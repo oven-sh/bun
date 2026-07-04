@@ -1459,19 +1459,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.config.idle_timeout = seconds.min(255) as u8;
     }
 
-    pub fn set_flags(
-        &mut self,
-        require_host_header: bool,
-        use_strict_method_validation: bool,
-        validate_host_header_value: bool,
-    ) {
+    pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app).set_flags(
-                require_host_header,
-                use_strict_method_validation,
-                validate_host_header_value,
-            );
+            bun_opaque::opaque_deref_mut(app)
+                .set_flags(require_host_header, use_strict_method_validation);
         }
     }
 

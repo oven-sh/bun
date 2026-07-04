@@ -524,7 +524,10 @@ it("request.url should be based on the Host header", async () => {
   );
 });
 
-it("request.url is the request-target when the Host header is not a valid authority", async () => {
+it.each([
+  ["HTTP/1.0", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
+  ["HTTP/1.1", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],
+])("request.url is the request-target when the %s Host header is not a valid authority", async (_version, payload) => {
   using server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -539,7 +542,7 @@ it("request.url is the request-target when the Host header is not a valid author
     socket.on("error", reject);
     socket.on("data", chunk => chunks.push(chunk));
     socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
-    socket.write("GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n");
+    socket.write(payload);
   });
   socket.destroy();
   expect(response).toStartWith("HTTP/1.1 200");

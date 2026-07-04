@@ -193,12 +193,11 @@ impl WorkspaceMap {
 
         for i in 0..item_count {
             let Some(input_path) = arr.item_str(i, &scratch) else {
-                let _ = log.add_error_fmt(
+                let _ = bun_ast::add_error_pretty!(
+                    log,
                     Some(source),
                     arr.item_loc(source, i),
-                    format_args!(
-                        "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                    ),
+                    "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                 );
                 return Err(bun_core::err!("InvalidPackageJSON"));
             };
@@ -359,14 +358,13 @@ impl WorkspaceMap {
                 )? {
                     Ok(w) => w,
                     Err(e) => {
-                        let _ = log.add_error_fmt(
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
                             Some(source),
                             loc,
-                            format_args!(
-                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                BStr::new(user_pattern),
-                                <&'static str>::from(e.get_errno()),
-                            ),
+                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                            BStr::new(user_pattern),
+                            <&'static str>::from(e.get_errno()),
                         );
                         return Err(bun_core::err!("GlobError"));
                     }
@@ -376,14 +374,13 @@ impl WorkspaceMap {
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
-                    let _ = log.add_error_fmt(
+                    let _ = bun_ast::add_error_pretty!(
+                        log,
                         Some(source),
                         loc,
-                        format_args!(
-                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                            BStr::new(user_pattern),
-                            <&'static str>::from(e.get_errno()),
-                        ),
+                        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                        BStr::new(user_pattern),
+                        <&'static str>::from(e.get_errno()),
                     );
                     return Err(bun_core::err!("GlobError"));
                 }
@@ -393,14 +390,13 @@ impl WorkspaceMap {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = log.add_error_fmt(
+                            let _ = bun_ast::add_error_pretty!(
+                                log,
                                 Some(source),
                                 loc,
-                                format_args!(
-                                    "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                    BStr::new(user_pattern),
-                                    <&'static str>::from(e.get_errno()),
-                                ),
+                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                                BStr::new(user_pattern),
+                                <&'static str>::from(e.get_errno()),
                             );
                             return Err(bun_core::err!("GlobError"));
                         }

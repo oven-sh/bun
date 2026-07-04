@@ -3367,9 +3367,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
-        let initial_data: StringOrBuffer = match opts.get_truthy(global, "initialData")? {
-            Some(v) => StringOrBuffer::from_js(global, v)?.unwrap_or(StringOrBuffer::EMPTY),
-            None => StringOrBuffer::EMPTY,
+        let initial_data: Vec<u8> = match opts.get_truthy(global, "initialData")? {
+            Some(v) => StringOrBuffer::from_js(global, v)?
+                .map(|data| data.slice().to_vec())
+                .unwrap_or_default(),
+            None => Vec::new(),
         };
         // Handlers lifecycle is always client-mode (heap-per-connection) here: a
         // standalone `new TLSSocket(socket, { isServer })` is NOT a SocketListener,
@@ -3741,11 +3743,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Feed bytes that arrived before the upgrade (already pulled off the fd
         // by the plain-TCP layer) into the TLS engine exactly as if they had
         // just been received — for a server-side wrap this is the ClientHello.
-        let initial_slice = initial_data.slice();
-        if !initial_slice.is_empty() {
-            // SAFETY: `new_raw` is live; the slice borrows a JS-owned buffer kept
-            // alive by the options object for the duration of this call.
-            unsafe { (*new_raw.as_ptr()).tls_feed(initial_slice) };
+        if !initial_data.is_empty() {
+            // SAFETY: `new_raw` is live; `initial_data` is an owned copy.
+            unsafe { (*new_raw.as_ptr()).tls_feed(initial_data.as_slice()) };
         }
 
         let array = JSValue::create_empty_array(global, 2)?;

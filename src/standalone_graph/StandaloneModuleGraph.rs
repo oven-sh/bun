@@ -674,8 +674,10 @@ impl LazySourceMap {
                 // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
-                    vec![None; source_files_count];
+                let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
+                    std::iter::repeat_with(std::sync::OnceLock::new)
+                        .take(source_files_count)
+                        .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
@@ -2447,7 +2449,7 @@ pub struct SerializedSourceMapLoaded {
     /// Only decompress source code once! Once a file is decompressed,
     /// it is stored here. Decompression failures are stored as an empty
     /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[Option<Vec<u8>>]>,
+    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(

@@ -933,8 +933,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
-    int64_t seconds = static_cast<int64_t>(time / 1000000000);
-    int64_t nanoseconds = time % 1000000000;
+    double seconds = static_cast<double>(time / 1000000000);
+    double nanoseconds = static_cast<double>(time % 1000000000);
 
     auto arg0 = callFrame->argument(0);
     if (callFrame->argumentCount() > 0 && !arg0.isUndefined()) {
@@ -949,14 +949,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
         JSValue relativeNanosecondsValue = relativeArray->getIndex(globalObject, 1);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        int64_t relativeSeconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeSecondsValue));
-        int64_t relativeNanoseconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeNanosecondsValue));
-        seconds -= relativeSeconds;
-        nanoseconds -= relativeNanoseconds;
-        if (nanoseconds < 0) {
-            seconds--;
-            nanoseconds += 1000000000;
-        }
+        // Node subtracts the tuple in JS, so the elements go through ToNumber and
+        // non-numeric ones propagate NaN rather than reaching an int64 conversion.
+        double relativeSeconds = relativeSecondsValue.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        double relativeNanoseconds = relativeNanosecondsValue.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        bool needsBorrow = nanoseconds < relativeNanoseconds;
+        seconds = needsBorrow ? seconds - relativeSeconds - 1 : seconds - relativeSeconds;
+        nanoseconds = needsBorrow ? nanoseconds + 1000000000 - relativeNanoseconds : nanoseconds - relativeNanoseconds;
     }
 
     JSC::JSArray* array = nullptr;

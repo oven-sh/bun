@@ -1140,7 +1140,15 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 }
 
+fn validate_request_target(target: &[u8]) -> Result<(), bun_core::Error> {
+    if target.iter().any(|&byte| byte <= 0x20 || byte == 0x7f) {
+        return Err(err!(InvalidURL));
+    }
+    Ok(())
+}
+
 fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), bun_core::Error> {
+    validate_request_target(client.url.href)?;
     let port: &[u8] = if client.url.get_port().is_some() {
         client.url.port
     } else if client.url.is_https() {
@@ -1172,6 +1180,7 @@ fn write_proxy_request(
     request: &picohttp::Request<'_>,
     client: &HTTPClient,
 ) -> Result<(), bun_core::Error> {
+    validate_request_target(client.url.href)?;
     writer.extend_from_slice(request.method);
     // will always be http:// here, https:// needs CONNECT tunnel
     writer.extend_from_slice(b" http://");
@@ -1205,6 +1214,7 @@ fn write_request(
     writer: &mut Vec<u8>,
     request: &picohttp::Request<'_>,
 ) -> Result<(), bun_core::Error> {
+    validate_request_target(request.path)?;
     writer.extend_from_slice(request.method);
     writer.extend_from_slice(b" ");
     writer.extend_from_slice(request.path);
@@ -2031,6 +2041,11 @@ impl<'a> HTTPClient<'a> {
             if self.unix_socket_path.slice().len() > 0 {
                 return false;
             }
+            // A peer accepted by a per-request JS `checkServerIdentity` callback must
+            // not enter or leave the shared pool (same exclusion as `can_offer_h2`).
+            if self.signals.get(signals::Field::CertErrors) {
+                return false;
+            }
             // check state
             if self.state.flags.allow_keepalive && !self.flags.disable_keepalive {
                 return true;
@@ -2809,6 +2824,7 @@ impl<'a> HTTPClient<'a> {
             }
         } else {
             bun_core::scoped_log!(fetch, "normal request");
+            validate_request_target(self.url.host)?;
             write_request(writer, &request)?;
         }
 
@@ -3278,8 +3294,8 @@ impl<'a> HTTPClient<'a> {
                     let writer = &mut temporary_send_buffer;
 
                     let request = self.build_request(self.body_len_for_send());
-                    if write_request(writer, &request).is_err() {
-                        self.close_and_fail::<IS_SSL>(err!(OutOfMemory), socket);
+                    if let Err(e) = write_request(writer, &request) {
+                        self.close_and_fail::<IS_SSL>(e, socket);
                         return;
                     }
 
@@ -3502,6 +3518,12 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    buffer.drain_front(buffer.len().saturating_sub(remaining));
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
@@ -3524,6 +3546,12 @@ impl<'a> HTTPClient<'a> {
                     if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
+                    }
+                    if !needs_move {
+                        let remaining = to_read!().len();
+                        let buffer = &mut self.state.response_message_buffer.list;
+                        buffer.drain_front(buffer.len().saturating_sub(remaining));
+                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
                     }
                     self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
@@ -3548,7 +3576,9 @@ impl<'a> HTTPClient<'a> {
             to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
 
             if response.status_code == 101 {
-                if self.flags.upgrade_state == HTTPUpgradeState::None {
+                if self.flags.upgrade_state == HTTPUpgradeState::None
+                    || (self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
+                {
                     // we cannot upgrade to websocket because the client did not request it!
                     self.close_and_fail::<IS_SSL>(err!(UnrequestedUpgrade), socket);
                     return;
@@ -3567,14 +3597,11 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
-                if !needs_move {
-                    let remaining = to_read!().len();
-                    let buffer = &mut self.state.response_message_buffer.list;
-                    let consumed = buffer.len().saturating_sub(remaining);
-                    buffer.drain_front(consumed);
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                }
                 if to_read!().is_empty() {
+                    if !needs_move {
+                        let buffer = &mut self.state.response_message_buffer.list;
+                        buffer.drain_front(buffer.len());
+                    }
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
                 }
@@ -5138,9 +5165,13 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 let new_url = new_url_.to_owned_slice();
+                                let parsed_url = URL::parse(&new_url);
+                                if !parsed_url.has_http_like_protocol() {
+                                    return Err(err!(UnsupportedRedirectProtocol));
+                                }
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
+                                self.url = unsafe { parsed_url.erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(self.url.origin),
                                     strings::without_trailing_slash(original_url.origin),
@@ -5249,10 +5280,12 @@ impl<'a> HTTPClient<'a> {
             return Ok(ShouldContinue::ContinueStreaming);
         }
 
+        // RFC 9112 §6.3: framing comes from Transfer-Encoding and Content-Length
+        // alone. `Connection: close` only means the socket won't be reused, so a
+        // `Content-Length: 0` response is still complete.
         if self.method.has_body()
             && (content_length.is_none()
                 || content_length.unwrap() > 0
-                || !self.state.flags.allow_keepalive
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {

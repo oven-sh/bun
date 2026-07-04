@@ -137,6 +137,64 @@ it("process.hrtime.bigint()", () => {
   expect(end > start).toBe(true);
 });
 
+// Runs in a subprocess because passing a non-numeric element used to trip an
+// assertion in the int64 conversion, which aborts assert-enabled builds.
+it("process.hrtime() coerces tuple elements with ToNumber like node", async () => {
+  const fixture = /* js */ `
+    const classify = v => {
+      if (typeof v !== "number") return typeof v;
+      if (Number.isNaN(v)) return "NaN";
+      if (!Number.isFinite(v)) return String(v);
+      if (!Number.isInteger(v)) return "fraction:" + Math.abs(v % 1);
+      return v < 0 ? "negative" : "integer";
+    };
+    const probe = time => {
+      try {
+        return process.hrtime(time).map(classify);
+      } catch (e) {
+        return e.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        strings: probe(["a", "b"]),
+        objects: probe([{}, {}]),
+        sparse: probe(new Array(2)),
+        undefineds: probe([undefined, undefined]),
+        nulls: probe([null, null]),
+        numericStrings: probe(["0", "0"]),
+        fractions: probe([-1, 0.5]),
+        bigints: probe([1n, 2n]),
+        symbols: probe([Symbol("x"), 0]),
+      }),
+    );
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim() || stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      strings: ["NaN", "NaN"],
+      objects: ["NaN", "NaN"],
+      sparse: ["NaN", "NaN"],
+      undefineds: ["NaN", "NaN"],
+      nulls: ["integer", "integer"],
+      numericStrings: ["integer", "integer"],
+      fractions: ["integer", "fraction:0.5"],
+      bigints: "TypeError",
+      symbols: "TypeError",
+    }),
+    exitCode: 0,
+  });
+});
+
 it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;

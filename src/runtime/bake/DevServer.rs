@@ -1448,6 +1448,16 @@ pub(super) enum DevHandlerId {
 /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
 /// page from reading bundled source via same-origin fetch.
 pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
+    is_allowed_host_header(
+        req,
+        dev.server.as_ref().map(|server| &server.config().address),
+    )
+}
+
+pub(crate) fn is_allowed_host_header(
+    req: &Request,
+    address: Option<&crate::server::server_config::Address>,
+) -> bool {
     let Some(host) = req.header(b"host") else {
         return false;
     };
@@ -1473,13 +1483,11 @@ pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     if strings::is_ip_address(ip) {
         return true;
     }
-    if let Some(server) = dev.server.as_ref() {
-        if let crate::server::server_config::Address::Tcp {
-            hostname: Some(h), ..
-        } = &server.config().address
-        {
-            return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
-        }
+    if let Some(crate::server::server_config::Address::Tcp {
+        hostname: Some(h), ..
+    }) = address
+    {
+        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
     }
     false
 }
@@ -1581,6 +1589,11 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     };
     if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
+    }
+    if matches!(ID, DevHandlerId::ReportError | DevHandlerId::UnrefSourceMap)
+        && !is_allowed_dev_origin(req)
+    {
+        return origin_forbidden(resp);
     }
     match ID {
         DevHandlerId::JsRequest => on_js_request(dev, req, resp),
@@ -6171,13 +6184,13 @@ impl DevServer {
 
     pub fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
         if let Some(s) = &self.server {
-            let _ = s.publish(&[topic as u8], message, opcode, false);
+            let _ = s.publish(&topic.uws_topic(), message, opcode, false);
         }
     }
 
     pub fn num_subscribers(&self, topic: HmrTopic) -> u32 {
         if let Some(s) = &self.server {
-            s.num_subscribers(&[topic as u8])
+            s.num_subscribers(&topic.uws_topic())
         } else {
             0
         }

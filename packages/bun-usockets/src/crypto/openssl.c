@@ -632,6 +632,18 @@ static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   }
 }
 
+void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t *old_s,
+                                      struct us_socket_t *new_s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (!loop_ssl_data) return;
+  if (loop_ssl_data->ssl_spill_owner == old_s) {
+    loop_ssl_data->ssl_spill_owner = new_s;
+  }
+  if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
+    loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
+  }
+}
+
 static int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 

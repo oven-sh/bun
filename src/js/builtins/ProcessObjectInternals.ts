@@ -123,7 +123,6 @@ export function getStdinStream(
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
-  var shouldDisown = false;
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
@@ -137,7 +136,6 @@ export function getStdinStream(
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
-    shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
       internalRead(stream);
@@ -149,22 +147,13 @@ export function getStdinStream(
     source?.setFlowing?.(false);
 
     if (reader) {
-      try {
-        reader.releaseLock();
-        reader = undefined;
-        $debug("released reader");
-      } catch (e: any) {
-        $debug("reader lock cannot be released, waiting");
-        $assert(e.message === "There are still pending read requests, cannot release the lock");
-
-        // Releasing the lock is not possible as there are active reads
-        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldDisown = true;
-        source?.updateRef?.(false);
-      }
-    } else if (source) {
-      source.updateRef(false);
+      // releaseLock() rejects any in-flight internalRead() with a TypeError; that
+      // rejection is handled there by observing that `reader` was cleared here.
+      reader.releaseLock();
+      reader = undefined;
+      $debug("released reader");
     }
+    source?.updateRef?.(false);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
@@ -234,14 +223,16 @@ export function getStdinStream(
 
   async function internalRead(stream) {
     $debug("internalRead();");
+    // The reader this read belongs to. releaseLock() rejects the in-flight read(); by the
+    // time that rejection lands, own() may already have acquired a NEW reader, so the catch
+    // must key on this acquisition rather than on the current `reader`.
+    const readerForThisRead = reader;
     try {
-      $assert(reader);
-      const { value } = await reader.read();
+      $assert(readerForThisRead);
+      const { value } = await readerForThisRead.read();
 
       if (value) {
         stream.push(value);
-
-        if (shouldDisown) disown();
       } else {
         // EOF. Nothing is left to read, so release the native reader before
         // push(null) runs user 'readable' listeners; the process must be able
@@ -254,10 +245,10 @@ export function getStdinStream(
         stream.push(null);
       }
     } catch (err) {
-      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // The stream was unref()ed. It may be ref()ed again in the future,
-        // or maybe it has already been ref()ed again and we just need to
-        // restart the internalRead() function. triggerRead() will figure that out.
+      if (readerForThisRead !== reader) {
+        // disown() released this read's reader while it was in flight (stdin may have been
+        // re-owned since), so the read rejected because the stream was unref()ed, not
+        // because it failed. triggerRead() re-arms if/when it is ref()ed again.
         triggerRead.$call(stream, undefined);
         return;
       }
@@ -268,7 +259,7 @@ export function getStdinStream(
   function triggerRead(_size) {
     $debug("_read();", reader);
 
-    if (reader && !shouldDisown) {
+    if (reader) {
       internalRead(this);
     } else {
       // The stream has not been ref()ed yet. If it is ever ref()ed,

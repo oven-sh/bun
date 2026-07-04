@@ -1061,7 +1061,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             _ => {
                 Output::panic(format_args!(
-                    "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to unexpected status\n{}",
+                    "error: Failed to run {} script from \"{}\" due to unexpected status\n{}",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     status,

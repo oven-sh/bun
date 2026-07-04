@@ -6,7 +6,8 @@ import util from "node:util";
 async function run(script: string, nodeDebug?: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: nodeDebug === undefined ? bunEnv : { ...bunEnv, NODE_DEBUG: nodeDebug },
+    // Always set the key so an ambient NODE_DEBUG cannot leak into the child.
+    env: { ...bunEnv, NODE_DEBUG: nodeDebug },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -15,10 +16,12 @@ async function run(script: string, nodeDebug?: string) {
 }
 
 describe("util.debuglog", () => {
+  // The value of `enabled` depends on this process's NODE_DEBUG, so the true and
+  // false cases live in the subprocess tests below.
   test("returns a function exposing an enumerable `enabled` boolean", () => {
-    const log = util.debuglog("never-enabled-section");
+    const log = util.debuglog("some-section");
     expect(typeof log).toBe("function");
-    expect(log.enabled).toBe(false);
+    expect(typeof log.enabled).toBe("boolean");
     expect(Object.keys(log)).toEqual(["enabled"]);
   });
 

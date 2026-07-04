@@ -75,6 +75,16 @@ describe("util.styleText", () => {
       expect(util.styleText("red", "x", { stream: new Writable() })).toBe("x");
     });
 
+    // https://github.com/oven-sh/bun/issues/25736
+    test("honors a bare isTTY flag on a stream with no getColorDepth", () => {
+      const tty: any = new Writable();
+      tty.isTTY = true;
+      const notTty: any = new Writable();
+      notTty.isTTY = false;
+      expect(util.styleText("bgYellow", "TTY", { stream: tty })).toBe("\u001b[43mTTY\u001b[49m");
+      expect(util.styleText("bgYellow", "No TTY", { stream: notTty })).toBe("No TTY");
+    });
+
     test("accepts web streams", () => {
       expect(util.styleText("red", "x", { stream: new WritableStream() as any })).toBe("x");
       expect(util.styleText("red", "x", { stream: new ReadableStream() as any })).toBe("x");
@@ -98,6 +108,36 @@ describe("util.styleText", () => {
   test.failing("restores the outer format after a nested one closes", () => {
     const nested = "A" + util.styleText("blue", "B", raw) + "C";
     expect(util.styleText("red", nested, raw)).toBe("\u001b[31mA\u001b[34mB\u001b[31mC\u001b[39m");
+  });
+
+  // https://github.com/oven-sh/bun/issues/20129
+  describe("the color environment variables", () => {
+    // A stream that claims to be a TTY and defers to the real color detection,
+    // so the env vars are the only thing deciding the outcome.
+    const script = `
+      const { Writable } = require("node:stream");
+      const stream = new Writable();
+      stream.isTTY = true;
+      stream.getColorDepth = require("node:tty").WriteStream.prototype.getColorDepth;
+      process.stdout.write(JSON.stringify(require("util").styleText("cyan", "hi", { stream })));
+    `;
+    const cleared = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, NODE_DISABLE_COLORS: undefined };
+    const colorized = JSON.stringify("\u001b[36mhi\u001b[39m");
+
+    test.each([
+      ["NO_COLOR", { NO_COLOR: "1" }, `"hi"`],
+      ["NODE_DISABLE_COLORS", { NODE_DISABLE_COLORS: "1" }, `"hi"`],
+      ["FORCE_COLOR", { FORCE_COLOR: "1" }, colorized],
+    ])("%s decides whether a TTY stream gets colors", async (_name, env, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...cleared, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
   });
 
   describe("the default stream is process.stdout", () => {

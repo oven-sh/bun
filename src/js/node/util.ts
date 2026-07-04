@@ -245,6 +245,12 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+// internal/streams/utils pulls in the whole stream machinery and
+// internal/util/colors requires node:tty, so neither is loaded until a caller
+// actually asks styleText to look at a stream.
+let lazyStreamUtils;
+let lazyUtilColors;
+
 function styleText(format, text, options) {
   const validateStream = options?.validateStream ?? true;
 
@@ -257,11 +263,13 @@ function styleText(format, text, options) {
   let skipColorize = false;
   if (validateStream) {
     const stream = options?.stream ?? process.stdout;
-    const { isReadableStream, isWritableStream, isNodeStream } = require("internal/streams/utils");
+    lazyStreamUtils ??= require("internal/streams/utils");
+    const { isReadableStream, isWritableStream, isNodeStream } = lazyStreamUtils;
     if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
       throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
-    skipColorize = !require("internal/util/colors").shouldColorize(stream);
+    lazyUtilColors ??= require("internal/util/colors");
+    skipColorize = !lazyUtilColors.shouldColorize(stream);
   }
 
   const formatArray = $isJSArray(format) ? format : [format];

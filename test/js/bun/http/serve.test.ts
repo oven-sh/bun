@@ -586,9 +586,10 @@ describe("streaming", () => {
               controller.close();
             },
           });
-          // Lock the stream before handing it to the response. A locked stream
-          // cannot be piped, so the server must surface ERR_STREAM_CANNOT_PIPE
-          // instead of silently returning a 200 with an empty body.
+          // Lock the stream before handing it to the response. Constructing a
+          // Response from a locked stream throws a TypeError (fetch spec; Node
+          // agrees), which must reach the error handler instead of silently
+          // returning a 200 with an empty body.
           stream.getReader();
           return new Response(stream);
         },
@@ -602,9 +603,9 @@ describe("streaming", () => {
       expect(await response.text()).toBe("handled");
       expect(response.status).toBe(500);
       expect(captured).toEqual({
-        code: "ERR_STREAM_CANNOT_PIPE",
-        name: "Error",
-        message: "Stream already used, please create a new one",
+        code: undefined,
+        name: "TypeError",
+        message: "Body object should not be disturbed or locked",
       });
     });
   });

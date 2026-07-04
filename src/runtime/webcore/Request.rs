@@ -1260,6 +1260,19 @@ impl Request {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
+                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
+                        // body throws before body extraction (Node's message is "keepalive").
+                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
+                            match value.get(global_this, "keepalive") {
+                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
+                                    bail!(Err(
+                                        global_this.throw_type_error(format_args!("keepalive"))
+                                    ));
+                                }
+                                Ok(_) => {}
+                                Err(e) => bail!(Err(e)),
+                            }
+                        }
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;

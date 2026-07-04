@@ -660,7 +660,7 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-    stdout: ["caught TypeError: ReadableStream is locked", "done"],
+    stdout: ["caught TypeError: Invalid state: ReadableStream is locked", "done"],
     stderr: "",
     exitCode: 0,
   });

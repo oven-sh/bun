@@ -7030,6 +7030,33 @@ describe("css tests", () => {
     );
   });
 
+  describe("animation", () => {
+    // The animation name is serialized last, in canonical order.
+    minify_test(".foo { animation: anim 2s }", ".foo{animation:2s anim}");
+    minify_test(".foo { animation: 0.25s ease-out forwards anim }", ".foo{animation:.25s ease-out forwards anim}");
+    minify_test(".foo { animation: none }", ".foo{animation:none}");
+
+    // Name-less shorthands must keep their components (must NOT collapse to
+    // `none`) — a lone trailing `none` is dropped as redundant.
+    minify_test(".foo { animation: 2s }", ".foo{animation:2s}");
+    minify_test(".foo { animation: 2s ease-in-out }", ".foo{animation:2s ease-in-out}");
+    minify_test(
+      ".foo { animation: 3s linear 1s infinite alternate }",
+      ".foo{animation:3s linear 1s infinite alternate}",
+    );
+    minify_test(".foo { animation: 2s none }", ".foo{animation:2s}");
+
+    // Multiple comma-separated animations.
+    minify_test(".foo { animation: spin 1s, 2s slide }", ".foo{animation:1s spin,2s slide}");
+
+    // Vendor-prefixed shorthand.
+    minify_test(".foo { -webkit-animation: spin 1s }", ".foo{-webkit-animation:1s spin}");
+
+    // animation-name longhand.
+    minify_test(".foo { animation-name: foo }", ".foo{animation-name:foo}");
+    minify_test(".foo { animation-name: foo, bar }", ".foo{animation-name:foo,bar}");
+  });
+
   describe("transform", () => {
     minify_test(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
     minify_test(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");

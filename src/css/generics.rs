@@ -444,6 +444,10 @@ mod inherent_bridge {
     bridge_hash!(AnimationName);
     bridge_deep_clone!(AnimationName);
 
+    use crate::properties::animation::Animation;
+    bridge_eql!(Animation);
+    bridge_deep_clone!(Animation);
+
     use crate::properties::custom::UAEnvironmentVariable;
     impl CssEql for UAEnvironmentVariable {
         #[inline]

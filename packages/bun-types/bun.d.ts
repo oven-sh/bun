@@ -9373,7 +9373,7 @@ declare module "bun" {
      * @returns A promise that resolves once the entry has been written
      *
      * @example
-     * **Build a zip without holding it in memory:**
+     * **Build a zip one entry at a time:**
      * ```ts
      * const archive = new Bun.Archive(undefined, { format: "zip" });
      * for (const path of paths) {
@@ -9391,6 +9391,56 @@ declare module "bun" {
      * ```
      */
     append(path: string, data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike): Promise<void>;
+
+    /**
+     * The archive's bytes as a `ReadableStream`, produced as entries are appended.
+     *
+     * Reading the stream is what lets the next `append()` make progress: once the
+     * stream's queue is full, an in-flight `append()` parks until the consumer has
+     * caught up. A large archive therefore never has to fit in memory.
+     *
+     * Call it before appending anything, and finish with `end()` to close the
+     * stream. An archive that has been streamed cannot also be read with `bytes()`,
+     * `blob()`, `files()`, or `extract()`: its bytes went to the consumer.
+     *
+     * @example
+     * **Stream a zip to a file without holding it in memory:**
+     * ```ts
+     * const archive = new Bun.Archive(undefined, { format: "zip" });
+     * const done = Bun.write("bundle.zip", new Response(archive.stream()));
+     *
+     * for (const path of paths) {
+     *   await archive.append(path, Bun.file(path));
+     * }
+     * archive.end();
+     * await done;
+     * ```
+     *
+     * @example
+     * **Stream a zip to an HTTP client:**
+     * ```ts
+     * const archive = new Bun.Archive(undefined, { format: "zip" });
+     * queueMicrotask(async () => {
+     *   for (const path of paths) await archive.append(path, Bun.file(path));
+     *   archive.end();
+     * });
+     * return new Response(archive.stream(), {
+     *   headers: { "content-type": "application/zip" },
+     * });
+     * ```
+     */
+    stream(): ReadableStream<Uint8Array>;
+
+    /**
+     * Finish the archive.
+     *
+     * A streamed archive closes its `stream()`. Any other archive is simply sealed,
+     * exactly as the first read of its bytes would do, so calling this is optional
+     * unless you are streaming.
+     *
+     * @throws if an `append()` is still in progress
+     */
+    end(): void;
   }
 
   /**

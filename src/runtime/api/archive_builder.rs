@@ -18,8 +18,9 @@ pub(crate) const FILETYPE_REGULAR: u32 = 0o100000;
 /// `append()`.
 const DEFAULT_ENTRY_PERM: u32 = 0o644;
 
-/// Bytes read from disk at a time when streaming a file-backed entry.
-const STREAM_CHUNK_SIZE: usize = 256 * 1024;
+/// Bytes of an entry written per step. Also how much of a file-backed entry is
+/// read from disk at a time.
+pub(crate) const STREAM_CHUNK_SIZE: usize = 256 * 1024;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Errors
@@ -35,6 +36,8 @@ pub(crate) enum BuildError {
     /// A file shrank between `stat` and the end of the copy loop, so fewer
     /// bytes were written than the entry header declares.
     EntryChangedSize,
+    /// The `stream()` consumer cancelled, so there is nowhere left to write.
+    StreamCancelled,
 }
 
 impl From<bun_sys::Error> for BuildError {
@@ -262,6 +265,41 @@ impl Builder {
         Ok(())
     }
 
+    /// Take the output produced so far, leaving the sink empty.
+    #[inline]
+    pub(crate) fn take_output(&mut self) -> Vec<u8> {
+        core::mem::take(&mut self.sink_mut().buf)
+    }
+
+    // ── Resumable entry ────────────────────────────────────────────────────
+    //
+    // `begin_entry` / `write_body` / `end_entry` let an entry be written a chunk
+    // at a time, so the work can be handed back to the JS thread in between. The
+    // all-at-once helpers below are those three calls in a loop.
+
+    /// Write an entry's header, declaring a body of `size` bytes.
+    #[inline]
+    pub(crate) fn begin_entry(
+        &mut self,
+        path: &ZBox,
+        size: u64,
+        mtime: i64,
+    ) -> Result<(), BuildError> {
+        self.write_header(path, size, mtime)
+    }
+
+    /// Write the next slice of the current entry's body.
+    #[inline]
+    pub(crate) fn write_body(&mut self, data: &[u8]) -> Result<(), BuildError> {
+        self.write_data(data)
+    }
+
+    /// Close the current entry, whose body must be fully written.
+    #[inline]
+    pub(crate) fn end_entry(&mut self) -> Result<(), BuildError> {
+        self.finish_entry()
+    }
+
     /// Write one complete entry whose bytes are already in memory.
     pub(crate) fn add_bytes(
         &mut self,
@@ -284,37 +322,18 @@ impl Builder {
         max_len: Option<u64>,
         mtime: i64,
     ) -> Result<(), BuildError> {
-        let file = bun_sys::File::open(
-            source.as_zstr(),
-            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
-            0,
-        )?;
-        let file_size = u64::try_from(bun_sys::fstat(file.fd())?.st_size).unwrap_or(0);
-        let start = offset.min(file_size);
-        let available = file_size - start;
-        let len = max_len.map_or(available, |l| l.min(available));
-
-        if start > 0 {
-            bun_sys::set_file_offset(file.fd(), start)?;
-        }
-
-        self.write_header(path, len, mtime)?;
+        let (file, len) = open_entry_file(source, offset, max_len)?;
+        self.begin_entry(path, len, mtime)?;
 
         let mut buf = vec![0u8; STREAM_CHUNK_SIZE.min(usize::try_from(len).unwrap_or(usize::MAX))];
         let mut remaining = len;
         while remaining > 0 {
-            let want = usize::try_from(remaining)
-                .unwrap_or(usize::MAX)
-                .min(buf.len());
-            let read = file.read_all(&mut buf[..want])?;
-            if read == 0 {
-                return Err(BuildError::EntryChangedSize);
-            }
-            self.write_data(&buf[..read])?;
+            let read = read_entry_chunk(&file, &mut buf, remaining)?;
+            self.write_body(&buf[..read])?;
             remaining -= read as u64;
         }
 
-        self.finish_entry()
+        self.end_entry()
     }
 
     /// Close the writer and take its output. Consumes the builder.
@@ -327,6 +346,47 @@ impl Builder {
         }
         Ok(core::mem::take(&mut self.sink_mut().buf))
     }
+}
+
+/// Open a file-backed entry's source and work out how many of its bytes the
+/// entry covers, seeking to `offset`.
+pub(crate) fn open_entry_file(
+    source: &ZBox,
+    offset: u64,
+    max_len: Option<u64>,
+) -> Result<(bun_sys::File, u64), BuildError> {
+    let file = bun_sys::File::open(
+        source.as_zstr(),
+        bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+        0,
+    )?;
+    let file_size = u64::try_from(bun_sys::fstat(file.fd())?.st_size).unwrap_or(0);
+    let start = offset.min(file_size);
+    let available = file_size - start;
+    let len = max_len.map_or(available, |l| l.min(available));
+
+    if start > 0 {
+        bun_sys::set_file_offset(file.fd(), start)?;
+    }
+    Ok((file, len))
+}
+
+/// Read the next slice of a file-backed entry, at most `remaining` bytes.
+pub(crate) fn read_entry_chunk(
+    file: &bun_sys::File,
+    buf: &mut [u8],
+    remaining: u64,
+) -> Result<usize, BuildError> {
+    let want = usize::try_from(remaining)
+        .unwrap_or(usize::MAX)
+        .min(buf.len());
+    let read = file.read_all(&mut buf[..want])?;
+    if read == 0 {
+        // The file shrank between `fstat` and here, so the entry can no longer
+        // match the size its header declares.
+        return Err(BuildError::EntryChangedSize);
+    }
+    Ok(read)
 }
 
 /// Apply `options` to a fresh `archive_write_new()` handle.

@@ -2,18 +2,29 @@
 //!
 //! An archive created from an object (or from nothing) stays *open* behind a
 //! live libarchive writer until the first read of its bytes, so entries can be
-//! streamed in one at a time with [`Archive::append`].
+//! streamed in one at a time with [`Archive::append`]. [`Archive::stream`]
+//! hands the bytes to a `ReadableStream` as they are produced, and parks an
+//! in-flight append whenever the consumer falls behind.
 
+use core::ffi::c_void;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::CString;
 
-use super::archive_builder::{BuildError, Builder, FILETYPE_REGULAR};
+use super::archive_builder::{
+    BuildError, Builder, FILETYPE_REGULAR, STREAM_CHUNK_SIZE, open_entry_file, read_entry_chunk,
+};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::ByteStream;
+use crate::webcore::ReadableStream;
 use crate::webcore::blob::store::Data as BlobData;
 use crate::webcore::blob::{MAX_SIZE as BLOB_MAX_SIZE, Store as BlobStore, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
+use crate::webcore::readable_stream::{
+    self, Source as ReadableStreamPtr, Strong as ReadableStreamStrong,
+};
+use crate::webcore::streams;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -28,6 +39,24 @@ use bun_jsc::{
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+
+/// Bytes queued in a `stream()` before an in-flight `append()` parks and waits
+/// for the consumer to catch up.
+const STREAM_HIGH_WATER_MARK: usize = 1024 * 1024;
+
+/// The `ReadableStream` an archive is being written into.
+struct StreamOut {
+    /// Keeps the JS `ReadableStream` alive, and with it the native source whose
+    /// `context` field `bytes` points at.
+    _held: ReadableStreamStrong,
+    /// The stream's native source, owned by the JS wrapper.
+    bytes: *mut ByteStream,
+    /// Set by [`Archive::on_stream_cancelled`] when the consumer walks away.
+    cancelled: bool,
+    /// An append parked on backpressure, put back on the work pool by
+    /// [`Archive::on_stream_drained`].
+    parked: Option<*mut AppendTask>,
+}
 
 /// Container format written by `new Archive(...)`. Reading auto-detects both.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -100,6 +129,9 @@ enum State {
     /// `None` while a work-pool task owns the builder for an in-flight append.
     Building(Option<Builder>),
     Done(StoreRef),
+    /// `end()` handed the archive's bytes to a `stream()` consumer, so there is
+    /// nothing left here to read.
+    Streamed,
     /// An `append()` failed part-way through an entry, so the archive stream is
     /// truncated and can never be completed.
     Failed,
@@ -123,6 +155,8 @@ pub struct Archive {
     queue: RefCell<VecDeque<PendingAppend>>,
     /// True while a work-pool task owns the builder.
     appending: Cell<bool>,
+    /// Set by `stream()`; the archive's bytes go here instead of accumulating.
+    stream: RefCell<Option<StreamOut>>,
 }
 
 // `jsc.Codegen.JSArchive` — codegen already emits `js_Archive`
@@ -141,6 +175,9 @@ impl Archive {
 
     pub fn finalize(self: Box<Self>) {
         jsc::mark_binding();
+        // The stream's source can outlive the archive, and its drain/cancel
+        // handlers point back here. Clear them before the payload goes away.
+        self.clear_stream_handlers();
         drop(self);
         // store.deref() happens via Arc<BlobStore>::drop; an unfinished
         // `Builder` poisons and frees its libarchive writer in `Drop`.
@@ -180,6 +217,7 @@ impl Archive {
                 "entries",
                 builder.as_ref().map_or(0, Builder::entries),
             ),
+            State::Streamed => ("Archive (streamed)".to_string(), "entries", 0),
             State::Failed => ("Archive (failed)".to_string(), "files", 0),
         };
 
@@ -307,6 +345,7 @@ impl Archive {
             options,
             queue: RefCell::new(VecDeque::new()),
             appending: Cell::new(false),
+            stream: RefCell::new(None),
         })
     }
 
@@ -320,6 +359,7 @@ impl Archive {
             let mut state = self.state.borrow_mut();
             match &mut *state {
                 State::Done(store) => return Ok(store.clone()),
+                State::Streamed => return Err(self.throw_streamed(global)),
                 State::Failed => return Err(self.throw_failed(global)),
                 State::Building(slot) => {
                     if slot.is_none() || !self.queue.borrow().is_empty() {
@@ -349,6 +389,12 @@ impl Archive {
         ))
     }
 
+    fn throw_streamed(&self, global: &JSGlobalObject) -> jsc::JsError {
+        global.throw_invalid_arguments(format_args!(
+            "Archive.stream() consumed this archive's bytes; there is nothing left to read"
+        ))
+    }
+
     /// Instance method: archive.append(path, data)
     /// Streams one more entry into an archive that is still open. Resolves when
     /// the entry has been written; rejects (and poisons the archive) on failure.
@@ -362,6 +408,7 @@ impl Archive {
                     "Archive.append() is only available before the archive is read; it cannot append to existing archive data"
                 )));
             }
+            State::Streamed => return Err(self.throw_streamed(global)),
             State::Failed => return Err(self.throw_failed(global)),
             State::Building(_) => {}
         }
@@ -386,6 +433,222 @@ impl Archive {
         Ok(value)
     }
 
+    /// Instance method: archive.stream()
+    /// The archive's bytes as a `ReadableStream`, produced as entries are
+    /// appended. Reading it is what lets the next `append()` make progress.
+    #[bun_jsc::host_fn(method)]
+    pub fn stream(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        match &*self.state.borrow() {
+            State::Done(_) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Archive.stream() is only available before the archive is read"
+                )));
+            }
+            State::Streamed => return Err(self.throw_streamed(global)),
+            State::Failed => return Err(self.throw_failed(global)),
+            State::Building(slot) => {
+                if slot.is_none() || !self.queue.borrow().is_empty() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Archive.stream() cannot start while an append() is in progress"
+                    )));
+                }
+            }
+        }
+        if self.stream.borrow().is_some() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Archive.stream() was already called"))
+            );
+        }
+
+        // Ownership of the heap-allocated source transfers to the JS wrapper in
+        // `to_readable_stream`; the wrapper's finalizer reclaims it.
+        let source = crate::webcore::byte_stream::Source::new(readable_stream::NewSource {
+            context: ByteStream::default(),
+            global_this: Some(bun_ptr::BackRef::new(global)),
+            ..Default::default()
+        });
+        // SAFETY: freshly heap-allocated, exclusive until handed to JS below.
+        let source = unsafe { &mut *source };
+        source.context.setup();
+        let value = source.to_readable_stream(global)?;
+
+        let bytes: *mut ByteStream = &raw mut source.context;
+        // `&self`-derived, and the handlers only ever form `&Archive`.
+        let this: *mut c_void = core::ptr::from_ref(self).cast_mut().cast();
+        source.drain_handler.set(Some(Archive::on_stream_drained));
+        source.drain_ctx.set(Some(this));
+        source
+            .cancel_handler
+            .set(Some(Archive::on_stream_cancelled));
+        source.cancel_ctx.set(Some(this));
+
+        *self.stream.borrow_mut() = Some(StreamOut {
+            _held: ReadableStreamStrong::init(
+                ReadableStream {
+                    ptr: ReadableStreamPtr::Bytes(bytes),
+                    value,
+                },
+                global,
+            ),
+            bytes,
+            cancelled: false,
+            parked: None,
+        });
+        Ok(value)
+    }
+
+    /// Instance method: archive.end()
+    /// Finish the archive. A streamed archive closes its stream; any other one
+    /// just seals, exactly as the first read of its bytes would.
+    #[bun_jsc::host_fn(method)]
+    pub fn end(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        if !self.is_streaming() {
+            self.blob_store(global)?;
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let builder = {
+            let mut state = self.state.borrow_mut();
+            match &mut *state {
+                State::Streamed => return Ok(JSValue::UNDEFINED),
+                State::Failed => return Err(self.throw_failed(global)),
+                State::Done(_) => return Err(self.throw_streamed(global)),
+                State::Building(slot) => {
+                    if slot.is_none() || !self.queue.borrow().is_empty() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Archive.append() is still in progress: await it before end()"
+                        )));
+                    }
+                    slot.take().expect("checked above")
+                }
+            }
+        };
+
+        let tail = match builder.close() {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                *self.state.borrow_mut() = State::Failed;
+                return Err(throw_build_error(global, err));
+            }
+        };
+        *self.state.borrow_mut() = State::Streamed;
+        self.push_to_stream(global, tail, true)?;
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[inline]
+    fn is_streaming(&self) -> bool {
+        self.stream.borrow().is_some()
+    }
+
+    /// Hand `bytes` to the stream's consumer. `done` closes the stream.
+    ///
+    /// `on_data` can resolve a parked reader and therefore run JS, so the
+    /// `stream` borrow is released first.
+    fn push_to_stream(
+        &self,
+        _global: &JSGlobalObject,
+        bytes: Vec<u8>,
+        done: bool,
+    ) -> Result<(), jsc::JsTerminated> {
+        let Some((source, cancelled)) = self
+            .stream
+            .borrow()
+            .as_ref()
+            .map(|out| (out.bytes, out.cancelled))
+        else {
+            return Ok(());
+        };
+        if cancelled || (bytes.is_empty() && !done) {
+            return Ok(());
+        }
+        let chunk = if done {
+            streams::Result::OwnedAndDone(bytes)
+        } else {
+            streams::Result::Owned(bytes)
+        };
+        // SAFETY: the `StreamOut`'s `_held` roots the JS wrapper that owns the
+        // source this points into, and it is still held (we just read it).
+        unsafe { &*source }.on_data(chunk)
+    }
+
+    /// Whether the consumer is far enough behind to park the next chunk.
+    fn stream_is_backed_up(&self) -> bool {
+        let stream = self.stream.borrow();
+        let Some(out) = stream.as_ref() else {
+            return false;
+        };
+        if out.cancelled {
+            return false;
+        }
+        // SAFETY: see `push_to_stream`.
+        unsafe { &*out.bytes }.buffer.get().len() >= STREAM_HIGH_WATER_MARK
+    }
+
+    fn park_append(&self, task: *mut AppendTask) {
+        if let Some(out) = self.stream.borrow_mut().as_mut() {
+            out.parked = Some(task);
+        }
+    }
+
+    /// The consumer drained the queue, so the parked append can carry on.
+    fn on_stream_drained(ctx: Option<*mut c_void>) {
+        let Some(ctx) = ctx else {
+            return;
+        };
+        // SAFETY: `ctx` is the `*mut Archive` registered in `stream()`. The
+        // handler is cleared in `finalize`, so the payload is alive here.
+        let archive = unsafe { &*ctx.cast::<Archive>() };
+        let parked = archive
+            .stream
+            .borrow_mut()
+            .as_mut()
+            .and_then(|out| out.parked.take());
+        if let Some(task) = parked {
+            AppendTask::schedule(task);
+        }
+    }
+
+    /// The consumer walked away. Resume any parked append so its promise
+    /// settles rather than hanging.
+    fn on_stream_cancelled(ctx: Option<*mut c_void>) {
+        let Some(ctx) = ctx else {
+            return;
+        };
+        // SAFETY: see `on_stream_drained`.
+        let archive = unsafe { &*ctx.cast::<Archive>() };
+        let parked = {
+            let mut stream = archive.stream.borrow_mut();
+            match stream.as_mut() {
+                Some(out) => {
+                    out.cancelled = true;
+                    out.parked.take()
+                }
+                None => None,
+            }
+        };
+        if let Some(task) = parked {
+            // SAFETY: a parked task is owned by the `StreamOut` we just took it
+            // from, and nothing else touches it until it is rescheduled.
+            unsafe { (*task).ctx.cancel() };
+            AppendTask::schedule(task);
+        }
+    }
+
+    fn clear_stream_handlers(&self) {
+        let stream = self.stream.borrow();
+        let Some(out) = stream.as_ref() else {
+            return;
+        };
+        // SAFETY: see `push_to_stream`. `NewSource` is `repr(C)` with `context`
+        // at offset 0, so the source starts at `bytes`.
+        let source = unsafe { &*out.bytes.cast::<crate::webcore::byte_stream::Source>() };
+        source.drain_handler.set(None);
+        source.drain_ctx.set(None);
+        source.cancel_handler.set(None);
+        source.cancel_ctx.set(None);
+    }
+
     /// Start the next queued append, if the builder is free.
     fn pump(&self, global: &JSGlobalObject, this: JSValue) {
         if self.appending.get() {
@@ -397,7 +660,7 @@ impl Archive {
 
         let builder = match &mut *self.state.borrow_mut() {
             State::Building(slot) => slot.take(),
-            State::Done(_) | State::Failed => None,
+            State::Done(_) | State::Streamed | State::Failed => None,
         };
         let Some(builder) = builder else {
             reject_pending(global, job, "Archive is no longer writable");
@@ -412,6 +675,15 @@ impl Archive {
                 path: job.path,
                 source: job.source,
                 mtime: now_seconds(),
+                // Only a streamed archive needs the output drained between
+                // chunks; otherwise the whole entry goes in one step.
+                chunked: self.is_streaming(),
+                started: false,
+                written: 0,
+                total: 0,
+                file: None,
+                buf: Vec::new(),
+                done: false,
                 result: Ok(()),
             },
             job.promise,
@@ -475,6 +747,8 @@ fn build_error_to_js(global: &JSGlobalObject, err: BuildError) -> JSValue {
         BuildError::EntryChangedSize => global.create_error_instance(format_args!(
             "Bun.Archive: the file changed size while it was being added"
         )),
+        BuildError::StreamCancelled => global
+            .create_error_instance(format_args!("Bun.Archive: the stream() consumer cancelled")),
         BuildError::Libarchive(stage) => {
             global.create_error_instance(format_args!("Failed to create archive: {stage}"))
         }
@@ -1068,12 +1342,28 @@ impl PromiseResult {
 ///   - `run` — runs on thread pool, stores result in `self`
 ///   - `run_from_js` — returns value to resolve/reject
 ///   - `Drop` — cleanup
+/// What `AsyncTask` does once `step_from_js` returns.
+pub enum Step {
+    /// Put the task back on the work pool for another `run()`.
+    Reschedule,
+    /// Leave the task alive and untouched; something else will reschedule it.
+    Parked,
+    /// Settle the task's promise and drop it.
+    Settle(PromiseResult),
+}
+
 pub trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
+    /// What to do on the JS thread after one `run()`. A context that can be
+    /// resumed overrides this; the default settles on the first pass. `task` is
+    /// the owning `AsyncTask<Self>`, which a resumable context parks.
+    fn step_from_js(&mut self, global: &JSGlobalObject, _task: *mut c_void) -> JsResult<Step> {
+        Ok(Step::Settle(self.run_from_js(global)?))
+    }
     /// Runs once this task's own promise has settled. A context that settles
     /// *other* promises does it here, so its own rejection is observed first.
     fn after_settled(&mut self, _global: &JSGlobalObject) {}
@@ -1173,27 +1463,43 @@ impl<C: TaskContext> AsyncTask<C> {
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: see fn-level safety contract.
-        let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(bun_io::js_vm_ctx());
-
-        // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
-        // exit (ctx implements Drop).
-
         let vm = VirtualMachine::get();
         if vm.is_shutting_down() {
+            // SAFETY: see fn-level safety contract.
+            let mut owned = unsafe { bun_core::heap::take(this) };
+            owned.keep_alive.unref(bun_io::js_vm_ctx());
             return Ok(());
         }
 
         let global = vm.global();
-        let promise = owned.promise.swap();
-        let result = match owned.ctx.run_from_js(global) {
-            Ok(r) => r,
+        // SAFETY: `this` is the live allocation from `create`; only this thread
+        // touches it between the work-pool callback and here.
+        let step = unsafe { (*this).ctx.step_from_js(global, this.cast()) };
+
+        // Ownership is only taken on the paths that settle: a rescheduled or
+        // parked task stays alive, and keeps the event loop alive with it.
+        let result = match step {
+            Ok(Step::Reschedule) => {
+                Self::schedule(this);
+                return Ok(());
+            }
+            Ok(Step::Parked) => return Ok(()),
+            Ok(Step::Settle(result)) => result,
             Err(e) => {
+                // SAFETY: see above.
+                let mut owned = unsafe { bun_core::heap::take(this) };
+                owned.keep_alive.unref(bun_io::js_vm_ctx());
+                let promise = owned.promise.swap();
                 // JSError means exception is already pending
                 return promise.reject(global, Ok(global.take_exception(e)));
             }
         };
+
+        // SAFETY: see above. `defer { ctx.deinit; destroy(this) }` — handled by
+        // `owned: Box<Self>` dropping at scope exit (ctx implements Drop).
+        let mut owned = unsafe { bun_core::heap::take(this) };
+        owned.keep_alive.unref(bun_io::js_vm_ctx());
+        let promise = owned.promise.swap();
         result.fulfill(global, promise)?;
         owned.ctx.after_settled(global);
         Ok(())
@@ -1742,30 +2048,44 @@ pub struct AppendContext {
     path: ZBox,
     source: AppendSource,
     mtime: i64,
+    /// Write the entry a chunk at a time, so the JS thread can drain the output
+    /// into the stream in between. Off when nothing is consuming the archive.
+    chunked: bool,
+    /// Whether the entry's header has been written.
+    started: bool,
+    /// Body bytes written so far, of `total`.
+    written: u64,
+    total: u64,
+    /// A file-backed source's open handle, carried across chunks.
+    file: Option<bun_sys::File>,
+    /// Scratch for a file-backed source's chunk.
+    buf: Vec<u8>,
+    done: bool,
     result: Result<(), BuildError>,
 }
 
-// SAFETY: `archive` is a JSC handle that is created, read and dropped only on
-// the JS thread; `run` (the work-pool half) never touches it. Everything else
-// in the context is `Send`.
-unsafe impl Send for AppendContext {}
+impl AppendContext {
+    /// Give up: the stream's consumer cancelled.
+    fn cancel(&mut self) {
+        if self.result.is_ok() {
+            self.result = Err(BuildError::StreamCancelled);
+        }
+        self.done = true;
+    }
 
-impl TaskContext for AppendContext {
-    const TAG: TaskTag = task_tag::ArchiveAppendTask;
-
-    fn run(&mut self) {
+    /// Write the whole entry in one go. The non-streaming path.
+    fn write_whole(&mut self) -> Result<(), BuildError> {
         let AppendContext {
             builder,
             path,
             source,
             mtime,
-            result,
             ..
         } = self;
         let Some(builder) = builder.as_mut() else {
-            return;
+            return Ok(());
         };
-        *result = match source {
+        match source {
             AppendSource::Bytes(data) => builder.add_bytes(path, data, *mtime),
             AppendSource::Store { store, offset, len } => {
                 let view = store.shared_view();
@@ -1778,7 +2098,103 @@ impl TaskContext for AppendContext {
                 offset,
                 len,
             } => builder.add_file(path, source_path, *offset, *len, *mtime),
-        };
+        }
+    }
+
+    /// Write the next chunk of the entry. The streaming path.
+    fn write_chunk(&mut self) -> Result<(), BuildError> {
+        if !self.started {
+            self.total = match &self.source {
+                AppendSource::Bytes(data) => data.len() as u64,
+                AppendSource::Store { store, offset, len } => {
+                    let view = store.shared_view();
+                    let offset = (*offset).min(view.len());
+                    (offset.saturating_add(*len).min(view.len()) - offset) as u64
+                }
+                AppendSource::File {
+                    path: source_path,
+                    offset,
+                    len,
+                } => {
+                    let (file, size) = open_entry_file(source_path, *offset, *len)?;
+                    self.file = Some(file);
+                    size
+                }
+            };
+            let builder = self.builder.as_mut().expect("builder held by the task");
+            builder.begin_entry(&self.path, self.total, self.mtime)?;
+            self.started = true;
+        }
+
+        if self.written >= self.total {
+            self.builder
+                .as_mut()
+                .expect("builder held by the task")
+                .end_entry()?;
+            self.done = true;
+            return Ok(());
+        }
+
+        let remaining = self.total - self.written;
+        let take = remaining.min(STREAM_CHUNK_SIZE as u64);
+
+        let AppendContext {
+            builder,
+            source,
+            written,
+            file,
+            buf,
+            ..
+        } = self;
+        let builder = builder.as_mut().expect("builder held by the task");
+        match source {
+            AppendSource::Bytes(data) => {
+                let start = *written as usize;
+                let end = start + take as usize;
+                builder.write_body(&data[start..end])?;
+                *written += take;
+            }
+            AppendSource::Store { store, offset, len } => {
+                let view = store.shared_view();
+                let base = (*offset).min(view.len());
+                let end_of_view = base.saturating_add(*len).min(view.len());
+                let start = base + *written as usize;
+                let end = (start + take as usize).min(end_of_view);
+                builder.write_body(&view[start..end])?;
+                *written += (end - start) as u64;
+            }
+            AppendSource::File { .. } => {
+                let file = file.as_ref().expect("file opened on the first chunk");
+                if buf.len() < take as usize {
+                    buf.resize(take as usize, 0);
+                }
+                let read = read_entry_chunk(file, &mut buf[..take as usize], remaining)?;
+                builder.write_body(&buf[..read])?;
+                *written += read as u64;
+            }
+        }
+        Ok(())
+    }
+}
+
+// SAFETY: `archive` is a JSC handle that is created, read and dropped only on
+// the JS thread; `run` (the work-pool half) never touches it. Everything else
+// in the context is `Send`.
+unsafe impl Send for AppendContext {}
+
+impl TaskContext for AppendContext {
+    const TAG: TaskTag = task_tag::ArchiveAppendTask;
+
+    fn run(&mut self) {
+        if self.done || self.result.is_err() || self.builder.is_none() {
+            return;
+        }
+        if self.chunked {
+            self.result = self.write_chunk();
+        } else {
+            self.result = self.write_whole();
+            self.done = true;
+        }
     }
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
@@ -1796,6 +2212,36 @@ impl TaskContext for AppendContext {
             Ok(()) => PromiseResult::Resolve(JSValue::UNDEFINED),
             Err(err) => PromiseResult::Reject(build_error_to_js(global, err)),
         })
+    }
+
+    fn step_from_js(&mut self, global: &JSGlobalObject, task: *mut c_void) -> JsResult<Step> {
+        let this = self.archive.get();
+        let Some(archive) = this.as_class_ref::<Archive>() else {
+            return Ok(Step::Settle(PromiseResult::Resolve(JSValue::UNDEFINED)));
+        };
+
+        // Hand whatever the writer produced to the consumer before deciding
+        // whether there is room for more.
+        if self.chunked && self.result.is_ok() {
+            let produced = self
+                .builder
+                .as_mut()
+                .map(Builder::take_output)
+                .unwrap_or_default();
+            archive.push_to_stream(global, produced, false)?;
+        }
+
+        if self.result.is_err() || self.done {
+            return Ok(Step::Settle(self.run_from_js(global)?));
+        }
+
+        if archive.stream_is_backed_up() {
+            // SAFETY: `task` is the `*mut AsyncTask<Self>` that owns us; the
+            // drain/cancel handler is the only thing that touches it again.
+            archive.park_append(task.cast::<AppendTask>());
+            return Ok(Step::Parked);
+        }
+        Ok(Step::Reschedule)
     }
 
     /// Reject the appends that were queued behind this one, now that its own

@@ -387,6 +387,45 @@ Rules:
 - If an `append()` rejects, the entry was left half-written: the archive is truncated and can no longer be used.
 - Entries are written with mode `0644` and the current time as their modification time.
 
+## Streaming Large Archives
+
+`stream()` hands you the archive's bytes as a `ReadableStream` while it is still being built. Reading the stream is what lets the next `append()` make progress: once the stream's queue fills up, an in-flight `append()` parks until the consumer has caught up. A large archive therefore never has to fit in memory.
+
+```ts
+const archive = new Bun.Archive(undefined, { format: "zip" });
+const done = Bun.write("everything.zip", new Response(archive.stream()));
+
+for await (const path of new Bun.Glob("**/*").scan(".")) {
+  await archive.append(path, Bun.file(path)); // parks when the writer falls behind
+}
+archive.end();
+await done;
+```
+
+Streaming a zip straight to an HTTP client, where the socket provides the backpressure:
+
+```ts
+Bun.serve({
+  fetch() {
+    const archive = new Bun.Archive(undefined, { format: "zip" });
+    queueMicrotask(async () => {
+      for (const path of paths) await archive.append(path, Bun.file(path));
+      archive.end();
+    });
+    return new Response(archive.stream(), {
+      headers: { "content-type": "application/zip" },
+    });
+  },
+});
+```
+
+Rules:
+
+- Call `stream()` before appending anything, and only once.
+- Finish with `end()` to close the stream. For any other archive `end()` just seals it, which the first read of its bytes does anyway.
+- A streamed archive's bytes went to the consumer, so `bytes()`, `blob()`, `files()`, and `extract()` throw afterwards.
+- If the consumer cancels, a parked `append()` rejects rather than hanging.
+
 ## Examples
 
 ### Bundle Project Files
@@ -511,6 +550,15 @@ class Archive {
    * Only valid before the archive's bytes are first read.
    */
   append(path: string, data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike): Promise<void>;
+
+  /**
+   * The archive's bytes as they are produced. Reading it is what lets the next
+   * append() make progress, so a large archive never has to fit in memory.
+   */
+  stream(): ReadableStream<Uint8Array>;
+
+  /** Finish the archive, closing its stream() if it has one. */
+  end(): void;
 
   /**
    * Extract archive to a directory

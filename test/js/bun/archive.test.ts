@@ -2278,6 +2278,111 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe.concurrent("archive.stream()", () => {
+    test("streams a tar as it is appended", async () => {
+      const archive = new Bun.Archive();
+      const reading = new Response(archive.stream()).bytes();
+
+      await archive.append("a.txt", "hello");
+      await archive.append("b.txt", "world");
+      archive.end();
+
+      const tar = await reading;
+      const files = await new Bun.Archive(tar).files();
+      expect([...files.keys()].sort()).toEqual(["a.txt", "b.txt"]);
+      expect(await files.get("b.txt")!.text()).toBe("world");
+    });
+
+    test("streams a zip", async () => {
+      const archive = new Bun.Archive(undefined, { format: "zip" });
+      const reading = new Response(archive.stream()).bytes();
+
+      await archive.append("x.txt", "x");
+      archive.end();
+
+      const zip = await reading;
+      expect(Array.from(zip.subarray(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+      expect(await (await new Bun.Archive(zip).files()).get("x.txt")!.text()).toBe("x");
+    });
+
+    // The whole point: the producer is throttled by whoever is reading.
+    test("parks an append while the consumer is behind", async () => {
+      const chunk = Buffer.alloc(2 * 1024 * 1024, "z"); // larger than the high-water mark
+      const archive = new Bun.Archive(undefined, { format: "zip", compress: "store" });
+      const reader = archive.stream().getReader();
+
+      let appended = 0;
+      const appending = (async () => {
+        for (let i = 0; i < 8; i++) {
+          await archive.append(`f${i}.bin`, chunk);
+          appended = i + 1;
+        }
+        archive.end();
+      })();
+
+      // Nothing is reading, so the appends cannot get ahead of the queue.
+      await Bun.sleep(20);
+      expect(appended).toBeLessThan(8);
+
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value!.length;
+      }
+      await appending;
+
+      expect(appended).toBe(8);
+      expect(total).toBeGreaterThan(8 * chunk.length);
+    });
+
+    test("a cancelled consumer rejects the parked append", async () => {
+      const chunk = Buffer.alloc(2 * 1024 * 1024, "z");
+      const archive = new Bun.Archive();
+      const reader = archive.stream().getReader();
+
+      const pending = archive.append("big.bin", chunk);
+      await Bun.sleep(20);
+      await reader.cancel();
+
+      await expect(pending).rejects.toThrow(/consumer cancelled/);
+    });
+
+    test("a streamed archive has nothing left to read", async () => {
+      const archive = new Bun.Archive();
+      const reading = new Response(archive.stream()).bytes();
+      await archive.append("a.txt", "a");
+      archive.end();
+      await reading;
+
+      expect(() => archive.bytes()).toThrow(/nothing left to read/);
+      expect(() => archive.append("b.txt", "b")).toThrow(/nothing left to read/);
+    });
+
+    test("rejects a second stream(), and one started mid-append", async () => {
+      const archive = new Bun.Archive();
+      archive.stream();
+      expect(() => archive.stream()).toThrow(/already called/);
+
+      const other = new Bun.Archive();
+      const pending = other.append("a.txt", "a");
+      expect(() => other.stream()).toThrow(/in progress/);
+      await pending;
+    });
+
+    test("rejects stream() on an archive built from existing data", async () => {
+      const tar = await new Bun.Archive({ "a.txt": "a" }).bytes();
+      expect(() => new Bun.Archive(tar).stream()).toThrow(/before the archive is read/);
+    });
+
+    test("end() on a non-streamed archive just seals it", async () => {
+      const archive = new Bun.Archive({ "a.txt": "a" });
+      archive.end();
+      expect((await archive.files()).size).toBe(1);
+      expect(() => archive.append("b.txt", "b")).toThrow();
+    });
+  });
+
   describe("TypeScript types", () => {
     test("valid archive options", () => {
       const files = { "hello.txt": "Hello, World!" };

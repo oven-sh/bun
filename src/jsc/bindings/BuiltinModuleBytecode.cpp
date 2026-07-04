@@ -67,9 +67,18 @@ JSC::UnlinkedFunctionExecutable* createBuiltinModuleExecutable(JSC::VM& vm, cons
         InlineAttribute::None);
 }
 
-// Defined in `StandaloneModuleGraph.rs`. False for every Bun process that is not a
-// `--compile --bytecode` executable, which is the common case and has to stay cheap.
+// Looks up one entry in the embedded section. Defined in `StandaloneModuleGraph.rs`.
 extern "C" bool Bun__getBuiltinModuleBytecode(unsigned moduleId, uint8_t** outBytes, size_t* outLength);
+
+// Only a `--compile --bytecode` executable carries builtin bytecode. Every other Bun process
+// compiles its builtins from source, and this is on the path of every one of them, so gate on
+// a plain flag the standalone graph sets at startup rather than calling across into Rust.
+static std::atomic<bool> s_hasBuiltinModuleBytecode { false };
+
+extern "C" void Bun__setHasBuiltinModuleBytecode()
+{
+    s_hasBuiltinModuleBytecode.store(true, std::memory_order_relaxed);
+}
 
 // How many builtins have been loaded from the embedded cache rather than parsed. Read by
 // `bun:internal-for-testing` so the `--compile --bytecode` tests can tell the two apart.
@@ -77,6 +86,9 @@ static std::atomic<unsigned> s_builtinsLoadedFromBytecode { 0 };
 
 JSC::UnlinkedFunctionExecutable* decodeBuiltinModuleBytecode(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const JSC::SourceCode& source, const WTF::String& moduleName, unsigned moduleId)
 {
+    if (!s_hasBuiltinModuleBytecode.load(std::memory_order_relaxed))
+        return nullptr;
+
     uint8_t* bytes = nullptr;
     size_t length = 0;
     if (!Bun__getBuiltinModuleBytecode(moduleId, &bytes, &length) || !length)

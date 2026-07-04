@@ -696,9 +696,16 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// The embedded JSC bytecode cache entry for JS builtin `module_id`, if this binary
-/// carries one. Called for every `require()` of a builtin, so the no-graph case has to be
-/// the cheap one.
+unsafe extern "C" {
+    /// Defined in `BuiltinModuleBytecode.cpp`. Flips the flag that gates the lookup below,
+    /// so that the builtin compile path in a Bun that embeds no builtin bytecode (every Bun
+    /// that is not a `--compile --bytecode` executable) never calls into here at all.
+    safe fn Bun__setHasBuiltinModuleBytecode();
+}
+
+/// The embedded JSC bytecode cache entry for JS builtin `module_id`. Only reached once
+/// `Bun__setHasBuiltinModuleBytecode()` has run, i.e. in an executable that actually carries
+/// entries.
 ///
 /// The bytes are validated by JSC: the entry carries a cache version and a `SourceCodeKey`
 /// over the builtin's source, so a mismatch (different Bun, different platform's `src/js`
@@ -2245,6 +2252,9 @@ fn from_bytes_alloc(
     offsets: Offsets,
 ) -> crate::Result<*mut StandaloneModuleGraph> {
     let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
+    if !graph.builtin_bytecode.is_empty() {
+        Bun__setHasBuiltinModuleBytecode();
+    }
     Ok(StandaloneModuleGraph::set(graph))
 }
 

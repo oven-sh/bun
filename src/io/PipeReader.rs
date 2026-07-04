@@ -664,7 +664,9 @@ impl PosixBufferedReader {
             if parent._buffer.capacity() == 0 {
                 // Use stack buffer for streaming — per-loop scratch buffer;
                 // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
+                let maxbuf = parent.maxbuf;
                 let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
@@ -710,11 +712,13 @@ impl PosixBufferedReader {
                     }
                 }
             } else {
+                let maxbuf = parent.maxbuf;
                 parent._buffer.reserve(16 * 1024);
                 let buf_len = {
                     // SAFETY: sys::read_nonblocking writes only initialized bytes into
                     // the prefix it reports; commit_spare exposes exactly that prefix.
                     let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+                    let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
                     let buf_len = buf.len();
                     match sys::read_nonblocking(fd, buf) {
                         sys::Result::Ok(bytes_read) => {
@@ -864,6 +868,7 @@ impl PosixBufferedReader {
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
                     let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
+                    let buf = MaxBuf::clamp_read_buf(parent.maxbuf, buf);
 
                     match sys_fn(fd, buf, parent._offset) {
                         sys::Result::Ok(bytes_read) => {
@@ -972,7 +977,9 @@ impl PosixBufferedReader {
             // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
             // Per-loop scratch buffer; single-threaded event loop (see
             // `EventLoopCtx::pipe_read_buffer_mut`).
+            let maxbuf = parent.maxbuf;
             let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+            let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
             // Unlike the block of code following this one, only handle the non-streaming case.
             debug_assert!(!streaming);
@@ -1018,9 +1025,11 @@ impl PosixBufferedReader {
         }
 
         loop {
+            let maxbuf = parent.maxbuf;
             parent._buffer.reserve(16 * 1024);
             // SAFETY: writing into spare capacity; commit after syscall reports bytes written.
             let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+            let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
 
             match sys_fn(fd, buf, parent._offset) {
                 sys::Result::Ok(bytes_read) => {
@@ -1340,9 +1349,13 @@ impl WindowsBufferedReader {
         suggested_size: usize,
     ) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
+        // Spare capacity grows well past `suggested_size`, so an unclamped read
+        // overshoots `maxBuffer` by however much the buffer had room for.
+        let maxbuf = self.maxbuf;
         self._buffer.reserve(suggested_size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
-        unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
+        let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
+        MaxBuf::clamp_read_buf(maxbuf, buf)
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {

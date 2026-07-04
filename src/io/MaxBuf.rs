@@ -20,6 +20,14 @@ pub struct MaxBuf {
     // (once both are cleared, it is freed)
 }
 
+/// How far past `maxBuffer` a reader may buffer before it notices.
+///
+/// The read that trips the limit is the one that overshoots it, so the
+/// overshoot is bounded by the read size. Node reads child stdio in 64 KB
+/// chunks and its `spawnSync` contract relies on the allowance being nonzero:
+/// `stdout` is documented to exceed `maxBuffer` by up to one read.
+const OVERREAD_ALLOWANCE: u64 = 64 * 1024;
+
 // TODO(refactor): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
 // {Posix,Windows}BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
 // (`ptr: &mut Option<NonNull<MaxBuf>>`, `value: Option<NonNull<MaxBuf>>`) and the hand-rolled
@@ -129,6 +137,25 @@ impl MaxBuf {
         let remaining = this.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
         this.remaining_bytes.set(remaining);
         remaining < 0 && this.owned_by_subprocess.get()
+    }
+
+    /// Trims `buf` so the read that trips `maxBuffer` cannot buffer more than
+    /// `OVERREAD_ALLOWANCE` bytes past the limit. Readers fill a 256 KB scratch
+    /// buffer (or whatever spare capacity they have) from a socketpair whose
+    /// receive buffer dwarfs Node's 64 KB read size, so an unclamped read
+    /// overshoots by hundreds of KB.
+    ///
+    /// Never returns an empty slice: a zero-length read is indistinguishable
+    /// from EOF.
+    pub fn clamp_read_buf(this: Option<NonNull<MaxBuf>>, buf: &mut [u8]) -> &mut [u8] {
+        let Some(this) = this else {
+            return buf;
+        };
+        let remaining = u64::try_from(Self::live(&this).remaining_bytes.get()).unwrap_or(0);
+        let limit =
+            usize::try_from(remaining.saturating_add(OVERREAD_ALLOWANCE)).unwrap_or(usize::MAX);
+        let len = buf.len().min(limit);
+        &mut buf[..len]
     }
 }
 

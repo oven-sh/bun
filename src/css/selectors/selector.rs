@@ -47,6 +47,14 @@ pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool 
         return false;
     }
 
+    fn any_or_is_list(c: &Component) -> Option<&[Selector]> {
+        match c {
+            Component::Any { selectors, .. } => Some(&selectors[..]),
+            Component::Is(v) => Some(&v[..]),
+            _ => None,
+        }
+    }
+
     for (i, a) in selectors.iter().enumerate() {
         let b = &other[i];
         if a.len() != b.len() {
@@ -64,23 +72,9 @@ pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool 
                     (a_comp, b_comp)
                 {
                     break 'blk a_pe.is_equivalent(b_pe);
-                } else if matches!(
-                    (a_comp, b_comp),
-                    (Component::Any { .. }, Component::Is(_))
-                        | (Component::Is(_), Component::Any { .. })
-                        | (Component::Any { .. }, Component::Any { .. })
-                        | (Component::Is(_), Component::Is(_))
-                ) {
-                    let a_selectors = match a_comp {
-                        Component::Any { selectors, .. } => &selectors[..],
-                        Component::Is(v) => &v[..],
-                        _ => unreachable!(),
-                    };
-                    let b_selectors = match b_comp {
-                        Component::Any { selectors, .. } => &selectors[..],
-                        Component::Is(v) => &v[..],
-                        _ => unreachable!(),
-                    };
+                } else if let (Some(a_selectors), Some(b_selectors)) =
+                    (any_or_is_list(a_comp), any_or_is_list(b_comp))
+                {
                     break 'blk is_equivalent(a_selectors, b_selectors);
                 } else {
                     break 'blk Component::eql(a_comp, b_comp);
@@ -868,54 +862,45 @@ pub mod serialize {
                 }
                 return dest.write_char(b']');
             }
-            Component::Is(_)
-            | Component::Where(_)
-            | Component::Negation(_)
-            | Component::Any { .. } => {
-                match component {
-                    Component::Where(_) => dest.write_str(b":where(")?,
-                    Component::Is(selectors) => {
-                        // If there's only one simple selector, serialize it directly.
-                        if should_unwrap_is(selectors) {
-                            return serialize_selector(&selectors[0], dest, context, false);
-                        }
-
-                        let vp = dest.vendor_prefix;
-                        if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
-                            dest.write_char(b':')?;
-                            vp.to_css(dest)?;
-                            dest.write_str(b"any(")?;
-                        } else {
-                            dest.write_str(b":is(")?;
-                        }
-                    }
-                    Component::Negation(_) => {
-                        dest.write_str(b":not(")?;
-                    }
-                    Component::Any { vendor_prefix, .. } => {
-                        let vp = dest.vendor_prefix.or_(*vendor_prefix);
-                        if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
-                            dest.write_char(b':')?;
-                            vp.to_css(dest)?;
-                            dest.write_str(b"any(")?;
-                        } else {
-                            dest.write_str(b":is(")?;
-                        }
-                    }
-                    _ => unreachable!(),
+            Component::Where(list) => {
+                dest.write_str(b":where(")?;
+                serialize_selector_list(list, dest, context, false)?;
+                return dest.write_str(b")");
+            }
+            Component::Is(selectors) => {
+                // If there's only one simple selector, serialize it directly.
+                if should_unwrap_is(selectors) {
+                    return serialize_selector(&selectors[0], dest, context, false);
                 }
-                serialize_selector_list(
-                    match component {
-                        Component::Where(list)
-                        | Component::Is(list)
-                        | Component::Negation(list) => list,
-                        Component::Any { selectors, .. } => selectors,
-                        _ => unreachable!(),
-                    },
-                    dest,
-                    context,
-                    false,
-                )?;
+                let vp = dest.vendor_prefix;
+                if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
+                    dest.write_char(b':')?;
+                    vp.to_css(dest)?;
+                    dest.write_str(b"any(")?;
+                } else {
+                    dest.write_str(b":is(")?;
+                }
+                serialize_selector_list(selectors, dest, context, false)?;
+                return dest.write_str(b")");
+            }
+            Component::Negation(list) => {
+                dest.write_str(b":not(")?;
+                serialize_selector_list(list, dest, context, false)?;
+                return dest.write_str(b")");
+            }
+            Component::Any {
+                vendor_prefix,
+                selectors,
+            } => {
+                let vp = dest.vendor_prefix.or_(*vendor_prefix);
+                if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
+                    dest.write_char(b':')?;
+                    vp.to_css(dest)?;
+                    dest.write_str(b"any(")?;
+                } else {
+                    dest.write_str(b":is(")?;
+                }
+                serialize_selector_list(selectors, dest, context, false)?;
                 return dest.write_str(b")");
             }
             Component::Has(list) => {
@@ -1153,8 +1138,9 @@ pub mod serialize {
                 })?;
             }
 
-            PseudoClass::Lang { .. } => unreachable!(),
-            PseudoClass::Dir { .. } => unreachable!(),
+            PseudoClass::Lang { .. } | PseudoClass::Dir { .. } => {
+                debug_assert!(false, "Lang/Dir serialized in the early match above");
+            }
             PseudoClass::Custom { name } => {
                 dest.write_char(b':')?;
                 return dest.serialize_identifier(name);
@@ -1634,34 +1620,34 @@ pub mod tocss_servo {
                 to_css_selector_list(&nth_of_data.selectors, dest)?;
                 dest.write_char(b')')?;
             }
-            Component::Is(_)
-            | Component::Where(_)
-            | Component::Negation(_)
-            | Component::Has(_)
-            | Component::Any { .. } => {
-                match component {
-                    Component::Where(_) => dest.write_str(b":where(")?,
-                    Component::Is(_) => dest.write_str(b":is(")?,
-                    Component::Negation(_) => dest.write_str(b":not(")?,
-                    Component::Has(_) => dest.write_str(b":has(")?,
-                    Component::Any { vendor_prefix, .. } => {
-                        dest.write_char(b':')?;
-                        vendor_prefix.to_css(dest)?;
-                        dest.write_str(b"any(")?;
-                    }
-                    _ => unreachable!(),
-                }
-                to_css_selector_list(
-                    match component {
-                        Component::Where(list)
-                        | Component::Is(list)
-                        | Component::Negation(list)
-                        | Component::Has(list) => list,
-                        Component::Any { selectors, .. } => selectors,
-                        _ => unreachable!(),
-                    },
-                    dest,
-                )?;
+            Component::Where(list) => {
+                dest.write_str(b":where(")?;
+                to_css_selector_list(list, dest)?;
+                dest.write_str(b")")?;
+            }
+            Component::Is(list) => {
+                dest.write_str(b":is(")?;
+                to_css_selector_list(list, dest)?;
+                dest.write_str(b")")?;
+            }
+            Component::Negation(list) => {
+                dest.write_str(b":not(")?;
+                to_css_selector_list(list, dest)?;
+                dest.write_str(b")")?;
+            }
+            Component::Has(list) => {
+                dest.write_str(b":has(")?;
+                to_css_selector_list(list, dest)?;
+                dest.write_str(b")")?;
+            }
+            Component::Any {
+                vendor_prefix,
+                selectors,
+            } => {
+                dest.write_char(b':')?;
+                vendor_prefix.to_css(dest)?;
+                dest.write_str(b"any(")?;
+                to_css_selector_list(selectors, dest)?;
                 dest.write_str(b")")?;
             }
             Component::NonTsPseudoClass(pseudo) => {

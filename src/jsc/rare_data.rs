@@ -725,7 +725,7 @@ impl RareData {
             .iter()
             .position(|h| h.ctx == ctx && core::ptr::fn_addr_eq(h.func, func))
         {
-            self.cleanup_hooks.swap_remove(i);
+            self.cleanup_hooks.remove(i);
         }
     }
 

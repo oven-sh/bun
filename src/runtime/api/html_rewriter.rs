@@ -1436,15 +1436,19 @@ impl SuspensionContext {
     /// # Safety
     /// `this` must be the live context, with its cleanup hook still registered.
     pub(crate) unsafe fn abandon(this: *mut Self) {
-        // SAFETY: fn contract — `this` is the leaked `new` allocation.
-        let sink = unsafe { bun_core::heap::take(this) }.sink;
+        // SAFETY: fn contract — `this` is live here.
+        let sink = unsafe { (*this).sink };
         // SAFETY: the context held a `+1` on `sink`; `adopt` consumes it.
         let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // SAFETY: `sink` is live for this scope (the ref above).
         let global = unsafe { (*sink).global };
-        // Running from the hook itself? `on_exit` already took the Vec, so the
-        // remove is a no-op; from the GC path it is the one that matters.
+        // Unregister before freeing, as `take` does: `remove_cleanup_hook`
+        // matches on the address. Running from the hook itself? `on_exit` already
+        // took the Vec, so the remove is a no-op; from the GC path it matters.
         Self::unregister_cleanup_hook(&global, this);
+        // SAFETY: fn contract — `this` is the leaked `new` allocation, and
+        // nothing above frees it.
+        unsafe { bun_core::heap::destroy(this) };
         // SAFETY: `sink` is live for this scope (the ref above).
         unsafe {
             BufferOutputSink::release_suspended_wrapper(sink);

@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_parser::{CssResult as Result, Parser, Token};
 use crate::generics::{CssEql as _, DeepClone as _};
 use crate::values::angle::{Angle, AnglePercentage};
-use crate::values::color::{ColorFallbackKind, CssColor};
+use crate::values::color::{ColorFallback, ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::{DimensionPercentage, NumberOrPercentage, Percentage};
@@ -260,7 +260,7 @@ impl Gradient {
     }
 
     /// Returns a fallback gradient for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Gradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->Gradient {
         match self {
             Gradient::Linear(g) => Gradient::Linear(g.get_fallback(bump, kind)),
             Gradient::RepeatingLinear(g) => Gradient::RepeatingLinear(g.get_fallback(bump, kind)),
@@ -387,22 +387,28 @@ impl LinearGradient {
                         LengthPercentage::Percentage(p) => flipped_items.push(GradientItem::Hint(
                             LengthPercentage::Percentage(Percentage { v: 1.0 - p.v }),
                         )),
-                        _ => unreachable!(),
+                        _ => {
+                            debug_assert!(false, "guard above ensures all hints are percentages");
+                            flipped_items.push(item.clone());
+                        }
                     },
                     GradientItem::ColorStop(cs) => {
                         flipped_items.push(GradientItem::ColorStop(ColorStop {
                             color: cs.color.clone(),
-                            position: if let Some(p) = &cs.position {
-                                match p {
-                                    LengthPercentage::Percentage(perc) => {
-                                        Some(LengthPercentage::Percentage(Percentage {
-                                            v: 1.0 - perc.v,
-                                        }))
-                                    }
-                                    _ => unreachable!(),
+                            position: match &cs.position {
+                                None => None,
+                                Some(LengthPercentage::Percentage(perc)) => {
+                                    Some(LengthPercentage::Percentage(Percentage {
+                                        v: 1.0 - perc.v,
+                                    }))
                                 }
-                            } else {
-                                None
+                                Some(p) => {
+                                    debug_assert!(
+                                        false,
+                                        "guard above ensures all positions are percentages"
+                                    );
+                                    Some(p.clone())
+                                }
                             },
                         }))
                     }
@@ -448,7 +454,7 @@ impl LinearGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->LinearGradient {
         let fallback_items: Vec<_> = self
             .items
             .iter()
@@ -533,7 +539,7 @@ impl RadialGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->RadialGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -629,7 +635,7 @@ impl ConicGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->ConicGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -793,7 +799,7 @@ impl WebKitGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
                 let stops: Vec<_> = linear
@@ -1052,7 +1058,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns a fallback gradient item for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> GradientItem<D> {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->GradientItem<D> {
         match self {
             GradientItem::ColorStop(stop) => GradientItem::ColorStop(ColorStop {
                 color: stop.color.get_fallback(bump, kind),
@@ -1242,7 +1248,7 @@ impl WebKitColorStop {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitColorStop {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->WebKitColorStop {
         WebKitColorStop {
             color: self.color.get_fallback(bump, kind),
             position: self.position,
@@ -1485,7 +1491,10 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
 
         match input.next() {
             Ok(Token::Comma) => continue,
-            Ok(_) => unreachable!("expected a comma after parsing a gradient"),
+            Ok(_) => {
+                debug_assert!(false, "parse_until_before(COMMA) yields only Comma or EOF");
+                break;
+            }
             Err(_) => break,
         }
     }

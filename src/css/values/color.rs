@@ -553,15 +553,14 @@ impl CssColor {
     }
 
     /// Project this color into the given fallback colorspace.
-    pub fn get_fallback(&self, _arena: &Arena, kind: ColorFallbackKind) -> CssColor {
+    pub fn get_fallback(&self, _arena: &Arena, kind: ColorFallback) -> CssColor {
         if matches!(self, CssColor::Rgba(_)) {
             return self.clone();
         }
-        let converted = match kind.bits() {
-            x if x == ColorFallbackKind::RGB.bits() => self.to_rgb(),
-            x if x == ColorFallbackKind::P3.bits() => self.to_p3(),
-            x if x == ColorFallbackKind::LAB.bits() => self.to_lab(),
-            _ => unreachable!("Expected RGBA, P3, LAB fallback. This is a bug in Bun."),
+        let converted = match kind {
+            ColorFallback::Rgb => self.to_rgb(),
+            ColorFallback::P3 => self.to_p3(),
+            ColorFallback::Lab => self.to_lab(),
         };
         converted.unwrap_or_else(|| self.clone())
     }
@@ -686,13 +685,10 @@ impl CssColor {
         self.clone()
     }
 
-    pub fn to_light_dark(&self) -> CssColor {
+    pub fn to_light_dark(&self) -> (Box<CssColor>, Box<CssColor>) {
         match self {
-            CssColor::LightDark { .. } => self.clone(),
-            _ => CssColor::LightDark {
-                light: Box::new(self.clone()),
-                dark: Box::new(self.clone()),
-            },
+            CssColor::LightDark { light, dark } => (light.clone(), dark.clone()),
+            _ => (Box::new(self.clone()), Box::new(self.clone())),
         }
     }
 
@@ -777,23 +773,8 @@ impl CssColor {
 
         if matches!(self, CssColor::LightDark { .. }) || matches!(other, CssColor::LightDark { .. })
         {
-            let this_light_dark = self.to_light_dark();
-            let other_light_dark = other.to_light_dark();
-
-            let CssColor::LightDark {
-                light: al,
-                dark: ad,
-            } = this_light_dark
-            else {
-                unreachable!()
-            };
-            let CssColor::LightDark {
-                light: bl,
-                dark: bd,
-            } = other_light_dark
-            else {
-                unreachable!()
-            };
+            let (al, ad) = self.to_light_dark();
+            let (bl, bd) = other.to_light_dark();
 
             return Some(CssColor::LightDark {
                 light: Box::new(al.interpolate::<T>(p1, &bl, p2, method)?),
@@ -814,8 +795,8 @@ impl CssColor {
                 CssColor::Float(f) => Some(TypeId::of::<T>() == f.payload_type_id()),
                 // System colors cannot be converted to specific color spaces at parse time
                 CssColor::System(_) => None,
-                // We checked these above
-                CssColor::LightDark { .. } | CssColor::CurrentColor => unreachable!(),
+                // Excluded by the debug_assert above; treat as non-convertible.
+                CssColor::LightDark { .. } | CssColor::CurrentColor => None,
             }
         }
 
@@ -972,13 +953,37 @@ impl ColorFallbackKind {
         self | ColorFallbackKind::from_bits_truncate(self.bits() - 1)
     }
 
-    pub fn supports_condition(self) -> css::SupportsCondition {
-        let s: &'static [u8] = match self.bits() {
-            b if b == ColorFallbackKind::P3.bits() => b"color(display-p3 0 0 0)",
-            b if b == ColorFallbackKind::LAB.bits() => b"lab(0% 0 0)",
-            _ => unreachable!("Expected P3 or LAB. This is a bug in Bun."),
-        };
+    /// If `self` is exactly one projectable fallback bit (RGB/P3/LAB), return
+    /// the corresponding `ColorFallback`; `None` for empty, OKLAB, or a set.
+    pub fn as_single(self) -> Option<ColorFallback> {
+        if self == ColorFallbackKind::RGB {
+            Some(ColorFallback::Rgb)
+        } else if self == ColorFallbackKind::P3 {
+            Some(ColorFallback::P3)
+        } else if self == ColorFallbackKind::LAB {
+            Some(ColorFallback::Lab)
+        } else {
+            None
+        }
+    }
+}
 
+/// A single color fallback target. `ColorFallbackKind` is the bitflag set of
+/// needed fallbacks; this is the discriminant when projecting into one space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorFallback {
+    Rgb,
+    P3,
+    Lab,
+}
+
+impl ColorFallback {
+    pub fn supports_condition(self) -> css::SupportsCondition {
+        let s: &'static [u8] = match self {
+            ColorFallback::Rgb => b"rgb(0, 0, 0)",
+            ColorFallback::P3 => b"color(display-p3 0 0 0)",
+            ColorFallback::Lab => b"lab(0% 0 0)",
+        };
         css::SupportsCondition::Declaration(css::css_rules::supports::Declaration {
             property_id: css::PropertyId::Color,
             value: s,

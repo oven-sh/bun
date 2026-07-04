@@ -602,7 +602,10 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
     // with the fix, bun exits cleanly on its own; on hang, Bun.spawn's
     // timeout kills the child with SIGTERM.
     expect(proc.signalCode).toBeNull();
-    expect(stderr + stdout).toContain("Integrity check failed");
+    // The exact message matters: it used to leak a literal "<r>" markup tag
+    // ("Integrity check failed<r> for tarball: ...").
+    expect(stderr + stdout).toContain("Integrity check failed for tarball: pkg");
+    expect(stderr + stdout).not.toContain("<r>");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });

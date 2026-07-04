@@ -117,12 +117,11 @@ fn invalid_trusted_dependencies(
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
 ) -> bun_core::Error {
-    let _ = log.add_error_fmt(
+    let _ = bun_ast::add_error_pretty!(
+        log,
         source,
         loc,
-        format_args!(
-            "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
-        ),
+        "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
     bun_core::err!("InvalidPackageJSON")
 }

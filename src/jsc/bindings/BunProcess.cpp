@@ -1635,12 +1635,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
 
+// Clears FD_CLOEXEC on `fd` so the descriptor is inherited across execve(2).
+// On success returns the previous F_GETFD flags (>= 0) so the caller can
+// restore them if execve(2) fails; on failure returns -1 with errno set.
 static int persistStandardStream(int fd)
 {
     int flags = fcntl(fd, F_GETFD, 0);
     if (flags < 0) return flags;
-    flags &= ~FD_CLOEXEC;
-    return fcntl(fd, F_SETFD, flags);
+    if (fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) < 0) return -1;
+    return flags;
 }
 #endif
 
@@ -1762,10 +1765,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     envp.append(nullptr);
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new
-    // process will inherit them.
-    if (persistStandardStream(0) < 0 || persistStandardStream(1) < 0 || persistStandardStream(2) < 0) {
-        throwSystemError(scope, globalObject, "fcntl"_s, errno);
-        return {};
+    // process will inherit them. Record the previous flags so a failed
+    // execve(2), which throws back to JS, leaves them unchanged.
+    int savedStdioFlags[3] = { -1, -1, -1 };
+    for (int fd = 0; fd < 3; fd++) {
+        int prev = persistStandardStream(fd);
+        if (prev < 0) {
+            int fcntlErrno = errno;
+            for (int j = 0; j < fd; j++)
+                fcntl(j, F_SETFD, savedStdioFlags[j]);
+            throwSystemError(scope, globalObject, "fcntl"_s, fcntlErrno);
+            return {};
+        }
+        savedStdioFlags[fd] = prev;
     }
 
     int savedErrno;
@@ -1807,7 +1819,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     // Ensure all other file descriptors are close-on-exec so they don't leak
     // into the replacement process. Bun opens descriptors with
     // O_CLOEXEC/SOCK_CLOEXEC where available, so the loop is a best-effort
-    // fallback for kernels without close_range(2).
+    // fallback for kernels without close_range(2). This is intentionally not
+    // undone if execve(2) fails: FD_CLOEXEC only takes effect at the next
+    // exec, so the still-running image is unaffected.
 #if OS(LINUX) || OS(FREEBSD)
     if (bun_close_range(3, ~0U, /* CLOSE_RANGE_CLOEXEC */ (1U << 2)) != 0)
 #endif
@@ -1823,31 +1837,33 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     // Reset the signal mask so the new process starts with defaults. execve(2)
     // resets handlers for caught signals but preserves the blocked mask.
     sigset_t emptyMask;
+    sigset_t previousMask;
     sigemptyset(&emptyMask);
-    pthread_sigmask(SIG_SETMASK, &emptyMask, nullptr);
+    pthread_sigmask(SIG_SETMASK, &emptyMask, &previousMask);
 
     ::execve(execPathUtf8.data(), argv.begin(), envp.begin());
     savedErrno = errno;
+
+    // execve(2) failed; put back the signal mask we cleared above.
+    pthread_sigmask(SIG_SETMASK, &previousMask, nullptr);
 #endif
 
-    // If we get here, execve failed. Match Node's behavior: print the error
-    // and abort the process (the original image is no longer in a usable
-    // state to return to JavaScript).
-    const char* errName = Bun__errnoName(savedErrno);
+    // execve(2) failed and the original image is still running. Restore the
+    // FD_CLOEXEC flags we cleared on stdio, then throw back to JS so the
+    // caller can handle it and recover. Node does the same (nodejs/node#62878).
+    for (int fd = 0; fd < 3; fd++)
+        fcntl(fd, F_SETFD, savedStdioFlags[fd]);
 
-    fprintf(stderr, "process.execve failed with error code %s\n", errName ? errName : "UNKNOWN");
-    fprintf(stderr, "SystemError [process.execve]: execve %s: %s\n", strerror(savedErrno), execPathUtf8.data());
-    fprintf(stderr, "    at execve (node:internal/process/per_thread:0:0)\n");
-    fflush(stderr);
-
-    // Disable core dumps before aborting. Node also calls abort() here, but
-    // Bun's CI treats any core file produced during a test run (including
-    // from an intentionally-aborting child process) as a failure. The error
-    // has already been written to stderr, so a core dump adds no diagnostic
-    // value.
-    struct rlimit noCore = { 0, 0 };
-    setrlimit(RLIMIT_CORE, &noCore);
-    abort();
+    // Match Node's ErrnoException: a plain Error with errno/code/syscall/path.
+    auto errName = String::fromLatin1(Bun__errnoName(savedErrno));
+    auto& names = WebCore::builtinNames(vm);
+    auto* error = JSC::createError(globalObject, makeString(errName, ", "_s, String::fromLatin1(strerror(savedErrno)), " '"_s, execPath, "'"_s));
+    error->putDirect(vm, names.errnoPublicName(), jsNumber(savedErrno), 0);
+    error->putDirect(vm, names.codePublicName(), jsString(vm, errName), 0);
+    error->putDirect(vm, names.syscallPublicName(), jsString(vm, String("execve"_s)), 0);
+    error->putDirect(vm, names.pathPublicName(), jsString(vm, execPath), 0);
+    scope.throwException(globalObject, error);
+    return {};
 #endif
 }
 

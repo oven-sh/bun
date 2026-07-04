@@ -9397,7 +9397,10 @@ declare module "bun" {
      *
      * Reading the stream is what lets the next `append()` make progress: once the
      * stream's queue is full, an in-flight `append()` parks until the consumer has
-     * caught up. A large archive therefore never has to fit in memory.
+     * caught up. A consumer that drains it chunk by chunk therefore never has to
+     * hold the whole archive in memory. One that asks for all of it at once, like
+     * `new Response(archive.stream()).bytes()`, buffers it by definition, and a
+     * `Bun.serve` response does not currently throttle the `append()`s at all.
      *
      * Call it before appending anything, and finish with `end()` to close the
      * stream. An archive that has been streamed cannot also be read with `bytes()`,

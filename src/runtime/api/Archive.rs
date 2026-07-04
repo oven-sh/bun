@@ -541,7 +541,10 @@ impl Archive {
             Ok(bytes) => bytes,
             Err(err) => {
                 *self.state.borrow_mut() = State::Failed;
-                return Err(throw_build_error(global, err));
+                // The consumer is waiting on a close that will never come.
+                let error = build_error_to_js(global, err);
+                self.error_stream(global, error)?;
+                return Err(global.throw_value(error));
             }
         };
         *self.state.borrow_mut() = State::Streamed;

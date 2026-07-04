@@ -389,7 +389,7 @@ Rules:
 
 ## Streaming Large Archives
 
-`stream()` hands you the archive's bytes as a `ReadableStream` while it is still being built. Reading the stream is what lets the next `append()` make progress: once the stream's queue fills up, an in-flight `append()` parks until the consumer has caught up. A large archive therefore never has to fit in memory.
+`stream()` hands you the archive's bytes as a `ReadableStream` while it is still being built. Reading the stream is what lets the next `append()` make progress: once the stream's queue fills up, an in-flight `append()` parks until the consumer has caught up. A consumer that drains the stream chunk by chunk therefore never has to hold the whole archive in memory.
 
 ```ts
 const archive = new Bun.Archive(undefined, { format: "zip" });
@@ -409,7 +409,7 @@ await writing;
 
 Drain the stream incrementally, as above, for the memory bound to hold. A consumer that asks for the whole thing at once, like `new Response(archive.stream()).bytes()`, buffers the entire archive by definition.
 
-Streaming a zip straight to an HTTP client, where the socket provides the backpressure:
+Streaming a zip straight to an HTTP client, so the client sees bytes before the archive is finished:
 
 ```ts
 Bun.serve({
@@ -426,11 +426,13 @@ Bun.serve({
 });
 ```
 
+A slow client does not currently throttle the `append()`s on this path: the server hands each chunk straight to the socket, which buffers whatever it cannot write yet. The response is still produced incrementally, but peak memory is bounded by the archive, not by the high-water mark.
+
 Rules:
 
 - Call `stream()` before appending anything, and only once.
-- Finish with `end()` to close the stream. For any other archive `end()` just seals it, which the first read of its bytes does anyway.
-- A streamed archive's bytes went to the consumer, so `bytes()`, `blob()`, `files()`, and `extract()` throw afterwards.
+- Finish with `end()` to close the stream. Abandoning a streaming archive without it leaves the consumer waiting, exactly like any `ReadableStream` whose producer never closes it. For any other archive `end()` just seals it, which the first read of its bytes does anyway.
+- A streamed archive's bytes belong to the consumer, so `bytes()`, `blob()`, `files()`, and `extract()` throw.
 - If the consumer cancels, a parked `append()` rejects rather than hanging, and a failed `append()` fails the consumer's read rather than leaving it waiting.
 - `compress: "gzip"` is a post-filter over the finished tar, so it cannot be streamed. `stream()` throws on a gzip archive; use `format: "zip"`, whose compression is per-entry.
 
@@ -560,8 +562,8 @@ class Archive {
   append(path: string, data: string | Blob | Bun.ArrayBufferView | ArrayBufferLike): Promise<void>;
 
   /**
-   * The archive's bytes as they are produced. Reading it is what lets the next
-   * append() make progress, so a large archive never has to fit in memory.
+   * The archive's bytes as they are produced. Draining it chunk by chunk is what
+   * lets the next append() make progress, so the archive need not fit in memory.
    */
   stream(): ReadableStream<Uint8Array>;
 

@@ -7829,6 +7829,24 @@ describe("css tests", () => {
       `,
     );
 
+    // Hardening: parse_at_rule delimiter arm (was `unreachable!()`) is now a
+    // graceful error; lock in all three constructible terminations.
+    describe("at-rule delimiter forms", () => {
+      cssTest("@unknown-rule some tokens;", "@unknown-rule some tokens;\n");
+      cssTest("@unknown-rule { color: red }", "@unknown-rule {\n  color: red\n}\n");
+      cssTest("@unknown-rule token", "@unknown-rule token;\n");
+      cssTest("@namespace svg url(http://www.w3.org/2000/svg)", '@namespace svg "http://www.w3.org/2000/svg";\n');
+    });
+
+    // Hardening: Size/MaxSize::Stretch else-prefix arm (was `unreachable!()`)
+    // now serializes generically; lock in the -moz-available round-trip.
+    describe("stretch prefixed keyword round-trip", () => {
+      prefix_test(".foo { width: -moz-available }", indoc`.foo {\n  width: -moz-available;\n}\n`, { firefox: 4 << 16 });
+      prefix_test(".foo { max-width: -moz-available }", indoc`.foo {\n  max-width: -moz-available;\n}\n`, {
+        firefox: 4 << 16,
+      });
+    });
+
     // Unicode and escape sequence edge cases
     describe("unicode edge cases", async () => {
       const input = await Bun.file(join(__dirname, "unicode.css")).text();

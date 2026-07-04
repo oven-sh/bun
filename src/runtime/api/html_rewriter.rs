@@ -612,6 +612,37 @@ struct PendingSuspension {
     promise: JSValue,
 }
 
+impl PendingSuspension {
+    /// Hand the parts to a caller that takes over the wrapper's ref and the
+    /// promise's protect, without running [`Drop`].
+    #[allow(clippy::type_complexity)]
+    fn into_parts(
+        self,
+    ) -> (
+        *mut core::ffi::c_void,
+        unsafe fn(*mut core::ffi::c_void, *mut LolRewriter),
+        unsafe fn(*mut core::ffi::c_void),
+        JSValue,
+    ) {
+        let me = core::mem::ManuallyDrop::new(self);
+        (me.wrapper, me.retarget, me.release, me.promise)
+    }
+}
+
+impl Drop for PendingSuspension {
+    /// Reached when a suspension was armed but never consumed by
+    /// [`BufferOutputSink::begin_suspension`] — lol-html returned something
+    /// other than `Suspended`, or the sink is being torn down. Release exactly
+    /// what the `Suspend` arm of [`handler_callback`] took, so the exactly-once
+    /// contract is structural rather than a property of the call order.
+    fn drop(&mut self) {
+        self.promise.unprotect();
+        // SAFETY: `wrapper` is the live, ref'd wrapper `handler_callback`
+        // parked here; it was never retargeted, so `detach` just nulls it.
+        unsafe { (self.release)(self.wrapper) };
+    }
+}
+
 /// `PendingSuspension::retarget` for a concrete wrapper type.
 ///
 /// # Safety
@@ -988,7 +1019,7 @@ impl BufferOutputSink {
         }
 
         // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
-        unsafe { Self::run_output_sink(sink, bytes, is_async) }
+        unsafe { Self::run_output_sink(sink, bytes) }
     }
 
     /// Run the whole (already buffered) input through lol-html: `write` then
@@ -1005,7 +1036,7 @@ impl BufferOutputSink {
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0; `(*sink).rewriter` and `(*sink).response` must be set.
-    unsafe fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) {
+    unsafe fn run_output_sink(sink: *mut Self, bytes: &[u8]) {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the rewriter calls so no
         // borrow of `*sink` is live across the re-entrant output sink.
@@ -1022,11 +1053,11 @@ impl BufferOutputSink {
         // SAFETY: rewriter heap-allocated by init(), not yet freed.
         if let Err(e) = unsafe { (*rewriter).write(bytes) } {
             // SAFETY: sink is live (fn safety contract).
-            return unsafe { Self::on_rewriting_error(sink, &e, is_async) };
+            return unsafe { Self::on_rewriting_error(sink, &e) };
         }
 
         // SAFETY: sink is live (fn safety contract); the guard is installed.
-        unsafe { Self::end_rewrite(sink, is_async) }
+        unsafe { Self::end_rewrite(sink) }
     }
 
     /// `write` completed: run `end()`. The caller must have an
@@ -1034,7 +1065,7 @@ impl BufferOutputSink {
     ///
     /// # Safety
     /// Same as [`Self::run_output_sink`].
-    unsafe fn end_rewrite(sink: *mut Self, is_async: bool) {
+    unsafe fn end_rewrite(sink: *mut Self) {
         // SAFETY: sink is live (fn safety contract).
         let rewriter = unsafe {
             (*sink).phase.set(RewritePhase::EndPending);
@@ -1046,7 +1077,7 @@ impl BufferOutputSink {
         // SAFETY: rewriter heap-allocated by init(), not yet freed.
         if let Err(e) = unsafe { (*rewriter).end_mut() } {
             // SAFETY: sink is live (fn safety contract).
-            return unsafe { Self::on_rewriting_error(sink, &e, is_async) };
+            return unsafe { Self::on_rewriting_error(sink, &e) };
         }
 
         // `end()` emitted the zero-length finalizing chunk, which ran
@@ -1071,7 +1102,7 @@ impl BufferOutputSink {
             // The resumed half of the rewrite runs from the event loop, long
             // after `transform()` returned; every failure here is async.
             // SAFETY: sink is live (fn safety contract).
-            return unsafe { Self::on_rewriting_error(sink, &e, true) };
+            return unsafe { Self::on_rewriting_error(sink, &e) };
         }
 
         // SAFETY: sink is live (fn safety contract).
@@ -1080,7 +1111,7 @@ impl BufferOutputSink {
                 // The suspended `write` completed; `end()` is still owed.
                 // SAFETY: sink is live (fn safety contract); the guard above
                 // is still installed.
-                unsafe { Self::end_rewrite(sink, true) }
+                unsafe { Self::end_rewrite(sink) }
             }
             RewritePhase::EndPending => {
                 // The suspended `end` completed; `done()` already ran.
@@ -1098,25 +1129,43 @@ impl BufferOutputSink {
     /// # Safety
     /// Same as [`Self::run_output_sink`]; an [`ActiveSinkGuard`] must be
     /// installed.
-    unsafe fn on_rewriting_error(
-        sink: *mut Self,
-        e: &lol_html::errors::RewritingError,
-        is_async: bool,
-    ) {
+    unsafe fn on_rewriting_error(sink: *mut Self, e: &lol_html::errors::RewritingError) {
         if matches!(e, lol_html::errors::RewritingError::Suspended) {
             // SAFETY: sink is live (fn safety contract).
             return unsafe { Self::begin_suspension(sink) };
         }
 
+        // A `Suspend` outcome should always make the lol-html call return
+        // `Suspended`, but that is lol-html's invariant, not ours: drain any
+        // armed suspension so its `Drop` releases the wrapper and the promise's
+        // protect rather than leaving a parked wrapper pointing at a unit the
+        // rewriter's `Drop` is about to free.
+        // SAFETY: sink is live (fn safety contract).
+        let leftover = unsafe { (*sink).pending_suspension.take() };
+        debug_assert!(
+            leftover.is_none(),
+            "lol-html returned a non-suspension error with a suspension armed"
+        );
+        drop(leftover);
+
         // The rewriter is poisoned (`Drop` frees it). Surface the real cause:
         // the exception/rejection a handler recorded, or lol-html's own error.
         // SAFETY: sink is live (fn safety contract).
-        let (global, captured) = unsafe {
+        let (global, captured, sync_only) = unsafe {
             (*sink).phase.set(RewritePhase::Done);
-            ((*sink).global, (*sink).take_handler_error())
+            (
+                (*sink).global,
+                (*sink).take_handler_error(),
+                (*sink).sync_only_noun.get().is_some(),
+            )
         };
 
-        if !is_async {
+        // Which channel a rewrite failure takes is decided by the overload, not
+        // by whether the input body happened to be buffered when `transform()`
+        // ran: `transform(string)`/`transform(ArrayBuffer)` have to hand back a
+        // value, so they throw; every `Response` input rejects its output body,
+        // which is the one contract the docs can state and users can rely on.
+        if sync_only {
             // `init()` is still on the stack; make `transform()` throw.
             // SAFETY: sink is live (fn safety contract).
             return unsafe {
@@ -1149,35 +1198,36 @@ impl BufferOutputSink {
         // SAFETY: sink is live (fn safety contract).
         let (global, rewriter) = unsafe { ((*sink).global, (*sink).rewriter) };
         // SAFETY: sink is live (fn safety contract).
-        let suspension = unsafe { (*sink).pending_suspension.take() }
-            .expect("lol-html suspended without a pending HTMLRewriter handler promise");
+        // `into_parts` disarms the `Drop`: from here the wrapper's ref and the
+        // promise's protect belong to this frame.
+        let (wrapper, retarget, release, promise) = unsafe { (*sink).pending_suspension.take() }
+            .expect("lol-html suspended without a pending HTMLRewriter handler promise")
+            .into_parts();
 
         // SAFETY: `rewriter` is suspended on exactly the unit type the
-        // `handler_callback::<_, Z, _>` that built `suspension` dispatched,
-        // and `suspension.wrapper` is that call's live, ref'd wrapper.
-        unsafe { (suspension.retarget)(suspension.wrapper, rewriter) };
+        // `handler_callback::<_, Z, _>` that built the suspension dispatched,
+        // and `wrapper` is that call's live, ref'd wrapper.
+        unsafe { retarget(wrapper, rewriter) };
 
         // The in-flight continuation keeps the sink (and through it the
         // suspended lol-html state) alive until the promise settles.
         // SAFETY: sink is live (fn safety contract).
         unsafe {
-            (*sink).suspended_wrapper.set(suspension.wrapper);
-            (*sink)
-                .suspended_wrapper_release
-                .set(Some(suspension.release));
+            (*sink).suspended_wrapper.set(wrapper);
+            (*sink).suspended_wrapper_release.set(Some(release));
             (*sink).ref_();
         }
 
         // Adopt the protection `handler_callback` took; once `then_with_value`
         // attaches, the reaction roots the promise and this can go.
-        let promise = jsc::ProtectedJSValue::adopt(suspension.promise);
+        let promise = jsc::ProtectedJSValue::adopt(promise);
 
         // The reactions' context is a GC-managed cell holding the sink's `+1`,
         // not a raw pointer: a promise collected without ever settling takes
         // the cell with it, and its destructor abandons the parked rewrite
         // instead of leaking it (`SuspensionContext::abandon`).
         // SAFETY: the `ref_()` above is the `+1` this context now owns.
-        let ctx = unsafe { SuspensionContext::new(sink) };
+        let ctx = unsafe { SuspensionContext::new(&global, sink) };
         let cell = NativePromiseContext::create(&global, ctx);
         promise.value().then_with_value(
             &global,
@@ -1327,36 +1377,74 @@ pub struct SuspensionContext {
     sink: *mut BufferOutputSink,
 }
 
+/// `RareData` cleanup-hook shim for an abandoned-at-exit suspension.
+///
+/// The GC'd-cell path alone does not cover `worker.terminate()`: teardown sets
+/// `vm.is_shutting_down` before sweeping the heap, and `DeferredDerefTask::
+/// schedule` bails on that flag, so the cell's destructor is a no-op. Registering
+/// here instead means `vm.on_exit()` — which runs on worker terminate and on main
+/// exit, while the JSC heap is still alive — drains the parked rewrite.
+extern "C" fn suspension_cleanup_hook(ctx: *mut core::ffi::c_void) {
+    // SAFETY: `ctx` is the `SuspensionContext` registered in `begin_suspension`
+    // and not yet taken (both `take` and `abandon` unregister first).
+    unsafe { SuspensionContext::abandon(ctx.cast::<SuspensionContext>()) };
+}
+
 impl SuspensionContext {
-    /// Consumes one ref on `sink`.
+    /// Consumes one ref on `sink`, and registers the exit-time cleanup hook.
     ///
     /// # Safety
     /// `sink` must be live with a `+1` transferred to the returned context.
-    unsafe fn new(sink: *mut BufferOutputSink) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self { sink }))
+    unsafe fn new(global: &JSGlobalObject, sink: *mut BufferOutputSink) -> *mut Self {
+        let this = bun_core::heap::into_raw(Box::new(Self { sink }));
+        global.bun_vm().as_mut().rare_data().push_cleanup_hook(
+            global,
+            this.cast::<core::ffi::c_void>(),
+            suspension_cleanup_hook,
+        );
+        this
+    }
+
+    /// Drop the exit-time hook. Must run before `this` is freed.
+    ///
+    /// # Safety
+    /// Called on the JS thread, with `this` still live.
+    fn unregister_cleanup_hook(global: &JSGlobalObject, this: *mut Self) {
+        global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .remove_cleanup_hook(this.cast::<core::ffi::c_void>(), suspension_cleanup_hook);
     }
 
     /// Reclaim the sink from a settling reaction's context argument. `None` if
     /// the cell was already taken (it can only be taken once).
-    fn take(cell: JSValue) -> Option<*mut BufferOutputSink> {
+    fn take(global: &JSGlobalObject, cell: JSValue) -> Option<*mut BufferOutputSink> {
         let ctx = NativePromiseContext::take::<Self>(cell)?;
+        Self::unregister_cleanup_hook(global, ctx.as_ptr());
         // SAFETY: `take` hands back the pointer `new` leaked, exactly once.
         let this = unsafe { bun_core::heap::take(ctx.as_ptr()) };
         Some(this.sink)
     }
 
-    /// The promise was collected without settling: the rewrite can never
-    /// continue. Fail the output body and release everything the suspension
-    /// parked. Runs from the event loop, not the GC sweep (see
+    /// The rewrite can never continue — the handler's promise was collected
+    /// unsettled, or the VM is exiting with it still parked. Fail the output
+    /// body and release everything the suspension holds. Runs from the event
+    /// loop or from `on_exit`, never from the GC sweep (see
     /// `DeferredDerefTask`), so touching the JSC heap is safe here.
     ///
     /// # Safety
-    /// `this` must be the live context the GC'd cell owned.
+    /// `this` must be the live context, with its cleanup hook still registered.
     pub(crate) unsafe fn abandon(this: *mut Self) {
         // SAFETY: fn contract — `this` is the leaked `new` allocation.
         let sink = unsafe { bun_core::heap::take(this) }.sink;
         // SAFETY: the context held a `+1` on `sink`; `adopt` consumes it.
         let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
+        // SAFETY: `sink` is live for this scope (the ref above).
+        let global = unsafe { (*sink).global };
+        // Running from the hook itself? `on_exit` already took the Vec, so the
+        // remove is a no-op; from the GC path it is the one that matters.
+        Self::unregister_cleanup_hook(&global, this);
         // SAFETY: `sink` is live for this scope (the ref above).
         unsafe {
             BufferOutputSink::release_suspended_wrapper(sink);
@@ -1371,9 +1459,9 @@ impl SuspensionContext {
     }
 }
 
-fn on_handler_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
-    let Some(sink) = SuspensionContext::take(args[args.len() - 1]) else {
+    let Some(sink) = SuspensionContext::take(global, args[args.len() - 1]) else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: the context held a `+1` on `sink`; `adopt` releases it.
@@ -1392,7 +1480,7 @@ fn on_handler_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let reason = args[0];
-    let Some(sink) = SuspensionContext::take(args[args.len() - 1]) else {
+    let Some(sink) = SuspensionContext::take(global, args[args.len() - 1]) else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: see `on_handler_resolve`.
@@ -1416,8 +1504,10 @@ impl Drop for BufferOutputSink {
     fn drop(&mut self) {
         // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
         // An error recorded but never taken (a throwing `init()`) still holds
-        // its protect.
+        // its protect, and an armed-but-unconsumed suspension still holds the
+        // wrapper's ref (`PendingSuspension::drop` releases both).
         self.handler_error.replace(JSValue::ZERO).unprotect();
+        drop(self.pending_suspension.take());
         if !self.rewriter.is_null() {
             // SAFETY: rewriter heap-allocated by init() and not yet freed
             // (the sink is its sole owner for its whole life).
@@ -1629,13 +1719,26 @@ macro_rules! impl_wrapper_like {
 /// Record a content handler's exception / rejection on the sink whose
 /// lol-html call is on the stack, so `transform()` (sync) or the output body
 /// (async) surfaces it instead of lol-html's generic "stopped" message.
-fn record_handler_error(global: &JSGlobalObject, err: JSValue) {
-    if let Some(sink) = active_sink(global) {
-        err.ensure_still_alive();
-        // SAFETY: the active sink drives the lol-html call that invoked this
-        // handler and is live (refcount > 0) for that call's whole duration.
-        unsafe { (*sink).set_handler_error(err) };
-    }
+/// The value an `Exception` cell wraps. Handing the cell itself to
+/// `JSPromise::reject` asserts, and a `Locked` body can now reject with any
+/// handler error, so unwrap at the point of capture. `to_error` falls back to
+/// the cell for a non-`Exception` (it cannot happen here).
+fn exception_value(exc: NonNull<jsc::Exception>) -> JSValue {
+    let cell = JSValue::from_cell(exc.as_ptr());
+    cell.to_error().unwrap_or(cell)
+}
+
+/// Takes the sink explicitly rather than re-deriving it from `global`: a caller
+/// that has already established there is none would otherwise silently drop the
+/// error.
+///
+/// # Safety
+/// `sink` must be the live `BufferOutputSink` driving the lol-html call that
+/// invoked this handler (refcount > 0 for that call's whole duration).
+unsafe fn record_handler_error(sink: *mut BufferOutputSink, err: JSValue) {
+    err.ensure_still_alive();
+    // SAFETY: see fn contract.
+    unsafe { (*sink).set_handler_error(err) };
 }
 
 fn handler_callback<H, Z, L>(
@@ -1673,6 +1776,15 @@ where
     let this = unsafe { &*this };
     let global = this.global();
 
+    // Content handlers only ever run from inside a sink's lol-html call, which
+    // installs the guard. Read it once here so every error path below has a
+    // sink to record onto, and a new entry point that forgets the guard fails
+    // before running any user code rather than dropping its result later.
+    let Some(sink) = active_sink(global) else {
+        debug_assert!(false, "HTMLRewriter handler ran outside a rewrite");
+        return HandlerOutcome::Stop;
+    };
+
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
     // callback. A post-hoc `try_take_exception()`
     // is *not* equivalent under
@@ -1698,7 +1810,9 @@ where
             // Record the exception so `transform()` / the output body throws
             // the real error instead of lol-html's generic "stopped" message.
             if let Some(exc) = scope.exception() {
-                record_handler_error(global, JSValue::from_cell(exc.as_ptr()));
+                // SAFETY: `sink` is the live sink for this rewrite.
+                // SAFETY: `sink` is the live sink for this rewrite.
+                unsafe { record_handler_error(sink, exception_value(exc)) };
             }
             // Clear the exception from the scope to prevent assertion failures
             scope.clear_exception();
@@ -1710,7 +1824,9 @@ where
 
     // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc) = scope.exception() {
-        record_handler_error(global, JSValue::from_cell(exc.as_ptr()));
+        // SAFETY: `sink` is the live sink for this rewrite.
+        // SAFETY: `sink` is the live sink for this rewrite.
+        unsafe { record_handler_error(sink, exception_value(exc)) };
         // Clear the exception to prevent assertion failures
         scope.clear_exception();
         return HandlerOutcome::Stop;
@@ -1753,27 +1869,16 @@ where
     match promise.status() {
         jsc::js_promise::Status::Fulfilled => HandlerOutcome::Continue,
         jsc::js_promise::Status::Rejected => {
-            // `result()` marks the rejection as handled.
-            record_handler_error(global, promise.result(global.vm()));
+            // We take the rejection and route it to the output body, so it is
+            // handled. Without this the handler's own returned promise is also
+            // reported to `unhandledRejection`; a fire-and-forget rejection the
+            // handler never returned still is, which is intended.
+            promise.set_handled(global.vm());
+            // SAFETY: `sink` is the live sink for this rewrite.
+            unsafe { record_handler_error(sink, promise.result(global.vm())) };
             HandlerOutcome::Stop
         }
         jsc::js_promise::Status::Pending => {
-            let Some(sink) = active_sink(global) else {
-                // Content handlers only ever run from inside a sink's lol-html
-                // call, which installs the guard. Reaching here means a new
-                // entry point forgot it; record a real error (not a
-                // compiled-out assert + silent `Stop`, which would drop the
-                // handler's result on the floor in release builds).
-                debug_assert!(false, "HTMLRewriter handler ran outside a rewrite");
-                record_handler_error(
-                    global,
-                    global.create_type_error_instance(format_args!(
-                        "HTMLRewriter content handler ran outside of a rewrite"
-                    )),
-                );
-                return HandlerOutcome::Stop;
-            };
-
             // `transform(string)` / `transform(ArrayBuffer)` must hand back the
             // result before `transform()` returns. Fail the whole rewrite here
             // rather than suspend: a suspension would keep lexing the rest of
@@ -1786,7 +1891,8 @@ where
                      content handler returned a Promise that did not resolve within a microtask. \
                      Pass a Response instead and await its body"
                 ));
-                record_handler_error(global, err);
+                // SAFETY: `sink` is the live sink for this rewrite.
+                unsafe { record_handler_error(sink, err) };
                 return HandlerOutcome::Stop;
             }
 

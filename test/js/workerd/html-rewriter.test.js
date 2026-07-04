@@ -22,16 +22,18 @@ describe("HTMLRewriter", () => {
     expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
   });
 
-  it("error inside element handler", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          element(element) {
-            throw new Error("test");
-          },
-        })
-        .transform(new Response("<div>hello</div>")),
-    ).toThrow("test");
+  // Which channel a handler error takes is decided by the overload, not by
+  // whether the input body happened to be buffered: every `Response` input
+  // rejects its output body.
+  it("error inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(element) {
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    await expect(res.text()).rejects.toThrow("test");
   });
 
   it("error inside element handler (string)", () => {
@@ -46,18 +48,15 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
-  // An `async` handler whose rejection is reachable by draining microtasks
-  // alone (no await on a timer / I/O) still fails `transform()` synchronously.
-  it("async error without a real await inside element handler", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          async element(element) {
-            throw new Error("test");
-          },
-        })
-        .transform(new Response("<div>hello</div>")),
-    ).toThrow("test");
+  it("async error without a real await inside element handler rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          throw new Error("test");
+        },
+      })
+      .transform(new Response("<div>hello</div>"));
+    await expect(res.text()).rejects.toThrow("test");
   });
 
   // A handler that only settles once the event loop turns (setImmediate /
@@ -1703,28 +1702,26 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
 });
 
 describe("invalid arguments throw instead of returning an error value", () => {
-  it("setAttribute with a forbidden character in the name throws", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          element(el) {
-            el.setAttribute("a b", "1");
-          },
-        })
-        .transform(new Response("<div>t</div>")),
-    ).toThrow("character is forbidden in the attribute name");
+  it("setAttribute with a forbidden character in the name rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.setAttribute("a b", "1");
+        },
+      })
+      .transform(new Response("<div>t</div>"));
+    await expect(res.text()).rejects.toThrow("character is forbidden in the attribute name");
   });
 
-  it("setAttribute with an empty name throws", () => {
-    expect(() =>
-      new HTMLRewriter()
-        .on("div", {
-          element(el) {
-            el.setAttribute("", "1");
-          },
-        })
-        .transform(new Response("<div>t</div>")),
-    ).toThrow("Attribute name can't be empty.");
+  it("setAttribute with an empty name rejects the body", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.setAttribute("", "1");
+        },
+      })
+      .transform(new Response("<div>t</div>"));
+    await expect(res.text()).rejects.toThrow("Attribute name can't be empty.");
   });
 
   it("setAttribute failure leaves the element unchanged", async () => {
@@ -1756,19 +1753,18 @@ describe("invalid arguments throw instead of returning an error value", () => {
     ).toThrow("character is forbidden in the attribute name");
   });
 
-  it("onEndTag with a non-function throws a TypeError", () => {
-    let err;
-    try {
-      new HTMLRewriter()
-        .on("div", {
-          element(el) {
-            el.onEndTag("nope");
-          },
-        })
-        .transform(new Response("<div>t</div>"));
-    } catch (e) {
-      err = e;
-    }
+  it("onEndTag with a non-function rejects the body with a TypeError", async () => {
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag("nope");
+        },
+      })
+      .transform(new Response("<div>t</div>"));
+    const err = await res.text().then(
+      () => null,
+      e => e,
+    );
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
   });

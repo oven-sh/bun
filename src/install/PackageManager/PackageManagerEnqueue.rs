@@ -1924,6 +1924,7 @@ fn enqueue_local_tarball(
                     )
                     .expect("unreachable"),
                     skip_verify: false,
+                    in_trusted_dependencies: false,
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,

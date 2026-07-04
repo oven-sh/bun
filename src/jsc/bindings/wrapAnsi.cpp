@@ -12,6 +12,7 @@
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
+extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 
 namespace Bun {
 using namespace WTF;
@@ -58,6 +59,51 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
     }
 }
 
+// A word may begin with ANSI escape sequences whose code units are all ASCII
+// (ESC, '[', digits, 'm'), hiding the codepoint that actually lands on the seam.
+// Skip them before classifying; a word not starting with ESC never enters the scan.
+template<typename Char>
+static inline const Char* skipLeadingAnsi(const Char* start, const Char* end)
+{
+    if (start < end && ANSI::isEscapeCharacter(*start))
+        return ANSI::consumeANSI(start, end);
+    return start;
+}
+
+// True when a grapheme cluster boundary always precedes the word's first codepoint
+// (worst-case predecessor: the separator space). A word-initial cluster-fusing
+// codepoint (combining mark, ZWJ, VS16, keycap) makes row widths non-additive.
+template<typename Char>
+static inline bool wordStartsNewCluster(const Char* wordStart, const Char* wordEnd)
+{
+    wordStart = skipLeadingAnsi(wordStart, wordEnd);
+    if (wordStart >= wordEnd)
+        return true;
+    char32_t cp;
+    if constexpr (sizeof(Char) == 1) {
+        cp = static_cast<char32_t>(static_cast<uint8_t>(*wordStart));
+    } else {
+        size_t cpLen;
+        cp = decodeUTF16(reinterpret_cast<const UChar*>(wordStart), wordEnd - wordStart, cpLen);
+    }
+    if (cp < 0x80)
+        return true;
+    uint8_t state = 0;
+    return Bun__graphemeBreak(' ', cp, &state);
+}
+
+// Without a separator space the row's trailing content is the word's real
+// predecessor, and a trailing escape can hide a cluster-fusing codepoint
+// (e.g. a Prepend): only an ASCII/ASCII seam keeps row widths additive.
+template<typename Char>
+static inline bool wordSeamIsAscii(Char rowTail, const Char* wordStart, const Char* wordEnd)
+{
+    wordStart = skipLeadingAnsi(wordStart, wordEnd);
+    if (wordStart >= wordEnd)
+        return true;
+    return static_cast<char32_t>(rowTail) < 0x80 && static_cast<char32_t>(*wordStart) < 0x80;
+}
+
 // ============================================================================
 // Row Management (using WTF::Vector)
 // ============================================================================
@@ -90,61 +136,55 @@ public:
         return stringWidth(span.data(), span.data() + span.size(), ambiguousIsNarrow);
     }
 
-    void trimLeadingSpaces()
+    size_t trimLeadingSpaces()
     {
-        size_t removeCount = 0;
-        bool inEscape = false;
+        if (m_leadingTrimComplete)
+            return 0;
 
-        // Count leading spaces (preserving ANSI)
-        for (size_t i = 0; i < m_data.size(); ++i) {
-            Char c = m_data[i];
+        const size_t size = m_data.size();
+        size_t read = m_trimScanOffset;
+        size_t write = m_trimScanOffset;
+        bool inEscape = m_trimInEscape;
+        size_t removedWidth = 0;
+
+        while (read < size) {
+            Char c = m_data[read];
             if (c == 0x1b) {
                 inEscape = true;
-                continue;
-            }
-            if (inEscape) {
+            } else if (inEscape) {
                 if (c == 'm' || c == 0x07)
                     inEscape = false;
+            } else if (c == ' ' || c == '\t') {
+                if (c == ' ')
+                    removedWidth++;
+                read++;
                 continue;
-            }
-            if (c == ' ' || c == '\t')
-                removeCount++;
-            else
+            } else {
+                m_leadingTrimComplete = true;
                 break;
+            }
+            m_data[write] = c;
+            write++;
+            read++;
         }
 
-        if (removeCount == 0)
-            return;
-
-        // Remove spaces while preserving ANSI codes
-        Vector<Char> newData;
-        newData.reserveCapacity(m_data.size() - removeCount);
-
-        inEscape = false;
-        size_t removed = 0;
-
-        for (size_t i = 0; i < m_data.size(); ++i) {
-            Char c = m_data[i];
-            if (c == 0x1b) {
-                inEscape = true;
-                newData.append(c);
-                continue;
+        if (write != read) {
+            while (read < size) {
+                m_data[write] = m_data[read];
+                write++;
+                read++;
             }
-            if (inEscape) {
-                if (c == 'm' || c == 0x07)
-                    inEscape = false;
-                newData.append(c);
-                continue;
-            }
-            if ((c == ' ' || c == '\t') && removed < removeCount) {
-                removed++;
-                continue;
-            }
-            newData.append(c);
+            m_data.shrink(write);
         }
 
-        m_data = std::move(newData);
+        m_trimScanOffset = write;
+        m_trimInEscape = inEscape;
+        return removedWidth;
     }
+
+    size_t m_trimScanOffset = 0;
+    bool m_trimInEscape = false;
+    bool m_leadingTrimComplete = false;
 };
 
 // ============================================================================
@@ -533,6 +573,8 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
     // Process each word
     const Char* wordStart = lineStart;
     size_t wordIndex = 0;
+    size_t lastRowWidth = 0;
+    bool lastRowWidthDirty = false;
 
     for (const Char* it = lineStart; it <= lineEnd; ++it) {
         if (it < lineEnd && *it != ' ')
@@ -540,10 +582,20 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 
         const Char* wordEnd = it;
 
-        if (options.trim)
-            rows.last().trimLeadingSpaces();
+        if (options.trim) {
+            size_t removedWidth = rows.last().trimLeadingSpaces();
+            if (!lastRowWidthDirty)
+                lastRowWidth = removedWidth < lastRowWidth ? lastRowWidth - removedWidth : 0;
+        }
 
-        size_t rowLength = rows.last().width(options.ambiguousIsNarrow);
+        if (lastRowWidthDirty) {
+            lastRowWidth = rows.last().width(options.ambiguousIsNarrow);
+            lastRowWidthDirty = false;
+        }
+
+        size_t rowLength = lastRowWidth;
+        bool spacePrecedesWord = true;
+        Char rowTail = static_cast<Char>(' ');
 
         if (wordIndex != 0) {
             if (rowLength >= columns && (!options.wordWrap || !options.trim)) {
@@ -554,6 +606,9 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             if (rowLength > 0 || !options.trim) {
                 rows.last().append(static_cast<Char>(' '));
                 rowLength++;
+            } else if (!rows.last().m_data.isEmpty()) {
+                spacePrecedesWord = false;
+                rowTail = rows.last().m_data.last();
             }
         }
 
@@ -568,6 +623,7 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
                 rows.append(Row<Char>());
 
             wrapWord(rows, wordStart, wordEnd, columns, options);
+            lastRowWidthDirty = true;
             wordStart = it + 1;
             wordIndex++;
             continue;
@@ -576,23 +632,29 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         if (rowLength + wordLen > columns && rowLength > 0 && wordLen > 0) {
             if (!options.wordWrap && rowLength < columns) {
                 wrapWord(rows, wordStart, wordEnd, columns, options);
+                lastRowWidthDirty = true;
                 wordStart = it + 1;
                 wordIndex++;
                 continue;
             }
 
             rows.append(Row<Char>());
+            rowLength = 0;
         }
 
-        rowLength = rows.last().width(options.ambiguousIsNarrow);
         if (rowLength + wordLen > columns && !options.wordWrap) {
             wrapWord(rows, wordStart, wordEnd, columns, options);
+            lastRowWidthDirty = true;
             wordStart = it + 1;
             wordIndex++;
             continue;
         }
 
         rows.last().append(wordStart, wordEnd);
+        if (spacePrecedesWord ? wordStartsNewCluster(wordStart, wordEnd) : wordSeamIsAscii(rowTail, wordStart, wordEnd))
+            lastRowWidth = rowLength + wordLen;
+        else
+            lastRowWidthDirty = true;
         wordStart = it + 1;
         wordIndex++;
     }

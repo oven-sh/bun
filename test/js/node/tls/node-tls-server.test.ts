@@ -1265,3 +1265,56 @@ describe("tls.Server socket destroySoon", () => {
     }
   });
 });
+
+it("tls.createServer honors secureOptions when negotiating the protocol version", async () => {
+  const server: Server = createServer({ ...COMMON_CERT, secureOptions: crypto.constants.SSL_OP_NO_TLSv1_3 });
+  const accepted = Promise.withResolvers<void>();
+  server.on("secureConnection", socket => {
+    accepted.resolve();
+    socket.end();
+  });
+  server.on("tlsClientError", accepted.reject);
+  server.listen(0);
+  await once(server, "listening");
+  let client: TLSSocket | undefined;
+  try {
+    const port = (server.address() as AddressInfo).port;
+    client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    await accepted.promise;
+    expect(client.getProtocol()).toBe("TLSv1.2");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+  await once(server, "close");
+});
+
+it("tls.connect honors secureOptions when negotiating the protocol version", async () => {
+  const server: Server = createServer(COMMON_CERT);
+  server.on("secureConnection", socket => socket.end());
+  server.listen(0);
+  await once(server, "listening");
+  let baseline: TLSSocket | undefined;
+  let client: TLSSocket | undefined;
+  try {
+    const port = (server.address() as AddressInfo).port;
+    baseline = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    await once(baseline, "secureConnect");
+    expect(baseline.getProtocol()).toBe("TLSv1.3");
+
+    client = connect({
+      port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      secureOptions: crypto.constants.SSL_OP_NO_TLSv1_3,
+    });
+    await once(client, "secureConnect");
+    expect(client.getProtocol()).toBe("TLSv1.2");
+  } finally {
+    baseline?.destroy();
+    client?.destroy();
+    server.close();
+  }
+  await once(server, "close");
+});

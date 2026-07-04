@@ -3,7 +3,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::{self as resolve_path, PathBuffer, SEP_STR};
+use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
 
@@ -1899,12 +1899,45 @@ impl<'a> ESModule<'a> {
                 }
                 // A scopeguard cannot hold the &mut across the recursive
                 // `&mut self` calls below; every return path in this arm invokes
-                // `dedent!()` manually instead (audited: all 10 returns in this arm dedent).
+                // `dedent!()` manually instead (audited: every return in this arm dedents).
                 macro_rules! dedent {
                     () => {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.decrease_indent();
                         }
+                    };
+                }
+                macro_rules! invalid_specifier_if_too_long {
+                    ($len:expr) => {
+                        if $len > MAX_PATH_BYTES {
+                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                                log.add_note_fmt(format_args!(
+                                    "The path \"{}\" is invalid because it is too long",
+                                    bstr::BStr::new(subpath)
+                                ));
+                            }
+                            dedent!();
+                            return Resolution {
+                                path: Box::<[u8]>::from(subpath),
+                                status: Status::InvalidModuleSpecifier,
+                                debug: ResolutionDebug::default(),
+                            };
+                        }
+                    };
+                }
+
+                if package_url.len() + str.len() + subpath.len() + 8 > MAX_PATH_BYTES {
+                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                        log.add_note_fmt(format_args!(
+                            "The target \"{}\" is invalid because the resolved path would be too long",
+                            bstr::BStr::new(str)
+                        ));
+                    }
+                    dedent!();
+                    return Resolution {
+                        path: Box::<[u8]>::from(str),
+                        status: Status::InvalidPackageTarget,
+                        debug: ResolutionDebug::default(),
                     };
                 }
 
@@ -1968,6 +2001,7 @@ impl<'a> ESModule<'a> {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                             let len = replacement_size(str, b"*", subpath);
+                            invalid_specifier_if_too_long!(len);
                             let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
                             let result = &resolve_target_buf2.0[0..len];
                             if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2067,6 +2101,7 @@ impl<'a> ESModule<'a> {
                 if PATTERN {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                     let len = replacement_size(resolved_target, b"*", subpath);
+                    invalid_specifier_if_too_long!(len);
                     let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
                     let result = &resolve_target_buf2.0[0..len];
                     if let Some(log) = self.debug_logs.as_deref_mut() {

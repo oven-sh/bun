@@ -524,6 +524,31 @@ it("request.url should be based on the Host header", async () => {
   );
 });
 
+it.each([
+  ["HTTP/1.0", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
+  ["HTTP/1.1", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],
+])("request.url is the request-target when the %s Host header is not a valid authority", async (_version, payload) => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      return new Response(req.url);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const response = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
+    socket.write(payload);
+  });
+  socket.destroy();
+  expect(response).toStartWith("HTTP/1.1 200");
+  expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {
@@ -2658,6 +2683,31 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   const text = await res.text();
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
+});
+
+it("only serves /bun:info to requests with a local Host header in development mode", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  const localHostRes = await fetch(`http://127.0.0.1:${server.port}/bun:info`, {
+    headers: { Host: "localhost" },
+  });
+  const localHostText = await localHostRes.text();
+  expect(localHostText).toContain("bun_version");
+  expect(localHostRes.status).toBe(200);
+
+  const foreignHostRes = await fetch(`http://127.0.0.1:${server.port}/bun:info`, {
+    headers: { Host: "example.com" },
+  });
+  const foreignHostText = await foreignHostRes.text();
+  expect(foreignHostText).toBe("handled by fetch");
+  expect(foreignHostRes.status).toBe(200);
 });
 
 // https://github.com/oven-sh/bun/issues/32469

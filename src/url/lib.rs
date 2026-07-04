@@ -1062,14 +1062,10 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                result.raw_value(scanner.pathname.pathname),
-            ) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
+            let value_slice = result.raw_value(scanner.pathname.pathname);
+            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
+            buf.extend_from_slice(value_slice);
             buf_writer_pos += value.length;
 
             list.push(Param {
@@ -1610,7 +1606,7 @@ impl<'a> PathnameScanner<'a> {
             name_needs_decoding: false,
             // TODO: fix this technical debt
             value: string_pointer_from_strings(self.pathname, param.value),
-            value_needs_decoding: strings::index_of_char(param.value, b'%').is_some(),
+            value_needs_decoding: false,
         })
     }
 }

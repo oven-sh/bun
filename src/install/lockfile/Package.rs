@@ -3379,6 +3379,20 @@ pub mod serializer {
                         }
                     }
                 }
+                if matches!(field, PackageField::Scripts) {
+                    // `Scripts.filled` is a `bool`; validate the raw byte the
+                    // same way before the copy.
+                    let stride = mem::size_of::<Scripts>();
+                    let filled_at = mem::offset_of!(Scripts, filled);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[filled_at], 0 | 1) {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid package scripts"
+                            ));
+                        }
+                    }
+                }
                 bytes.copy_from_slice(src);
                 stream.pos = end_pos;
                 if matches!(field, PackageField::Meta) {

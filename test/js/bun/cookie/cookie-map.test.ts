@@ -350,6 +350,47 @@ describe("iterator", () => {
   });
 });
 
+describe("cookie header values with non-ASCII characters", () => {
+  test("preserves a non-ASCII cookie value when another value in the header is percent-encoded", () => {
+    const map = new Bun.CookieMap("a=%20; b=café");
+    expect(map.get("b")).toBe("café");
+    expect(map.get("a")).toBe(" ");
+  });
+
+  test("decodes a percent-encoded cookie value that also contains non-ASCII characters", () => {
+    const map = new Bun.CookieMap("b=café%20au%20lait");
+    expect(map.get("b")).toBe("café au lait");
+  });
+});
+
+describe("delete with prefixed cookie names", () => {
+  test("deleting a cookie whose name starts with __Host- emits a Secure expiring cookie", () => {
+    const map = new Bun.CookieMap("__Host-id=1");
+    map.delete("__Host-id");
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Host-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+    ]);
+  });
+
+  test("deleting a cookie whose name starts with __Secure- emits a Secure expiring cookie", () => {
+    const map = new Bun.CookieMap("__Secure-id=1");
+    map.delete("__Secure-id");
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Secure-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+    ]);
+  });
+
+  test("deleting a cookie without a name prefix emits an expiring cookie without Secure", () => {
+    const map = new Bun.CookieMap("__Host-id=1; id=1");
+    map.delete("__Host-id");
+    map.delete("id");
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Host-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+      "id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+    ]);
+  });
+});
+
 describe("invalid delete usage", () => {
   test("invalid usage does not crash", () => {
     expect(() => {

@@ -931,12 +931,12 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn get_statement_from_signature_hash(
+    pub fn get_statement_from_signature_name(
         &self,
-        signature_hash: u64,
+        signature_name: &[u8],
     ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
     {
-        self.connection_mut().statements.get_or_put(signature_hash)
+        self.connection_mut().statements.get_or_put(signature_name)
     }
 }
 

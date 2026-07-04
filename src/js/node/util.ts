@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean, validateObject } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -60,21 +60,53 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
+function debuglogImpl(enabled, set) {
   if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+    let impl;
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+      impl = function debug() {
+        const msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      impl = function debug() {};
     }
+    Object.defineProperty(impl, "enabled", {
+      __proto__: null,
+      value: enabled,
+      configurable: true,
+      enumerable: true,
+    });
+    debugs[set] = impl;
   }
   return debugs[set];
+}
+
+function debuglog(set, cb) {
+  set = set.toUpperCase();
+  const enabled = debugEnvRegex.test(set);
+  // The implementation is created eagerly so that the NODE_DEBUG=http warning
+  // is emitted when node:http requires this, the way node:_http_client does.
+  const impl = debuglogImpl(enabled, set);
+  let notified = false;
+  const logger = function debuglogWrapper() {
+    if (!notified) {
+      notified = true;
+      if (typeof cb === "function") cb(impl);
+    }
+    return impl.$apply(undefined, arguments);
+  };
+  Object.defineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return enabled;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {
@@ -213,30 +245,41 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
+function styleText(format, text, options) {
+  const validateStream = options?.validateStream ?? true;
+
   validateString(text, "text");
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
+  validateBoolean(validateStream, "options.validateStream");
 
-  if ($isJSArray(format)) {
-    let left = "";
-    let right = "";
-    for (const key of format) {
-      const formatCodes = inspect.colors[key];
-      if (formatCodes == null) {
-        validateOneOf(key, "format", ObjectKeys(inspect.colors));
-      }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+  let skipColorize = false;
+  if (validateStream) {
+    const stream = options?.stream ?? process.stdout;
+    const { isReadableStream, isWritableStream, isNodeStream } = require("internal/streams/utils");
+    if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
-
-    return `${left}${text}${right}`;
+    skipColorize = !require("internal/util/colors").shouldColorize(stream);
   }
 
-  let formatCodes = inspect.colors[format];
+  const formatArray = $isJSArray(format) ? format : [format];
 
-  if (formatCodes == null) {
-    validateOneOf(format, "format", ObjectKeys(inspect.colors));
+  let left = "";
+  let right = "";
+  for (const key of formatArray) {
+    if (key === "none") continue;
+    const formatCodes = inspect.colors[key];
+    if (formatCodes == null) {
+      validateOneOf(key, "format", ObjectKeys(inspect.colors));
+    }
+    if (skipColorize) continue;
+    left += `\u001b[${formatCodes[0]}m`;
+    right = `\u001b[${formatCodes[1]}m${right}`;
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+
+  return skipColorize ? text : `${left}${text}${right}`;
 }
 
 function getSystemErrorName(err: any) {

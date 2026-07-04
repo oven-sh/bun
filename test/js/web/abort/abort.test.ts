@@ -222,7 +222,13 @@ describe("AbortSignal.prototype.throwIfAborted", () => {
     const controller = new AbortController();
     const reason = new Error("nope");
     controller.abort(reason);
-    expect(() => controller.signal.throwIfAborted()).toThrow(reason);
+    let thrown: unknown = "not thrown";
+    try {
+      controller.signal.throwIfAborted();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBe(reason);
   });
 
   test("throws the default DOMException", () => {
@@ -259,6 +265,36 @@ describe("AbortSignal.abort", () => {
   test("stores the reason by identity", () => {
     const reason = { why: 1 };
     expect(AbortSignal.abort(reason).reason).toBe(reason);
+  });
+});
+
+// Every engine that ships DOMException attaches a stack to it, and abort reasons
+// are useless to debug without one.
+describe("the stack of a DOMException abort reason", () => {
+  // https://github.com/oven-sh/bun/issues/17877
+  test.failing("a constructed DOMException has a stack", () => {
+    expect(typeof new DOMException("boom", "AbortError").stack).toBe("string");
+  });
+
+  // https://github.com/oven-sh/bun/issues/17877
+  test.failing("AbortSignal.abort() produces a reason with a stack", () => {
+    expect(typeof AbortSignal.abort().reason.stack).toBe("string");
+  });
+
+  test.failing("controller.abort() produces a stack naming the error", () => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(controller.signal.reason.stack).toContain("AbortError");
+  });
+
+  // https://github.com/oven-sh/bun/issues/25182, https://github.com/oven-sh/bun/issues/21900
+  test.failing("AbortSignal.timeout() produces a reason with a non-empty stack", async () => {
+    const signal = AbortSignal.timeout(1);
+    const { promise, resolve } = Promise.withResolvers<Event>();
+    signal.addEventListener("abort", resolve, { once: true });
+    await promise;
+    expect(signal.reason.stack).not.toBe("");
+    expect(typeof signal.reason.stack).toBe("string");
   });
 });
 

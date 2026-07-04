@@ -1,4 +1,4 @@
-// TextDecoderStream / CompressionStream / DecompressionStream throughput.
+// TextEncoderStream / TextDecoderStream / CompressionStream / DecompressionStream throughput.
 // 64 KiB chunks; MB/s of payload through the transform (decoded / uncompressed bytes).
 // Portable across Bun, Node, and Deno; each scenario reports the best of RUNS passes.
 const CHUNK = 64 * 1024;
@@ -64,7 +64,11 @@ const compressedSource = () =>
     },
   });
 
+// A 64 K-character string chunk (mostly ASCII with multi-byte content mixed in).
+const stringChunk = ("hello world \u{1F30A} stream \u2728 " + "x".repeat(40)).repeat(1200).slice(0, CHUNK);
+
 const scenarios = {
+  "TextEncoderStream": () => drainBytes(source(stringChunk).pipeThrough(new TextEncoderStream())),
   "TextDecoderStream": () => drainBytes(source(textChunk).pipeThrough(new TextDecoderStream())),
   "CompressionStream (gzip)": () => drainBytes(source(compressibleChunk).pipeThrough(new CompressionStream("gzip"))),
   "DecompressionStream (gzip)": () => drainBytes(compressedSource().pipeThrough(new DecompressionStream("gzip"))),

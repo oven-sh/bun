@@ -153,7 +153,7 @@ describe("util.styleText", () => {
   describe("the default stream is process.stdout", () => {
     const script = `process.stdout.write(JSON.stringify(require("util").styleText("red", "test")));`;
 
-    test("a piped stdout gets no escape codes", async () => {
+    test.concurrent("a piped stdout gets no escape codes", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
         env: bunEnv,
@@ -164,7 +164,7 @@ describe("util.styleText", () => {
       expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({ stdout: `"test"`, stderr: "", exitCode: 0 });
     });
 
-    test("FORCE_COLOR turns the codes back on", async () => {
+    test.concurrent("FORCE_COLOR turns the codes back on", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
         env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },

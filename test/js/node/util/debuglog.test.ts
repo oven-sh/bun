@@ -29,12 +29,12 @@ describe("util.debuglog", () => {
     expect(util.debug).toBe(util.debuglog);
   });
 
-  test("a disabled section writes nothing", async () => {
+  test.concurrent("a disabled section writes nothing", async () => {
     const result = await run(`require("util").debuglog("quiet")("hello");`);
     expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
-  test("an enabled section writes SECTION pid: message to stderr", async () => {
+  test.concurrent("an enabled section writes SECTION pid: message to stderr", async () => {
     const { stdout, stderr, exitCode } = await run(
       `const log = require("util").debuglog("noisy");
        process.stdout.write(String(log.enabled));
@@ -46,21 +46,21 @@ describe("util.debuglog", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("enabled reflects NODE_DEBUG", async () => {
+  test.concurrent("enabled reflects NODE_DEBUG", async () => {
     const script = `const util = require("util");
       process.stdout.write(JSON.stringify([util.debuglog("a").enabled, util.debuglog("b").enabled]));`;
     const results = await Promise.all([run(script, "a"), run(script, "b"), run(script, "a,b"), run(script)]);
     expect(results.map(r => r.stdout)).toEqual(["[true,false]", "[false,true]", "[true,true]", "[false,false]"]);
   });
 
-  test("section matching is case-insensitive and supports wildcards", async () => {
+  test.concurrent("section matching is case-insensitive and supports wildcards", async () => {
     const script = `const util = require("util");
       process.stdout.write(JSON.stringify([util.debuglog("FOO").enabled, util.debuglog("foobar").enabled]));`;
     const results = await Promise.all([run(script, "foo"), run(script, "foo*")]);
     expect(results.map(r => r.stdout)).toEqual(["[true,false]", "[true,true]"]);
   });
 
-  test("the callback runs once, on the first call, with the logging function", async () => {
+  test.concurrent("the callback runs once, on the first call, with the logging function", async () => {
     const { stdout, exitCode } = await run(
       `const util = require("util");
        const seen = [];
@@ -75,7 +75,7 @@ describe("util.debuglog", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the logging function handed to the callback also reports enabled", async () => {
+  test.concurrent("the logging function handed to the callback also reports enabled", async () => {
     const { stdout } = await run(
       `const util = require("util");
        let enabled;
@@ -86,13 +86,13 @@ describe("util.debuglog", () => {
     expect(stdout).toBe("true");
   });
 
-  test("a non-function callback is ignored", async () => {
+  test.concurrent("a non-function callback is ignored", async () => {
     const result = await run(`require("util").debuglog("ignored", 42)("x");`, "ignored");
     expect(result.stderr.trim()).toMatch(/^IGNORED \d+: x$/);
     expect(result.exitCode).toBe(0);
   });
 
-  test("NODE_DEBUG=http warns that it can expose sensitive data", async () => {
+  test.concurrent("NODE_DEBUG=http warns that it can expose sensitive data", async () => {
     const { stderr, exitCode } = await run(`require("util").debuglog("http");`, "http");
     expect(stderr).toContain("can expose sensitive data");
     expect(exitCode).toBe(0);

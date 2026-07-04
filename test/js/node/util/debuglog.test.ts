@@ -35,14 +35,13 @@ describe("util.debuglog", () => {
   });
 
   test("an enabled section writes SECTION pid: message to stderr", async () => {
-    const { stderr, exitCode } = await run(
+    const { stdout, stderr, exitCode } = await run(
       `const log = require("util").debuglog("noisy");
        process.stdout.write(String(log.enabled));
        log("hello %s", "world");`,
       "noisy",
     );
-    expect(stderr).toContain("NOISY");
-    expect(stderr).toContain("hello world");
+    expect(stdout).toBe("true");
     expect(stderr.trim()).toMatch(/^NOISY \d+: hello world$/);
     expect(exitCode).toBe(0);
   });

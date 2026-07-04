@@ -1,5 +1,5 @@
 // https://nodejs.org/api/util.html#utilstyletextformat-text-options
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { Writable } from "node:stream";
 import util from "node:util";
@@ -15,6 +15,16 @@ function colorCapableStream() {
   stream.getColorDepth = () => 24;
   return stream;
 }
+
+// FORCE_COLOR short-circuits the stream check, so the in-process cases below
+// would answer to the ambient environment rather than to the stream they pass.
+const ambientForceColor = process.env.FORCE_COLOR;
+beforeAll(() => {
+  delete process.env.FORCE_COLOR;
+});
+afterAll(() => {
+  if (ambientForceColor !== undefined) process.env.FORCE_COLOR = ambientForceColor;
+});
 
 describe("util.styleText", () => {
   test("wraps the text in the format's open and close codes", () => {

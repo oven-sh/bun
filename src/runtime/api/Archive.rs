@@ -689,7 +689,19 @@ fn add_object_entries(
         let key_slice = key.to_utf8();
         let path = ZBox::from_bytes(key_slice.slice());
 
-        // Use a view for Blob/ArrayBuffer, convert for strings.
+        // `Bun.file()` has no bytes in memory; stream it off disk.
+        if let Some(blob) = blob_from_js(value) {
+            if let Some(store) = blob.store.get().as_ref() {
+                if let Some(file) = file_backed_source(global, blob, store)? {
+                    builder
+                        .add_file(&path, &file.path, file.offset, file.len, mtime)
+                        .map_err(|err| throw_build_error(global, err))?;
+                    continue;
+                }
+            }
+        }
+
+        // Use a view for in-memory Blob/ArrayBuffer, convert for strings.
         let data_slice = get_entry_data(global, value)?;
 
         builder
@@ -698,6 +710,42 @@ fn add_object_entries(
     }
 
     Ok(())
+}
+
+/// Where a file-backed blob's bytes live on disk. `None` for an in-memory blob,
+/// whose bytes both archive paths read directly instead.
+struct FileBackedSource {
+    path: ZBox,
+    offset: u64,
+    len: Option<u64>,
+}
+
+fn file_backed_source(
+    global: &JSGlobalObject,
+    blob: &Blob,
+    store: &StoreRef,
+) -> JsResult<Option<FileBackedSource>> {
+    match &store.data {
+        BlobData::Bytes(_) => Ok(None),
+        BlobData::File(file) => match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => {
+                // A file-backed blob's size stays `MAX_SIZE` until something
+                // stats it; only a `.slice()` gives a real window to honour.
+                let declared = blob.size.get();
+                Ok(Some(FileBackedSource {
+                    path: ZBox::from_bytes(path.slice()),
+                    offset: blob.offset.get(),
+                    len: (declared < BLOB_MAX_SIZE).then_some(declared),
+                }))
+            }
+            PathOrFileDescriptor::Fd(_) => Err(global.throw_invalid_arguments(format_args!(
+                "Bun.Archive: file descriptor-backed files are not supported; read the bytes first"
+            ))),
+        },
+        BlobData::S3(_) => Err(global.throw_invalid_arguments(format_args!(
+            "Bun.Archive: S3 files are not supported; await file.bytes() first"
+        ))),
+    }
 }
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
@@ -752,38 +800,22 @@ fn parse_append_source(global: &JSGlobalObject, value: JSValue) -> JsResult<Appe
         let Some(store) = blob.store.get().as_ref().cloned() else {
             return Ok(AppendSource::Bytes(Vec::new()));
         };
-        match &store.data {
-            BlobData::Bytes(_) => {
-                let view = store.shared_view();
-                let offset = usize::try_from(blob.offset.get())
-                    .unwrap_or(usize::MAX)
-                    .min(view.len());
-                let len = usize::try_from(blob.size.get())
-                    .unwrap_or(usize::MAX)
-                    .min(view.len() - offset);
-                return Ok(AppendSource::Store { store, offset, len });
-            }
-            BlobData::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => {
-                    let declared = blob.size.get();
-                    return Ok(AppendSource::File {
-                        path: ZBox::from_bytes(path.slice()),
-                        offset: blob.offset.get(),
-                        len: (declared < BLOB_MAX_SIZE).then_some(declared),
-                    });
-                }
-                PathOrFileDescriptor::Fd(_) => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Archive.append: file descriptor-backed files are not supported; read the bytes first"
-                    )));
-                }
-            },
-            BlobData::S3(_) => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Archive.append: S3 files are not supported; await file.bytes() first"
-                )));
-            }
+        if let Some(file) = file_backed_source(global, blob, &store)? {
+            return Ok(AppendSource::File {
+                path: file.path,
+                offset: file.offset,
+                len: file.len,
+            });
         }
+        // In-memory: hold a ref on the store instead of copying its bytes.
+        let view = store.shared_view();
+        let offset = usize::try_from(blob.offset.get())
+            .unwrap_or(usize::MAX)
+            .min(view.len());
+        let len = usize::try_from(blob.size.get())
+            .unwrap_or(usize::MAX)
+            .min(view.len() - offset);
+        return Ok(AppendSource::Store { store, offset, len });
     }
 
     if let Some(array_buffer) = value.as_array_buffer(global) {

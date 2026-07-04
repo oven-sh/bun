@@ -1908,6 +1908,50 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe("Bun.file() entries", () => {
+    test("the object form streams a Bun.file() instead of writing an empty entry", async () => {
+      using dir = tempDir("archive-objform-file", {
+        "a.txt": "from disk",
+        "b.json": JSON.stringify({ n: 1 }),
+      });
+
+      const archive = new Bun.Archive({
+        "a.txt": Bun.file(join(String(dir), "a.txt")),
+        "b.json": Bun.file(join(String(dir), "b.json")),
+        "inline.txt": "inline",
+      });
+
+      const files = await archive.files();
+      expect(await files.get("a.txt")!.text()).toBe("from disk");
+      expect(await files.get("b.json")!.text()).toBe(JSON.stringify({ n: 1 }));
+      expect(await files.get("inline.txt")!.text()).toBe("inline");
+    });
+
+    test("the object form honors a sliced Bun.file()", async () => {
+      using dir = tempDir("archive-objform-slice", { "a.txt": "0123456789" });
+
+      const archive = new Bun.Archive({ "s.txt": Bun.file(join(String(dir), "a.txt")).slice(2, 6) });
+      expect(await (await archive.files()).get("s.txt")!.text()).toBe("2345");
+    });
+
+    test("Archive.write() streams Bun.file() entries too", async () => {
+      using dir = tempDir("archive-objform-write", { "src.txt": "streamed" });
+      const out = join(String(dir), "out.tar");
+
+      await Bun.Archive.write(out, { "src.txt": Bun.file(join(String(dir), "src.txt")) });
+
+      const files = await new Bun.Archive(await Bun.file(out).bytes()).files();
+      expect(await files.get("src.txt")!.text()).toBe("streamed");
+    });
+
+    test("a missing Bun.file() throws rather than writing an empty entry", () => {
+      using dir = tempDir("archive-objform-missing", {});
+      expect(() => new Bun.Archive({ "gone.txt": Bun.file(join(String(dir), "gone.txt")) })).toThrow(
+        /ENOENT|no such file/i,
+      );
+    });
+  });
+
   describe("zip format", () => {
     test("writes a zip with the PK local file header magic", async () => {
       const archive = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip" });

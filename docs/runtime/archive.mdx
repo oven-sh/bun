@@ -68,8 +68,11 @@ File contents can be:
 
 - **Strings** - Text content
 - **Blobs** - Binary data
+- **`Bun.file()`** - Read from disk, a chunk at a time
 - **ArrayBufferViews** (such as `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
+
+`Bun.file()` entries are read synchronously while the constructor runs. To build an archive out of large files without blocking, use [`append()`](#appending-entries) instead.
 
 ```ts
 const data = "binary data";
@@ -477,6 +480,18 @@ async function archiveDirectory(dir: string, compress = false): Promise<Bun.Arch
 
 const archive = await archiveDirectory("./my-project", true);
 await Bun.write("my-project.tar.gz", archive);
+```
+
+For a large directory, `append()` keeps the constructor from blocking and bounds memory:
+
+```ts
+import { Glob } from "bun";
+
+const archive = new Bun.Archive(undefined, { format: "zip" });
+for await (const path of new Glob("**/*").scan("./my-project")) {
+  await archive.append(path, Bun.file(`./my-project/${path}`));
+}
+await Bun.Archive.write("my-project.zip", archive);
 ```
 
 ## Reference

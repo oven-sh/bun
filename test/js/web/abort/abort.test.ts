@@ -296,9 +296,9 @@ describe("the stack of a DOMException abort reason", () => {
   });
 });
 
-// Awaiting the abort event of a timeout signal wedges the test runner on Windows,
-// which is what the "FIXME: test runner hangs" in abort.ts is about. Polling the
-// flag with a bound fails loudly instead of hanging the whole file.
+// Awaiting the abort event of a timeout signal wedges the test runner on Windows:
+// https://github.com/oven-sh/bun/issues/33334. Polling the flag with a bound fails
+// loudly instead of hanging the whole file. Revert to awaiting the event once fixed.
 async function waitUntilAborted(signal: AbortSignal) {
   for (let attempt = 0; attempt < 2000 && !signal.aborted; attempt++) {
     await Bun.sleep(1);

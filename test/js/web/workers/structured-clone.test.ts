@@ -1003,29 +1003,26 @@ describe("structuredClone rejects non-serializable values", () => {
     ],
   ];
 
-  for (const [label, make] of rejected) {
-    test(`${label} throws a DataCloneError`, () => {
-      let thrown: any;
-      try {
-        structuredClone(make());
-      } catch (error) {
-        thrown = error;
-      }
-      expect(thrown).toBeInstanceOf(DOMException);
-      expect(thrown.name).toBe("DataCloneError");
-    });
-  }
-
-  test("a typed array in the transfer list throws a DataCloneError", () => {
-    const view = new Uint8Array(8);
+  function expectDataCloneError(clone: () => unknown) {
     let thrown: any;
     try {
-      structuredClone(view, { transfer: [view as any] });
+      clone();
     } catch (error) {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(DOMException);
     expect(thrown.name).toBe("DataCloneError");
+  }
+
+  for (const [label, make] of rejected) {
+    test(`${label} throws a DataCloneError`, () => {
+      expectDataCloneError(() => structuredClone(make()));
+    });
+  }
+
+  test("a typed array in the transfer list throws a DataCloneError", () => {
+    const view = new Uint8Array(8);
+    expectDataCloneError(() => structuredClone(view, { transfer: [view as any] }));
   });
 });
 

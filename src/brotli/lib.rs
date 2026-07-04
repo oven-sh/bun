@@ -348,6 +348,8 @@ impl StreamingDecoder {
         }
         .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
+        // OHOS: LARGE_WINDOW causes crashes in Brotli decoder (verified 2026-06-07).
+        #[cfg(not(target_env = "ohos"))]
         if options.params.large_window {
             let _ =
                 BrotliDecoder::set_parameter(brotli, c::BrotliDecoderParameter::LARGE_WINDOW, 1);

@@ -414,9 +414,10 @@ fn parse_at_rule<P: AtRuleParser>(
                     Ok(v) => v,
                     Err(_) => break 'out,
                 };
-                if !matches!(*tok, Token::OpenCurly | Token::Semicolon) {
-                    unreachable!("Should have consumed these delimiters");
-                }
+                debug_assert!(
+                    matches!(*tok, Token::OpenCurly | Token::Semicolon),
+                    "parse_until_before(SEMICOLON|CURLY) contract"
+                );
             }
             return Err(e);
         }
@@ -438,7 +439,7 @@ fn parse_at_rule<P: AtRuleParser>(
         Token::OpenCurly => parse_nested_block(input, |input2: &mut Parser| {
             P::parse_block(parser, prelude, start, input2)
         }),
-        _ => unreachable!(),
+        t => Err(input.new_unexpected_token_error(t)),
     }
 }
 
@@ -982,7 +983,6 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
 pub enum AtRulePrelude<T> {
     FontFace,
-    FontFeatureValues,
     FontPaletteValues(DashedIdent),
     CounterStyle(CustomIdent),
     Import {
@@ -1538,16 +1538,9 @@ mod rule_parsers {
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
-            let composes_state = if self.is_in_style_rule
-                && matches!(self.composes_state, ComposesState::Allow(_))
-            {
-                let ComposesState::Allow(l) = self.composes_state else {
-                    unreachable!()
-                };
-                ComposesState::DisallowNested(l)
-            } else {
-                // ComposesState is Copy.
-                self.composes_state
+            let composes_state = match self.composes_state {
+                ComposesState::Allow(l) if self.is_in_style_rule => ComposesState::DisallowNested(l),
+                other => other,
             };
             // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
             // parser arena.
@@ -2008,7 +2001,6 @@ mod rule_parsers {
                         }));
                     Ok(())
                 }
-                AtRulePrelude::FontFeatureValues => unreachable!(),
                 AtRulePrelude::Unknown { name, tokens } => {
                     this.rules.v.push(CssRule::Unknown(UnknownAtRule {
                         name,
@@ -3605,7 +3597,8 @@ impl<'a> Parser<'a> {
                 Err(_) => return Ok(values),
             };
             if !matches!(tok, Token::Comma) {
-                unreachable!();
+                debug_assert!(false, "parse_until_before(COMMA) contract");
+                return Ok(values);
             }
         }
     }
@@ -4011,7 +4004,8 @@ impl<'a> Parser<'a> {
                 ) {
                     Ok(())
                 } else {
-                    unreachable!("Unexpected error encountered: {}", e.kind);
+                    debug_assert!(false, "expect_exhausted: unexpected error {}", e.kind);
+                    Ok(())
                 }
             }
         };
@@ -5716,14 +5710,6 @@ impl Token {
     #[inline]
     pub fn kind_string(&self) -> &'static str {
         self.kind().to_string()
-    }
-
-    pub fn raw(&self) -> &[u8] {
-        match self {
-            Token::Ident(v) => v,
-            // .function => ...
-            _ => unreachable!(),
-        }
     }
 
     pub fn to_css_generic<W: WriteAll + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {

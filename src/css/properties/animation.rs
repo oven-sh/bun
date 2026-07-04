@@ -2,9 +2,8 @@ use crate as css;
 use crate::CSSString;
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
-use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
+use crate::css_values::length::LengthPercentage;
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
-use crate::css_values::size::Size2D;
 use crate::css_values::time::Time;
 use crate::generics::CssEql;
 use crate::{Parser, PrintErr, Printer, SmallList};
@@ -513,17 +512,9 @@ pub enum AnimationTimeline {
     None,
     /// A timeline referenced by name.
     DashedIdent(DashedIdent),
-    /// The scroll() function.
-    Scroll(ScrollTimeline),
-    /// The view() function.
-    View(ViewTimeline),
 }
 
 impl AnimationTimeline {
-    // Void variants (`auto`, `none`) are tried first via ident match;
-    // payloads follow in declaration order. We stop at `DashedIdent`; if
-    // scroll()/view() ever become live they need real function-syntax
-    // parsing, not a derived field-sequence fallback.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
@@ -545,12 +536,6 @@ impl AnimationTimeline {
             AnimationTimeline::Auto => dest.write_str(b"auto"),
             AnimationTimeline::None => dest.write_str(b"none"),
             AnimationTimeline::DashedIdent(d) => d.to_css(dest),
-            // These variants are currently unconstructible via `parse()`, and
-            // emitting bare space-separated fields here would be wrong CSS
-            // (spec syntax is `scroll(...)` / `view(...)`).
-            AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
-                unreachable!("ScrollTimeline / ViewTimeline have no toCss in spec (uninstantiated)")
-            }
         }
     }
 
@@ -584,72 +569,8 @@ impl PartialEq for AnimationTimeline {
             (AnimationTimeline::Auto, AnimationTimeline::Auto) => true,
             (AnimationTimeline::None, AnimationTimeline::None) => true,
             (AnimationTimeline::DashedIdent(a), AnimationTimeline::DashedIdent(b)) => a.eql(b),
-            (AnimationTimeline::Scroll(a), AnimationTimeline::Scroll(b)) => a == b,
-            (AnimationTimeline::View(a), AnimationTimeline::View(b)) => {
-                a.axis == b.axis && Size2D::eql(&a.inset, &b.inset)
-            }
             _ => false,
         }
-    }
-}
-
-/// The [scroll()](https://drafts.csswg.org/scroll-animations-1/#scroll-notation) function.
-#[derive(PartialEq, Eq)]
-pub struct ScrollTimeline {
-    /// Specifies which element to use as the scroll container.
-    pub scroller: Scroller,
-    /// Specifies which axis of the scroll container to use as the progress for the timeline.
-    pub axis: ScrollAxis,
-}
-
-/// The [view()](https://drafts.csswg.org/scroll-animations-1/#view-notation) function.
-pub struct ViewTimeline {
-    /// Specifies which axis of the scroll container to use as the progress for the timeline.
-    pub axis: ScrollAxis,
-    /// Provides an adjustment of the view progress visibility range.
-    pub inset: Size2D<LengthPercentageOrAuto>,
-}
-
-/// A scroller, used in the `scroll()` function.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum Scroller {
-    /// Specifies to use the document viewport as the scroll container.
-    Root,
-    /// Specifies to use the nearest ancestor scroll container.
-    Nearest,
-    /// Specifies to use the element's own principal box as the scroll container.
-    #[css("self")]
-    Self_,
-}
-
-impl Scroller {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
-    pub fn default() -> Scroller {
-        Scroller::Nearest
-    }
-}
-
-/// A scroll axis, used in the `scroll()` function.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum ScrollAxis {
-    /// Specifies to use the measure of progress along the block axis of the scroll container.
-    Block,
-    /// Specifies to use the measure of progress along the inline axis of the scroll container.
-    Inline,
-    /// Specifies to use the measure of progress along the horizontal axis of the scroll container.
-    X,
-    /// Specifies to use the measure of progress along the vertical axis of the scroll container.
-    Y,
-}
-
-impl ScrollAxis {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
-    pub fn default() -> ScrollAxis {
-        ScrollAxis::Block
     }
 }
 

@@ -492,11 +492,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                         rgba.green as u32,
                                         rgba.blue as u32,
                                     );
-                                    // Foreground text color as a 16-color SGR parameter:
-                                    // 30..=37 for the first eight, 90..=97 for their
-                                    // bright variants. The 38;5;{index} form only a
-                                    // 256-color terminal understands is what ansi-256 is
-                                    // for.
+                                    // 16-color SGR: 30..=37 for the first eight, 90..=97
+                                    // for their bright variants. The 38;5;{index} form
+                                    // only a 256-color terminal reads is ansi-256's job.
                                     let sgr = if index < 8 { 30 + index } else { 82 + index };
                                     let mut buf = [0u8; 8];
                                     buf[0..2].copy_from_slice(b"\x1b[");

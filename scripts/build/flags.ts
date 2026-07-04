@@ -1396,7 +1396,10 @@ export const linkerFlags: Flag[] = [
       "-Wl,--undefined=us_socket_sni_resolve",
       "-Wl,--undefined=us_socket_set_tos",
       "-Wl,--undefined=us_socket_tls_feed",
-      "-Wl,--undefined=Bun__dlopen"],
+      "-Wl,--undefined=Bun__dlopen",
+      // Keep .bun section alive for --compile even though OHOS
+      // runtime reads payload via /proc/self/exe (doesn't reference it).
+      "-Wl,--undefined=BUN_COMPILED"],
     when: c => c.release && c.ohos,
     desc: "Force-keep uSockets SSL symbols + Bun__dlopen referenced via Rust FFI (OHOS)",
   },

@@ -264,20 +264,6 @@ impl VendorPrefix {
         VendorPrefix::NONE,
     ];
 
-    // NOTE: bitflags 2.x already generates `from_name(&str) -> Option<Self>`;
-    // the panicking variant is exposed as `from_name_str`.
-    #[inline]
-    pub fn from_name_str(name: &str) -> VendorPrefix {
-        match name {
-            "none" => VendorPrefix::NONE,
-            "webkit" => VendorPrefix::WEBKIT,
-            "moz" => VendorPrefix::MOZ,
-            "ms" => VendorPrefix::MS,
-            "o" => VendorPrefix::O,
-            _ => unreachable!(),
-        }
-    }
-
     /// Returns VendorPrefix::None if empty.
     #[inline]
     pub fn or_none(self) -> VendorPrefix {

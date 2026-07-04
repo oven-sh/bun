@@ -9199,7 +9199,10 @@ declare module "bun" {
      *
      * @param path - The file path to write the archive to
      * @param data - The input data for the archive (same as `new Archive()`)
-     * @param options - Optional archive options including compression settings
+     * @param options - Optional archive options including compression settings.
+     *   When `data` is an existing `Archive` its bytes are already packed, so
+     *   `format` has no effect; only `compress` still applies, and omitting it
+     *   inherits the archive's own setting.
      *
      * @returns A promise that resolves when the write is complete
      *

@@ -349,6 +349,8 @@ const fastZip = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip
 const storedZip = new Bun.Archive({ "hello.txt": "Hello, World!" }, { format: "zip", compress: "store" });
 ```
 
+When `Bun.Archive.write()` is handed an existing `Archive`, its bytes are already packed, so `format` has no effect there; only `compress` still applies, and omitting it inherits the archive's own setting.
+
 The `options` argument accepts:
 
 - `{ format: "tar" | "zip" }` - Container format (default `"tar"`)

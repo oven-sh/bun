@@ -1985,3 +1985,37 @@ it("readMany batches the pipelined pull's chunk with the delivered one", async (
   }
   expect(wakes).toEqual(["c1", "c2", "c3,c4", "c5,c6"]);
 });
+
+
+// A chunk the pipe has already dequeued when a shutdown begins must still be written to the
+// destination (the shutdown waits for pending writes); it must not vanish.
+// https://github.com/oven-sh/bun/pull/33329
+it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", async () => {
+  const ac = new AbortController();
+  let pulls = 0;
+  const written = [];
+  const rs = new ReadableStream({
+    start(c) {
+      c.enqueue("a");
+      c.enqueue("b");
+      c.enqueue("c");
+    },
+    pull() {
+      if (++pulls === 1) ac.abort(new Error("stop"));
+    },
+  });
+  const ws = new WritableStream(
+    {
+      write(chunk) {
+        written.push(chunk);
+      },
+    },
+    new CountQueuingStrategy({ highWaterMark: 16 }),
+  );
+  const outcome = await rs.pipeTo(ws, { signal: ac.signal }).then(
+    () => "fulfilled",
+    e => "rejected:" + e.message,
+  );
+  // Node 26 agrees byte-for-byte: every dequeued chunk is written before the abort finishes.
+  expect({ outcome, written }).toEqual({ outcome: "rejected:stop", written: ["a", "b", "c"] });
+});

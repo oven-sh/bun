@@ -486,7 +486,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobal
             if (!next)
                 break;
             // The dequeue can run the source's pull(): re-check before touching the writer.
-            if (op->m_finalized || op->m_shuttingDown || op->m_writer.get() != writer)
+            // A dequeued chunk must still be written if a shutdown merely began (the
+            // shutdown waits on m_currentWrite); only a finalized op or a replaced writer
+            // makes the write invalid.
+            if (op->m_finalized || op->m_writer.get() != writer)
                 break;
             auto* nextWrite = writableStreamDefaultWriterWrite(globalObject, writer, next);
             if (catchScope.exception()) [[unlikely]]
@@ -618,10 +621,11 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, writePromise);
     queuePipeReactionJob(vm, globalObject, runtime->onPipeChunkDeferredWrite(), chunk, context);
     publishPipeWrite(globalObject, op, writePromise);
+    RETURN_IF_EXCEPTION(scope, );
     // A shutdown that is waiting on m_currentWrite re-checks it when its reaction fires.
     if (op->m_shuttingDown)
         return;
-    WebCore::registerPipeReaction(globalObject, writer->m_readyPromise.get(), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
+    RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->m_readyPromise.get(), runtime->onPipeWriterReadyFulfilled(), nullptr, op));
 }
 
 void pipeToReadRequestCloseSteps(JSGlobalObject* globalObject, JSStreamPipeToOperation* op)

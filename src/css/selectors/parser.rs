@@ -475,7 +475,8 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
     use GenericComponent as C;
     match simple_selector {
         C::Combinator(_) => {
-            unreachable!("Found combinator in simple selectors vector?");
+            // Compound-selector iteration never yields combinators; contribute nothing.
+            debug_assert!(false, "Found combinator in simple selectors vector?");
         }
         C::Part(_) | C::PseudoElement(_) | C::LocalName(_) => {
             specificity.element_selectors += 1;
@@ -525,20 +526,14 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
             }
             specificity.add(Specificity::from_u32(max));
         }
-        C::Negation(_) | C::Is(_) | C::Any { .. } => {
+        C::Negation(list) | C::Is(list) | C::Any { selectors: list, .. } => {
             // https://drafts.csswg.org/selectors/#specificity-rules:
             //
             //     The specificity of an :is() pseudo-class is replaced by the
             //     specificity of the most specific complex selector in its
             //     selector list argument.
-            let list: &[GenericSelector<Impl>] = match simple_selector {
-                C::Negation(list) => list,
-                C::Is(list) => list,
-                C::Any { selectors, .. } => selectors,
-                _ => unreachable!(),
-            };
             let mut max: u32 = 0;
-            for selector in list {
+            for selector in list.iter() {
                 max = selector.specificity().max(max);
             }
             specificity.add(Specificity::from_u32(max));
@@ -1669,13 +1664,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         true
     }
 
-    /// Do not call this! Use `serializer::serialize_selector_list()` or
-    /// `tocss_servo::to_css_selector_list()` instead.
-    #[deprecated = "use serializer::serialize_selector_list()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector_list()");
-    }
-
     pub fn parse_with_options(input: &mut CssParser, options: &ParserOptions) -> CResult<Self> {
         let mut parser = SelectorParser {
             options,
@@ -1947,13 +1935,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
-    }
-
-    /// Do not call this! Use `serializer::serialize_selector()` or
-    /// `tocss_servo::to_css_selector()` instead.
-    #[deprecated = "use serializer::serialize_selector()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector()");
     }
 
     pub fn append(&mut self, component: GenericComponent<Impl>) {
@@ -2410,13 +2391,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// Returns true if this is a combinator.
     pub fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
-    }
-
-    /// Do not call this! Use `serializer::serialize_component()` or
-    /// `tocss_servo::to_css_component()` instead.
-    #[deprecated = "use serializer::serialize_component()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_component()");
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
@@ -2952,13 +2926,6 @@ pub enum Combinator {
 impl Combinator {
     // hash — via `#[derive(CssHash)]`.
 
-    /// Do not call this! Use `serializer::serialize_combinator()` or
-    /// `tocss_servo::to_css_combinator()` instead.
-    #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_combinator()");
-    }
-
     pub fn is_tree_combinator(self) -> bool {
         matches!(
             self,
@@ -3305,7 +3272,7 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
     state: SelectorParsingState,
     sink: &mut SelectorBuilder<Impl>,
 ) -> CResult<bool> {
-    let result = match parse_qualified_name::<Impl>(parser, input, false) {
+    let result = match parse_qualified_name::<Impl>(parser, input) {
         Ok(v) => v,
         Err(e) => {
             if matches!(
@@ -3361,9 +3328,6 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
             // QNamePrefix::ImplicitAnyNamespace case.
             // For lightning css this logic was removed, should be handled when matching.
             sink.push_simple_selector(GenericComponent::ExplicitAnyNamespace);
-        }
-        QNamePrefix::ImplicitNoNamespace => {
-            unreachable!("Should not be returned with in_attr_selector = false");
         }
     }
 
@@ -3576,30 +3540,25 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let (namespace, local_name): (Option<N<Impl>>, Str) = 'brk: {
         input.skip_whitespace();
 
-        let qname = parse_qualified_name::<Impl>(parser, input, true)?;
+        let qname = parse_attr_qualified_name::<Impl>(parser, input)?;
         match qname {
-            OptionalQName::None(t) => {
+            OptionalAttrQName::None(t) => {
                 return Err(input.new_custom_error(
                     SelectorParseErrorKind::NoQualifiedNameInAttributeSelector(t)
                         .into_default_parser_error(),
                 ));
             }
-            OptionalQName::Some(ns, ln) => {
-                let ln = ln.unwrap_or_else(|| unreachable!());
+            OptionalAttrQName::Some(ns, ln) => {
                 break 'brk (
                     match ns {
-                        QNamePrefix::ImplicitNoNamespace | QNamePrefix::ExplicitNoNamespace => None,
-                        QNamePrefix::ExplicitNamespace(prefix, url) => {
+                        AttrQName::NoNamespace => None,
+                        AttrQName::Specific(prefix, url) => {
                             Some(attrs::NamespaceConstraint::Specific(attrs::NamespaceUrl {
                                 prefix,
                                 url,
                             }))
                         }
-                        QNamePrefix::ExplicitAnyNamespace => Some(attrs::NamespaceConstraint::Any),
-                        QNamePrefix::ImplicitAnyNamespace
-                        | QNamePrefix::ImplicitDefaultNamespace(_) => {
-                            unreachable!("Not returned with in_attr_selector = true");
-                        }
+                        AttrQName::Any => Some(attrs::NamespaceConstraint::Any),
                     },
                     ln,
                 );
@@ -4031,8 +3990,8 @@ pub enum OptionalQName<Impl: SelectorImpl> {
     None(Token),
 }
 
+/// Namespace prefix as observed by a **type** selector (`ns|E`, `*|E`, `|E`, `E`).
 pub enum QNamePrefix<Impl: SelectorImpl> {
-    ImplicitNoNamespace,                          // `foo` in attr selectors
     ImplicitAnyNamespace,                         // `foo` in type selectors, without a default ns
     ImplicitDefaultNamespace(Impl::NamespaceUrl), // `foo` in type selectors, with a default ns
     ExplicitNoNamespace,                          // `|foo`
@@ -4040,6 +3999,22 @@ pub enum QNamePrefix<Impl: SelectorImpl> {
     ExplicitNamespace(Impl::NamespacePrefix, Impl::NamespaceUrl), // `prefix|foo`
 }
 
+/// Namespace prefix as observed by an **attribute** selector (`[ns|attr]`, `[*|attr]`, `[attr]`).
+/// Implicit and explicit no-namespace collapse; a default @namespace does not apply.
+pub enum AttrQName<Impl: SelectorImpl> {
+    NoNamespace,                                        // `foo` or `|foo`
+    Any,                                                // `*|foo`
+    Specific(Impl::NamespacePrefix, Impl::NamespaceUrl), // `prefix|foo`
+}
+
+pub enum OptionalAttrQName<Impl: SelectorImpl> {
+    /// Local name is always present — `[ns|*]` is a parse error.
+    Some(AttrQName<Impl>, Str),
+    None(Token),
+}
+
+/// Parse a qualified name for a **type** selector.
+///
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(None(token))`: Not a simple selector, could be something else. `input` was not consumed,
 ///                      but the token is still returned.
@@ -4047,7 +4022,6 @@ pub enum QNamePrefix<Impl: SelectorImpl> {
 pub fn parse_qualified_name<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    in_attr_selector: bool,
 ) -> CResult<OptionalQName<Impl>> {
     let start = input.state();
 
@@ -4083,16 +4057,9 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                 return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                     input,
                     QNamePrefix::ExplicitNamespace(prefix, url),
-                    in_attr_selector,
                 );
             } else {
                 input.reset(&after_ident);
-                if in_attr_selector {
-                    return Ok(OptionalQName::Some(
-                        QNamePrefix::ImplicitNoNamespace,
-                        Some(value),
-                    ));
-                }
                 return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
                     parser,
                     Some(value),
@@ -4108,29 +4075,18 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                         return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                             input,
                             QNamePrefix::ExplicitAnyNamespace,
-                            in_attr_selector,
                         );
                     }
                 }
-                // Reshaped for borrowck — clone token before reset.
-                let result_cloned = result.cloned();
                 input.reset(&after_star);
-                if in_attr_selector {
-                    let t = result_cloned?;
-                    return Err(after_star
-                        .source_location()
-                        .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
-                } else {
-                    return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
-                        parser, None,
-                    ));
-                }
+                return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
+                    parser, None,
+                ));
             }
             Some(b'|') => {
                 return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                     input,
                     QNamePrefix::ExplicitNoNamespace,
-                    in_attr_selector,
                 );
             }
             _ => {}
@@ -4156,24 +4112,109 @@ fn parse_qualified_name_default_namespace_helper<Impl: BunSelectorImpl>(
 fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     input: &mut CssParser,
     namespace: QNamePrefix<Impl>,
-    in_attr_selector: bool,
 ) -> CResult<OptionalQName<Impl>> {
     let location = input.current_source_location();
     let t = input.next_including_whitespace()?.clone();
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
-        // `*` is only a valid local name outside of attribute selectors;
-        // `[ns|*]` must fall through to the `InvalidQualNameInAttr` error below.
-        Token::Delim(c) if *c == b'*' as u32 && !in_attr_selector => {
+        Token::Delim(c) if *c == b'*' as u32 => {
             return Ok(OptionalQName::Some(namespace, None));
         }
         _ => {}
     }
-    if in_attr_selector {
-        let e = SelectorParseErrorKind::InvalidQualNameInAttr(t);
-        return Err(location.new_custom_error(e));
-    }
     Err(location.new_custom_error(SelectorParseErrorKind::ExplicitNamespaceUnexpectedToken(t)))
+}
+
+/// Parse a qualified name for an **attribute** selector. `[ns|*]` is rejected here,
+/// so a successful parse always yields a concrete local name.
+pub fn parse_attr_qualified_name<Impl: BunSelectorImpl>(
+    parser: &mut SelectorParser,
+    input: &mut CssParser,
+) -> CResult<OptionalAttrQName<Impl>> {
+    let start = input.state();
+
+    let tok = match input.next_including_whitespace() {
+        Ok(v) => v.clone(),
+        Err(e) => {
+            input.reset(&start);
+            return Err(e);
+        }
+    };
+    match &tok {
+        Token::Ident(value) => {
+            let value = *value;
+            let after_ident = input.state();
+            let n = if let Ok(t) = input.next_including_whitespace() {
+                matches!(t, Token::Delim(d) if *d == b'|' as u32)
+            } else {
+                false
+            };
+            if n {
+                let prefix: Impl::NamespacePrefix = Ident { v: value };
+                let result: Option<Impl::NamespaceUrl> =
+                    parser.namespace_for_prefix(Ident { v: value });
+                let url: Impl::NamespaceUrl = match result {
+                    Some(url) => url,
+                    None => {
+                        return Err(input.new_custom_error(
+                            SelectorParseErrorKind::UnsupportedPseudoClassOrElement(value)
+                                .into_default_parser_error(),
+                        ));
+                    }
+                };
+                return parse_attr_qualified_name_explicit_helper::<Impl>(
+                    input,
+                    AttrQName::Specific(prefix, url),
+                );
+            } else {
+                input.reset(&after_ident);
+                return Ok(OptionalAttrQName::Some(AttrQName::NoNamespace, value));
+            }
+        }
+        Token::Delim(c) => match u8::try_from(*c).ok() {
+            Some(b'*') => {
+                let after_star = input.state();
+                let result = input.next_including_whitespace();
+                if let Ok(t) = &result {
+                    if matches!(t, Token::Delim(d) if *d == b'|' as u32) {
+                        return parse_attr_qualified_name_explicit_helper::<Impl>(
+                            input,
+                            AttrQName::Any,
+                        );
+                    }
+                }
+                // Reshaped for borrowck — clone token before reset.
+                let result_cloned = result.cloned();
+                input.reset(&after_star);
+                let t = result_cloned?;
+                return Err(after_star
+                    .source_location()
+                    .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
+            }
+            Some(b'|') => {
+                return parse_attr_qualified_name_explicit_helper::<Impl>(
+                    input,
+                    AttrQName::NoNamespace,
+                );
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+    input.reset(&start);
+    Ok(OptionalAttrQName::None(tok))
+}
+
+fn parse_attr_qualified_name_explicit_helper<Impl: BunSelectorImpl>(
+    input: &mut CssParser,
+    namespace: AttrQName<Impl>,
+) -> CResult<OptionalAttrQName<Impl>> {
+    let location = input.current_source_location();
+    let t = input.next_including_whitespace()?.clone();
+    if let Token::Ident(local_name) = &t {
+        return Ok(OptionalAttrQName::Some(namespace, *local_name));
+    }
+    Err(location.new_custom_error(SelectorParseErrorKind::InvalidQualNameInAttr(t)))
 }
 
 #[derive(Clone, PartialEq)]

@@ -294,11 +294,9 @@ impl Archive {
         // For plain objects, open a writer and pack the object's entries into it.
         if data_arg.is_object() {
             let mut builder = open_builder(global, options)?;
-            if let Err(err) = add_object_entries(global, &mut builder, data_arg) {
-                // A JS exception from property iteration: the builder's `Drop`
-                // closes the writer and removes any spill file.
-                return Err(err);
-            }
+            // On a JS exception from property iteration the builder's `Drop`
+            // closes the writer and removes any spill file.
+            add_object_entries(global, &mut builder, data_arg)?;
             return Ok(Archive::new(State::Building(Some(builder)), options));
         }
 
@@ -468,7 +466,7 @@ fn reject_pending(global: &JSGlobalObject, job: PendingAppend, message: &str) {
 
 /// Seconds since the epoch, for entry mtimes.
 fn now_seconds() -> i64 {
-    i64::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0)
+    bun_core::time::timestamp()
 }
 
 fn open_builder(global: &JSGlobalObject, options: Options) -> JsResult<Builder> {
@@ -852,7 +850,10 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
     // For Archive instances, use options override or archive's compression settings
     if let Some(archive) = data_arg.as_class_ref::<Archive>() {
-        let gzip = options.compress.gzip().or(archive.options.compress.gzip());
+        let gzip = options
+            .compress
+            .gzip()
+            .or_else(|| archive.options.compress.gzip());
         return start_write_task(
             global,
             WriteData::Store(archive.blob_store(global)?),

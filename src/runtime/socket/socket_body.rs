@@ -4967,13 +4967,23 @@ pub mod testing_apis {
                 )));
             }
 
+            // ssl_loop_buffer is an allocation, not a socket operation: its hook
+            // passes fd = -1, so a rule pinned to a descriptor would arm and then
+            // silently never fire.
+            let target_fd = get_i32("fd", -1)?;
+            if syscall == fi::SSL_LOOP_BUFFER && target_fd != -1 {
+                return Err(global.throw(format_args!(
+                    "rule.fd is not supported for syscall \"ssl_loop_buffer\""
+                )));
+            }
+
             let rule = fi::UsFaultRule {
                 action,
                 errno_value,
                 clamp_bytes,
                 after_n_calls: get_i32("after", 0)?,
                 repeat: get_i32("repeat", 1)?,
-                target_fd: get_i32("fd", -1)?,
+                target_fd,
             };
 
             // SAFETY: rule is a valid stack pointer for the duration of the call.

@@ -316,7 +316,7 @@ export type SocketFaultRule = {
   after?: number;
   /** fire this many times then disarm; -1 = forever. Default 1. */
   repeat?: number;
-  /** match only this fd; -1 (default) = any */
+  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer", which has no fd. */
   fd?: number;
 };
 

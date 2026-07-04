@@ -46,6 +46,18 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM" })).toBe(true);
   });
 
+  // ssl_loop_buffer's hook is an allocation, so it checks with fd = -1; a rule
+  // pinned to a descriptor would arm and then silently never fire.
+  test("set() rejects 'fd' for ssl_loop_buffer, which has no descriptor", () => {
+    expect(() => fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM", fd: 3 })).toThrow(
+      /rule\.fd is not supported for syscall "ssl_loop_buffer"/,
+    );
+    // -1 is the default "any" sentinel and stays accepted.
+    expect(fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM", fd: -1 })).toBe(true);
+    // Descriptor-pinned rules still work for the real syscalls.
+    expect(fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", fd: 3 })).toBe(true);
+  });
+
   test("set() rejects unknown errno name", () => {
     expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ENOSUCHERR" as any })).toThrow(
       /unknown errno name/,

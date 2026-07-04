@@ -1552,6 +1552,100 @@ describe("Headers", () => {
     expect(headers.get("content-type")).toBe(null);
     gc();
   });
+
+  // RFC 9110 section 5.5 permits zero-length field values. "present but empty" and
+  // "absent" are different things, so the fetch client must not drop such headers.
+  it("keeps response headers with empty values", async () => {
+    const { promise, resolve } = Promise.withResolvers<AddressInfo>();
+    await using server = net
+      .createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(
+            "HTTP/1.1 200 OK\r\n" +
+              // no OWS after the colon, uncommon header name
+              "x-empty:\r\n" +
+              // OWS after the colon, well-known header name
+              "vary: \r\n" +
+              "x-after: 1\r\n" +
+              "content-length: 0\r\n" +
+              "\r\n",
+          );
+          socket.end();
+        });
+      })
+      .listen(0, "127.0.0.1", () => resolve(server.address() as AddressInfo));
+    const { port } = await promise;
+
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.headers.toJSON()).toEqual({
+      "x-empty": "",
+      "vary": "",
+      "x-after": "1",
+      "content-length": "0",
+    });
+    expect([res.headers.has("x-empty"), res.headers.get("x-empty")]).toEqual([true, ""]);
+    expect([res.headers.has("vary"), res.headers.get("vary")]).toEqual([true, ""]);
+    expect([...res.headers]).toEqual([
+      ["content-length", "0"],
+      ["vary", ""],
+      ["x-after", "1"],
+      ["x-empty", ""],
+    ]);
+    expect(res.status).toBe(200);
+  });
+
+  // RFC 9110 section 5.3: repeated field lines combine into one comma-separated value.
+  it("combines repeated response headers instead of replacing them", async () => {
+    const { promise, resolve } = Promise.withResolvers<AddressInfo>();
+    await using server = net
+      .createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(
+            "HTTP/1.1 200 OK\r\n" +
+              // well-known name: already combined before this change
+              "vary: a\r\n" +
+              "vary: b\r\n" +
+              // uncommon name: used to keep only the last value
+              "x-uncommon: a\r\n" +
+              "x-uncommon: b\r\n" +
+              // an empty repeat must not erase the value that came before it
+              "x-keep: HIT\r\n" +
+              "x-keep:\r\n" +
+              "content-length: 0\r\n" +
+              "\r\n",
+          );
+          socket.end();
+        });
+      })
+      .listen(0, "127.0.0.1", () => resolve(server.address() as AddressInfo));
+    const { port } = await promise;
+
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.headers.toJSON()).toEqual({
+      "vary": "a, b",
+      "x-uncommon": "a, b",
+      "x-keep": "HIT, ",
+      "content-length": "0",
+    });
+  });
+
+  it("round-trips an empty header value through Bun.serve", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(JSON.stringify(req.headers.get("x-empty-req")), {
+          headers: { "x-empty-res": "", "x-after": "1" },
+        });
+      },
+    });
+
+    const res = await fetch(server.url, { headers: { "x-empty-req": "" } });
+    // The request side already round-trips an empty value; the response side is the fix.
+    expect(await res.text()).toBe(`""`);
+    expect([res.headers.get("x-empty-res"), res.headers.get("x-after")]).toEqual(["", "1"]);
+  });
 });
 
 it("body nullable", async () => {

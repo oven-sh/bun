@@ -177,7 +177,22 @@ void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
         m_uncommonHeaders[index].value = value;
 }
 
-void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const String& value)
+// Repeated field lines combine into one comma-separated value (RFC 9110 section 5.3),
+// matching what `add(HTTPHeaderName, ...)` already does for well-known names.
+void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
+{
+    auto index = m_uncommonHeaders.findIf([&](auto& header) {
+        return equalIgnoringASCIICase(header.key, name);
+    });
+    if (index == notFound)
+        m_uncommonHeaders.append(UncommonHeader { name, value });
+    else
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+}
+
+// `addUncommonHeader` for callers whose `name` borrows a buffer that will not outlive the
+// map. It is copied only when a new entry is appended; combining reuses the stored name.
+void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -188,7 +203,7 @@ void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const Stri
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
     } else
-        m_uncommonHeaders[index].value = value;
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::add(const String& name, const String& value)
@@ -198,13 +213,7 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         add(headerName, value);
         return;
     }
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
-    else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+    addUncommonHeader(name, value);
 }
 
 void HTTPHeaderMap::append(const String& name, const String& value)

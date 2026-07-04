@@ -233,6 +233,33 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  // RFC 9110 section 5.5: a zero-length field value is valid and distinct from an absent header.
+  test("GET: response header with an empty value is preserved", async () => {
+    await withH2Server(
+      (_req, res) => {
+        res.writeHead(200, { "x-empty": "", "x-after": "1" });
+        res.end("ok");
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          const res = await fetch(${JSON.stringify(url)} + "/empty-header", {
+            tls: { rejectUnauthorized: false },
+          });
+          const body = await res.text();
+          console.log(JSON.stringify({
+            empty: res.headers.get("x-empty"),
+            after: res.headers.get("x-after"),
+            body,
+          }));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({ empty: "", after: "1", body: "ok" });
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("POST: request body is delivered as DATA frames", async () => {
     await withH2Server(
       (req, res) => {

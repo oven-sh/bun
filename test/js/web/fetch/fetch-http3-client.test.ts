@@ -17,6 +17,7 @@ beforeAll(async () => {
     http1: false,
     routes: {
       "/hello": () => new Response("hello over h3", { headers: { "x-proto": "h3" } }),
+      "/empty-header": () => new Response("ok", { headers: { "x-empty": "", "x-after": "1" } }),
       "/echo": async req => {
         const body = await req.bytes();
         return new Response(body, {
@@ -415,6 +416,13 @@ describe("fetch protocol: http3", () => {
     for (const [name, value] of Object.entries(sent)) {
       expect(got[name.toLowerCase()]).toBe(value);
     }
+  });
+
+  // RFC 9110 section 5.5: a zero-length field value is valid and distinct from an absent header.
+  test("response header with an empty value is preserved", async () => {
+    const res = await fetch(`${base}/empty-header`, h3);
+    expect(await res.text()).toBe("ok");
+    expect([res.headers.get("x-empty"), res.headers.get("x-after")]).toEqual(["", "1"]);
   });
 
   test("response consumed as blob / bytes", async () => {

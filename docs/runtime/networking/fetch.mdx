@@ -260,9 +260,40 @@ const response = await fetch("http://example.com", {
   // Disable connection reuse for this request
   keepalive: false,
 
+  // How many redirects to follow (default: 20, maximum: 126)
+  maxRedirects: 5,
+
   // Debug logging level
   verbose: true, // or "curl" for more detailed output
 });
+```
+
+### Redirects
+
+By default, `fetch` follows up to 20 redirects, the limit the [fetch specification](https://fetch.spec.whatwg.org/#http-redirect-fetch) mandates. The 21st redirect rejects with a `TypeError`:
+
+```ts
+try {
+  await fetch("http://example.com/a-very-long-redirect-chain");
+} catch (error) {
+  error instanceof TypeError; // true
+  error.code; // "TooManyRedirects"
+}
+```
+
+Use the `maxRedirects` option to raise or lower the limit. It accepts any integer from `0` (reject the first redirect) through `126`; larger values are clamped to `126`.
+
+```ts
+// Follow at most 5 redirects
+await fetch("http://example.com/", { maxRedirects: 5 });
+```
+
+The standard `redirect` option works as the specification describes. `"manual"` returns the redirect response itself, and `"error"` rejects with a `TypeError` whose `code` is `"UnexpectedRedirect"`.
+
+```ts
+const response = await fetch("http://example.com/", { redirect: "manual" });
+response.status; // 302
+response.headers.get("location"); // the redirect target
 ```
 
 ### Protocol support
@@ -335,6 +366,7 @@ Bun's fetch implementation includes several specific error cases:
 - Using the `proxy` and `unix` options together throws an error
 - TLS certificate validation failures when `rejectUnauthorized` is true (or undefined)
 - S3 operations may throw specific errors related to authentication or permissions
+- Redirect failures reject with a `TypeError` carrying a `code` property, such as `"TooManyRedirects"` or `"UnexpectedRedirect"`
 
 ### Content-Type handling
 

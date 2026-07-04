@@ -196,8 +196,10 @@ if (fd !== -1) {
   let writeStream;
   try {
     writeStream = new WriteStream(fd);
-  } catch {
-    // e.g. EINVAL from kqueue on /dev/tty on macOS
+  } catch (err) {
+    // getTTYfd() falls back to a read-only /dev/tty when no stdio fd is a tty,
+    // and bun cannot poll that fd for writability (EINVAL from kqueue).
+    if (err.code !== 'EINVAL') throw err;
     common.skip('Could not create TTY WriteStream');
   }
 

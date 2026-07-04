@@ -102,8 +102,8 @@ class JSDirectStreamController;
     V(onAsyncIteratorRejectMicrotask)
 
 // owner: JSStreamPipeToOperation.cpp. context = the JSStreamPipeToOperation, EXCEPT
-// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, chunk} (the pipe's
-// read-request chunk steps defer the sink write by one reaction).
+// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, m_currentWrite
+// promise} and whose argument is the chunk (the pipe's deferred sink write job).
 // onPipeWriteSettled is registered as BOTH the fulfillment and the rejection handler of
 // every write-request promise (the pipe must react to every one).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V) \

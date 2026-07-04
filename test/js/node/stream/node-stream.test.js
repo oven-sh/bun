@@ -701,6 +701,79 @@ describe("webstreams adapters (Node v26 sync)", () => {
     duplex.destroy();
   });
 
+  // Readable.fromWeb()'s pump pushes several chunks per _read(), and Readable
+  // calls _read() again as soon as push() is called. Two pumps racing on one
+  // reader used to hand back the chunks out of order.
+  it("Readable.fromWeb(Readable.toWeb()) preserves chunk order", async () => {
+    const src = Readable.from(["A", "B", "C", "D", "E", "F"]);
+    const chunks = [];
+    for await (const chunk of Readable.fromWeb(Readable.toWeb(src))) {
+      chunks.push(chunk.toString());
+    }
+    expect(chunks.join("")).toBe("ABCDEF");
+  });
+
+  it("Readable.fromWeb(Readable.toWeb()) preserves chunk order in object mode", async () => {
+    const expected = Array.from({ length: 30 }, (_, i) => `chunk-${i}`);
+    const src = Readable.from(expected);
+    const chunks = [];
+    for await (const chunk of Readable.fromWeb(Readable.toWeb(src), { objectMode: true })) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toEqual(expected);
+  });
+
+  it("Readable.fromWeb(Readable.toWeb()) preserves chunk order under backpressure", async () => {
+    const expected = Array.from({ length: 25 }, (_, i) => `x${i}`);
+    const src = Readable.from(expected);
+    const dst = Readable.fromWeb(Readable.toWeb(src), { objectMode: true, highWaterMark: 2 });
+    const chunks = [];
+    for await (const chunk of dst) {
+      chunks.push(chunk);
+      await null;
+    }
+    expect(chunks).toEqual(expected);
+  });
+
+  // Paused mode drains inside the 'readable' handler, so no microtask runs
+  // between read() calls. _read() has to be able to start the next pump on
+  // every one of them or the stream stalls with kReading stuck on.
+  it.each([1, 2, 16])(
+    "Readable.fromWeb(Readable.toWeb()) preserves chunk order in paused mode (highWaterMark: %i)",
+    async highWaterMark => {
+      const expected = Array.from({ length: 30 }, (_, i) => `p${i}`);
+      const src = Readable.from(expected);
+      const dst = Readable.fromWeb(Readable.toWeb(src), { objectMode: true, highWaterMark });
+
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const chunks = [];
+      dst.on("readable", () => {
+        let chunk;
+        while ((chunk = dst.read()) !== null) chunks.push(chunk);
+      });
+      dst.on("end", resolve);
+      dst.on("error", reject);
+      await promise;
+
+      expect(chunks).toEqual(expected);
+    },
+  );
+
+  it("Readable.fromWeb(Readable.toWeb()) preserves chunk order in flowing mode", async () => {
+    const expected = Array.from({ length: 30 }, (_, i) => `f${i}`);
+    const src = Readable.from(expected);
+    const dst = Readable.fromWeb(Readable.toWeb(src), { objectMode: true, highWaterMark: 1 });
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const chunks = [];
+    dst.on("data", chunk => chunks.push(chunk));
+    dst.on("end", resolve);
+    dst.on("error", reject);
+    await promise;
+
+    expect(chunks).toEqual(expected);
+  });
+
   // Upstream: v26 Writable.toWeb wraps (Shared)ArrayBuffer chunks in a
   // Uint8Array before writing to the Node stream.
   it("Writable.toWeb accepts ArrayBuffer chunks", async () => {

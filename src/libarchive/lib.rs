@@ -109,6 +109,8 @@ pub mod lib {
         fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
         fn archive_write_set_format_zip(a: *mut Archive) -> Result;
         fn archive_write_set_bytes_in_last_block(a: *mut Archive, bytes: c_int) -> Result;
+        // Returns the new state (`ARCHIVE_STATE_FATAL`), not an `ARCHIVE_*` code.
+        fn archive_write_fail(a: *mut Archive) -> c_int;
         fn archive_write_zip_set_compression_deflate(a: *mut Archive) -> Result;
         fn archive_write_zip_set_compression_store(a: *mut Archive) -> Result;
         fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
@@ -395,6 +397,18 @@ pub mod lib {
         pub fn write_close(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
+        }
+        /// Put the writer into `ARCHIVE_STATE_FATAL`, so a later
+        /// `archive_write_free` frees it without running a normal close.
+        ///
+        /// `archive_write_free` otherwise calls `archive_write_close`, whose
+        /// `format_finish_entry` pads a half-written entry out to the size its
+        /// header declared (`archive_write_set_format_pax.c`'s
+        /// `__archive_write_nulls(remaining + padding)`), pushing every one of
+        /// those bytes through the client write callback.
+        pub fn write_fail(&self) {
+            // SAFETY: self valid; only mutates the handle's state field.
+            unsafe { archive_write_fail(self.as_mut_ptr()) };
         }
         pub fn write_set_format_pax_restricted(&self) -> Result {
             // SAFETY: self valid.

@@ -474,30 +474,24 @@ fn open_builder(global: &JSGlobalObject, options: Options) -> JsResult<Builder> 
     Builder::open(options).map_err(|err| throw_build_error(global, err))
 }
 
-fn throw_build_error(global: &JSGlobalObject, err: BuildError) -> jsc::JsError {
-    match err {
-        BuildError::Sys(sys_err) => global.throw_value(sys_err.to_js(global)),
-        BuildError::OutOfMemory => global.throw_value(global.create_out_of_memory_error()),
-        BuildError::EntryChangedSize => global.throw_invalid_arguments(format_args!(
-            "Archive.append: the file changed size while it was being added"
-        )),
-        BuildError::Libarchive(stage) => {
-            global.throw_invalid_arguments(format_args!("Failed to create archive: {stage}"))
-        }
-    }
-}
-
+/// The constructor, `Archive.write()`, and `append()` all reach these, so the
+/// messages name the class rather than one method.
 fn build_error_to_js(global: &JSGlobalObject, err: BuildError) -> JSValue {
     match err {
         BuildError::Sys(sys_err) => sys_err.to_js(global),
         BuildError::OutOfMemory => global.create_out_of_memory_error(),
         BuildError::EntryChangedSize => global.create_error_instance(format_args!(
-            "Archive.append: the file changed size while it was being added"
+            "Bun.Archive: the file changed size while it was being added"
         )),
         BuildError::Libarchive(stage) => {
             global.create_error_instance(format_args!("Failed to create archive: {stage}"))
         }
     }
+}
+
+#[inline]
+fn throw_build_error(global: &JSGlobalObject, err: BuildError) -> jsc::JsError {
+    global.throw_value(build_error_to_js(global, err))
 }
 
 /// Turn a closed builder's output into a `Blob.Store`.

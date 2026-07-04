@@ -290,7 +290,18 @@ unsafe impl Send for Builder {}
 
 impl Drop for Builder {
     fn drop(&mut self) {
-        // `archive_write_free` can flush buffered bytes through the write
+        if let Some(archive) = &self.archive {
+            if !self.closed {
+                // This writer is being abandoned, so its output is thrown away.
+                // Without poisoning it, `archive_write_free` runs a normal close,
+                // and closing while an entry is half-written makes tar pad that
+                // entry out to its declared size: a failed `append()` of a 600 MB
+                // file would write 600 MB of NULs into the sink (spilling them to
+                // a temp file) before the promise settles.
+                archive.write_fail();
+            }
+        }
+        // `archive_write_free` can still flush buffered bytes through the write
         // callback, which writes into `*sink`: free the archive first.
         drop(self.archive.take());
         // SAFETY: `sink` is the `heap::into_raw` allocation made in `open`,
@@ -425,7 +436,11 @@ impl Builder {
         max_len: Option<u64>,
         mtime: i64,
     ) -> Result<(), BuildError> {
-        let file = bun_sys::File::open(source.as_zstr(), bun_sys::O::RDONLY, 0)?;
+        let file = bun_sys::File::open(
+            source.as_zstr(),
+            bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+            0,
+        )?;
         let file_size = u64::try_from(bun_sys::fstat(file.fd())?.st_size).unwrap_or(0);
         let start = offset.min(file_size);
         let available = file_size - start;

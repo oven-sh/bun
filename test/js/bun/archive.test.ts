@@ -2172,6 +2172,20 @@ describe("Bun.Archive", () => {
       expect(() => archive.bytes()).toThrow(/can no longer be used/);
     });
 
+    // Abandoning a libarchive writer mid-entry makes its normal close pad the
+    // entry out to the size its header declared, pushing every NUL byte through
+    // the sink: a failed append of a 600MB file used to write 600MB of zeros to
+    // a throwaway spill file before the promise settled.
+    test.skipIf(isWindows)("a source that fails mid-read does not pad the entry out", async () => {
+      using dir = tempDir("archive-append-unreadable", {});
+      const archive = new Bun.Archive();
+
+      // A directory: open() and fstat() succeed, so the entry header is written
+      // with the directory's size, and then read() fails with EISDIR.
+      await expect(archive.append("d.bin", Bun.file(String(dir)))).rejects.toThrow(/EISDIR|directory/i);
+      expect(() => archive.bytes()).toThrow(/can no longer be used/);
+    });
+
     test("rejects every queued append once one fails", async () => {
       using dir = tempDir("archive-append-queue-fail", {});
       const archive = new Bun.Archive();

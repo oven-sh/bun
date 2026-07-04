@@ -38,22 +38,12 @@ use bun_jsc::js_error_to_write_error;
 #[bun_jsc::JsClass]
 pub struct Expect {
     pub flags: Cell<Flags>,
-    /// Rust-only (the C++-mirrored `Flags(u8)` byte is full). Set while a deferred
-    /// matcher's settle reaction re-invokes the same matcher, so the second pass takes
-    /// the synchronous path and per-test bookkeeping is not double-counted.
-    pub reentry: Cell<bool>,
-    /// Rust-only. Settlement handed to the running settle re-invocation; `Some` only for
-    /// its synchronous duration ([`Expect::on_subject_settled`] sets/clears it around
-    /// `callee.call`), during which the reaction frame + context array root its values.
-    pub reentry_settlement: Cell<Option<ReentrySettlement>>,
-    /// Rust-only. User call site of the deferring invocation, restored for the settle
-    /// re-invocation window (same rooting as [`Expect::reentry_settlement`]): that pass
-    /// runs from a reaction job with no user frames for inline snapshots to walk.
-    pub reentry_call_site: Cell<Option<ReentryCallSite>>,
-    /// Rust-only. The running settle re-invocation's own deferral (same window/rooting as
-    /// [`Expect::reentry_settlement`]); a re-invocation that defers AGAIN takes and
-    /// reuses it instead of minting a second `D` — see [`ReentryDeferred`].
-    pub reentry_deferred: Cell<Option<ReentryDeferred>>,
+    /// Rust-only (the C++-mirrored `Flags(u8)` byte is full). Non-null exactly while a
+    /// deferred matcher's settle reaction re-invokes the same matcher; it points at the
+    /// [`ReentryWindow`] stack local of [`Expect::on_subject_settled`], which saves the
+    /// previous value and restores it (nested windows are a stack). Never dereferenced
+    /// outside that synchronous window — see [`Expect::with_reentry_window`].
+    pub reentry_window: Cell<*const ReentryWindow>,
     pub parent: Option<bun_test::RefDataPtr>,
     pub custom_label: bun_core::String,
 }
@@ -64,8 +54,11 @@ pub struct Expect {
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DeferralOrigin {
-    /// `.resolves`/`.rejects` subject promise (`process_promise`). The re-invocation
-    /// re-reads the (now settled) subject, so it never consumes the settlement.
+    /// `.resolves`/`.rejects` subject promise (`get_value` / `apply_custom_matcher`).
+    /// The re-invocation consumes the settlement; the raw subject's internal slots are
+    /// never re-read (a subclass with a delegating `then` may never settle its own).
+    /// A chained deferral carries the consumed settlement into every later re-invocation
+    /// ([`ReentryWindow::consumed_subject`]) so that stays true past the first pass.
     Subject = 0,
     /// Promise returned by the function under `toThrow` (`get_value_as_to_throw`): the
     /// function already ran on the first pass and must not be called again.
@@ -87,8 +80,36 @@ impl DeferralOrigin {
     }
 }
 
+/// State of one settle re-invocation of a deferred matcher. A STACK local of
+/// [`Expect::on_subject_settled`], alive strictly for the synchronous `callee.call`;
+/// `Expect::reentry_window` points at it for exactly that window (the previous pointer is
+/// saved and restored, so a nested settle reaction gets its own window). All `JSValue`s
+/// inside are rooted by the reaction frame + its context array for that whole window.
+pub struct ReentryWindow {
+    /// The `Expect` being re-invoked; only for the accessors' debug_assert.
+    expect: *const Expect,
+    /// How the deferral's subject settled; taken by the await point that deferred.
+    settlement: Cell<Option<ReentrySettlement>>,
+    /// The `.resolves`/`.rejects` subject settlement an earlier (or this) pass already
+    /// consumed, carried across chained deferrals: every later re-invocation resumes the
+    /// Subject await point from it instead of re-reading the raw subject's internal
+    /// slots (which a subclass with a delegating `then` never settles). Recorded by
+    /// [`Expect::take_reentry_settlement`] and forwarded by [`Expect::defer_matcher`].
+    consumed_subject: Cell<Option<ReentrySettlement>>,
+    /// User call site of the deferring invocation: this pass runs from a reaction job
+    /// with no user frames for inline snapshots / a chained deferral to walk.
+    call_site: ReentryCallSite,
+    /// The re-invocation's own deferral; a re-invocation that defers AGAIN takes and
+    /// reuses it instead of minting a second `D` — see [`ReentryDeferred`].
+    deferred: Cell<Option<ReentryDeferred>>,
+    /// The `Expect`'s flags at defer time ([`deferred_ctx::FLAGS`]), installed on the
+    /// `Expect` for the window so later `.not`/`.resolves` mutations of the same handle
+    /// cannot re-label an earlier deferral.
+    flags: Flags,
+}
+
 /// The user call site captured when a matcher deferred ([`deferred_ctx::SRC_URL`]),
-/// handed back to its settle re-invocation through [`Expect::reentry_call_site`].
+/// handed back to its settle re-invocation through [`ReentryWindow::call_site`].
 /// `source_url` (a `JSString`) is rooted by the reaction's context array for the whole
 /// re-invocation window, exactly like [`ReentrySettlement`]'s values.
 #[derive(Clone, Copy)]
@@ -108,7 +129,7 @@ pub struct ReentryDeferred {
 }
 
 /// How the promise a matcher deferred on settled, handed from the settle reaction to the
-/// re-invoked matcher (see [`Expect::reentry_settlement`] for the rooting invariant).
+/// re-invoked matcher (see [`ReentryWindow`] for the rooting invariant).
 #[derive(Clone, Copy)]
 pub struct ReentrySettlement {
     pub origin: DeferralOrigin,
@@ -297,11 +318,11 @@ impl Expect {
 
     /// Ordering invariant: every matcher entry point must call this BEFORE its
     /// `Deferred` early-return (`get_value`/`process_promise`), so the deferring first
-    /// pass counts exactly once and the `reentry` re-invocation is gated off below.
+    /// pass counts exactly once and the settle re-invocation is gated off below.
     pub fn increment_expect_call_counter(&self) {
         // A deferred matcher promise's settle reaction re-invokes the same matcher on the
-        // same `Expect` with `reentry` set; the first invocation already counted it.
-        if self.reentry.get() {
+        // same `Expect` inside a reentry window; the first invocation already counted it.
+        if self.in_settle_reentry() {
             return;
         }
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
@@ -324,28 +345,76 @@ impl Expect {
         }
     }
 
+    /// Run `f` against the active settle re-invocation window, or return `None` when the
+    /// matcher is running as an ordinary (first-pass) invocation. The window is only
+    /// handed out for the duration of `f` so a `&ReentryWindow` can never escape it.
+    // SAFETY: the pointer is non-null only while `on_subject_settled`'s `callee.call` is
+    // on the stack; the pointee is that frame's stack local, which strictly outlives the
+    // synchronous window (the scopeguard restores the previous pointer before it dies).
+    fn with_reentry_window<R>(&self, f: impl FnOnce(&ReentryWindow) -> R) -> Option<R> {
+        let window = self.reentry_window.get();
+        if window.is_null() {
+            return None;
+        }
+        // SAFETY: see above — non-null implies the pointee is a live stack local.
+        let window = unsafe { &*window };
+        debug_assert!(core::ptr::eq(window.expect, self));
+        Some(f(window))
+    }
+
+    /// This matcher invocation is the settle re-invocation of its own deferral, so it
+    /// takes the synchronous path and skips the per-test bookkeeping the first pass did.
+    pub fn in_settle_reentry(&self) -> bool {
+        self.with_reentry_window(|_| ()).is_some()
+    }
+
     /// Consume the settlement the settle reaction stashed for the deferral made at
     /// `origin`. Returns `None` outside a re-invocation, or when the pending settlement
     /// belongs to a different await point of the same matcher (e.g. the subject deferral
     /// of a `.resolves.toThrow()` chain), so each site only ever resumes its own deferral.
+    ///
+    /// The Subject settlement stays available past the pass that took it: a chained
+    /// deferral's re-invocations resume the Subject await point from the carried copy
+    /// ([`ReentryWindow::consumed_subject`]), never from the raw subject's internal slots.
     pub fn take_reentry_settlement(&self, origin: DeferralOrigin) -> Option<ReentrySettlement> {
-        let settlement = self.reentry_settlement.get()?;
-        if settlement.origin != origin {
-            return None;
-        }
-        self.reentry_settlement.set(None);
-        Some(settlement)
+        self.with_reentry_window(|window| {
+            if let Some(settlement) = window.settlement.get()
+                && settlement.origin == origin
+            {
+                window.settlement.set(None);
+                if origin == DeferralOrigin::Subject {
+                    window.consumed_subject.set(Some(settlement));
+                }
+                return Some(settlement);
+            }
+            if origin == DeferralOrigin::Subject {
+                return window.consumed_subject.get();
+            }
+            None
+        })
+        .flatten()
     }
 
     /// The user call site captured when the matcher currently being re-invoked deferred
-    /// ([`deferred_ctx::SRC_URL`]); `None` outside a settle re-invocation. Like
-    /// [`CallFrame::get_caller_src_loc`], the returned `str` is +1 and the caller owns
-    /// releasing it.
+    /// ([`deferred_ctx::SRC_URL`]); `None` outside a settle re-invocation.
+    fn reentry_call_site(&self) -> Option<ReentryCallSite> {
+        self.with_reentry_window(|window| window.call_site)
+    }
+
+    /// The running settle re-invocation's own deferral, or `None` outside one (or when
+    /// this re-invocation already deferred again); see [`ReentryDeferred`].
+    fn take_reentry_deferred(&self) -> Option<ReentryDeferred> {
+        self.with_reentry_window(|window| window.deferred.take()).flatten()
+    }
+
+    /// [`Expect::reentry_call_site`] as a [`CallerSrcLoc`](bun_jsc::call_frame::CallerSrcLoc).
+    /// Like [`CallFrame::get_caller_src_loc`], the returned `str` is +1 and the caller
+    /// owns releasing it.
     pub fn reentry_caller_src_loc(
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<bun_jsc::call_frame::CallerSrcLoc>> {
-        let Some(site) = self.reentry_call_site.get() else { return Ok(None) };
+        let Some(site) = self.reentry_call_site() else { return Ok(None) };
         Ok(Some(bun_jsc::call_frame::CallerSrcLoc {
             str: bun_core::String::from_js(site.source_url, global_this)?,
             line: site.line,
@@ -522,7 +591,7 @@ impl Expect {
 
         // A `.resolves`/`.rejects` subject promise is never awaited synchronously from
         // inside the matcher (oven-sh/bun#33261) — defer even if it is already settled
-        // (Jest parity: one-microtask minimum). The settle re-invocation (`reentry`) and
+        // (Jest parity: one-microtask minimum). The settle re-invocation (reentry window) and
         // non-promise subjects fall through to `process_promise`'s synchronous logic.
         if let Some(deferred) = self.try_defer_subject(global_this, call_frame, value) {
             return Ok(GetValueResult::Deferred(deferred?));
@@ -530,6 +599,23 @@ impl Expect {
 
         #[allow(clippy::disallowed_methods)] // template is a runtime parameter
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
+        // The settle re-invocation of a `.resolves`/`.rejects` deferral resumes from the
+        // settlement its reaction captured; the raw subject's internal slots are never
+        // re-read (a subclass with a delegating `then` may never settle its own).
+        if let Some(settlement) = self.take_reentry_settlement(DeferralOrigin::Subject) {
+            return Self::process_settled_subject(
+                self.custom_label.clone(),
+                self.flags.get(),
+                global_this,
+                value,
+                settlement.rejected,
+                settlement.value,
+                bstr::BStr::new(matcher_name),
+                matcher_params,
+                false,
+            )
+            .map(GetValueResult::Ready);
+        }
         Self::process_promise(
             self.custom_label.clone(),
             self.flags.get(),
@@ -582,40 +668,100 @@ impl Expect {
         // never reported as an unhandled rejection.
         promise.set_handled(vm);
 
-        // `Some((expected, received))` describes a state mismatch for the failure message.
-        let mismatch: Option<(&str, &str)> = match promise.status() {
-            js_promise::Status::Fulfilled => {
-                if resolution == Promise::Rejects { Some(("rejects", "resolved")) } else { None }
-            }
-            js_promise::Status::Rejected => {
-                if resolution == Promise::Resolves { Some(("resolves", "rejected")) } else { None }
-            }
-            js_promise::Status::Pending => Some((
+        let status = promise.status();
+        if status == js_promise::Status::Pending {
+            return Err(Self::promise_state_mismatch_error(
+                custom_label,
+                flags,
+                global_this,
+                value,
+                matcher_name,
+                matcher_params,
+                silent,
                 if resolution == Promise::Rejects { "rejects" } else { "resolves" },
                 "is still pending",
-            )),
+            ));
+        }
+        Self::process_settled_subject(
+            custom_label,
+            flags,
+            global_this,
+            value,
+            status == js_promise::Status::Rejected,
+            promise.result(vm),
+            matcher_name,
+            matcher_params,
+            silent,
+        )
+    }
+
+    /// Settled half of [`Expect::process_promise`], taking the settlement explicitly:
+    /// direction-check `(rejected, settled_value)` against `flags` and return the settled
+    /// value. The `.resolves`/`.rejects` settle re-invocation resumes here from the
+    /// settlement its reaction captured, never from the raw subject's internal slots.
+    fn process_settled_subject(
+        custom_label: bun_core::String,
+        flags: Flags,
+        global_this: &JSGlobalObject,
+        subject: JSValue,
+        rejected: bool,
+        settled_value: JSValue,
+        matcher_name: impl fmt::Display,
+        matcher_params: impl fmt::Display,
+        silent: bool,
+    ) -> JsResult<JSValue> {
+        let resolution = flags.promise();
+        // `Some((expected, received))` describes a direction mismatch for the failure message.
+        let mismatch: Option<(&str, &str)> = if rejected {
+            (resolution == Promise::Resolves).then_some(("resolves", "rejected"))
+        } else {
+            (resolution == Promise::Rejects).then_some(("rejects", "resolved"))
         };
         if let Some((expected, received)) = mismatch {
-            if !silent {
-                let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                return Err(Self::throw_pretty_matcher_error(
-                    global_this,
-                    custom_label,
-                    matcher_name,
-                    matcher_params,
-                    flags,
-                    format_args!(
-                        "Expected promise that {expected}<r>\nReceived promise that {received}: <red>{}<r>\n",
-                        value.to_fmt(&mut formatter),
-                    ),
-                ));
-            }
-            return Err(JsError::Thrown);
+            return Err(Self::promise_state_mismatch_error(
+                custom_label,
+                flags,
+                global_this,
+                subject,
+                matcher_name,
+                matcher_params,
+                silent,
+                expected,
+                received,
+            ));
         }
+        settled_value.ensure_still_alive();
+        Ok(settled_value)
+    }
 
-        let new_value = promise.result(vm);
-        new_value.ensure_still_alive();
-        Ok(new_value)
+    /// The `.resolves`/`.rejects` state-mismatch failure ("expected a promise that
+    /// {expected}, received one that {received}"), thrown pretty unless `silent`.
+    fn promise_state_mismatch_error(
+        custom_label: bun_core::String,
+        flags: Flags,
+        global_this: &JSGlobalObject,
+        subject: JSValue,
+        matcher_name: impl fmt::Display,
+        matcher_params: impl fmt::Display,
+        silent: bool,
+        expected: &str,
+        received: &str,
+    ) -> JsError {
+        if silent {
+            return JsError::Thrown;
+        }
+        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+        Self::throw_pretty_matcher_error(
+            global_this,
+            custom_label,
+            matcher_name,
+            matcher_params,
+            flags,
+            format_args!(
+                "Expected promise that {expected}<r>\nReceived promise that {received}: <red>{}<r>\n",
+                subject.to_fmt(&mut formatter),
+            ),
+        )
     }
 
     pub fn is_asymmetric_matcher(value: JSValue) -> bool {
@@ -708,7 +854,7 @@ impl Expect {
         let buntest = buntest_strong.get();
         // A sequence parked on pending matcher promises has no `active_entry`, but it is
         // still the owning test: resolve it through the sequence's `test_entry`, exactly
-        // like `record_unawaited_matcher_failure`.
+        // like `record_provisional_matcher_failure`.
         let execution_entry: *const bun_test::ExecutionEntry = match parent.phase.entry(buntest) {
             Some(entry) => entry,
             None => match parent.phase.sequence(buntest).and_then(|s| s.test_entry) {
@@ -813,10 +959,7 @@ impl Expect {
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
-            reentry: Cell::new(false),
-            reentry_settlement: Cell::new(None),
-            reentry_call_site: Cell::new(None),
-            reentry_deferred: Cell::new(None),
+            reentry_window: Cell::new(core::ptr::null()),
             custom_label,
             parent: active_execution_entry_ref,
         };
@@ -1053,9 +1196,9 @@ impl Expect {
                     DeferralOrigin::ThrownValue,
                 )?));
             }
-            // No owning sequence can keep the test alive across a deferral
-            // (`test.concurrent`, outside bun:test, a torn-down phase): keep the
-            // pre-existing synchronous wait so a failing assertion still fails in place.
+            // No owning test entry can keep this deferral alive (a concurrent group running
+            // 2+ sequences, a hook-only beforeAll/afterAll sequence, outside bun:test):
+            // keep the pre-existing synchronous wait so a failing assertion fails in place.
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this.bun_vm().as_mut().wait_for_promise(promise);
             let rejected = promise.status() == js_promise::Status::Rejected;
@@ -1850,25 +1993,40 @@ impl Expect {
             )));
         };
         // Counted before the deferral point, so the deferring first pass counts and the
-        // `reentry` re-invocation is the gated no-op.
+        // settle re-invocation is the gated no-op.
         expect.increment_expect_call_counter();
 
         // A `.resolves`/`.rejects` subject promise defers the custom matcher exactly like
         // `get_value` defers the built-in matchers; the settle reaction re-invokes this
-        // entry point with `reentry` set and the (now settled) subject falls through below.
+        // entry point inside a reentry window and consumes the captured settlement below.
         if let Some(deferred) = expect.try_defer_subject(global_this, call_frame, value) {
             return deferred;
         }
 
-        value = Self::process_promise(
-            expect.custom_label.clone(),
-            expect.flags.get(),
-            global_this,
-            value,
-            matcher_name,
-            &matcher_params,
-            false,
-        )?;
+        // The settle re-invocation resumes from the settlement its reaction captured
+        // (never from the raw subject's internal slots — see `get_value`).
+        value = match expect.take_reentry_settlement(DeferralOrigin::Subject) {
+            Some(settlement) => Self::process_settled_subject(
+                expect.custom_label.clone(),
+                expect.flags.get(),
+                global_this,
+                value,
+                settlement.rejected,
+                settlement.value,
+                matcher_name,
+                &matcher_params,
+                false,
+            )?,
+            None => Self::process_promise(
+                expect.custom_label.clone(),
+                expect.flags.get(),
+                global_this,
+                value,
+                matcher_name,
+                &matcher_params,
+                false,
+            )?,
+        };
         value.ensure_still_alive();
 
         // The settle re-invocation of a deferred async matcher resumes from the stashed
@@ -1919,9 +2077,9 @@ impl Expect {
                         DeferralOrigin::MatcherResult,
                     );
                 }
-                // No owning sequence can keep the test alive across a deferral
-                // (`test.concurrent`, outside bun:test, a torn-down phase): keep the
-                // pre-existing synchronous wait so a failing matcher still fails in place.
+                // No owning test entry can keep this deferral alive (a concurrent group
+                // running 2+ sequences, a hook-only beforeAll/afterAll sequence, outside
+                // bun:test): the pre-existing synchronous wait fails the matcher in place.
                 // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
                 global_this.bun_vm().as_mut().wait_for_promise(promise);
                 match promise.status() {
@@ -2058,9 +2216,9 @@ impl Expect {
     }
 
     /// Only triggers a GC sweep. It intentionally does NOT reset `flags`
-    /// (not/resolves/rejects), `reentry`, or the cached captured value, so an `Expect`
-    /// whose matcher deferred on a pending promise still carries all of them when the
-    /// settle reaction re-invokes the same matcher.
+    /// (not/resolves/rejects) or the cached captured value, so an `Expect` whose matcher
+    /// deferred on a pending promise still carries both when the settle reaction
+    /// re-invokes the same matcher (inside a [`ReentryWindow`]).
     pub fn post_match(&self, global_this: &JSGlobalObject) {
         global_this.bun_vm().auto_garbage_collect();
     }
@@ -2097,8 +2255,8 @@ impl Expect {
     ) -> JsResult<GetValueResult<(PostMatchGuard<'a>, JSValue, bool)>> {
         let this = self.post_match_guard(global);
         let value = this.get_value(global, frame, matcher_name, matcher_params)?;
-        // Counted before the deferral early-return: the re-invocation runs with
-        // `reentry` set, so `increment_expect_call_counter` is a no-op there.
+        // Counted before the deferral early-return: the re-invocation runs inside a
+        // reentry window, so `increment_expect_call_counter` is a no-op there.
         this.increment_expect_call_counter();
         let value = match value {
             GetValueResult::Ready(value) => value,
@@ -3624,7 +3782,7 @@ pub mod mock {
 // ───────────────────── deferred matcher promise settlement ──────────────────────
 // Async matchers must not re-enter the event loop from inside the matcher
 // (oven-sh/bun#33261): the matcher returns a deferred promise `D`, and native reactions
-// on the subject re-invoke it (with `Expect.reentry` set) once the subject settles.
+// on the subject re-invoke it (inside a [`ReentryWindow`]) once the subject settles.
 
 /// Indices into the GC-rooted reaction context array built by [`Expect::defer_subject`]
 /// and unpacked by [`Expect::on_subject_settled`]. The array is the reaction's context
@@ -3642,8 +3800,8 @@ mod deferred_ctx {
     /// used to attribute an un-awaited failing matcher to that line.
     pub(super) const CALL_SITE_ERROR: u32 = 4;
     /// [`super::DeferralOrigin`] discriminant (an int32) identifying which await point of
-    /// the matcher deferred, handed back to the re-invocation through
-    /// `Expect::reentry_settlement`.
+    /// the matcher deferred, handed back to the re-invocation through the
+    /// [`super::ReentryWindow`]'s settlement.
     pub(super) const ORIGIN: u32 = 5;
     /// The promise the reactions were attached to. A call-produced deferral
     /// (`ThrownValue` / `MatcherResult`) resumes from it instead of re-running its
@@ -3655,38 +3813,43 @@ mod deferred_ctx {
     /// (abandoned by the per-test timeout, or reset away by a retry/repeat attempt).
     pub(super) const EPOCH: u32 = 7;
     /// User call site of the deferring matcher invocation (`SRC_URL` is a `JSString`;
-    /// line/column are int32s), restored on the `Expect` for the re-invocation window
-    /// (see [`super::Expect::reentry_call_site`]).
+    /// line/column are int32s), carried into the re-invocation's
+    /// [`super::ReentryWindow::call_site`].
     pub(super) const SRC_URL: u32 = 8;
     pub(super) const SRC_LINE: u32 = 9;
     pub(super) const SRC_COL: u32 = 10;
-    /// int32 [`super::SettlePhase`] discriminant. `Invoke` re-invokes the matcher;
-    /// `Report` runs one job later so user code that adopts `D` in the same drain
-    /// (e.g. an async callback's implicit `return`) is not misread as un-awaited.
-    pub(super) const PHASE: u32 = 11;
-    /// `Report` phase only: the matcher failure (already attributed to the call site).
-    pub(super) const FAILURE: u32 = 12;
-    pub(super) const LEN: usize = 13;
-}
-
-/// Which pass of the settle reaction a context array describes; see [`deferred_ctx::PHASE`].
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-enum SettlePhase {
-    /// Re-invoke the deferred matcher (the subject settled).
-    Invoke = 0,
-    /// Decide how to report a matcher failure: by rejecting `D` (user awaited it) or by
-    /// failing the owning test directly (nobody did).
-    Report = 1,
+    /// int32 [`super::Flags`] byte of the `Expect` at defer time. The re-invocation runs
+    /// with these flags restored: `.not`/`.resolves` mutate the shared wrapper, so a
+    /// later chained getter must not relabel an earlier call's deferral.
+    pub(super) const FLAGS: u32 = 11;
+    /// The already-consumed `.resolves`/`.rejects` subject settlement a chained deferral
+    /// carries forward ([`super::ReentryWindow::consumed_subject`]), so every later
+    /// re-invocation resumes the Subject await point from it instead of re-reading the
+    /// raw subject's internal slots. `CARRIED_SUBJECT_REJECTED` is an int32 boolean, or
+    /// `undefined` when the deferral has no subject settlement to carry (a first-pass
+    /// deferral); the other two slots are only read when it is present.
+    pub(super) const CARRIED_SUBJECT_REJECTED: u32 = 12;
+    pub(super) const CARRIED_SUBJECT_VALUE: u32 = 13;
+    pub(super) const CARRIED_SUBJECT: u32 = 14;
+    pub(super) const LEN: usize = 15;
 }
 
 impl Expect {
     /// Shared gate for the matcher entry points that observe the `.resolves`/`.rejects`
     /// subject (`get_value`, `apply_custom_matcher`): when promise flags are set, this is
-    /// the first pass (`!reentry`), and the subject is a plain `JSPromise` (`then2` cannot
-    /// attach native reactions to a `JSInternalPromise`), mark the subject handled, defer
-    /// the matcher, and return the deferred promise it must hand back to JS. `None` means
-    /// the caller proceeds with the synchronous `process_promise` logic.
+    /// the first pass (no reentry window), and the subject is a `JSPromise` cell, mark the
+    /// subject handled, defer the matcher, and return the deferred promise it must hand
+    /// back to JS. `None` means the caller proceeds with the synchronous
+    /// `process_promise` logic.
+    ///
+    /// The `JSPromise` requirement is the deferral machinery's own invariant: the settle
+    /// re-invocation and the rooted `deferred_ctx::SUBJECT` slot need a stable `JSPromise`
+    /// cell to mark handled and to resume the matcher from once it settles. A bare
+    /// thenable (a non-promise object with a `then`) has no such cell, so it is
+    /// deliberately not deferred: it keeps the pre-existing synchronous path, where
+    /// `process_promise` rejects non-promise subjects. That is a scope cut, not a `then2`
+    /// limitation — the settle reactions attach to a tracking promise this code creates,
+    /// never to the subject itself.
     fn try_defer_subject(
         &self,
         global_this: &JSGlobalObject,
@@ -3694,7 +3857,7 @@ impl Expect {
         value: JSValue,
     ) -> Option<JsResult<JSValue>> {
         if self.flags.get().promise() == Promise::None
-            || self.reentry.get()
+            || self.in_settle_reentry()
             || value.as_promise().is_none()
         {
             return None;
@@ -3703,9 +3866,9 @@ impl Expect {
             // An un-awaited rejecting subject must not report as an unhandled rejection.
             promise.set_handled(global_this.vm());
             if !self.can_track_matcher_promise() {
-                // No owning sequence can keep the test alive across a deferral
-                // (`test.concurrent`, outside bun:test, a torn-down phase): keep the
-                // pre-existing synchronous wait and fall through to the settled logic.
+                // No owning test entry can keep this deferral alive (a concurrent group
+                // running 2+ sequences, a hook-only beforeAll/afterAll sequence, outside
+                // bun:test): synchronously wait and fall through to the settled logic.
                 if promise.status() == js_promise::Status::Pending {
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
                     global_this.bun_vm().as_mut().wait_for_promise(promise);
@@ -3724,20 +3887,21 @@ impl Expect {
         call_frame: &CallFrame,
         subject: JSValue,
     ) -> JsResult<JSValue> {
-        // The settle re-invocation must never defer its (now settled) subject again
-        // (`process_promise` is gated on `!reentry`), or the counter would never reach zero.
-        debug_assert!(!self.reentry.get());
+        // The settle re-invocation must never defer its (now settled) subject again (the
+        // reentry window gates `process_promise`), or the counter would never reach zero.
+        debug_assert!(!self.in_settle_reentry());
         self.defer_matcher(global_this, call_frame, subject, DeferralOrigin::Subject)
     }
 
     /// Defer the calling matcher until `subject` settles: create the deferred `D` the
     /// matcher returns to JS, capture a GC-rooted reaction context (see [`deferred_ctx`]),
     /// register the pending deferral on the owning test's sequence, and attach the native
-    /// settle reactions to `subject`.
+    /// settle reactions to a tracking promise that adopts `subject`.
     ///
     /// `subject` must already be `set_handled` (an un-awaited rejecting subject must not
-    /// report as an unhandled rejection) and must be a plain `JSPromise`:
-    /// `JSValue::then2` cannot attach native reactions to a `JSInternalPromise`.
+    /// report as an unhandled rejection) and must be a `JSPromise` cell: the settle
+    /// re-invocation and the rooted `deferred_ctx::SUBJECT` slot both key on that cell.
+    /// Bare thenables are deliberately never deferred (see [`Expect::try_defer_subject`]).
     pub fn defer_matcher(
         &self,
         global_this: &JSGlobalObject,
@@ -3758,7 +3922,7 @@ impl Expect {
         // deferred `D` and the call-site error the first pass already created instead of
         // minting new ones (see [`ReentryDeferred`]): only that pass ran with the user's
         // `expect()` call on the stack, and `D` is the promise the user holds.
-        let chained = self.reentry_deferred.take();
+        let chained = self.take_reentry_deferred();
         let deferred_js = match &chained {
             Some(outer) => outer.deferred,
             None => js_promise::JSPromise::create(global_this).to_js(),
@@ -3767,13 +3931,18 @@ impl Expect {
         // not at the promise-reaction job that later re-invokes the matcher.
         let call_site_error = match &chained {
             Some(outer) => outer.call_site_error,
-            None => global_this.create_error_instance(format_args!("Matcher promise was not awaited")),
+            None => {
+                // Only its stack matters: it donates the user's `expect()` frames to the
+                // real failure (`attributed_matcher_error`) and to the stale-epoch reason.
+                global_this
+                    .create_error_instance(format_args!("expect() call site for a deferred matcher"))
+            }
         };
         // The user call site, captured for the same reason. A deferral made from inside a
         // settle re-invocation (e.g. the `toThrow` half of `.resolves.toThrow(...)`)
         // inherits the site captured by the deferral driving it: this frame is a
         // promise-reaction job with no user frames to walk.
-        let call_site = match self.reentry_call_site.get() {
+        let call_site = match self.reentry_call_site() {
             Some(site) => site,
             None => {
                 let srcloc = call_frame.get_caller_src_loc(global_this);
@@ -3813,11 +3982,29 @@ impl Expect {
             deferred_ctx::SRC_COL,
             JSValue::js_number_from_int32(call_site.column as i32),
         )?;
+        // Chained getters (`.not`, `.resolves`) mutate the shared wrapper's flags, so the
+        // re-invocation must observe the flags THIS call saw, not the latest ones.
         ctx.put_index(
             global_this,
-            deferred_ctx::PHASE,
-            JSValue::js_number_from_int32(SettlePhase::Invoke as i32),
+            deferred_ctx::FLAGS,
+            JSValue::js_number_from_int32(self.flags.get().encode() as i32),
         )?;
+        // A chained deferral carries the `.resolves`/`.rejects` subject settlement this
+        // re-invocation already consumed, so every later pass resumes the Subject await
+        // point from it and never re-reads the raw subject's internal slots.
+        let carried_subject =
+            self.with_reentry_window(|window| window.consumed_subject.get()).flatten();
+        let (carried_rejected, carried_value, carried_subject_js) = match carried_subject {
+            Some(settlement) => (
+                JSValue::js_number_from_int32(settlement.rejected as i32),
+                settlement.value,
+                settlement.subject,
+            ),
+            None => (JSValue::UNDEFINED, JSValue::UNDEFINED, JSValue::UNDEFINED),
+        };
+        ctx.put_index(global_this, deferred_ctx::CARRIED_SUBJECT_REJECTED, carried_rejected)?;
+        ctx.put_index(global_this, deferred_ctx::CARRIED_SUBJECT_VALUE, carried_value)?;
+        ctx.put_index(global_this, deferred_ctx::CARRIED_SUBJECT, carried_subject_js)?;
 
         // Adopt the subject through the generic promise-resolve path: a promise subclass
         // or thenable (e.g. `Bun.$`'s lazy ShellPromise) is adopted via its own `.then` —
@@ -3868,24 +4055,36 @@ impl Expect {
     /// Count a deferred matcher promise on the owning test's sequence so the runner keeps
     /// the test open until it settles, and return the registration epoch the settle
     /// reaction must hand back to [`Expect::settle_pending_matcher_promise`]. `None`
-    /// (nothing registered) degrades exactly like `expect_call_count` when no single
-    /// sequence is resolvable (`test.concurrent`, outside `bun:test`, stale phase).
+    /// (nothing registered) degrades exactly like `expect_call_count` when no test entry
+    /// owns the deferral: a concurrent group running 2+ sequences, a hook-only
+    /// `beforeAll`/`afterAll` sequence, or outside `bun:test` (stale phase).
     fn register_pending_matcher_promise(&self) -> Option<u32> {
         let parent = self.parent.as_ref()?;
         let buntest_strong = parent.bun_test()?;
         let buntest = buntest_strong.get();
         let sequence = parent.phase.sequence(buntest)?;
+        // A hook-only sequence has no test entry to derive a completion deadline from, so
+        // a tracked deferral could park the run forever; fall back to the synchronous wait
+        // instead. That wait ignores the hook timeout, so a never-settling subject in a
+        // beforeAll/afterAll still blocks the run — the same behavior as released Bun.
+        if sequence.test_entry.is_none() {
+            return None;
+        }
         Some(sequence.register_matcher_promise())
     }
 
     /// A deferral can only be tracked (and therefore gate its test's completion) when the
-    /// owning sequence is resolvable; see [`Expect::register_pending_matcher_promise`].
-    /// Callers fall back to the pre-existing synchronous wait when it is not.
+    /// owning sequence has a test entry to bound the wait; see
+    /// [`Expect::register_pending_matcher_promise`]. Callers otherwise fall back to the
+    /// pre-existing synchronous wait.
     fn can_track_matcher_promise(&self) -> bool {
         let Some(parent) = self.parent.as_ref() else { return false };
         let Some(buntest_strong) = parent.bun_test() else { return false };
         let buntest = buntest_strong.get();
-        parent.phase.sequence(buntest).is_some()
+        parent
+            .phase
+            .sequence(buntest)
+            .is_some_and(|sequence| sequence.test_entry.is_some())
     }
 
     /// The settle reaction ran (or the deferral failed to attach): release the
@@ -3917,74 +4116,76 @@ impl Expect {
         );
     }
 
-    /// An un-awaited matcher promise failed: fail the owning TEST now with the
-    /// call-site-attributed `exception`. A stale `epoch` (attempt timed out / retried) is
-    /// ignored. `Execution::handle_uncaught_exception` cannot be reused: it validates
-    /// against the active entry, which the callback has long advanced past by now.
-    fn record_unawaited_matcher_failure(
+    /// The re-invoked matcher failed. Reject `D` PLAINLY (not as-handled), so a user
+    /// `await`/`.catch` observes the failure, and record a provisional failure on the
+    /// owning sequence: whether anyone adopted `D` is decided once, when that sequence
+    /// completes (`Execution::commit_provisional_matcher_failures`). Until then the
+    /// bun:test unhandled-rejection handler suppresses `D`'s own rejection report.
+    fn record_provisional_matcher_failure(
         &self,
         global_this: &JSGlobalObject,
+        deferred: &mut js_promise::JSPromise,
         exception: JSValue,
         epoch: Option<u32>,
     ) {
-        use super::execution::Result as SequenceResult;
+        use super::execution::ProvisionalMatcherFailure;
 
-        let Some(parent) = self.parent.as_ref() else {
-            // Not inside bun:test: report it like any other unhandled error.
+        let deferred_js = deferred.to_js();
+        // Contexts with no owning sequence cannot decide "awaited or not" at a later
+        // sequence completion: report the failure now, like any other unhandled error,
+        // and settle `D` without an unhandled-rejection report of its own.
+        let Some((parent, buntest_strong)) = self
+            .parent
+            .as_ref()
+            .and_then(|parent| Some((parent, parent.bun_test()?)))
+        else {
+            deferred.set_handled();
+            let _ = deferred.reject(global_this, Ok(exception));
             global_this.bun_vm().as_mut().run_error_handler(exception, None);
             return;
         };
-        let Some(buntest_strong) = parent.bun_test() else {
-            global_this.bun_vm().as_mut().run_error_handler(exception, None);
-            return;
-        };
+        {
+            let buntest = buntest_strong.get();
+            if parent.phase.sequence(buntest).is_none() {
+                // Multi-sequence concurrent group / stale phase: no single owning
+                // sequence. Route through the shared handler so it is still reported.
+                deferred.set_handled();
+                let _ = deferred.reject(global_this, Ok(exception));
+                buntest.on_uncaught_exception(global_this, Some(exception), true, &parent.phase);
+                return;
+            }
+        }
+
+        // Reject before re-borrowing the sequence: settling a promise never runs user JS
+        // synchronously (reactions are queued), but it does enter the rejection tracker.
+        if deferred.reject(global_this, Ok(exception)).is_err() {
+            return; // terminated
+        }
         let buntest = buntest_strong.get();
-        let Some(sequence) = parent.phase.sequence(buntest) else {
-            // Concurrent group / stale phase: no single owning sequence. Route through the
-            // shared handler so the failure is still reported (as an unhandled error).
-            buntest.on_uncaught_exception(global_this, Some(exception), true, &parent.phase);
-            return;
+        let Some(sequence) = parent.phase.sequence(buntest) else { return };
+        // The `expect()` was created inside a hook if the entry it captured at creation
+        // time is not the sequence's test entry (e.g. a beforeEach of a `test.failing`).
+        let in_hook = match &parent.phase {
+            bun_test::RefDataValue::Execution { entry_data: Some(entry_data), .. } => {
+                sequence.test_entry.is_none_or(|test_entry| {
+                    !core::ptr::eq(test_entry.as_ptr().cast::<()>().cast_const(), entry_data.entry)
+                })
+            }
+            _ => false,
         };
-        if epoch.is_some_and(|epoch| epoch != sequence.matcher_epoch) {
-            // Stale deferral: the attempt it belonged to already timed out or was
-            // retried, so the sequence now describes a different attempt.
-            return;
-        }
-        // Mirror `Execution::handle_uncaught_exception`'s test-entry arm.
-        let mode = sequence
-            .test_entry
-            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-            .map_or(bun_test::ScopeMode::Normal, |e| unsafe { e.as_ref() }.base.mode);
-        let show = match mode {
-            bun_test::ScopeMode::Failing => {
-                if sequence.result == SequenceResult::Pending {
-                    sequence.result = SequenceResult::Pass;
-                }
-                false // `test.failing` expects the failure; hide it like the sync path
-            }
-            bun_test::ScopeMode::Todo => {
-                if sequence.result == SequenceResult::Pending {
-                    sequence.result = SequenceResult::Todo;
-                }
-                true
-            }
-            _ => {
-                if sequence.result == SequenceResult::Pending {
-                    sequence.result = SequenceResult::Fail;
-                }
-                true
-            }
-        };
-        if show {
-            buntest.bun_test_root.on_before_print();
-            global_this.bun_vm().as_mut().run_error_handler(exception, None);
-            Output::flush();
-        }
+        sequence.provisional_matcher_failures.push(ProvisionalMatcherFailure {
+            deferred: bun_jsc::Strong::create(deferred_js, global_this),
+            exception: bun_jsc::Strong::create(exception, global_this),
+            epoch: epoch.unwrap_or(sequence.matcher_epoch),
+            in_hook,
+            leaked: false,
+        });
     }
 
-    /// Best-effort: report the matcher failure through the call-site error (whose stack
-    /// points at the user's `expect()` line) carrying the failure's message. The reaction
-    /// job's own stack is useless for attribution. Never leaves a pending exception.
+    /// Best-effort: the failure surfaced from a promise-reaction job, so graft the user's
+    /// `expect()` call-site frames (captured at defer time in `call_site_error`) onto the
+    /// real exception, keeping its class, name, message, `cause`, extra properties — and
+    /// any user frames of its own. Never leaves a pending exception.
     fn attributed_matcher_error(
         global_this: &JSGlobalObject,
         exception: JSValue,
@@ -3993,20 +4194,90 @@ impl Expect {
         if !exception.is_object() || !call_site_error.is_object() {
             return exception;
         }
-        match exception.get(global_this, "message") {
-            Ok(Some(message)) if message.is_string() => {
-                call_site_error.put(global_this, "message", message);
-                call_site_error
-            }
-            Ok(_) => exception,
-            Err(JsError::Terminated) => exception,
+        match Self::graft_call_site_stack(global_this, exception, call_site_error) {
+            Ok(()) | Err(JsError::Terminated) => {}
             Err(_) => {
-                // Attribution is cosmetic; a throwing `message` getter must not derail the
+                // Attribution is cosmetic; a throwing `stack` getter must not derail the
                 // settle path or leak a pending exception out of the reaction.
                 let _ = global_this.clear_exception_except_termination();
-                exception
             }
         }
+        exception
+    }
+
+    /// Append `call_site_error`'s user frames (`"\n    at ..."`, file/line included) to
+    /// `exception`'s `stack` after any user frames of its own, keeping the exception's
+    /// header (name and message) and every other property. An exception raised from user
+    /// JS inside the re-invoked matcher keeps its real throw site; one raised natively
+    /// from the reaction job has no user frames of its own, so the call-site frames are
+    /// all it gets.
+    fn graft_call_site_stack(
+        global_this: &JSGlobalObject,
+        exception: JSValue,
+        call_site_error: JSValue,
+    ) -> JsResult<()> {
+        use bstr::ByteSlice;
+        // The V8-format frame prefix every stack line Bun serializes starts with.
+        const FRAME: &[u8] = b"\n    at ";
+        // The reporter hides source-less native frames of an intact trace; keep that
+        // parity by dropping their serialized form (`(unknown)`/`(native)` locations).
+        fn is_native_frame(line: &[u8]) -> bool {
+            line.ends_with(b"(unknown)")
+                || line.ends_with(b"(native)")
+                || line.ends_with(b" at unknown")
+                || line.ends_with(b" at native")
+        }
+        let Some(site_stack) = call_site_error.get(global_this, "stack")?.filter(|v| v.is_string())
+        else {
+            return Ok(());
+        };
+        let site_stack =
+            bun_core::OwnedString::new(site_stack.to_bun_string(global_this)?).to_utf8_bytes();
+        // No user frames were captured at the call site: nothing to attribute with.
+        let Some(site_frames_at) = site_stack.find(FRAME) else { return Ok(()) };
+        // Reading `stack` materializes the exception's own (reaction-job) trace, so the
+        // `put` below is what every later consumer (the failure reporter included) sees.
+        let Some(own_stack) = exception.get(global_this, "stack")?.filter(|v| v.is_string()) else {
+            return Ok(());
+        };
+        let own_stack =
+            bun_core::OwnedString::new(own_stack.to_bun_string(global_this)?).to_utf8_bytes();
+        let header_len = own_stack.find(FRAME).unwrap_or(own_stack.len());
+        let mut grafted = Vec::with_capacity(own_stack.len() + (site_stack.len() - site_frames_at));
+        grafted.extend_from_slice(&own_stack[..header_len]);
+        // The exception's own user frames come first: they name the real throw site.
+        let mut own_frames: Vec<&[u8]> = Vec::new();
+        for line in own_stack[header_len..].split(|&byte| byte == b'\n') {
+            if line.is_empty() || is_native_frame(line) {
+                continue;
+            }
+            grafted.push(b'\n');
+            grafted.extend_from_slice(line);
+            own_frames.push(line);
+        }
+        // Then the call-site frames it does not already carry, so the failure also points
+        // back at the user's `expect()` line.
+        let mut grafted_a_frame = !own_frames.is_empty();
+        for line in site_stack[site_frames_at..].split(|&byte| byte == b'\n') {
+            if line.is_empty() || is_native_frame(line) || own_frames.contains(&line) {
+                continue;
+            }
+            grafted.push(b'\n');
+            grafted.extend_from_slice(line);
+            grafted_a_frame = true;
+        }
+        if !grafted_a_frame {
+            return Ok(());
+        }
+        // NOT mirrored onto own `sourceURL`/`line`/`column` properties: `put` would make
+        // them enumerable (JSC materializes them DontEnum), so the reporter would dump
+        // them as extra fields. The reporter takes the location from the frames instead.
+        exception.put(
+            global_this,
+            "stack",
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &grafted)?,
+        );
+        Ok(())
     }
 
     /// The registration at `epoch` still belongs to the attempt currently occupying the
@@ -4024,10 +4295,11 @@ impl Expect {
         sequence.matcher_epoch == epoch
     }
 
-    /// Shared body of `Bun__Expect__onSubjectResolve/Reject`. `Invoke` phase: re-invoke
-    /// the deferred matcher now that the subject settled; a failure re-arms the context
-    /// as a `Report` reaction one job later, so user code adopting `D` in the same drain
-    /// (an async callback's implicit `return`) is seen before the un-awaited decision.
+    /// Shared body of `Bun__Expect__onSubjectResolve/Reject`: re-invoke the deferred
+    /// matcher now that the subject settled. A matcher failure rejects `D` plainly and
+    /// records a provisional failure on the owning sequence; whether anyone adopted `D`
+    /// is decided once, when that sequence completes (see
+    /// [`Expect::record_provisional_matcher_failure`]).
     fn on_subject_settled(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -4046,11 +4318,26 @@ impl Expect {
         let origin = DeferralOrigin::from_ctx_slot(ctx.get_index(global_this, deferred_ctx::ORIGIN)?);
         let subject = ctx.get_index(global_this, deferred_ctx::SUBJECT)?;
         let epoch = Self::epoch_from_ctx_slot(ctx.get_index(global_this, deferred_ctx::EPOCH)?);
-        let phase = ctx.get_index(global_this, deferred_ctx::PHASE)?;
+        let flags_snapshot =
+            Flags::decode(Self::u32_from_ctx_slot(ctx.get_index(global_this, deferred_ctx::FLAGS)?) as FlagsCppType);
         let call_site = ReentryCallSite {
             source_url: ctx.get_index(global_this, deferred_ctx::SRC_URL)?,
             line: Self::u32_from_ctx_slot(ctx.get_index(global_this, deferred_ctx::SRC_LINE)?),
             column: Self::u32_from_ctx_slot(ctx.get_index(global_this, deferred_ctx::SRC_COL)?),
+        };
+        // The `.resolves`/`.rejects` subject settlement a chained deferral carried
+        // forward (`undefined` for a first-pass deferral): re-seeded into the window so
+        // this re-invocation's Subject await point never re-reads the raw subject.
+        let carried_rejected = ctx.get_index(global_this, deferred_ctx::CARRIED_SUBJECT_REJECTED)?;
+        let consumed_subject = if carried_rejected.is_int32() {
+            Some(ReentrySettlement {
+                origin: DeferralOrigin::Subject,
+                subject: ctx.get_index(global_this, deferred_ctx::CARRIED_SUBJECT)?,
+                value: ctx.get_index(global_this, deferred_ctx::CARRIED_SUBJECT_VALUE)?,
+                rejected: carried_rejected.as_int32() != 0,
+            })
+        } else {
+            None
         };
 
         let (Some(expect_ptr), Some(deferred_ptr)) =
@@ -4064,28 +4351,16 @@ impl Expect {
         // SAFETY: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let deferred = js_promise::JSPromise::opaque_mut(deferred_ptr);
 
-        // Report phase: the matcher already failed on the Invoke pass one job ago.
-        if phase.is_int32() && phase.as_int32() == SettlePhase::Report as i32 {
-            let exception = ctx.get_index(global_this, deferred_ctx::FAILURE)?;
-            if deferred.is_handled() {
-                // The user awaited (or `.catch`ed) the matcher promise: reject it and let
-                // their handler surface the failure.
-                let _ = deferred.reject(global_this, Ok(exception));
-            } else {
-                // Un-awaited failing matcher: fail the owning test and settle `D` without
-                // an unhandled-rejection report.
-                expect.record_unawaited_matcher_failure(global_this, exception, epoch);
-                let _ = deferred.reject_as_handled(global_this, exception);
-            }
-            expect.settle_pending_matcher_promise(global_this, epoch);
-            return Ok(JSValue::UNDEFINED);
-        }
-
         // The attempt this deferral belonged to is gone (per-test timeout or retry/repeat
         // reset): do not re-run the matcher — its side effects (snapshot counters, expect
         // counts) would land in the attempt now occupying the sequence.
         if !expect.matcher_epoch_is_current(epoch) {
-            let _ = deferred.reject_as_handled(global_this, call_site_error);
+            // Reject with the real reason, attributed to the user's `expect()` line.
+            let stale = global_this.create_error_instance(format_args!(
+                "Test attempt ended (timeout or retry) before the matcher promise settled"
+            ));
+            let stale = Self::attributed_matcher_error(global_this, stale, call_site_error);
+            let _ = deferred.reject_as_handled(global_this, stale);
             expect.settle_pending_matcher_promise(global_this, epoch);
             return Ok(JSValue::UNDEFINED);
         }
@@ -4096,36 +4371,42 @@ impl Expect {
             args.push(args_js.get_index(global_this, i)?);
         }
 
-        // Re-invoke the SAME matcher. With `reentry` set and a settled subject,
-        // `process_promise` falls through the synchronous Fulfilled/Rejected logic, and a
-        // call-produced deferral (async `toThrow` / async custom matcher) resumes from the
-        // stashed settlement instead of running the producer a second time.
-        expect.reentry.set(true);
-        expect.reentry_settlement.set(Some(ReentrySettlement {
-            origin,
-            subject,
-            value: settled_value,
-            rejected,
-        }));
-        expect.reentry_call_site.set(Some(call_site));
-        // Consumed (taken) only if this re-invocation defers again; see [`ReentryDeferred`].
-        expect.reentry_deferred.set(Some(ReentryDeferred { deferred: deferred_js, call_site_error }));
+        // Re-invoke the SAME matcher. Inside the reentry window, every await point resumes from
+        // the stashed settlement: a subject deferral direction-checks it instead of
+        // re-reading the subject's internal slots, and a call-produced deferral (async
+        // `toThrow` / async custom matcher) never runs its producer a second time.
+        // The re-invocation window (see [`ReentryWindow`]): every `JSValue` in it is
+        // rooted by this reaction frame + `ctx` for the synchronous `callee.call` below.
+        let window = ReentryWindow {
+            expect: expect_ptr,
+            settlement: Cell::new(Some(ReentrySettlement {
+                origin,
+                subject,
+                value: settled_value,
+                rejected,
+            })),
+            consumed_subject: Cell::new(consumed_subject),
+            call_site,
+            // Consumed (taken) only if this re-invocation defers again; see [`ReentryDeferred`].
+            deferred: Cell::new(Some(ReentryDeferred { deferred: deferred_js, call_site_error })),
+            flags: flags_snapshot,
+        };
         let call_result = {
-            let (reentry, settlement, site, chained) = (
-                &expect.reentry,
-                &expect.reentry_settlement,
-                &expect.reentry_call_site,
-                &expect.reentry_deferred,
-            );
-            // Reset even if the matcher throws or a nested panic unwinds; the settlement's
-            // and call site's `JSValue`s are only rooted (by this frame + `ctx`) for the
-            // call below.
-            let _reset = scopeguard::guard((), |()| {
-                reentry.set(false);
-                settlement.set(None);
-                site.set(None);
-                chained.set(None);
+            // Restore the PREVIOUS window and flags — not null/default — even if the
+            // matcher throws or a nested panic unwinds: a further settle reaction firing
+            // inside this one (nested window) must hand back what it found. Armed before
+            // the two `replace` calls below so no path can leave the stale pointer behind.
+            let previous_window = expect.reentry_window.get();
+            let previous_flags = expect.flags.get();
+            let _restore = scopeguard::guard((), move |()| {
+                expect.reentry_window.set(previous_window);
+                expect.flags.set(previous_flags);
             });
+            // The re-invoked matcher must observe the flags captured at defer time
+            // ([`deferred_ctx::FLAGS`]): a later `.not`/`.resolves` on the same handle
+            // already mutated the shared byte.
+            expect.reentry_window.set(&window);
+            expect.flags.set(window.flags);
             callee.call(global_this, expect_this, &args)
         };
 
@@ -4157,28 +4438,14 @@ impl Expect {
                     raw.to_error().unwrap_or(raw),
                     call_site_error,
                 );
-                // Whether the failure is "awaited" cannot be decided yet: the job that
-                // adopts `D` (e.g. the async callback's implicit-return thenable job) may
-                // still be queued behind this reaction. Re-arm the same context as a
-                // Report reaction — it runs after those jobs — and keep the registration
-                // (and `D`) pending until it decides.
-                ctx.put_index(
-                    global_this,
-                    deferred_ctx::PHASE,
-                    JSValue::js_number_from_int32(SettlePhase::Report as i32),
-                )?;
-                ctx.put_index(global_this, deferred_ctx::FAILURE, exception)?;
-                subject.then2(
-                    global_this,
-                    ctx,
-                    Bun__Expect__onSubjectResolve,
-                    Bun__Expect__onSubjectReject,
-                );
-                return Ok(JSValue::UNDEFINED);
+                // Whether the failure was "awaited" cannot be decided yet (the user may
+                // adopt `D` any time before the test ends): reject `D` plainly and record
+                // a provisional failure the owning sequence commits at completion.
+                expect.record_provisional_matcher_failure(global_this, deferred, exception, epoch);
             }
         }
-        // Exactly one decrement per registration: each reaction pair runs at most once
-        // per phase, and only the final phase reaches a release path.
+        // Exactly one decrement per registration: the reaction pair runs at most once,
+        // and every arm above that returns early releases it first.
         expect.settle_pending_matcher_promise(global_this, epoch);
         Ok(JSValue::UNDEFINED)
     }

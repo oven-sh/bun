@@ -21,8 +21,9 @@
 // Fix: register the pidfd level-triggered (no EPOLLONESHOT). A pidfd stays
 // readable from process exit until close, so a dropped ready_polls slot is
 // harmless — the next epoll_wait returns it again.
-import { test } from "bun:test";
-import { isLinux } from "harness";
+import { getEventLoopStats } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
+import { isDebug, isLinux } from "harness";
 
 // pidfd path is Linux-only; macOS/FreeBSD use EVFILT_PROC which is keyed
 // on pid and auto-removed by the kernel when the process is reaped.
@@ -35,6 +36,9 @@ test.skipIf(!isLinux)(
     const N = 20;
     const exits: Array<Promise<void>> = [];
     let nested = false;
+    // `nestedDispatchTicks` (debug-only) counts ticks entered while an outer ready-poll
+    // dispatch is mid-batch — exactly the re-entry this test relies on triggering below.
+    const nestedTicksBefore = getEventLoopStats().nestedDispatchTicks;
 
     for (let i = 0; i < N; i++) {
       const { promise, resolve } = Promise.withResolvers<void>();
@@ -73,5 +77,12 @@ test.skipIf(!isLinux)(
     // whose events were dropped never fire onExit and this await hangs until
     // the test's own 5s timeout — there is no other wake source.
     await Promise.all(exits);
+
+    // Self-verifying trigger: the HTMLRewriter transform in onExit must have re-entered
+    // the event loop from inside the outer poll dispatch. If it stops nesting (#33261),
+    // this test no longer exercises the dropped-ready_polls path and must be re-armed.
+    if (isDebug) {
+      expect(getEventLoopStats().nestedDispatchTicks).toBeGreaterThan(nestedTicksBefore);
+    }
   },
 );

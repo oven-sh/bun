@@ -1282,10 +1282,15 @@ pub(crate) fn inject(
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<Box<[u8]>> = None;
-    let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
+
+    // Prepend tmpdir path so the temp file lands in a writable location
+    // (e.g. /data/local/tmp on OHOS, not the CWD which may be read-only).
+    // The existing fallback in the retry loop below already does this, but
+    // only on the 2nd attempt; this ensures the 1st attempt also uses tmpdir.
+    let mut tmpbuf = PathBuffer::uninit();
+    let tmpname = match bun_fs::FileSystem::tmpname(
         b"bun-build",
-        &mut buf[..],
-        // i64 → u64 bitcast.
+        &mut tmpbuf[..],
         bun_core::time::milli_timestamp() as u64,
     ) {
         Ok(n) => n,
@@ -1296,6 +1301,18 @@ pub(crate) fn inject(
             );
             return Fd::INVALID;
         }
+    };
+    let zname_z = bun_core::strings::concat(&[
+        bun_bundler::bun_fs::RealFS::tmpdir_path(),
+        SEP_STR.as_bytes(),
+        tmpname.as_bytes(),
+        &[0],
+    ]);
+    let len = zname_z.len().saturating_sub(1);
+    zname_owned = Some(zname_z);
+    // SAFETY: trailing 0 byte appended above; `zname_owned` keeps the allocation alive.
+    let mut zname: &ZStr = unsafe {
+        ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
     };
 
     let cleanup = |name: &ZStr, fd: Fd| {

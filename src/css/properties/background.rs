@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate as css;
-use crate::css_values::color::{ColorFallback, ColorFallbackKind};
 use crate::css_values::color::CssColor;
+use crate::css_values::color::{ColorFallback, ColorFallbackKind};
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};

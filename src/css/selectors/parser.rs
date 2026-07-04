@@ -526,7 +526,11 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
             }
             specificity.add(Specificity::from_u32(max));
         }
-        C::Negation(list) | C::Is(list) | C::Any { selectors: list, .. } => {
+        C::Negation(list)
+        | C::Is(list)
+        | C::Any {
+            selectors: list, ..
+        } => {
             // https://drafts.csswg.org/selectors/#specificity-rules:
             //
             //     The specificity of an :is() pseudo-class is replaced by the
@@ -3992,18 +3996,18 @@ pub enum OptionalQName<Impl: SelectorImpl> {
 
 /// Namespace prefix as observed by a **type** selector (`ns|E`, `*|E`, `|E`, `E`).
 pub enum QNamePrefix<Impl: SelectorImpl> {
-    ImplicitAnyNamespace,                         // `foo` in type selectors, without a default ns
+    ImplicitAnyNamespace, // `foo` in type selectors, without a default ns
     ImplicitDefaultNamespace(Impl::NamespaceUrl), // `foo` in type selectors, with a default ns
-    ExplicitNoNamespace,                          // `|foo`
-    ExplicitAnyNamespace,                         // `*|foo`
+    ExplicitNoNamespace,  // `|foo`
+    ExplicitAnyNamespace, // `*|foo`
     ExplicitNamespace(Impl::NamespacePrefix, Impl::NamespaceUrl), // `prefix|foo`
 }
 
 /// Namespace prefix as observed by an **attribute** selector (`[ns|attr]`, `[*|attr]`, `[attr]`).
 /// Implicit and explicit no-namespace collapse; a default @namespace does not apply.
 pub enum AttrQName<Impl: SelectorImpl> {
-    NoNamespace,                                        // `foo` or `|foo`
-    Any,                                                // `*|foo`
+    NoNamespace,                                         // `foo` or `|foo`
+    Any,                                                 // `*|foo`
     Specific(Impl::NamespacePrefix, Impl::NamespaceUrl), // `prefix|foo`
 }
 

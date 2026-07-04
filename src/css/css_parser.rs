@@ -1539,7 +1539,9 @@ mod rule_parsers {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
             let composes_state = match self.composes_state {
-                ComposesState::Allow(l) if self.is_in_style_rule => ComposesState::DisallowNested(l),
+                ComposesState::Allow(l) if self.is_in_style_rule => {
+                    ComposesState::DisallowNested(l)
+                }
                 other => other,
             };
             // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the

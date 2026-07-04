@@ -260,7 +260,7 @@ impl Gradient {
     }
 
     /// Returns a fallback gradient for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->Gradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> Gradient {
         match self {
             Gradient::Linear(g) => Gradient::Linear(g.get_fallback(bump, kind)),
             Gradient::RepeatingLinear(g) => Gradient::RepeatingLinear(g.get_fallback(bump, kind)),
@@ -454,7 +454,7 @@ impl LinearGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->LinearGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> LinearGradient {
         let fallback_items: Vec<_> = self
             .items
             .iter()
@@ -539,7 +539,7 @@ impl RadialGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->RadialGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> RadialGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -635,7 +635,7 @@ impl ConicGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->ConicGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> ConicGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -799,7 +799,7 @@ impl WebKitGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->WebKitGradient {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
                 let stops: Vec<_> = linear
@@ -1058,7 +1058,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns a fallback gradient item for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->GradientItem<D> {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> GradientItem<D> {
         match self {
             GradientItem::ColorStop(stop) => GradientItem::ColorStop(ColorStop {
                 color: stop.color.get_fallback(bump, kind),
@@ -1248,7 +1248,7 @@ impl WebKitColorStop {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) ->WebKitColorStop {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallback) -> WebKitColorStop {
         WebKitColorStop {
             color: self.color.get_fallback(bump, kind),
             position: self.position,

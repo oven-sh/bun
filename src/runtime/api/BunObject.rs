@@ -1426,12 +1426,46 @@ pub fn bun_resolve_sync_with_paths(
     };
     let source_str = scopeguard::guard(source_str, |s| s.deref());
 
+    // The resolver walks each entry as a directory, which requires it to be
+    // absolute. Node resolves relative entries against the cwd too, via the
+    // `path.resolve()` at the top of `Module._nodeModulePaths`.
+    let mut abs_bufs: Vec<Vec<u8>> = Vec::new();
+    let mut abs_paths: Vec<BunString> = Vec::with_capacity(paths.len());
+    {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        let top_level_dir = global.bun_vm().top_level_dir();
+        let mut join_buf = bun_paths::path_buffer_pool::get();
+        for path in paths {
+            let utf8 = path.to_utf8_without_ref();
+            if bun_paths::is_absolute(utf8.slice()) {
+                abs_paths.push(*path);
+                continue;
+            }
+            // `None` means the joined path does not fit in MAX_PATH_BYTES, so it
+            // cannot name a real directory either. Dropping the entry is the only
+            // option: the resolver would assert on the relative original.
+            let Some(abs) = join_abs_string_buf_checked::<platform::Auto>(
+                top_level_dir,
+                join_buf.as_mut_slice(),
+                &[utf8.slice()],
+            ) else {
+                continue;
+            };
+            abs_bufs.push(abs.to_vec());
+            // Borrowed, not cloned: `abs_bufs` owns the bytes until this function
+            // returns, and its elements' heap buffers never move.
+            abs_paths.push(BunString::borrow_utf8(abs_bufs.last().unwrap()));
+        }
+    }
+
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    // SAFETY: `abs_paths` borrows the C++-owned BunStrings and `abs_bufs`, both
+    // valid for the duration of this synchronous resolve call; lifetime is
+    // erased for the resolver slot.
+    bun_vm.transpiler.resolver.custom_dir_paths =
+        Some(unsafe { bun_ptr::detach_lifetime(abs_paths.as_slice()) });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;

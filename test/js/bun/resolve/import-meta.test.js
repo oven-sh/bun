@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -230,6 +230,54 @@ it('import("bun") works', async () => {
 
 it("require.resolve with empty options object", () => {
   expect(require.resolve(import.meta.path + String(""), {})).toBe(import.meta.path);
+});
+
+it("require.resolve resolves relative options.paths against the cwd", async () => {
+  using dir = tempDir("resolve-relative-paths", {
+    "node_modules/dummy-pkg/package.json": JSON.stringify({ name: "dummy-pkg", main: "index.js" }),
+    "node_modules/dummy-pkg/index.js": "module.exports = 1;",
+    "sub/target.js": "module.exports = 2;",
+    "fixture.js": `
+      const Module = require("node:module");
+      const path = require("node:path");
+      const rel = p => path.relative(process.cwd(), p).replaceAll(path.sep, "/");
+      // Non-string entries are coerced, so these end up as relative paths too.
+      const coerced = [-5.0, 4.736300735651323, -769908.0822694495, -1000000000.0];
+      console.log(rel(require.resolve("dummy-pkg", { paths: ["sub"] })));
+      console.log(rel(require.resolve("dummy-pkg", { paths: ["./sub"] })));
+      console.log(rel(require.resolve("dummy-pkg", { paths: [""] })));
+      console.log(rel(require.resolve("dummy-pkg", { paths: ["does-not-exist"] })));
+      console.log(rel(require.resolve("dummy-pkg", { paths: coerced })));
+      console.log(rel(require.resolve("./target.js", { paths: ["sub"] })));
+      console.log(rel(Module._resolveFilename("dummy-pkg", null, false, { paths: ["sub"] })));
+      // Absolute entries are passed through untouched, including ones too long to
+      // join: the resolver falls back to the nearest existing parent directory.
+      const tooLong = path.join(process.cwd(), Buffer.alloc(8000, "a").toString());
+      console.log(rel(require.resolve("dummy-pkg", { paths: [tooLong] })));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout, String(dir))).toMatchInlineSnapshot(`
+    "node_modules/dummy-pkg/index.js
+    node_modules/dummy-pkg/index.js
+    node_modules/dummy-pkg/index.js
+    node_modules/dummy-pkg/index.js
+    node_modules/dummy-pkg/index.js
+    sub/target.js
+    node_modules/dummy-pkg/index.js
+    node_modules/dummy-pkg/index.js"
+  `);
+  expect(exitCode).toBe(0);
 });
 
 it("dynamically import bun", async () => {

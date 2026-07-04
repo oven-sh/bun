@@ -184,8 +184,7 @@ impl Animation {
             wrote_any = true;
         }
 
-        if !self.timing_function.is_ease()
-            || name_str.is_some_and(|n| EasingFunction::is_ident(n))
+        if !self.timing_function.is_ease() || name_str.is_some_and(|n| EasingFunction::is_ident(n))
         {
             space!();
             self.timing_function.to_css(dest)?;

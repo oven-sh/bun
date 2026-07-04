@@ -5823,10 +5823,9 @@ impl Property {
                 }
             }
             PropertyId::Animation(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<animation::Animation, 1>,
-                >(input, options)
-                {
+                if let Ok(c) = css::generic::parse_with_options::<SmallList<animation::Animation, 1>>(
+                    input, options,
+                ) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(Property::Animation((c, pre)));
                     }

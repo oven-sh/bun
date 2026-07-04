@@ -3,6 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
 use super::mock;
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_have_been_called_with(
     this: &Expect,
@@ -11,13 +12,13 @@ pub(crate) fn to_have_been_called_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let arguments = frame.arguments();
-    let (this, calls, _value) = this.mock_prologue(
+    let (this, calls, _value) = ready_or_defer!(this.mock_prologue(
         global,
-        frame.this(),
+        frame,
         "toHaveBeenCalledWith",
         "<green>...expected<r>",
         mock::MockKind::CallsWithSig,
-    )?;
+    )?);
 
     let mut pass = false;
 

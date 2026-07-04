@@ -526,6 +526,17 @@ pub mod on_unhandled_rejection {
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+            // A provisional matcher deferred rejects plainly so a user `await`/`.catch` can
+            // still observe it; whether the failure is recorded is decided once, at sequence
+            // completion (`commit_provisional_matcher_failures`), never here. The owning
+            // sequence may already be parked (no `active_entry`), so ask the whole group.
+            if buntest.execution.claim_provisional_matcher_rejection(rejection) {
+                // `VirtualMachine::uncaught_exception` counted this rejection before calling
+                // us; the runner owns it, so a later-adopted (passing) matcher promise must
+                // not leave the VM's unhandled-error counter latched.
+                jsc_vm.unhandled_error_counter -= 1;
+                return;
+            }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).

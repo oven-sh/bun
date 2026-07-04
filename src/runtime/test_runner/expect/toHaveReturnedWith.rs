@@ -3,6 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
 use super::mock;
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_have_returned_with(
     this: &Expect,
@@ -10,13 +11,13 @@ pub(crate) fn to_have_returned_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let expected = frame.arguments_as_array::<1>()[0];
-    let (this, returns, _value) = this.mock_prologue(
+    let (this, returns, _value) = ready_or_defer!(this.mock_prologue(
         global,
-        frame.this(),
+        frame,
         "toHaveReturnedWith",
         "<green>expected<r>",
         mock::MockKind::Returns,
-    )?;
+    )?);
 
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let mut pass = false;

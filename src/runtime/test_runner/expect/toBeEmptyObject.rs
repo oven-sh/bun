@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::ready_or_defer;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -9,7 +10,7 @@ pub(crate) fn to_be_empty_object(
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let this_value = call_frame.this();
-    let (this, value, not) = this.matcher_prelude(global, this_value, "toBeEmptyObject", "")?;
+    let (this, value, not) = ready_or_defer!(this.matcher_prelude(global, call_frame, "toBeEmptyObject", "")?);
     let mut pass = value.is_object_empty(global)?;
 
     if not {

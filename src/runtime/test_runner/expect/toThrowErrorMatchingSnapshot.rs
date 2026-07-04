@@ -3,6 +3,7 @@ use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 pub(crate) fn to_throw_error_matching_snapshot(
     this: &Expect,
@@ -13,7 +14,6 @@ pub(crate) fn to_throw_error_matching_snapshot(
     // (early `return Err`, `?`, fall-through).
     let this = this.post_match_guard(global);
 
-    let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
     let arguments: &[JSValue] = _arguments.slice();
 
@@ -68,15 +68,15 @@ pub(crate) fn to_throw_error_matching_snapshot(
 
     let hint = hint_string.to_slice();
 
-    let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
+    let received = ready_or_defer!(this.get_value(
         global,
-        this.get_value(
-            global,
-            this_value,
-            "toThrowErrorMatchingSnapshot",
-            "<green>properties<r><d>, <r>hint",
-        )?,
-    )?
+        frame,
+        "toThrowErrorMatchingSnapshot",
+        "<green>properties<r><d>, <r>hint",
+    )?);
+    // Deferred while the promise returned by the received function is still pending.
+    let Some(value): Option<JSValue> =
+        ready_or_defer!(this.fn_to_err_string_or_undefined(global, frame, received)?)
     else {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", false);
         return this.throw_fmt(

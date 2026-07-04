@@ -5,6 +5,7 @@ use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -14,7 +15,7 @@ impl Expect {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
+            ready_or_defer!(self.matcher_prelude(global, frame, "toContain", "<green>expected<r>")?);
 
         let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();

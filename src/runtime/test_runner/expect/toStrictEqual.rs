@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::Expect;
+use super::ready_or_defer;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -11,7 +12,7 @@ impl Expect {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toStrictEqual", "<green>expected<r>")?;
+            ready_or_defer!(self.matcher_prelude(global, frame, "toStrictEqual", "<green>expected<r>")?);
 
         let _arguments = frame.arguments_old::<1>();
         let arguments: &[JSValue] = _arguments.slice();

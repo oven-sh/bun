@@ -4,6 +4,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -37,7 +38,7 @@ pub(crate) fn to_be_one_of(
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, expected, not) =
-        this.matcher_prelude(global_this, call_frame.this(), "toBeOneOf", "<green>expected<r>")?;
+        ready_or_defer!(this.matcher_prelude(global_this, call_frame, "toBeOneOf", "<green>expected<r>")?);
 
     let arguments_ = call_frame.arguments_old::<1>();
     let arguments = arguments_.slice();

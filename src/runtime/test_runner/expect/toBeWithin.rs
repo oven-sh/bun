@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::ready_or_defer;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -9,12 +10,12 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, value, not) = self.matcher_prelude(
+        let (this, value, not) = ready_or_defer!(self.matcher_prelude(
             global,
-            frame.this(),
+            frame,
             "toBeWithin",
             "<green>start<r><d>, <r><green>end<r>",
-        )?;
+        )?);
 
         let _arguments = frame.arguments_old::<2>();
         let arguments = _arguments.slice();

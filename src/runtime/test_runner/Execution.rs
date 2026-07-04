@@ -38,7 +38,7 @@
 use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
@@ -155,9 +155,52 @@ pub struct ExecutionSequence {
     pub started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
     pub expect_call_count: u32,
+    /// Deferred matcher promises (`.resolves`/`.rejects`, async `toThrow`, async custom
+    /// matchers) registered on this sequence that have not settled yet. The sequence does
+    /// not complete while this is nonzero (see [`Execution::finish_sequence`]). Like
+    /// `expect_call_count`, this is only tracked when the owning sequence is resolvable
+    /// (`get_current_state_data()` with `entry_data: Some`); a concurrent group running
+    /// 2+ sequences cannot resolve which one is calling (a lone `test.concurrent` is a
+    /// group of one, so it still tracks), so per-test tracking degrades the same way.
+    pub pending_matcher_promises: u32,
+    /// Generation for `pending_matcher_promises`: captured by [`Self::register_matcher_promise`],
+    /// checked by [`Self::settle_matcher_promise`]. Monotonic for the lifetime of the slot
+    /// (bumped by the timeout-abandon path and by every retry/repeat `reset_sequence`), so a
+    /// settlement from an abandoned or previous attempt never touches a later attempt's counter.
+    pub matcher_epoch: u32,
+    /// The sequence is parked on `pending_matcher_promises > 0` — either at the boundary
+    /// after the test entry (before the afterEach entries) or after it ran out of entries.
+    /// `step_deferred_completion` resumes/finishes it once they settle or the timeout fires.
+    pub completion_deferred: bool,
+    /// Set while parked at the test-entry boundary: the entry (first afterEach) to resume
+    /// into once the pending matcher promises settle. `None` for the end-of-sequence park.
+    pub deferred_resume_entry: Option<NonNull<ExecutionEntry>>,
+    /// Failing deferred matchers of the current attempt whose outcome is decided once, at
+    /// sequence completion (see [`ProvisionalMatcherFailure`]). Their plain rejections are
+    /// suppressed by the bun:test unhandled-rejection handler in the meantime.
+    pub provisional_matcher_failures: Vec<ProvisionalMatcherFailure>,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub expect_assertions: ExpectAssertions,
     pub maybe_skip: bool,
+}
+
+/// A deferred matcher promise `D` whose matcher failed on the re-invocation pass. `D` was
+/// rejected plainly (not as-handled) so a user `await`/`.catch` can observe the failure;
+/// at sequence completion an entry whose `D` is still unhandled (or was leaked) is
+/// recorded as a failure, otherwise it is dropped. Both `Strong`s are released whenever
+/// the entry is removed.
+pub struct ProvisionalMatcherFailure {
+    /// Root of the deferred matcher promise `D`.
+    pub deferred: Strong,
+    /// The attributed matcher exception `D` was rejected with.
+    pub exception: Strong,
+    /// [`ExecutionSequence::matcher_epoch`] at registration; stale entries are dropped.
+    pub epoch: u32,
+    /// The `expect()` was created in a beforeEach/afterEach entry, not the test entry.
+    pub in_hook: bool,
+    /// The user adopted `D` but let a promise derived from it reject unhandled (e.g. a
+    /// floating `D.finally(..)` re-throws the reason): still the test's failure.
+    pub leaked: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -188,6 +231,11 @@ impl ExecutionSequence {
             executing: false,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
+            pending_matcher_promises: 0,
+            matcher_epoch: 0,
+            completion_deferred: false,
+            deferred_resume_entry: None,
+            provisional_matcher_failures: Vec::new(),
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
@@ -195,6 +243,50 @@ impl ExecutionSequence {
 
     pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
         &self.flaky_attempts_buf[0..self.flaky_attempt_count]
+    }
+
+    /// Count a deferred matcher promise (`.resolves`, async `toThrow`, async custom matcher)
+    /// so the sequence does not complete until it settles. Returns the epoch the settle
+    /// reaction must hand back to [`Self::settle_matcher_promise`].
+    pub fn register_matcher_promise(&mut self) -> u32 {
+        self.pending_matcher_promises += 1;
+        self.matcher_epoch
+    }
+
+    /// Release one registration made at `epoch`. Returns whether the caller must wake the
+    /// runner (via `RefDataValue::Start` — a parked sequence has `active_entry == None`, so
+    /// `get_current_and_valid_execution_sequence` rejects `Execution` refdata for it).
+    /// Stale settlements (abandoned by the per-test timeout, or from a previous retry/repeat
+    /// attempt of this slot) fail the epoch check and are ignored.
+    pub fn settle_matcher_promise(&mut self, epoch: u32) -> bool {
+        if epoch != self.matcher_epoch {
+            return false;
+        }
+        // The epoch matched, so this registration was neither abandoned nor reset away and
+        // is still counted; a promise reaction settles at most once.
+        debug_assert!(self.pending_matcher_promises > 0);
+        self.pending_matcher_promises -= 1;
+        self.pending_matcher_promises == 0 && self.completion_deferred
+    }
+
+    /// `rejection` was reported as an unhandled rejection. Returns whether the
+    /// provisional-matcher machinery owns it (the caller must not report it). The handler
+    /// only receives the rejection *reason*, so entries are matched by the exception `D`
+    /// was rejected with: an un-adopted `D`'s own rejection is decided at completion,
+    /// while a promise the user derived from an adopted `D` (a floating `D.finally(..)`
+    /// re-rejects the same reason) marks the entry [`leaked`](ProvisionalMatcherFailure).
+    pub fn claim_provisional_matcher_rejection(&mut self, rejection: JSValue) -> bool {
+        for p in &mut self.provisional_matcher_failures {
+            if p.exception.get() != rejection {
+                continue;
+            }
+            let Some(deferred) = p.deferred.get().as_promise() else { continue };
+            if bun_jsc::js_promise::JSPromise::opaque_ref(deferred).is_handled() {
+                p.leaked = true;
+            }
+            return true;
+        }
+        false
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -438,6 +530,17 @@ impl Execution {
         Some(&self.groups[self.group_index])
     }
 
+    /// See [`ExecutionSequence::claim_provisional_matcher_rejection`]. Checks every
+    /// sequence of the active group: a sequence parked on pending matcher promises has
+    /// no `active_entry`, so `get_current_state_data` cannot resolve it for the caller.
+    pub fn claim_provisional_matcher_rejection(&mut self, rejection: JSValue) -> bool {
+        let Some(group) = self.active_group_ref() else { return false };
+        let (start, end) = (group.sequence_start, group.sequence_end);
+        self.sequences[start..end]
+            .iter_mut()
+            .any(|sequence| sequence.claim_provisional_matcher_rejection(rejection))
+    }
+
     /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
     /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
     /// Dereference at point-of-use only.
@@ -528,52 +631,165 @@ impl Execution {
             } else {
                 sequence.active_entry = nn(entry.next);
             }
+
+            // Deferred matcher promises settle before the afterEach entries run (so they
+            // observe pre-afterEach state): park at the test-entry boundary, exactly like
+            // the end-of-sequence park below, and resume via `step_deferred_completion`.
+            if sequence.pending_matcher_promises > 0
+                && Some(entry_ptr) == sequence.test_entry
+                && sequence.active_entry.is_some()
+            {
+                group_log::log(format_args!(
+                    "advanceSequence: parking after the test entry; {} pending matcher promise(s)",
+                    sequence.pending_matcher_promises
+                ));
+                sequence.deferred_resume_entry = sequence.active_entry.take();
+                sequence.completion_deferred = true;
+                return;
+            }
         } else {
             debug_assert!(false, "can't call advanceSequence on a completed sequence");
         }
 
         if sequence.active_entry.is_none() {
-            // just completed the sequence
-            let test_failed = sequence.result.is_fail();
-            let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
-
-            // Handle retry logic: if test failed and we have retries remaining, retry it
-            if test_failed && sequence.remaining_retry_count > 0 {
-                if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
-                    let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
-                        0
-                    } else {
-                        sequence.started_at.since_now_force_real_time()
-                    };
-                    sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
-                        result: sequence.result,
-                        elapsed_ns,
-                    };
-                    sequence.flaky_attempt_count += 1;
-                }
-                sequence.remaining_retry_count -= 1;
-                Execution::reset_sequence(sequence);
+            // The sequence ran out of entries; it only completes once every deferred matcher
+            // promise has settled. `step_deferred_completion` finishes it (or times it out).
+            // While parked here `active_entry` is None, so an `Execution` refdata can never
+            // re-step it (`get_current_and_valid_execution_sequence` rejects it as outdated):
+            // the settle reaction must wake the runner with `RefDataValue::Start`.
+            if sequence.pending_matcher_promises > 0 {
+                group_log::log(format_args!(
+                    "advanceSequence: deferring completion; {} pending matcher promise(s)",
+                    sequence.pending_matcher_promises
+                ));
+                sequence.completion_deferred = true;
                 return;
             }
+            Execution::finish_sequence(buntest, sequence_ptr, group_ptr);
+        }
+    }
 
-            // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 {
-                sequence.remaining_repeat_count -= 1;
-                Execution::reset_sequence(sequence);
-                return;
+    /// Retry/repeat handling, final reporting, and group accounting for a sequence with no
+    /// entries left and no pending matcher promises. Reached from [`Execution::advance_sequence`]
+    /// (immediate completion) and `step_deferred_completion` (deferred completion).
+    ///
+    /// `sequence_ptr` / `group_ptr` carry the same raw-pointer contract as `advance_sequence`.
+    fn finish_sequence(
+        buntest: NonNull<BunTest>,
+        sequence_ptr: NonNull<ExecutionSequence>,
+        group_ptr: NonNull<ConcurrentGroup>,
+    ) {
+        // A rejection derived from a deferred `D` (e.g. a floating `D.finally(..)`) settled by
+        // a task in the current tick batch has not been notified yet: deliver it now so its
+        // claim marks the entry leaked before the commit below drops `D` as cleanly adopted.
+        // SAFETY: `sequence_ptr` is valid (caller contract); the shared borrow ends before the
+        // drain, which re-enters `claim_provisional_matcher_rejection` on this sequence.
+        if !unsafe { sequence_ptr.as_ref() }.provisional_matcher_failures.is_empty() {
+            VirtualMachine::get().global().handle_rejected_promises();
+        }
+        // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
+        // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
+        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        debug_assert!(sequence.active_entry.is_none());
+        debug_assert!(!sequence.executing);
+        sequence.completion_deferred = false;
+
+        // Decide the attempt's provisional matcher failures first: they may flip the
+        // result the retry/repeat logic below inspects.
+        Execution::commit_provisional_matcher_failures(buntest, sequence);
+
+        // just completed the sequence
+        let test_failed = sequence.result.is_fail();
+        let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
+
+        // Handle retry logic: if test failed and we have retries remaining, retry it
+        if test_failed && sequence.remaining_retry_count > 0 {
+            if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
+                let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
+                    0
+                } else {
+                    sequence.started_at.since_now_force_real_time()
+                };
+                sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
+                    result: sequence.result,
+                    elapsed_ns,
+                };
+                sequence.flaky_attempt_count += 1;
             }
+            sequence.remaining_retry_count -= 1;
+            Execution::reset_sequence(sequence);
+            return;
+        }
 
-            // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
+        // Handle repeat logic: if test passed and we have repeats remaining, repeat it
+        if test_passed && sequence.remaining_repeat_count > 0 {
+            sequence.remaining_repeat_count -= 1;
+            Execution::reset_sequence(sequence);
+            return;
+        }
 
-            // No more retries or repeats; mark sequence as complete
-            // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
-            if group.remaining_incomplete_entries == 0 {
-                debug_assert!(false); // remaining_incomplete_entries should never go below 0
-                return;
+        // Only report the final result after all retries/repeats are done
+        Execution::on_sequence_completed(buntest, sequence);
+
+        // No more retries or repeats; mark sequence as complete
+        // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
+        let group = unsafe { &mut *group_ptr.as_ptr() };
+        if group.remaining_incomplete_entries == 0 {
+            debug_assert!(false); // remaining_incomplete_entries should never go below 0
+            return;
+        }
+        group.remaining_incomplete_entries -= 1;
+    }
+
+    /// Decide every provisional matcher failure recorded on `sequence` (see
+    /// [`ProvisionalMatcherFailure`]) now that the attempt is completing: a `D` nobody
+    /// adopted fails the test; an adopted (or timeout-abandoned) one is dropped. Runs
+    /// before the retry/repeat decision so a committed failure can trigger a retry, and
+    /// drains the list on every completion path, releasing both `Strong`s per entry.
+    fn commit_provisional_matcher_failures(
+        buntest: NonNull<BunTest>,
+        sequence: &mut ExecutionSequence,
+    ) {
+        if sequence.provisional_matcher_failures.is_empty() {
+            return;
+        }
+        let epoch = sequence.matcher_epoch;
+        let mode = sequence.entry_mode();
+        for provisional in core::mem::take(&mut sequence.provisional_matcher_failures) {
+            let Some(deferred_ptr) = provisional.deferred.get().as_promise() else {
+                debug_assert!(false); // only ever recorded with a `JSPromise` `D`
+                continue;
+            };
+            // SAFETY: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+            let deferred = bun_jsc::js_promise::JSPromise::opaque_mut(deferred_ptr);
+            let adopted = deferred.is_handled();
+            // The provisional machinery owns `D`'s outcome either way: the generic
+            // unhandled-rejection path must never report it after this point.
+            deferred.set_handled();
+            if provisional.epoch != epoch || (adopted && !provisional.leaked) {
+                // The entry belongs to an abandoned/previous attempt, or the user adopted
+                // `D` without leaking it: their `await`/`catch`/`finally` observed it.
+                continue;
             }
-            group.remaining_incomplete_entries -= 1;
+            let (result, show) = classify_uncaught(mode, provisional.in_hook);
+            // A synchronous hook failure preempts the test callback and its result; one
+            // only learned now must equally override whatever the callback recorded
+            // (e.g. `test.failing`'s inversion to `Pass`).
+            if sequence.result == Result::Pending
+                || (provisional.in_hook && !sequence.result.is_fail())
+            {
+                sequence.result = result;
+            }
+            if show {
+                // SAFETY: `bun_test_root` is disjoint from `execution.sequences` (which
+                // `sequence` points into); dereferenced at point-of-use only.
+                unsafe { buntest.as_ref() }.bun_test_root.on_before_print();
+                // SAFETY: `VirtualMachine::get()` is the live per-thread VM.
+                VirtualMachine::get()
+                    .as_mut()
+                    .run_error_handler(provisional.exception.get(), None);
+                bun_core::Output::flush();
+            }
         }
     }
 
@@ -638,6 +854,9 @@ impl Execution {
     fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+        // A sequence never completes with unsettled matcher promises: `finish_sequence` is
+        // gated on the counter, and the timeout path abandons them (epoch bump + zero) first.
+        debug_assert_eq!(sequence.pending_matcher_promises, 0);
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
@@ -739,9 +958,14 @@ impl Execution {
             }
         }
 
+        // `commit_provisional_matcher_failures` drained the finished attempt's provisional
+        // failures; the re-init below drops (and so releases) anything left regardless.
+        debug_assert!(sequence.provisional_matcher_failures.is_empty());
+
         // Preserve retry/repeat counts and flaky attempt history across reset
         let saved_flaky_attempt_count = sequence.flaky_attempt_count;
         let saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
+        let saved_matcher_epoch = sequence.matcher_epoch;
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
             sequence.test_entry,
@@ -750,6 +974,10 @@ impl Execution {
         );
         sequence.flaky_attempt_count = saved_flaky_attempt_count;
         sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
+        // The epoch stays monotonic across attempts: `init` zeroed `pending_matcher_promises`,
+        // so any matcher promise registered by a previous attempt must fail the epoch check
+        // instead of decrementing (and corrupting) this attempt's counter when it settles.
+        sequence.matcher_epoch = saved_matcher_epoch.wrapping_add(1);
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -779,34 +1007,33 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         sequence.maybe_skip = true;
-        if sequence.active_entry != sequence.test_entry {
-            // executing hook
-            if sequence.result == Result::Pending {
-                sequence.result = Result::Fail;
-            }
-            return HandleUncaughtExceptionResult::ShowHandledError;
+        let in_hook = sequence.active_entry != sequence.test_entry;
+        let (result, show) = classify_uncaught(sequence.entry_mode(), in_hook);
+        if sequence.result == Result::Pending {
+            sequence.result = result;
         }
+        if show {
+            HandleUncaughtExceptionResult::ShowHandledError
+        } else {
+            HandleUncaughtExceptionResult::HideError // failing tests prevent the error from being displayed
+        }
+    }
+}
 
-        match sequence.entry_mode() {
-            ScopeMode::Failing => {
-                if sequence.result == Result::Pending {
-                    sequence.result = Result::Pass; // executing test() callback
-                }
-                HandleUncaughtExceptionResult::HideError // failing tests prevent the error from being displayed
-            }
-            ScopeMode::Todo => {
-                if sequence.result == Result::Pending {
-                    sequence.result = Result::Todo; // executing test() callback
-                }
-                HandleUncaughtExceptionResult::ShowHandledError // todo tests with --todo will still display the error
-            }
-            _ => {
-                if sequence.result == Result::Pending {
-                    sequence.result = Result::Fail;
-                }
-                HandleUncaughtExceptionResult::ShowHandledError
-            }
-        }
+/// Single source of truth for how an uncaught failure affects the owning test: maps the
+/// test's `ScopeMode` (and whether the failure happened in a hook) to the sequence
+/// `Result` to record and whether the error should be displayed.
+pub(crate) fn classify_uncaught(mode: ScopeMode, in_hook: bool) -> (Result, bool) {
+    if in_hook {
+        // Hook failures always fail the test: they are never inverted by `test.failing`
+        // and never downgraded to todo.
+        return (Result::Fail, true);
+    }
+    match mode {
+        ScopeMode::Failing => (Result::Pass, false),
+        // todo tests with --todo will still display the error
+        ScopeMode::Todo => (Result::Todo, true),
+        _ => (Result::Fail, true),
     }
 }
 
@@ -988,6 +1215,10 @@ fn step_sequence_one(
     }
 
     let Some(next_item_ptr) = sequence.active_entry else {
+        // Completion was deferred on pending matcher promises; wait / time out / finish it.
+        if sequence.completion_deferred {
+            return Ok(step_deferred_completion(buntest_ptr, sequence_ptr, group, now));
+        }
         // Sequence is complete - either because:
         // 1. It ran out of entries (normal completion)
         // 2. All retry/repeat attempts have been exhausted
@@ -1069,4 +1300,65 @@ fn step_sequence_one(
         Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
         return Ok(None); // run again
     }
+}
+
+/// A sequence parked on pending matcher promises (`ExecutionSequence::completion_deferred`) —
+/// either at the test-entry boundary before its afterEach entries, or with no entries left —
+/// is held open here. The test's own deadline still applies: if it expires first, the pending
+/// promises are abandoned and the sequence resumes/completes through the normal timeout path.
+/// Returns `None` when the sequence should be stepped again.
+///
+/// `sequence_ptr` / `group` carry the same raw-pointer contract as `advance_sequence`.
+fn step_deferred_completion(
+    buntest_ptr: NonNull<BunTest>,
+    sequence_ptr: NonNull<ExecutionSequence>,
+    group: NonNull<ConcurrentGroup>,
+    now: &Timespec,
+) -> Option<AdvanceSequenceStatus> {
+    let _g = group_begin!();
+    // SAFETY: sequence_ptr points into `buntest.execution.sequences`; unique live `&mut` here.
+    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    debug_assert!(sequence.active_entry.is_none());
+    debug_assert!(!sequence.executing);
+
+    if sequence.pending_matcher_promises > 0 {
+        let Some(test_entry_ptr) = sequence.test_entry else {
+            // No test entry to derive a deadline from; wait for the promises to settle.
+            return Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH });
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let test_entry = unsafe { test_entry_ptr.as_ref() };
+        if !test_entry.evaluate_timeout(sequence, now) {
+            group_log::log(format_args!(
+                "runOne: no more entries; waiting for {} pending matcher promise(s)",
+                sequence.pending_matcher_promises
+            ));
+            return Some(AdvanceSequenceStatus::Execute { timeout: test_entry.timespec });
+        }
+        // The per-test timeout fired first. Failures that already settled are real
+        // assertion failures: commit them now (which reports them and marks their `D`s
+        // handled so the generic unhandled-rejection path never picks them up later).
+        Execution::commit_provisional_matcher_failures(buntest_ptr, sequence);
+        // Then abandon the still-pending registrations. Bumping the epoch invalidates
+        // them, so a late settlement fails `settle_matcher_promise`'s epoch check instead
+        // of decrementing a counter it is no longer part of (this attempt's, or a retry's).
+        sequence.matcher_epoch = sequence.matcher_epoch.wrapping_add(1);
+        sequence.pending_matcher_promises = 0;
+    }
+
+    // Parked at the test-entry boundary: resume into the afterEach entries. If the timeout
+    // abandoned the promises above, `evaluate_timeout` set `maybe_skip` for the (already
+    // advanced-past) test entry; clear it so it is not misapplied to the resumed entry.
+    if let Some(resume_entry) = sequence.deferred_resume_entry.take() {
+        group_log::log(format_args!("runOne: matcher promises settled; resuming into afterEach"));
+        sequence.completion_deferred = false;
+        sequence.maybe_skip = false;
+        sequence.active_entry = Some(resume_entry);
+        return None;
+    }
+
+    group_log::log(format_args!("runOne: deferred completion; all matcher promises settled"));
+    Execution::finish_sequence(buntest_ptr, sequence_ptr, group);
+    // finish_sequence may have reset the sequence for a retry/repeat; step it again either way.
+    None
 }

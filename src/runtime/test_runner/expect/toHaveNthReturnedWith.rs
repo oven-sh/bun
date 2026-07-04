@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
-use super::{Expect, get_signature};
+use super::{Expect, get_signature, ready_or_defer};
 
 pub(crate) fn to_have_nth_returned_with(
     this: &Expect,
@@ -10,13 +10,13 @@ pub(crate) fn to_have_nth_returned_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let [nth_arg, expected] = frame.arguments_as_array::<2>();
-    let (this, returns, _value) = this.mock_prologue(
+    let (this, returns, _value) = ready_or_defer!(this.mock_prologue(
         global,
-        frame.this(),
+        frame,
         "toHaveNthReturnedWith",
         "<green>n<r>, <green>expected<r>",
         super::mock::MockKind::Returns,
-    )?;
+    )?);
 
     // Validate n is a number
     if !nth_arg.is_any_int() {

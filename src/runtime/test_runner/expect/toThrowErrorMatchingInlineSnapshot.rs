@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
 use super::Expect;
+use super::ready_or_defer;
 
 pub(crate) fn to_throw_error_matching_inline_snapshot(
     this: &Expect,
@@ -11,7 +12,6 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     // The guard owns the &mut, Derefs to it, and runs post_match on Drop.
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
-    let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
     let arguments: &[JSValue] = _arguments.slice();
 
@@ -59,13 +59,15 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
 
     // reshaped for borrowck — hoist get_value out so the two &mut self
     // receivers don't overlap.
-    let received = this.get_value(
+    let received = ready_or_defer!(this.get_value(
         global,
-        this_value,
+        frame,
         "toThrowErrorMatchingInlineSnapshot",
         "<green>properties<r><d>, <r>hint",
-    )?;
-    let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
+    )?);
+    // Deferred while the promise returned by the received function is still pending.
+    let Some(value) = ready_or_defer!(this.fn_to_err_string_or_undefined(global, frame, received)?)
+    else {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
         return this.throw(
             global,

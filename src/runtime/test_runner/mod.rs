@@ -417,7 +417,6 @@ pub mod expect {
             // `defer this.postMatch(globalThis)` — run on every exit path.
             let this = scopeguard::guard(self, |this| this.post_match(global));
 
-            let this_value = frame.this();
             let args_buf = frame.arguments_old::<1>();
             let arguments: &[JSValue] = args_buf.slice();
 
@@ -433,7 +432,7 @@ pub mod expect {
             other_value.ensure_still_alive();
 
             let value: JSValue =
-                this.get_value(global, this_value, name, "<green>expected<r>")?;
+                ready_or_defer!(this.get_value(global, frame, name, "<green>expected<r>")?);
 
             if (!value.is_number() && !value.is_big_int())
                 || (!other_value.is_number() && !other_value.is_big_int())

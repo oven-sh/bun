@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -12,7 +13,6 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let this = self.post_match_guard(global);
 
-        let this_value = call_frame.this();
         let this_arguments = call_frame.arguments_old::<2>();
         let arguments = this_arguments.slice();
 
@@ -40,7 +40,7 @@ impl Expect {
         }
 
         let received_: JSValue =
-            this.get_value(global, this_value, "toBeCloseTo", "<green>expected<r>, precision")?;
+            ready_or_defer!(this.get_value(global, call_frame, "toBeCloseTo", "<green>expected<r>, precision")?);
         if !received_.is_number() {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }

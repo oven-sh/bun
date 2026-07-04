@@ -3,6 +3,7 @@ use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 pub(crate) fn to_match_snapshot(
     this: &Expect,
@@ -14,7 +15,6 @@ pub(crate) fn to_match_snapshot(
     // deref through the guard for the body.
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
-    let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
     let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 
@@ -90,12 +90,12 @@ pub(crate) fn to_match_snapshot(
     let hint = hint_string.to_slice();
     // `hint` cleanup handled by Drop.
 
-    let value: JSValue = this.get_value(
+    let value: JSValue = ready_or_defer!(this.get_value(
         global,
-        this_value,
+        frame,
         "toMatchSnapshot",
         "<green>properties<r><d>, <r>hint",
-    )?;
+    )?);
 
     Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }

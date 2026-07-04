@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
-use super::{Expect, get_signature};
+use super::{Expect, get_signature, ready_or_defer};
 
 pub(crate) fn to_have_been_last_called_with(
     this: &Expect,
@@ -10,13 +10,13 @@ pub(crate) fn to_have_been_last_called_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let arguments = frame.arguments();
-    let (this, calls, value) = this.mock_prologue(
+    let (this, calls, value) = ready_or_defer!(this.mock_prologue(
         global,
-        frame.this(),
+        frame,
         "toHaveBeenLastCalledWith",
         "<green>...expected<r>",
         super::mock::MockKind::CallsWithSig,
-    )?;
+    )?);
 
     let total_calls: u32 = calls.get_length(global)? as u32;
     let mut last_call_value: JSValue = JSValue::ZERO;

@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::ready_or_defer;
 
 bun_core::comptime_string_map! {
     static JS_TYPE_OF_MAP: &'static [u8] = {
@@ -22,7 +23,7 @@ pub(crate) fn to_be_type_of(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeTypeOf", "")?;
+    let (this, value, not) = ready_or_defer!(this.matcher_prelude(global, frame, "toBeTypeOf", "")?);
     let _arguments = frame.arguments_old::<1>();
     let arguments = _arguments.slice();
 

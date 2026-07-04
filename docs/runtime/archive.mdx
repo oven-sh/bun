@@ -424,7 +424,8 @@ Rules:
 - Call `stream()` before appending anything, and only once.
 - Finish with `end()` to close the stream. For any other archive `end()` just seals it, which the first read of its bytes does anyway.
 - A streamed archive's bytes went to the consumer, so `bytes()`, `blob()`, `files()`, and `extract()` throw afterwards.
-- If the consumer cancels, a parked `append()` rejects rather than hanging.
+- If the consumer cancels, a parked `append()` rejects rather than hanging, and a failed `append()` fails the consumer's read rather than leaving it waiting.
+- `compress: "gzip"` is a post-filter over the finished tar, so it cannot be streamed. `stream()` throws on a gzip archive; use `format: "zip"`, whose compression is per-entry.
 
 ## Examples
 

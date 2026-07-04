@@ -2278,7 +2278,7 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe.concurrent("archive.stream()", () => {
+  describe("archive.stream()", () => {
     test("streams a tar as it is appended", async () => {
       const archive = new Bun.Archive();
       const reading = new Response(archive.stream()).bytes();
@@ -2305,6 +2305,12 @@ describe("Bun.Archive", () => {
       expect(await (await new Bun.Archive(zip).files()).get("x.txt")!.text()).toBe("x");
     });
 
+    // Yield to the event loop n times. Not a delay: it gives the work pool
+    // that many chances to make progress, which is what we are asserting about.
+    const barriers = async (n: number) => {
+      for (let i = 0; i < n; i++) await Bun.sleep(0);
+    };
+
     // The whole point: the producer is throttled by whoever is reading.
     test("parks an append while the consumer is behind", async () => {
       const chunk = Buffer.alloc(2 * 1024 * 1024, "z"); // larger than the high-water mark
@@ -2320,8 +2326,9 @@ describe("Bun.Archive", () => {
         archive.end();
       })();
 
-      // Nothing is reading, so the appends cannot get ahead of the queue.
-      await Bun.sleep(20);
+      // Nothing is reading, so the appends cannot finish however long we spin.
+      const raced = await Promise.race([appending.then(() => "finished"), barriers(500).then(() => "stalled")]);
+      expect(raced).toBe("stalled");
       expect(appended).toBeLessThan(8);
 
       let total = 0;
@@ -2336,16 +2343,44 @@ describe("Bun.Archive", () => {
       expect(total).toBeGreaterThan(8 * chunk.length);
     });
 
-    test("a cancelled consumer rejects the parked append", async () => {
+    // Whether the append is parked or still on the work pool, a cancelled
+    // consumer has to settle it rather than leave it running or hanging.
+    test.each([0, 1, 8])("a cancelled consumer rejects the append (after %i barriers)", async n => {
       const chunk = Buffer.alloc(2 * 1024 * 1024, "z");
       const archive = new Bun.Archive();
       const reader = archive.stream().getReader();
 
       const pending = archive.append("big.bin", chunk);
-      await Bun.sleep(20);
+      await barriers(n);
       await reader.cancel();
 
       await expect(pending).rejects.toThrow(/consumer cancelled/);
+    });
+
+    // Without this the consumer waits forever on bytes that will never come.
+    test("a failed append fails the consumer's read", async () => {
+      using dir = tempDir("archive-stream-fail", {});
+      const archive = new Bun.Archive();
+      const reading = new Response(archive.stream()).bytes();
+
+      // Both reject in the same turn, so attach handlers before awaiting either.
+      const [append, consumer] = await Promise.allSettled([
+        archive.append("gone.bin", Bun.file(join(String(dir), "nope.bin"))),
+        reading,
+      ]);
+
+      expect(append.status).toBe("rejected");
+      expect((append as PromiseRejectedResult).reason.message).toMatch(/ENOENT|no such file/i);
+      expect(consumer.status).toBe("rejected");
+      expect((consumer as PromiseRejectedResult).reason.message).toMatch(/ENOENT|no such file/i);
+    });
+
+    // gzip is a post-filter over the finished bytes, and nothing post-filters
+    // what goes to the stream, so it must not silently emit a raw tar.
+    test("rejects stream() on a gzip archive", () => {
+      expect(() => new Bun.Archive(undefined, { compress: "gzip" }).stream()).toThrow(
+        /does not support compress: "gzip"/,
+      );
     });
 
     test("a streamed archive has nothing left to read", async () => {

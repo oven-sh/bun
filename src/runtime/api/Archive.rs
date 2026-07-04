@@ -459,6 +459,13 @@ impl Archive {
                 global.throw_invalid_arguments(format_args!("Archive.stream() was already called"))
             );
         }
+        // gzip is a post-filter over the finished bytes, and nothing post-filters
+        // what goes to the stream. Say so rather than emit a raw tar.
+        if self.options.compress.gzip().is_some() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive.stream() does not support compress: \"gzip\"; use format: \"zip\", or read the archive with bytes()"
+            )));
+        }
 
         // Ownership of the heap-allocated source transfers to the JS wrapper in
         // `to_readable_stream`; the wrapper's finalizer reclaims it.
@@ -570,6 +577,37 @@ impl Archive {
         // SAFETY: the `StreamOut`'s `_held` roots the JS wrapper that owns the
         // source this points into, and it is still held (we just read it).
         unsafe { &*source }.on_data(chunk)
+    }
+
+    /// Fail the stream's consumer, so a read that is waiting on bytes which will
+    /// never come rejects instead of hanging.
+    fn error_stream(
+        &self,
+        global: &JSGlobalObject,
+        error: JSValue,
+    ) -> Result<(), jsc::JsTerminated> {
+        let Some((source, cancelled)) = self
+            .stream
+            .borrow()
+            .as_ref()
+            .map(|out| (out.bytes, out.cancelled))
+        else {
+            return Ok(());
+        };
+        if cancelled {
+            return Ok(());
+        }
+        let err = streams::StreamError::JSValue(jsc::strong::Optional::create(error, global));
+        // SAFETY: see `push_to_stream`.
+        unsafe { &*source }.on_data(streams::Result::Err(err))
+    }
+
+    /// Whether the consumer has walked away.
+    fn stream_cancelled(&self) -> bool {
+        self.stream
+            .borrow()
+            .as_ref()
+            .is_some_and(|out| out.cancelled)
     }
 
     /// Whether the consumer is far enough behind to park the next chunk.
@@ -2220,6 +2258,12 @@ impl TaskContext for AppendContext {
             return Ok(Step::Settle(PromiseResult::Resolve(JSValue::UNDEFINED)));
         };
 
+        // The consumer walked away while we were on the work pool: stop now
+        // rather than write out chunks nobody will read.
+        if self.chunked && self.result.is_ok() && archive.stream_cancelled() {
+            self.cancel();
+        }
+
         // Hand whatever the writer produced to the consumer before deciding
         // whether there is room for more.
         if self.chunked && self.result.is_ok() {
@@ -2232,7 +2276,15 @@ impl TaskContext for AppendContext {
         }
 
         if self.result.is_err() || self.done {
-            return Ok(Step::Settle(self.run_from_js(global)?));
+            let settled = self.run_from_js(global)?;
+            // A failed append leaves the consumer waiting on bytes that will
+            // never come. Fail its read instead of hanging it.
+            if let PromiseResult::Reject(error) = settled {
+                if archive.is_streaming() {
+                    archive.error_stream(global, error)?;
+                }
+            }
+            return Ok(Step::Settle(settled));
         }
 
         if archive.stream_is_backed_up() {

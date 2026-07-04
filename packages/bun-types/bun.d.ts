@@ -9403,6 +9403,12 @@ declare module "bun" {
      * stream. An archive that has been streamed cannot also be read with `bytes()`,
      * `blob()`, `files()`, or `extract()`: its bytes went to the consumer.
      *
+     * A failed `append()` fails the consumer's read, and a cancelled consumer
+     * rejects the in-flight `append()`, so neither side is left waiting.
+     *
+     * @throws if the archive uses `compress: "gzip"`, which is a post-filter over
+     *   the finished tar and so cannot be streamed. Use `format: "zip"`.
+     *
      * @example
      * **Stream a zip to a file without holding it in memory:**
      * ```ts

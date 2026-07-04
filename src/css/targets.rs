@@ -686,7 +686,13 @@ impl Features {
             | Feature::VminUnit
             | Feature::VwUnit
             | Feature::WebkitFillAvailableSize
-            | Feature::XResolutionUnit => Features::empty(),
+            | Feature::XResolutionUnit => {
+                debug_assert!(
+                    false,
+                    "compat::Feature::{compat_feature:?} has no Features mapping"
+                );
+                Features::empty()
+            }
         }
     }
 }

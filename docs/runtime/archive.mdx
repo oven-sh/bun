@@ -360,7 +360,7 @@ The `options` argument accepts:
 
 ## Appending Entries
 
-`append()` adds one more entry to an archive you are building, without holding the entry's contents in memory first. Pass a `Bun.file()` and it streams from disk a chunk at a time, so you can add a file larger than available memory:
+`append()` adds one more entry to an archive you are building, without holding the entry's contents in memory first. Pass a `Bun.file()` and it is read from disk a chunk at a time, so the file's bytes are never buffered whole:
 
 ```ts
 const archive = new Bun.Archive(undefined, { format: "zip" });
@@ -460,7 +460,7 @@ const archive = await archiveDirectory("./my-project", true);
 await Bun.write("my-project.tar.gz", archive);
 ```
 
-For a large directory, `append()` keeps the constructor from blocking and bounds memory:
+For a large directory, `append()` keeps the constructor from blocking:
 
 ```ts
 import { Glob } from "bun";

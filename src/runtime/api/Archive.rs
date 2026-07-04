@@ -143,7 +143,7 @@ impl Archive {
         jsc::mark_binding();
         drop(self);
         // store.deref() happens via Arc<BlobStore>::drop; an unfinished
-        // `Builder` closes and removes its spill file in `Drop`.
+        // `Builder` poisons and frees its libarchive writer in `Drop`.
     }
 
     /// Pretty-print for console.log
@@ -291,7 +291,7 @@ impl Archive {
         if data_arg.is_object() {
             let mut builder = open_builder(global, options)?;
             // On a JS exception from property iteration the builder's `Drop`
-            // closes the writer and removes any spill file.
+            // poisons the writer, so no partial output is flushed.
             add_object_entries(global, &mut builder, data_arg)?;
             return Ok(Archive::new(State::Building(Some(builder)), options));
         }

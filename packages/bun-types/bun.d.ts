@@ -9361,8 +9361,9 @@ declare module "bun" {
      * `Archive` wrapping existing archive data throws.
      *
      * Appends are applied in call order. Passing a `Bun.file()` reads it from
-     * disk a chunk at a time, so a file larger than memory can be added. If an
-     * `append()` rejects, the archive is left truncated and can no longer be used.
+     * disk a chunk at a time, so the file's bytes are never buffered whole. If
+     * an `append()` rejects, the archive is left truncated and can no longer be
+     * used.
      *
      * Entries are written with mode `0644` and the current time as their
      * modification time.

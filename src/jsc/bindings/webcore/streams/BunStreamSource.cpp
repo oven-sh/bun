@@ -263,13 +263,6 @@ static inline JSBoundFunction* createBoundHandler(JSGlobalObject* globalObject, 
     return createStreamsBoundHandler(globalObject, target, context);
 }
 
-// Queues handler(value, contextCell) — the reaction-convention argument order.
-static void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
-{
-    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
-    globalObject->vm().queueMicrotask(WTF::move(task));
-}
-
 // object.<name>(...args) with a real [[Get]], as the replaced builtins did.
 static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
 {

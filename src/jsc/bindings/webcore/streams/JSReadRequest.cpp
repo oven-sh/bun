@@ -122,7 +122,9 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         auto* promise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
         auto* result = createIteratorResultObject(globalObject, chunk, false);
         RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
+        // Per spec, next()'s promise resolves from a queued microtask.
+        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
+        return;
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -188,7 +190,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, void());
         auto* result = createIteratorResultObject(globalObject, jsUndefined(), true);
         RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
+        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
+        return;
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -214,7 +217,8 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         iterator->m_isFinished = true;
         readableStreamDefaultReaderRelease(globalObject, iterator->m_reader.get());
         RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, rejectPromise(globalObject, promise, error));
+        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorRejectMicrotask(), error, promise);
+        return;
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

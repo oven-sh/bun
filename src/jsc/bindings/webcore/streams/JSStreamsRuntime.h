@@ -97,7 +97,9 @@ class JSDirectStreamController;
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V) \
     V(onAsyncIteratorNextAfterOngoingSettled)                   \
     V(onAsyncIteratorReturnAfterOngoingSettled)                 \
-    V(onAsyncIteratorCancelFulfilled)
+    V(onAsyncIteratorCancelFulfilled)                           \
+    V(onAsyncIteratorResolveMicrotask)                          \
+    V(onAsyncIteratorRejectMicrotask)
 
 // owner: JSStreamPipeToOperation.cpp. context = the JSStreamPipeToOperation, EXCEPT
 // onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, chunk} (the pipe's
@@ -383,6 +385,10 @@ public:
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DECLARE_STRUCTURE_ACCESSOR
 
+    // The readMany `{value, size, done}` result shape, so results are built with
+    // putDirectOffset instead of three transitioning putDirects.
+    JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
+
 private:
     JSStreamsRuntime(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, Zig::GlobalObject*);
@@ -400,6 +406,7 @@ private:
     JSC::LazyProperty<JSStreamsRuntime, JSC::Structure> m_##memberName;
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_MEMBER)
 #undef WEB_STREAMS_DECLARE_STRUCTURE_MEMBER
+    JSC::LazyProperty<JSStreamsRuntime, JSC::Structure> m_readManyResultStructure;
 };
 
 } // namespace WebCore

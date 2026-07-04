@@ -99,6 +99,20 @@ void JSStreamsRuntime::finishCreation(VM& vm, Zig::GlobalObject*)
     });
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_INIT_STRUCTURE)
 #undef WEB_STREAMS_INIT_STRUCTURE
+
+    m_readManyResultStructure.initLater([](const JSC::LazyProperty<JSStreamsRuntime, Structure>::Initializer& init) {
+        auto* globalObject = init.owner->globalObject();
+        auto& vm = init.vm;
+        auto* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 3);
+        JSC::PropertyOffset offset;
+        structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->value, 0, offset);
+        RELEASE_ASSERT(offset == 0);
+        structure = Structure::addPropertyTransition(vm, structure, WebCore::builtinNames(vm).sizePublicName(), 0, offset);
+        RELEASE_ASSERT(offset == 1);
+        structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->done, 0, offset);
+        RELEASE_ASSERT(offset == 2);
+        init.set(structure);
+    });
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamsRuntime);
@@ -120,6 +134,7 @@ void JSStreamsRuntime::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 #define WEB_STREAMS_VISIT_STRUCTURE(memberName, ClassName) thisObject->m_##memberName.visit(visitor);
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_VISIT_STRUCTURE)
+    thisObject->m_readManyResultStructure.visit(visitor);
 #undef WEB_STREAMS_VISIT_STRUCTURE
 
     {
@@ -203,5 +218,10 @@ JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Zig::Global
     }
 FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR
+
+Structure* JSStreamsRuntime::readManyResultStructure(const Zig::GlobalObject*)
+{
+    return m_readManyResultStructure.get(this);
+}
 
 } // namespace WebCore

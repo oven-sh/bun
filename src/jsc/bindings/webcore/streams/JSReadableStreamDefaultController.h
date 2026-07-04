@@ -74,6 +74,9 @@ public:
     JSC::JSPromise* cancelSteps(JSC::JSGlobalObject*, JSC::JSValue reason);
     // [[PullSteps]](readRequest) — userJS: YES (may run the user pull algorithm).
     void pullSteps(JSC::JSGlobalObject*, JSReadRequest*);
+    // The queue-hit half of [[PullSteps]]: dequeue + the close-or-pull bookkeeping.
+    // Caller checks !m_queue.isEmpty(). Returns the chunk (empty on exception).
+    JSC::JSValue dequeueChunkForRead(JSC::JSGlobalObject*);
     // [[ReleaseSteps]]() — spec: "Return." (no-op). userJS: no.
     void releaseSteps();
 

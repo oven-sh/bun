@@ -252,6 +252,8 @@ void setUpReadableByteStreamControllerFromUnderlyingSource(JSC::JSGlobalObject*,
 // JSReadableStreamDefaultReader.cpp
 
 void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSReadRequest*); // userJS: yes ([[PullSteps]] → user pull; the TOTAL ControllerKind dispatch) — JSReadableStreamDefaultReader.cpp
+void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
+JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSC::JSValue error); // userJS: yes — JSReadableStreamDefaultReader.cpp
 // Bun public `reader.readMany()`: returns the `{value,size,done}` object synchronously OR

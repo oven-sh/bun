@@ -80,6 +80,22 @@ void readableStreamDefaultReaderErrorReadRequests(JSGlobalObject* globalObject, 
 }
 
 // ReadableStreamDefaultReaderRead(reader, readRequest)
+// A read on a readable, default-controller stream with a queued chunk and no pending read
+// requests needs no JSReadRequest: dequeue synchronously. Returns an empty JSValue when the
+// fast path does not apply (or on exception; callers RETURN_IF_EXCEPTION).
+JSValue readableStreamDefaultReaderTryReadFromQueue(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* stream = reader->m_stream.get();
+    if (!stream || stream->m_state != ReadableStreamState::Readable || stream->m_controllerKind != ControllerKind::Default || !reader->m_readRequests.isEmpty())
+        return {};
+    auto* controller = uncheckedDowncast<WebCore::JSReadableStreamDefaultController>(stream->m_controller.get());
+    if (controller->m_queue.isEmpty())
+        return {};
+    stream->m_disturbed = true;
+    RELEASE_AND_RETURN(scope, controller->dequeueChunkForRead(globalObject));
+}
+
 void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, WebCore::JSReadRequest* readRequest)
 {
     auto& vm = getVM(globalObject);
@@ -154,10 +170,11 @@ void readableStreamDefaultReaderRelease(JSGlobalObject* globalObject, JSReadable
 // The `{value, size, done}` readMany result shape.
 static JSObject* createReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject, JSValue value, double size, bool done)
 {
-    auto* result = constructEmptyObject(globalObject);
-    result->putDirect(vm, vm.propertyNames->value, value);
-    result->putDirect(vm, WebCore::builtinNames(vm).sizePublicName(), jsNumber(size));
-    result->putDirect(vm, vm.propertyNames->done, jsBoolean(done));
+    auto* structure = JSStreamsRuntime::from(globalObject)->readManyResultStructure(defaultGlobalObject(globalObject));
+    auto* result = constructEmptyObject(vm, structure);
+    result->putDirectOffset(vm, 0, value);
+    result->putDirectOffset(vm, 1, jsNumber(size));
+    result->putDirectOffset(vm, 2, jsBoolean(done));
     return result;
 }
 
@@ -691,6 +708,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
     if (!reader->m_stream)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
 
+    // Queued chunk and nothing waiting: resolve synchronously with no read request.
+    JSValue chunk = Bun::WebStreams::readableStreamDefaultReaderTryReadFromQueue(lexicalGlobalObject, reader);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (chunk) {
+        JSObject* result = createIteratorResultObject(lexicalGlobalObject, chunk, false);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseResolvedWith(lexicalGlobalObject, result)));
+    }
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
     auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());

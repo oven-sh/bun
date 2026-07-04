@@ -8,6 +8,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadRequest.h"
+#include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
@@ -139,7 +140,7 @@ void JSReadableStreamAsyncIterator::visitChildrenImpl(JSCell* cell, Visitor& vis
 }
 
 // "Get the next iteration result": the read request's chunk/close/error steps
-// (JSReadRequest.cpp, AsyncIterator kind) settle the fresh promise carried at field 1.
+// (JSReadRequest.cpp, AsyncIterator kind) settle the result promise carried at field 1.
 static JSPromise* runAsyncIteratorNextSteps(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamAsyncIterator* iterator)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -152,17 +153,24 @@ static JSPromise* runAsyncIteratorNextSteps(JSC::VM& vm, JSGlobalObject* globalO
 
     auto* reader = iterator->m_reader.get();
     ASSERT(reader);
+    // Queued chunk and nothing waiting: dequeue with no read request. The result promise
+    // still settles in a microtask, as the spec's read-request chunk steps require.
+    JSValue chunk = readableStreamDefaultReaderTryReadFromQueue(globalObject, reader);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (chunk) {
+        auto* result = createIteratorResultObject(globalObject, chunk, false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
+        return promise;
+    }
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    auto* context = InternalFieldTuple::create(vm, domGlobalObject->internalFieldTupleStructure(), iterator, promise);
+    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    auto* context = InternalFieldTuple::create(vm, domGlobalObject->internalFieldTupleStructure(), iterator, result);
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(domGlobalObject), ReadRequestKind::AsyncIterator, context);
     readableStreamDefaultReaderRead(globalObject, reader, readRequest);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // Web IDL's next() transforms the "get the next iteration result" promise, so the value the
-    // caller observes settles one reaction after the read request does (undefined = identity).
-    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), result, jsUndefined());
     return result;
 }
 
@@ -281,6 +289,22 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorReturnAfterOngoingSe
     auto* promise = runAsyncIteratorReturnSteps(vm, globalObject, iterator, context->getInternalField(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
+}
+
+// The spec settles next()'s promise from a queued microtask; these two are that job
+// ([reaction-convention]: argument(0) = value, argument(1) = the promise).
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorResolveMicrotask, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* promise = uncheckedDowncast<JSPromise>(callFrame->argument(1));
+    resolvePromise(globalObject, promise, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIteratorRejectMicrotask, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* promise = uncheckedDowncast<JSPromise>(callFrame->argument(1));
+    rejectPromise(globalObject, promise, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
 }
 
 // Fulfillment steps for the cancel promise: the return() result carries the caller's argument.

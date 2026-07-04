@@ -295,6 +295,26 @@ JSPromise* JSReadableStreamDefaultController::cancelSteps(JSGlobalObject* global
     return result;
 }
 
+JSValue JSReadableStreamDefaultController::dequeueChunkForRead(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    ASSERT(!m_queue.isEmpty());
+    JSValue chunk;
+    {
+        WTF::Locker locker { cellLock() };
+        chunk = m_queue.dequeueValue(locker);
+    }
+    if (m_closeRequested && m_queue.isEmpty()) {
+        readableStreamDefaultControllerClearAlgorithms(this);
+        readableStreamClose(globalObject, m_stream.get());
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        readableStreamDefaultControllerCallPullIfNeeded(globalObject, this);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return chunk;
+}
+
 // [[PullSteps]](readRequest)
 void JSReadableStreamDefaultController::pullSteps(JSGlobalObject* globalObject, JSReadRequest* readRequest)
 {
@@ -302,19 +322,8 @@ void JSReadableStreamDefaultController::pullSteps(JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSReadableStream* stream = m_stream.get();
     if (!m_queue.isEmpty()) {
-        JSValue chunk;
-        {
-            WTF::Locker locker { cellLock() };
-            chunk = m_queue.dequeueValue(locker);
-        }
-        if (m_closeRequested && m_queue.isEmpty()) {
-            readableStreamDefaultControllerClearAlgorithms(this);
-            readableStreamClose(globalObject, stream);
-            RETURN_IF_EXCEPTION(scope, void());
-        } else {
-            readableStreamDefaultControllerCallPullIfNeeded(globalObject, this);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+        JSValue chunk = dequeueChunkForRead(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
         RELEASE_AND_RETURN(scope, readRequest->chunkSteps(globalObject, chunk));
     }
     readableStreamAddReadRequest(vm, stream, readRequest);

@@ -1,12 +1,50 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
+import { join } from "node:path";
 import tls from "node:tls";
 
 const skip = !fault.available() || isWindows;
 
 afterEach(() => fault.clear());
+
+// The loop's shared TLS plaintext buffer is one lazy 512 KiB malloc, and its
+// NULL return used to be ignored: SSL_read then wrote to
+// `NULL + LIBUS_RECV_BUFFER_PADDING`. Runs in a child because the allocation
+// happens once per event loop, on its first TLS socket. No isWindows skip —
+// the unchecked allocation is exactly the one that fails there.
+//
+// Every marker the fixture can print. A crashing debug build symbolizes its
+// backtrace onto stdout, so match the fixture's lines rather than the whole
+// stream; anything past "ARMED" means a TLS socket survived the failed
+// allocation and reached its read loop.
+const OOM_FIXTURE_MARKERS = ["ARMED", "READ DATA", "CLOSED", "CLIENT ERROR"];
+test.skipIf(!fault.available())(
+  "a failed per-loop TLS buffer allocation reports out of memory instead of faulting inside SSL_read",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-loop-buffer-oom-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const outOfMemory = stderr.includes("Bun ran out of memory");
+    expect({
+      markers: stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => OOM_FIXTURE_MARKERS.includes(line)),
+      outOfMemory,
+      // Only populated when the assertion is about to fail, so the diff shows why.
+      stderrTail: outOfMemory ? "" : stderr.slice(-2000),
+    }).toEqual({ markers: ["ARMED"], outOfMemory: true, stderrTail: "" });
+  },
+  // Symbolizing the crash backtrace of a debug/ASAN binary takes several
+  // seconds on its own, well past the default per-test budget.
+  60_000,
+);
 
 async function connectedTLSPair(onServerSocket?: (s: tls.TLSSocket) => void) {
   const server = tls.createServer({ key: certs.key, cert: certs.cert });

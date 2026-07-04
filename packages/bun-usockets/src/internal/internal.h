@@ -71,6 +71,10 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
+/* Reports "Bun ran out of memory" through the crash handler and aborts. For
+ * allocations this library has no way to fail gracefully from. */
+extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()

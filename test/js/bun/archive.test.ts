@@ -1926,6 +1926,43 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe.concurrent("Blob input", () => {
+    // Sharing the Blob's store is only the same bytes when the Blob spans the
+    // whole store; a slice sees a window of it.
+    test("a sliced Blob archives its window, not its parent", async () => {
+      using dir = tempDir("archive-blob-slice", {});
+      const tar = await new Bun.Archive({ "a.txt": "a", "b.txt": "b" }).bytes();
+      const blob = new Blob([tar]);
+
+      expect((await new Bun.Archive(blob.slice(0, 512)).bytes()).length).toBe(512);
+      expect((await new Bun.Archive(blob.slice(512)).bytes()).length).toBe(tar.length - 512);
+
+      const out = join(String(dir), "sliced.tar");
+      await Bun.Archive.write(out, blob.slice(0, 512));
+      expect(await Bun.file(out).size).toBe(512);
+    });
+
+    test("an unsliced Blob round-trips", async () => {
+      const tar = await new Bun.Archive({ "a.txt": "a", "b.txt": "b" }).bytes();
+      const archive = new Bun.Archive(new Blob([tar]));
+
+      expect((await archive.bytes()).length).toBe(tar.length);
+      expect([...(await archive.files()).keys()].sort()).toEqual(["a.txt", "b.txt"]);
+    });
+
+    // An empty Blob has no store at all, and must not be mistaken for an object
+    // literal: it is empty archive data, exactly like an empty Uint8Array.
+    test("an empty Blob is empty archive data, not an empty object", async () => {
+      expect((await new Bun.Archive(new Blob([])).bytes()).length).toBe(0);
+      expect((await new Bun.Archive(new Uint8Array(0)).bytes()).length).toBe(0);
+
+      // Zero bytes is not a valid archive, so reading its entries fails the
+      // same way for both.
+      await expect(new Bun.Archive(new Blob([])).files()).rejects.toThrow(/Unrecognized archive format/);
+      await expect(new Bun.Archive(new Uint8Array(0)).files()).rejects.toThrow(/Unrecognized archive format/);
+    });
+  });
+
   describe.concurrent("Bun.file() entries", () => {
     test("the object form streams a Bun.file() instead of writing an empty entry", async () => {
       using dir = tempDir("archive-objform-file", {

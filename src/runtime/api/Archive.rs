@@ -282,17 +282,13 @@ impl Archive {
             return Ok(Archive::new(State::Building(Some(builder)), options));
         }
 
-        // For a Blob, ref the existing store (zero-copy). An empty Blob has no
-        // store at all, and is still archive data: it must not fall through to
-        // the object form below and be packed as an empty object literal.
+        // A Blob is archive data, even when it has no store at all: it must not
+        // fall through to the object form below and be packed as an empty object.
         if let Some(blob) = blob_from_js(data_arg) {
-            // StoreRef::clone == store.ref()
-            let store = blob
-                .store
-                .get()
-                .as_ref()
-                .map_or_else(|| BlobStore::init(Vec::new()), StoreRef::clone);
-            return Ok(Archive::new(State::Done(store), options));
+            return Ok(Archive::new(
+                State::Done(archive_store_from_blob(blob)),
+                options,
+            ));
         }
 
         // For ArrayBuffer/TypedArray, copy the data
@@ -653,6 +649,28 @@ fn parse_level(
     Ok(u8::try_from(level).expect("int cast"))
 }
 
+/// The archive bytes a Blob stands for.
+///
+/// Sharing the store is zero-copy, but it is only the same bytes when the Blob
+/// spans its whole store: `blob.slice(0, 512)` sees a window of it, and the
+/// window is what the archive is made of.
+fn archive_store_from_blob(blob: &Blob) -> StoreRef {
+    let Some(store) = blob.store.get().as_ref().cloned() else {
+        return BlobStore::init(Vec::new());
+    };
+    // File- and S3-backed stores have no bytes to window into; they are passed
+    // through as-is, the way `Bun.write()` consumes them.
+    if !matches!(store.data, BlobData::Bytes(_)) {
+        return store;
+    }
+    let view = blob.shared_view();
+    if view.len() == store.shared_view().len() {
+        // StoreRef::clone == store.ref()
+        return store;
+    }
+    BlobStore::init(view.to_vec())
+}
+
 /// `JSValue::as_::<Blob>()` shim — kept as a free fn. Returns a shared
 /// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
 /// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
@@ -889,14 +907,12 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
     // For Blobs, use store reference with options compression
     if let Some(blob) = blob_from_js(data_arg) {
-        if let Some(store) = blob.store.get().as_ref() {
-            return start_write_task(
-                global,
-                WriteData::Store(store.clone()),
-                path_slice.slice(),
-                options.compress.gzip(),
-            );
-        }
+        return start_write_task(
+            global,
+            WriteData::Store(archive_store_from_blob(blob)),
+            path_slice.slice(),
+            options.compress.gzip(),
+        );
     }
 
     // For ArrayBuffer/TypedArray, copy the data with options compression

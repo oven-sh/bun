@@ -71,23 +71,22 @@ impl SpillFile {
             RealFS::platform_temp_dir(),
             &[name.as_bytes()],
         );
-        let path = ZBox::from_bytes(joined.as_bytes());
+        #[allow(unused_mut)]
+        let mut path = ZBox::from_bytes(joined.as_bytes());
         let file = bun_sys::File::open(
             path.as_zstr(),
             bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
             0o600,
         )?;
 
+        // POSIX: drop the name now so a crash cannot leave the file behind. The
+        // open descriptor keeps the inode alive. If the unlink fails, keep the
+        // path so `Drop` removes it instead.
         #[cfg(unix)]
-        {
-            let _ = bun_sys::unlink(path.as_zstr());
-            return Ok(SpillFile {
-                file: Some(file),
-                path: ZBox::from_bytes(b""),
-                len: 0,
-            });
+        if bun_sys::unlink(path.as_zstr()).is_ok() {
+            path = ZBox::from_bytes(b"");
         }
-        #[cfg(not(unix))]
+
         Ok(SpillFile {
             file: Some(file),
             path,
@@ -469,10 +468,10 @@ impl Builder {
     /// Close the writer and take its output. Consumes the builder.
     pub(crate) fn close(mut self) -> Result<SinkOutput, BuildError> {
         if !self.closed {
-            self.closed = true;
             if self.archive().write_close() != lib::Result::Ok {
                 return Err(self.fail("ArchiveCloseError"));
             }
+            self.closed = true;
         }
         Ok(self.sink_mut().take_output())
     }

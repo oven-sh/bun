@@ -1443,49 +1443,49 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             } else if dependency.behavior.is_required() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    this.log_mut()
-                    .add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                                PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
-                            ),
-                        );
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                        PackageWorkspaceSearchPathFormatter {
+                            manager: this,
+                            version,
+                            quoted: true
+                        },
+                    );
                 } else {
-                    this.log_mut()
-                    .add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                            ),
-                        );
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                    );
                 }
             } else if this.options.log_level.is_verbose() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    this.log_mut()
-                    .add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                                PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
-                            ),
-                        );
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                        PackageWorkspaceSearchPathFormatter {
+                            manager: this,
+                            version,
+                            quoted: true
+                        },
+                    );
                 } else {
-                    this.log_mut()
-                    .add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
-                                bstr::BStr::new(this.lockfile.str(&name)),
-                            ),
-                        );
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                    );
                 }
             }
             Ok(())

@@ -475,31 +475,41 @@ test("CallFrame.p.isConstructor", () => {
 // concatenates `typeName + "."` into the formatted frame, so the old
 // behaviour rendered as `undefined.<anonymous>` in TAP error output.
 test("CallSite.p.getTypeName returns null (not 'undefined') when receiver is not an object", () => {
+  // The assertion runs inside the prepareStackTrace hook, so require it to fire.
+  expect.hasAssertions();
   let prevPrepareStackTrace = Error.prepareStackTrace;
   Error.prepareStackTrace = (_, s) => {
     expect(s[0].getTypeName()).toBe(null);
   };
-  const e = new Error();
-  Error.captureStackTrace(e);
-  e.stack;
-  Error.prepareStackTrace = prevPrepareStackTrace;
+  try {
+    const e = new Error();
+    Error.captureStackTrace(e);
+    e.stack;
+  } finally {
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
 });
 
 test("CallSite.p.getFunctionName returns null for anonymous frames", () => {
+  expect.hasAssertions();
   let prevPrepareStackTrace = Error.prepareStackTrace;
   Error.prepareStackTrace = (_, s) => {
     // Top frame is the anonymous arrow below.
     expect(s[0].getFunctionName()).toBe(null);
   };
-  (() => {
-    const e = new Error();
-    Error.captureStackTrace(e);
-    e.stack;
-  })();
-  Error.prepareStackTrace = prevPrepareStackTrace;
+  try {
+    (() => {
+      const e = new Error();
+      Error.captureStackTrace(e);
+      e.stack;
+    })();
+  } finally {
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
 });
 
 test("CallSite.p.getMethodName returns null for non-method frames", () => {
+  expect.hasAssertions();
   let prevPrepareStackTrace = Error.prepareStackTrace;
   function topLevelFn() {
     const e = new Error();
@@ -511,8 +521,11 @@ test("CallSite.p.getMethodName returns null for non-method frames", () => {
     // `this`, so V8 returns null. Previously Bun delegated to getFunctionName.
     expect(s[0].getMethodName()).toBe(null);
   };
-  topLevelFn();
-  Error.prepareStackTrace = prevPrepareStackTrace;
+  try {
+    topLevelFn();
+  } finally {
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
 });
 
 test("CallFrame.p.isNative", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import type { Config } from "../../../../scripts/build/config.ts";
 import { linkDepends, linkerFlags, orderFilePath, usesOrderFile } from "../../../../scripts/build/flags.ts";
@@ -90,5 +91,68 @@ describe("order file generator", () => {
   it.skipIf(process.platform === "linux")("refuses to run off linux", () => {
     // It is an ELF linker input and the tracer reads /proc/self/maps.
     expect(() => generateOrderFile({ buildDir: "/tmp/build" })).toThrow(/linux/);
+  });
+});
+
+const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+
+/**
+ * One of the traced workloads runs on a pseudo-terminal, because bun's stdio,
+ * tty and readline code take a path there that a pipe never reaches, and an
+ * order file that missed it would leave all of that scattered. `ptyrun.c` is
+ * what provides the terminal.
+ */
+describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
+  /** Reports what the process sees on its stdio, plus the one line it was typed. */
+  const probe = [
+    `process.stdin.once("data", data => {`,
+    `  const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);`,
+    `  const fields = [tty, process.stdout.columns ?? 0, process.env.LD_PRELOAD ?? "none", data.toString().trim()];`,
+    `  process.stdout.write(fields.join(" ") + "\\n");`,
+    `  process.stdin.pause();`,
+    `});`,
+  ].join("\n");
+
+  async function compile(args: string[]) {
+    await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  async function type(cmd: string[], env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...env },
+      stdin: new Blob(["hi\n"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A terminal echoes back what it was typed and turns \n into \r\n, so the
+    // probe's own line is the last one.
+    const lines = stdout.replaceAll("\r", "").trim().split("\n");
+    return { line: lines.at(-1), stderr, exitCode };
+  }
+
+  it("runs the child on a terminal, and hands it the preload it was given", async () => {
+    using dir = tempDir("ptyrun", { "empty.c": "int ptyrun_nothing;\n" });
+    const ptyrun = join(String(dir), "ptyrun");
+    // Somewhere for LD_PRELOAD to point that is real but does nothing. In a
+    // trace this is the page tracer, which has to load into the traced binary
+    // and not into ptyrun.
+    const preload = join(String(dir), "empty.so");
+    await compile(["-o", ptyrun, join(import.meta.dir, "../../../../scripts/orderfile/ptyrun.c"), "-lutil"]);
+    await compile(["-shared", "-fPIC", "-o", preload, join(String(dir), "empty.c")]);
+
+    const pty = await type([ptyrun, bunExe(), "-e", probe], { PTYRUN_PRELOAD: preload });
+    const pipe = await type([bunExe(), "-e", probe], {});
+
+    expect({ pty: pty.line, pipe: pipe.line, ptyExit: pty.exitCode, pipeExit: pipe.exitCode }).toEqual({
+      pty: `true 80 ${preload} hi`,
+      pipe: "false 0 none hi",
+      ptyExit: 0,
+      pipeExit: 0,
+    });
   });
 });

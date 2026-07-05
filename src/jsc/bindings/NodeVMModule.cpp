@@ -344,6 +344,27 @@ void NodeVMModule::prepareGraphForEvaluation(JSGlobalObject* globalObject, uint3
     visited.add(this);
     stack.append(Frame { this, 0 });
 
+    // A callback threw. record->evaluate() will never run, so the records of the
+    // modules still on the stack stay Linked and reconcileEvaluationState() would
+    // leave their wrappers linked -- and happily evaluate them later on top of a
+    // dependency that never produced its exports. Post-order means everything
+    // still on the stack transitively imports the thrower, which is exactly the
+    // set innerModuleEvaluation errors out of its own DFS stack.
+    auto propagateEvaluationError = [&](NodeVMModule* thrower) {
+        JSC::Exception* exception = scope.exception();
+        if (!exception) [[unlikely]]
+            return;
+        auto markErrored = [&](NodeVMModule* module) {
+            if (module->status() == Status::Errored)
+                return;
+            module->status(Status::Errored);
+            module->m_evaluationException.set(vm, module, exception);
+        };
+        markErrored(thrower);
+        for (const Frame& frame : stack)
+            markErrored(frame.module);
+    };
+
     while (!stack.isEmpty()) {
         NodeVMModule* module = stack.last().module;
         const WTF::Vector<NodeVMModuleRequest>& requests = module->moduleRequests();
@@ -365,15 +386,18 @@ void NodeVMModule::prepareGraphForEvaluation(JSGlobalObject* globalObject, uint3
         if (auto* syntheticModule = dynamicDowncast<NodeVMSyntheticModule>(module)) {
             if (module->status() == Status::Unlinked) {
                 syntheticModule->link(globalObject, nullptr, nullptr, jsUndefined());
-                RETURN_IF_EXCEPTION(scope, );
+                if (scope.exception()) [[unlikely]]
+                    return propagateEvaluationError(module);
             }
             if (module->status() == Status::Linked) {
                 module->evaluate(globalObject, timeout, breakOnSigint);
-                RETURN_IF_EXCEPTION(scope, );
+                if (scope.exception()) [[unlikely]]
+                    return propagateEvaluationError(module);
             }
         } else if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
             sourceTextModule->initializeImportMeta(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            if (scope.exception()) [[unlikely]]
+                return propagateEvaluationError(module);
         }
     }
 }

@@ -1239,6 +1239,12 @@ describe("node:vm SourceTextModule graph evaluation order", () => {
     expect(context.order).toEqual(["D", "B", "C", "A"]);
   });
 
+  // JSC's SyntheticModuleRecord evaluates to undefined and offers no hook for a
+  // user callback, so a SyntheticModule's evaluation steps cannot run at their
+  // DFS position the way V8 runs them. Bun runs every synthetic callback before
+  // record->evaluate() runs any body, so node orders this ["B","S","A7"] while
+  // bun orders it ["S","B","A7"]. Only the relative order of a synthetic's side
+  // effects differs; its exports are always set before any importer reads them.
   test("a synthetic dependency of a cyclic graph runs its evaluation steps first", async () => {
     const context = createContext({ order: [] as string[] });
     const S: SyntheticModule = new SyntheticModule(
@@ -1259,6 +1265,51 @@ describe("node:vm SourceTextModule graph evaluation order", () => {
     await root.evaluate();
 
     expect(context.order).toEqual(["S", "B", "A7"]);
+  });
+
+  test("a synthetic dependency that throws errors every module importing it", async () => {
+    const context = createContext({});
+    const S = new SyntheticModule(
+      [],
+      () => {
+        throw new Error("synthetic boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; export const a = 1;`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "S"; export const b = 2;`, { identifier: "B", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("synthetic boom");
+
+    // B transitively imports S, so it must not be left evaluable on top of a
+    // dependency that never produced its exports.
+    expect([modules.A.status, modules.B.status, S.status]).toEqual(["errored", "errored", "errored"]);
+    expect(modules.B.error.message).toBe("synthetic boom");
+    await expect(modules.B.evaluate()).rejects.toThrow("synthetic boom");
+  });
+
+  test("an initializeImportMeta that throws errors the module and its importers", async () => {
+    const context = createContext({});
+    const modules = {
+      A: new SourceTextModule(`import "B"; export const a = 1;`, { identifier: "A", context }),
+      B: new SourceTextModule(`import.meta.x; export const b = 2;`, {
+        identifier: "B",
+        context,
+        initializeImportMeta() {
+          throw new Error("meta boom");
+        },
+      }),
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("meta boom");
+
+    expect([modules.A.status, modules.B.status]).toEqual(["errored", "errored"]);
+    await expect(modules.B.evaluate()).rejects.toThrow("meta boom");
   });
 
   test("import.meta is initialized for every module in a cycle before any body runs", async () => {

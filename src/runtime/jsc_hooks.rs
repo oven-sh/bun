@@ -1101,9 +1101,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
-    // A timer or I/O callback above may have rejected a promise. Notify it here
-    // (node notifies inside the same phase) so the handler runs, and whatever it
-    // schedules is visible before the caller re-checks `is_event_loop_alive()`.
+    // A timer or I/O callback above may have rejected a promise; node notifies it in
+    // the same phase, so what the handler schedules is visible to the liveness check.
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).drain_rejected_promises() };
 }

@@ -159,13 +159,6 @@ sync_webkit() {
 
 # ─── 代码生成（codegen）───────────────────────────────────────────────────────
 run_codegen() {
-    info "检查 codegen 产物..."
-    local json_rs="${BUILD_DIR}/codegen/json_byte_class.rs"
-    if [ -f "$json_rs" ]; then
-        ok "codegen 已就绪 ($(basename "$json_rs"))"
-        return 0
-    fi
-
     info "运行 configure (含 codegen)..."
     cd "$CI_SRC"
     OHOS_CROSS_LIBS="$OHOS_CROSS_LIBS" \
@@ -182,6 +175,7 @@ run_codegen() {
         err "configure 失败"
         return 1
     }
+    local json_rs="${BUILD_DIR}/codegen/json_byte_class.rs"
     if [ ! -f "$json_rs" ]; then
         err "codegen 失败: $json_rs 未生成"
         return 1

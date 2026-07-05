@@ -378,6 +378,7 @@ describe("execArgv option", async () => {
       [["--title=blah"], "--title=blah"],
       [["--zero-fill-buffers"], "--zero-fill-buffers"],
       [["--use-openssl-ca"], "--use-openssl-ca"],
+      [["--use-bundled-ca"], "--use-bundled-ca"],
       // Engine flags: these have to be set before the JS engine starts.
       [["--expose-gc"], "--expose-gc"],
       [["--stack-trace-limit=7"], "--stack-trace-limit=7"],
@@ -431,6 +432,8 @@ describe("execArgv option", async () => {
       [["--warnings", "--addons", "--deprecation"]],
       // Node canonicalises `_` to `-` in a long flag's name.
       [["--experimental_vm_modules", "--no_warnings"]],
+      // Unlike its two siblings above, Node made this one per-environment.
+      [["--use-system-ca"]],
       // Everything from the first positional on is a positional, never a flag.
       [["--", "--definitely-not-a-flag"]],
       [["entrypoint.js", "--definitely-not-a-flag"]],

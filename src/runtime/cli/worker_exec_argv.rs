@@ -35,6 +35,12 @@ enum Flag {
 /// Bun flags that configure the process or the JS engine. Node rejects each of
 /// these from `execArgv` too: `--expose-gc` and `--stack-trace-limit` are V8
 /// options there, the rest are per-process options.
+///
+/// `--use-system-ca` shares Bun's CA-store group with `--use-bundled-ca` and
+/// `--use-openssl-ca` but is deliberately absent: Node registers it in
+/// `EnvironmentOptionsParser`, not `PerProcessOptionsParser`, making it the one
+/// of the three Node accepts here.
+/// <https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L1100>
 const PER_PROCESS_LONG: &[&[u8]] = &[
     b"expose-gc",
     b"help",
@@ -474,6 +480,11 @@ mod tests {
         assert_eq!(lookup_long(b"title"), Flag::PerProcess);
         assert_eq!(lookup_long(b"expose-gc"), Flag::PerProcess);
         assert_eq!(lookup_long(b"definitely-not-a-flag"), Flag::Unknown);
+        // Of Bun's three CA-store flags, only the one Node made per-environment
+        // is accepted.
+        assert_eq!(lookup_long(b"use-openssl-ca"), Flag::PerProcess);
+        assert_eq!(lookup_long(b"use-bundled-ca"), Flag::PerProcess);
+        assert_eq!(lookup_long(b"use-system-ca"), Flag::Supported(Values::None));
     }
 
     #[test]

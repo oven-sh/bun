@@ -906,4 +906,25 @@ describe("MessagePort EventEmitter interface", () => {
     await worker.terminate();
     expect(message).toEqual({ messageCleared: true, errorHandlerKept: true });
   });
+
+  test("off() removes a raw addEventListener registration even after on() cached a wrapper", () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const h = () => {};
+      // Seed the wrapper cache for (h, "message") and tear it back down.
+      port1.on("message", h);
+      port1.off("message", h);
+      expect(port1.listenerCount("message")).toBe(0);
+
+      // Now register the same function raw. A stale cached wrapper must not
+      // shadow it: off() has to find and remove the raw registration too.
+      port1.addEventListener("message", h);
+      expect(port1.listenerCount("message")).toBe(1);
+      port1.off("message", h);
+      expect(port1.listenerCount("message")).toBe(0);
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
 });

@@ -106,13 +106,22 @@ function injectFakeEmitter(Class) {
     return this;
   };
 
+  function removeAny(target, event, listener) {
+    const wrapper = existingWrapperFor(event, listener);
+    target.removeEventListener(event, wrapper);
+    // A listener registered raw via addEventListener has no cached wrapper, but
+    // a stale cache entry from an earlier on() would shadow it, so also remove
+    // the listener itself (a no-op when it isn't registered).
+    if (wrapper !== listener) target.removeEventListener(event, listener);
+  }
+
   Class.prototype.off = function off(event, listener) {
-    this.removeEventListener(event, existingWrapperFor(event, listener));
+    removeAny(this, event, listener);
     return this;
   };
 
   Class.prototype.removeListener = function removeListener(event, listener) {
-    this.removeEventListener(event, existingWrapperFor(event, listener));
+    removeAny(this, event, listener);
     return this;
   };
 

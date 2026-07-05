@@ -111,12 +111,12 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
   }
 
   interface RunOptions {
-    env?: Record<string, string | undefined>;
-    cwd?: string;
-    input?: string;
-    timeout?: number;
+    env?: Record<string, string | undefined> | undefined;
+    cwd?: string | undefined;
+    input?: string | undefined;
+    timeout?: number | undefined;
     /** How the command is named in errors. Defaults to the executable. */
-    label?: string;
+    label?: string | undefined;
   }
 
   function run(cmd: string[], options: RunOptions = {}) {

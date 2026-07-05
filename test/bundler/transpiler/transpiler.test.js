@@ -1642,18 +1642,24 @@ export default class {
       },
     );
 
-    it.each(["default", "await"])("leaves a renamed re-export of `%s` alone when replacing", keyword => {
-      expect(transform(`export { rr as ${keyword} } from "./d";`, { replace: { [keyword]: 9 } })).toBe(
-        `export { rr as ${keyword} } from "./d";`,
-      );
-    });
+    it.each(["default", "class", "let", "eval", "await"])(
+      "leaves a renamed re-export of `%s` alone when replacing",
+      keyword => {
+        expect(transform(`export { rr as ${keyword} } from "./d";`, { replace: { [keyword]: 9 } })).toBe(
+          `export { rr as ${keyword} } from "./d";`,
+        );
+      },
+    );
 
-    // The exported name is the reserved word even without `as`.
-    it("leaves an unrenamed re-export of a reserved word alone when replacing", () => {
-      expect(transform(`export { default } from "./d";`, { replace: { default: 9 } })).toBe(
-        `export { default } from "./d";`,
-      );
-    });
+    // A re-export carries the reserved word as its exported name even without `as`.
+    it.each(["default", "class", "let", "eval", "await"])(
+      "leaves an unrenamed re-export of `%s` alone when replacing",
+      keyword => {
+        expect(transform(`export { ${keyword} } from "./d";`, { replace: { [keyword]: 9 } })).toBe(
+          `export { ${keyword} } from "./d";`,
+        );
+      },
+    );
 
     it("still eliminates exports named with a reserved word", () => {
       expect(transform(`const q = 1; export { q as class };`, { eliminate: ["class"] })).toBe(`const q = 1;`);

@@ -1292,6 +1292,65 @@ describe("node:vm SourceTextModule graph evaluation order", () => {
     await expect(modules.B.evaluate()).rejects.toThrow("synthetic boom");
   });
 
+  test("a cycle member popped before a throwing synthetic is still errored", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S = new SyntheticModule(
+      ["x"],
+      () => {
+        throw new Error("cycle boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "C"; import { x } from "S"; order.push("B" + x);`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "B"; order.push("C");`, { identifier: "C", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("cycle boom");
+
+    // C sits in a cycle with B and so transitively imports S, even though the
+    // post-order walk pops C before it ever reaches S.
+    expect([modules.A.status, modules.B.status, modules.C.status, S.status]).toEqual([
+      "errored",
+      "errored",
+      "errored",
+      "errored",
+    ]);
+    await expect(modules.C.evaluate()).rejects.toThrow("cycle boom");
+    expect(context.order).toEqual([]);
+  });
+
+  test("a sibling that does not import a throwing synthetic stays evaluable", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S = new SyntheticModule(
+      [],
+      () => {
+        throw new Error("sibling boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "S"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`order.push("B"); export const b = 5;`, { identifier: "B", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("sibling boom");
+
+    // B has no dependency on S, so erroring it would be wrong. Its body has not
+    // run yet either (synthetic steps run before any body), so it reads "linked"
+    // where node reads "evaluated" -- it evaluates on demand instead.
+    expect(modules.A.status).toBe("errored");
+    expect(modules.B.status).toBe("linked");
+    await modules.B.evaluate();
+    expect(modules.B.namespace.b).toBe(5);
+    expect(context.order).toEqual(["B"]);
+  });
+
   test("an initializeImportMeta that throws errors the module and its importers", async () => {
     const context = createContext({});
     const modules = {

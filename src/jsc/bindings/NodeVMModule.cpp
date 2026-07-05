@@ -344,25 +344,46 @@ void NodeVMModule::prepareGraphForEvaluation(JSGlobalObject* globalObject, uint3
     visited.add(this);
     stack.append(Frame { this, 0 });
 
-    // A callback threw. record->evaluate() will never run, so the records of the
-    // modules still on the stack stay Linked and reconcileEvaluationState() would
-    // leave their wrappers linked -- and happily evaluate them later on top of a
-    // dependency that never produced its exports. Post-order means everything
-    // still on the stack transitively imports the thrower, which is exactly the
-    // set innerModuleEvaluation errors out of its own DFS stack.
+    // A callback threw. record->evaluate() never runs, so the records of the
+    // modules that were waiting on it stay Linked and reconcileEvaluationState()
+    // leaves their wrappers linked -- free to evaluate later on top of a
+    // dependency that never produced its exports. Error everything that
+    // transitively imports the thrower, found by walking importer edges.
+    //
+    // The stack is not that set: post-order pops a cycle member as soon as its
+    // own requests are done, which can happen before a sibling of a still-stacked
+    // cycle member throws. Nor is `visited`: a module that does not import the
+    // thrower is untouched by the failure and must stay evaluable.
     auto propagateEvaluationError = [&](NodeVMModule* thrower) {
         JSC::Exception* exception = scope.exception();
         if (!exception) [[unlikely]]
             return;
-        auto markErrored = [&](NodeVMModule* module) {
-            if (module->status() == Status::Errored)
-                return;
-            module->status(Status::Errored);
-            module->m_evaluationException.set(vm, module, exception);
-        };
-        markErrored(thrower);
-        for (const Frame& frame : stack)
-            markErrored(frame.module);
+
+        WTF::HashMap<NodeVMModule*, WTF::Vector<NodeVMModule*>> importers;
+        for (NodeVMModule* module : visited) {
+            for (const NodeVMModuleRequest& request : module->moduleRequests()) {
+                auto iter = module->m_resolveCache.find(request.specifier());
+                if (iter == module->m_resolveCache.end())
+                    continue;
+                if (auto* dependency = dynamicDowncast<NodeVMModule>(iter->value.get()))
+                    importers.add(dependency, WTF::Vector<NodeVMModule*> {}).iterator->value.append(module);
+            }
+        }
+
+        WTF::HashSet<NodeVMModule*> errored;
+        WTF::Vector<NodeVMModule*, 16> worklist;
+        worklist.append(thrower);
+        while (!worklist.isEmpty()) {
+            NodeVMModule* module = worklist.takeLast();
+            if (!errored.add(module).isNewEntry)
+                continue;
+            if (module->status() != Status::Errored) {
+                module->status(Status::Errored);
+                module->m_evaluationException.set(vm, module, exception);
+            }
+            if (auto iter = importers.find(module); iter != importers.end())
+                worklist.appendVector(iter->value);
+        }
     };
 
     while (!stack.isEmpty()) {

@@ -445,8 +445,6 @@ pub struct Repeated {
 
 impl Repeated {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // Hand-expanded `css.implementDeepClone` (field-wise reflection):
-        // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
         Repeated {
             components: self.components.iter().map(|c| c.deep_clone(bump)).collect(),
             separator: self.separator,

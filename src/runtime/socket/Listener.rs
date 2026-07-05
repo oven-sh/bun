@@ -565,6 +565,7 @@ impl Listener {
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
+            fatal_write_error: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         });
@@ -609,6 +610,7 @@ impl Listener {
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
+            fatal_write_error: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         });
@@ -1134,6 +1136,7 @@ impl Listener {
                         ));
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
+                        prev.reset_write_state_for_reuse();
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
                         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
@@ -1162,6 +1165,7 @@ impl Listener {
                             ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
+                            fatal_write_error: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                         })
@@ -1233,6 +1237,7 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
+                        prev.reset_write_state_for_reuse();
                         // Adopt `connection` (heap-owned for .unix) so the socket's
                         // deinit frees it; matches the TLS arm above and the
                         // non-pipe arm below. Previously `.connection = null`
@@ -1258,6 +1263,7 @@ impl Listener {
                             ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
+                            fatal_write_error: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                         })
@@ -1529,6 +1535,7 @@ fn connect_finish<const IS_SSL: bool>(
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
+            fatal_write_error: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         })

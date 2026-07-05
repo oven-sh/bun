@@ -96,6 +96,100 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(received.length).toBe(256);
   });
 
+  // A send() that fails outright leaves the queued bytes undeliverable. Bun
+  // used to drop them and then report the write as completed, so a caller saw
+  // write-cb(null) + 'finish' + close(hadError=false) for data that never
+  // reached the wire. Node fails the write callback and destroys the socket.
+  test("send → fatal ECONNRESET while flushing buffered data fails the pending write", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const clientFd = (p.client as any)._handle.fd;
+    expect(clientFd).toBeGreaterThanOrEqual(0);
+
+    const errors: NodeJS.ErrnoException[] = [];
+    p.client.on("error", e => errors.push(e));
+    // Not events.once(): it would reject on the 'error' this test expects.
+    const closed = Promise.withResolvers<boolean>();
+    p.client.on("close", hadError => closed.resolve(hadError));
+
+    // One EAGAIN parks the payload in the node:net buffer so the write callback
+    // waits on a drain; the drain's retry then hits the fatal reset.
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: 1, fd: clientFd });
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    p.client.write(Buffer.alloc(256, "x"), err => resolve(err));
+    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: clientFd });
+
+    const writeErr = await promise;
+    const hadError = await closed.promise;
+
+    expect({
+      code: writeErr?.code,
+      syscall: writeErr?.syscall,
+      errorCodes: errors.map(e => e.code),
+      hadError,
+      writableFinished: p.client.writableFinished,
+    }).toEqual({
+      code: "ECONNRESET",
+      syscall: "write",
+      errorCodes: ["ECONNRESET"],
+      hadError: true,
+      writableFinished: false,
+    });
+  });
+
+  // The same failure on the very first send(): no writable event ever follows a
+  // fatal error, so parking the callback on a drain would hang the write.
+  test("send → fatal EPIPE on the first write fails the write callback", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const clientFd = (p.client as any)._handle.fd;
+    p.client.on("error", () => {});
+
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: clientFd });
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    p.client.write(Buffer.alloc(256, "x"), err => resolve(err));
+
+    const writeErr = await promise;
+    expect({ code: writeErr?.code, syscall: writeErr?.syscall }).toEqual({ code: "EPIPE", syscall: "write" });
+    expect(p.client.writableFinished).toBe(false);
+  });
+
+  // The latched error belongs to the connection, not to the Socket wrapper.
+  // node:net lets connect() rebind a still-live handle to a fresh native
+  // socket, and the new connection must be able to write. Writing straight to
+  // the handle is what reaches that state: the handle's own write() reports a
+  // fatal send error without tearing the stream down, so the Socket survives
+  // to be reconnected.
+  test("a reconnected socket is not poisoned by the previous connection's send error", async () => {
+    const echo = net.createServer(s => s.on("data", c => s.write(c)));
+    echo.listen(0, "127.0.0.1");
+    await once(echo, "listening");
+    const port = (echo.address() as net.AddressInfo).port;
+
+    const client = net.connect({ port, host: "127.0.0.1" });
+    client.on("error", () => {});
+    await once(client, "connect");
+    const handle = (client as any)._handle;
+
+    // send-only fault: a read-side error would detach the handle and send the
+    // reconnect down the fresh-handle path instead.
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: handle.fd });
+    expect(handle.write(Buffer.alloc(16, "a"))).toBeLessThan(0);
+    fault.clear();
+
+    // Same Socket, same wrapper, new native socket.
+    expect(client.destroyed).toBe(false);
+    client.connect({ port, host: "127.0.0.1" });
+    await once(client, "connect");
+
+    const echoed = once(client, "data") as Promise<[Buffer]>;
+    const secondWrite = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    client.write(Buffer.alloc(16, "b"), err => secondWrite.resolve(err));
+
+    expect(await secondWrite.promise).toBeFalsy();
+    expect((await echoed)[0].toString()).toBe(Buffer.alloc(16, "b").toString());
+    client.destroy();
+    echo.close();
+  });
+
   test("send → short writes still deliver complete payload to peer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {

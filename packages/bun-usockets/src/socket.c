@@ -502,8 +502,13 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         }
         /* Fatal send error (EPIPE/ECONNRESET after the peer vanished): report
          * it to callers that opt in instead of masking it as would-block, and
-         * do not keep polling writable - retrying can never succeed. */
-        if (fatal_write_error) *fatal_write_error = 1;
+         * do not keep polling writable - retrying can never succeed. The code
+         * lets node:net fail the write with the same errno Node surfaces;
+         * bsd_would_block() only reads the error, so it still names the send. */
+        if (fatal_write_error) {
+            int send_error = LIBUS_ERR;
+            *fatal_write_error = send_error ? send_error : LIBUS_FATAL_WRITE_ERROR_UNKNOWN;
+        }
         return 0;
     }
     if (written != length) {

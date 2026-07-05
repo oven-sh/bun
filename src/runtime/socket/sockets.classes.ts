@@ -235,6 +235,11 @@ function generate(ssl) {
         length: 2,
         privateSymbol: "write",
       },
+      "writeError": {
+        fn: "writeError",
+        length: 0,
+        privateSymbol: "writeError",
+      },
       "endBuffered": {
         fn: "endBuffered",
         length: 2,

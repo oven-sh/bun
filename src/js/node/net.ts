@@ -254,6 +254,30 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+/**
+ * A write that was waiting on the native drain can never complete once the
+ * socket is gone - fail it so 'finish'/destroy are not stuck behind it. The
+ * stream turns this into the user's write callback plus destroy(err), so
+ * 'error'/hadError fire and the writable side is never marked finished.
+ */
+function failPendingWrite(self, err?) {
+  const callback = self[kwriteCallback];
+  if (!callback) return;
+  self[kwriteCallback] = null;
+  callback(err ?? $ERR_SOCKET_CLOSED());
+}
+
+/**
+ * A flush that did not complete because send() failed outright (the peer is
+ * gone) has thrown the queued bytes away: they can never reach the wire and no
+ * further drain is coming. Fail the write with that error the way Node's
+ * onWriteComplete does, instead of reporting the dropped bytes as written.
+ */
+function failPendingWriteOnSendError(self, socket) {
+  const writeError = socket.$writeError();
+  if (writeError) failPendingWrite(self, writeError);
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -283,12 +307,13 @@ const SocketHandlers: SocketHandler = {
       const writeChunk = self._pendingData;
       if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
         self._pendingData = self[kwriteCallback] = null;
+        self[kBytesWritten] = socket.bytesWritten;
         callback(null);
-      } else {
-        self._pendingData = null;
+        return;
       }
-
+      self._pendingData = null;
       self[kBytesWritten] = socket.bytesWritten;
+      failPendingWriteOnSendError(self, socket);
     }
   },
   end(socket) {
@@ -498,6 +523,7 @@ function SocketEmitEndNT(self, _err?) {
       const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
         self.destroy(er);
+        failPendingWrite(self, er);
         return;
       }
     }
@@ -512,9 +538,11 @@ function SocketEmitEndNT(self, _err?) {
       er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
       er.syscall = "read";
       self.destroy(er);
+      failPendingWrite(self, er);
     } else {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
+      failPendingWrite(self, _err);
     }
     return;
   }
@@ -531,12 +559,8 @@ function SocketEmitEndNT(self, _err?) {
     // no further events.
     self.destroy();
   }
-  // A write that was waiting on the native drain can never complete once the
-  // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
-  const pendingWrite = self[kwriteCallback];
-  if (pendingWrite && (self.destroyed || _err)) {
-    self[kwriteCallback] = null;
-    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
+  if (self.destroyed || _err) {
+    failPendingWrite(self, _err);
   }
 }
 
@@ -1034,10 +1058,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
-      } else {
-        self[kBytesWritten] = socket.bytesWritten;
-        self._pendingData = null;
+        return;
       }
+      self[kBytesWritten] = socket.bytesWritten;
+      self._pendingData = null;
+      failPendingWriteOnSendError(self, socket);
     }
   },
   end(socket) {
@@ -1082,35 +1107,28 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
+      let er = err;
       if (err.code === undefined || err.code === "ECONNRESET") {
         // Shape it like Node's errnoException(UV_ECONNRESET, 'read').
-        const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
+        er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
         er.errno = err.errno;
         er.syscall = "read";
-        self.destroy(er);
-      } else {
-        // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
-        // keeps its identity — Node's onStreamRead does
-        // `stream.destroy(errnoException(nread, 'read'))` for any nread that
-        // is not UV_EOF. The native on_close only passes a non-undefined err
-        // when the close was driven by a recv() failure (libus close-code
-        // enum values are filtered out in NewSocket::on_close).
-        self.destroy(err);
       }
+      // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...) keeps
+      // its identity — Node's onStreamRead does
+      // `stream.destroy(errnoException(nread, 'read'))` for any nread that is
+      // not UV_EOF. The native on_close only passes a non-undefined err when
+      // the close was driven by a recv() failure (libus close-code enum values
+      // are filtered out in NewSocket::on_close).
+      self.destroy(er);
+      failPendingWrite(self, er);
       return;
     }
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    // A write that was waiting on the native drain can never complete once the
-    // socket is gone - fail it so 'finish'/destroy are not stuck behind it
-    // (mirrors SocketEmitEndNT).
-    const pendingWrite = self[kwriteCallback];
-    if (pendingWrite) {
-      self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
-    }
+    failPendingWrite(self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
@@ -2434,6 +2452,14 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   } else if (this[kwriteCallback]) {
     callback(new Error("overlapping _write()"));
   } else {
+    const writeError = socket.$writeError();
+    if (writeError) {
+      // send() failed outright: the bytes were dropped and no drain follows,
+      // so fail the write like Node's onWriteComplete instead of parking the
+      // callback on an event that can never arrive.
+      process.nextTick(callback, writeError);
+      return false;
+    }
     this[kwriteCallback] = callback;
   }
 };

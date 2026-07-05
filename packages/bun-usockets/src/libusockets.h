@@ -556,9 +556,14 @@ struct us_iovec_t {
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
+/* Reported through *fatal_write_error when send() failed fatally but the
+ * platform could not name the error. */
+#define LIBUS_FATAL_WRITE_ERROR_UNKNOWN (-1)
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the
- * write instead of retrying forever. TLS sockets fall back to
+ * write instead of retrying forever. 0 means no fatal error; otherwise the
+ * value is the platform's send error (errno on POSIX, a WSA code on Windows)
+ * or LIBUS_FATAL_WRITE_ERROR_UNKNOWN. TLS sockets fall back to
  * us_socket_write (their errors propagate through the SSL layer). */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 

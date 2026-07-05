@@ -285,6 +285,11 @@ pub struct NewSocket<const SSL: bool> {
     pub server_name: JsCell<Option<Box<[u8]>>>,
     pub buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub bytes_written: Cell<u64>,
+    /// The platform send error of the first fatal (non-would-block) write
+    /// failure, or 0. Once set, everything queued for this socket has been
+    /// dropped and nothing written afterwards can ever reach the peer, so no
+    /// write may report completion.
+    pub fatal_write_error: Cell<c_int>,
 
     pub native_callback: JsCell<NativeCallbacks>,
     /// `upgradeTLS` produces two `TLSSocket` wrappers over one
@@ -1261,8 +1266,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
         unsafe { *ext = core::ptr::null_mut() };
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.buffered_data_for_node_net
-            .with_mut(|b| b.clear_and_free());
+        self.reset_write_state_for_reuse();
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -2404,7 +2408,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let (res, fatal) = socket.write_check_error(buffer);
-        if fatal {
+        if fatal != 0 {
             // The kernel rejected the write outright (EPIPE/ECONNRESET after
             // the peer vanished): fail the write. Do NOT close the socket from
             // inside the write call - a synchronous close dispatches the whole
@@ -2418,6 +2422,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // dropped by the caller: clearing it here would create a `&mut` of
             // `buffered_data_for_node_net` while `buffer` may still borrow its
             // heap allocation.
+            self.record_fatal_write_error(fatal);
             return -1;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -2427,15 +2432,75 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
+    /// Latch the first fatal send error. `write_error` hands it to node:net,
+    /// which fails the pending write callback with it.
+    fn record_fatal_write_error(&self, code: c_int) {
+        debug_assert!(code != 0);
+        if self.fatal_write_error.get() == 0 {
+            self.fatal_write_error.set(code);
+        }
+    }
+
+    /// `node:net` permits `socket.connect()` on an already-used Socket, which
+    /// rebinds this wrapper to a fresh native socket. Write state belongs to
+    /// the old connection: a latched fatal error would otherwise make every
+    /// write on the new one fail, and stale buffered bytes would be sent to
+    /// the wrong peer.
+    pub fn reset_write_state_for_reuse(&self) {
+        self.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        self.fatal_write_error.set(0);
+    }
+
+    /// Nothing written to this socket can reach the peer any more: the handle
+    /// is gone, or a fatal send error already discarded everything queued.
+    /// Drops the now-undeliverable buffer and reports that no write on this
+    /// socket may complete.
+    fn discard_writes_if_doomed(&self) -> bool {
+        if self.socket.get().is_detached() || self.fatal_write_error.get() != 0 {
+            self.buffered_data_for_node_net
+                .with_mut(|b| b.clear_and_free());
+            return true;
+        }
+        false
+    }
+
+    /// The fatal send error that discarded this socket's queued bytes, shaped
+    /// like Node's `errnoException(status, 'write')`, or undefined.
+    #[bun_jsc::host_fn(method)]
+    pub fn write_error(
+        this: &Self,
+        global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let code = this.fatal_write_error.get();
+        if code == 0 {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // `write_check_error` reports the platform's raw send error (errno on
+        // POSIX, a WSA code on Windows, both positive); `sys::Error` stores a
+        // SystemErrno discriminant, so normalize through the errno table. A
+        // failure the platform could not name is reported as a reset.
+        let errno = if code > 0 {
+            sys::SystemErrno::init(code as i64).unwrap_or(sys::SystemErrno::ECONNRESET)
+        } else {
+            sys::SystemErrno::ECONNRESET
+        };
+        let err = sys::Error {
+            errno: errno as _,
+            syscall: sys::Tag::write,
+            ..Default::default()
+        };
+        Ok(<sys::Error as jsc::SysErrorJsc>::to_js(&err, global))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn write_buffered(
         this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.socket.get().is_detached() {
-            this.buffered_data_for_node_net
-                .with_mut(|b| b.clear_and_free());
+        if this.discard_writes_if_doomed() {
             return Ok(JSValue::FALSE);
         }
 
@@ -2461,9 +2526,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.socket.get().is_detached() {
-            this.buffered_data_for_node_net
-                .with_mut(|b| b.clear_and_free());
+        if this.discard_writes_if_doomed() {
             return Ok(JSValue::FALSE);
         }
 
@@ -2841,7 +2904,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
+        // `wrote < 0` is a fatal send error: no writable event will follow, so
+        // queueing the remainder would park it (and the JS write callback)
+        // forever. The caller fails the write instead.
+        if buffer_unwritten_data && wrote >= 0 {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
                 let _ = self
@@ -2879,12 +2945,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             && self.buffered_data_for_node_net.get().len() == 0
     }
 
-    /// Returns `false` when a fatal send error dropped the buffered data.
-    /// NOTE: callers currently ignore this (the drain callback is dispatched
-    /// regardless) - skipping the drain on fatal made Windows servers reset
-    /// FIN-terminated responses (see a5e7ba5905). The return value stays so
-    /// the contract can be re-landed once the Windows fatal-write detection
-    /// is verified.
+    /// Returns `false` when a fatal send error dropped the buffered data; the
+    /// error is latched in `fatal_write_error`.
+    /// NOTE: callers ignore the return value on purpose (the drain callback is
+    /// dispatched regardless) - skipping the drain on fatal made Windows
+    /// servers reset FIN-terminated responses (see a5e7ba5905). node:net sees
+    /// the failure through `write_error` instead, so the drain keeps running
+    /// while the pending write still fails.
     fn internal_flush(&self) -> bool {
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
@@ -2908,15 +2975,14 @@ impl<const SSL: bool> NewSocket<SSL> {
                     .socket
                     .get()
                     .write_check_error(self.buffered_data_for_node_net.get().slice());
-                if fatal {
+                if fatal != 0 {
                     // Same rule as write_maybe_corked: drop the undeliverable
                     // buffer and stop re-arming the writable retry, but do not
                     // close from inside the drain dispatch - the peer reset is
                     // delivered on the read side and tears the socket down on
-                    // a clean stack. Report the failure so callers do not
-                    // dispatch the JS drain callback (the write did NOT
-                    // complete; Node fails the callback instead of succeeding
-                    // it).
+                    // a clean stack. Latching the error is what keeps the
+                    // dropped bytes from being reported as a completed write.
+                    self.record_fatal_write_error(fatal);
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
                     return false;
@@ -3492,6 +3558,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            fatal_write_error: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
         });
@@ -3639,6 +3706,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            fatal_write_error: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
         });
@@ -4528,6 +4596,7 @@ pub fn js_upgrade_duplex_to_tls(
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
+        fatal_write_error: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
     });

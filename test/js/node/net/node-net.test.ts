@@ -999,3 +999,55 @@ describe("paused socket whose peer sends RST", () => {
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
   });
 });
+
+describe("peer resets while a large write is still in flight", () => {
+  // The undeliverable bytes were dropped and the write then reported success:
+  // write-cb(null), 'finish', close(hadError=false) and writableFinished ===
+  // true, for a payload that mostly never left the process. Node fails the
+  // write callback, emits 'error' and closes with hadError.
+  it("fails the write callback instead of reporting it as flushed", async () => {
+    // Far larger than any socket buffer pair, so the write is still queued when
+    // the peer resets.
+    const payload = Buffer.alloc(32 * 1024 * 1024, 0x61);
+    let received = 0;
+    const server = createServer(c => {
+      c.on("error", () => {});
+      c.on("data", chunk => {
+        received += chunk.length;
+        if (received >= 128 * 1024) c.resetAndDestroy();
+      });
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      const errors: NodeJS.ErrnoException[] = [];
+      const writeDone = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+      const closed = Promise.withResolvers<boolean>();
+
+      const c = connect(port, "127.0.0.1", () => {
+        c.write(payload, err => writeDone.resolve(err));
+      });
+      c.on("error", e => errors.push(e));
+      c.on("close", hadError => closed.resolve(hadError));
+
+      const writeErr = await writeDone.promise;
+      const hadError = await closed.promise;
+
+      expect({
+        writeErrored: !!writeErr,
+        errorEvents: errors.length,
+        hadError,
+        writableFinished: c.writableFinished,
+      }).toEqual({ writeErrored: true, errorEvents: 1, hadError: true, writableFinished: false });
+      // A peer that vanished mid-write: ECONNRESET from the reset, or EPIPE if
+      // the kernel already tore the connection down by the time send() ran.
+      expect(writeErr!.code).toMatch(/^(ECONNRESET|EPIPE)$/);
+      // The error is what makes the truncation observable: the peer stopped
+      // reading long before the payload was through.
+      expect(received).toBeLessThan(payload.length);
+    } finally {
+      server.close();
+    }
+  });
+});

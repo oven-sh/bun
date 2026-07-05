@@ -149,6 +149,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
+#ifndef LIBUS_USE_LIBUV
+/* POSIX sweep scheduling: no us_timer_t, just a deadline folded into the
+ * epoll/kqueue timeout. Defined in loop.c, driven from epoll_kqueue.c. */
+long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
+void us_internal_sweep_if_due(struct us_loop_t *loop);
+#endif
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -373,7 +379,11 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+#ifdef LIBUS_USE_LIBUV
+  /* us_timer_set's one-shot guard for the sweep timer. POSIX has no
+   * us_timer_t at all (see loop_data.h sweep_next_tick_ns). */
   unsigned has_added_timer_to_event_loop;
+#endif
 };
 
 #endif

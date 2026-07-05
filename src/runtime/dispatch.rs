@@ -911,6 +911,8 @@ pub(crate) unsafe fn __bun_run_wtf_timer(
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+    use bun_jsc::garbage_collection_controller::GarbageCollectionController;
+
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
@@ -1089,6 +1091,17 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
             CronJob::on_timer_fire(c, VirtualMachine::get());
+        }
+        EventLoopTimerTag::GCTimer => {
+            let c = owner!(GarbageCollectionController, gc_timer);
+            // SAFETY: per fn contract — `c` is the VM's embedded controller.
+            unsafe { GarbageCollectionController::on_gc_timer(c) };
+        }
+        EventLoopTimerTag::GCRepeatingTimer => {
+            let c = owner!(GarbageCollectionController, gc_repeating_timer);
+            // SAFETY: per fn contract — `c` is `vm`'s embedded controller, and
+            // `vm` owns the heap the node was just popped from.
+            unsafe { GarbageCollectionController::on_gc_repeating_timer(c, vm) };
         }
     }
 }

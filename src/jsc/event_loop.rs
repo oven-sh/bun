@@ -75,8 +75,14 @@ pub struct EventLoop {
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
     pub waker: Option<Waker>,
-    // `?*uws.Timer` FFI handle.
+    /// `tick_possibly_forever()` has to park the loop even when nothing is
+    /// registered with it. libuv needs a live ref'd handle for that; epoll and
+    /// kqueue just need `num_polls != 0`, which is all this (no-op) timer ever
+    /// did for them.
+    #[cfg(windows)]
     pub forever_timer: Option<NonNull<uws::Timer>>,
+    #[cfg(not(windows))]
+    pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     #[cfg(windows)]
     // `?*uws.Loop` FFI handle.
@@ -115,7 +121,10 @@ impl Default for EventLoop {
             global: None,
             virtual_machine: None,
             waker: None,
+            #[cfg(windows)]
             forever_timer: None,
+            #[cfg(not(windows))]
+            holds_forever_poll: false,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             #[cfg(windows)]
             uws_loop: None,
@@ -1051,6 +1060,40 @@ impl EventLoop {
         Ok(result)
     }
 
+    /// Keep one poll registered with the loop so the upcoming
+    /// `us_loop_run_bun_tick` actually parks instead of returning immediately
+    /// (it bails out on `num_polls == 0`). Idempotent.
+    #[cfg(not(windows))]
+    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+        if !self.holds_forever_poll {
+            // Mirrors the non-fallthrough `us_create_timer` this replaced:
+            // `num_polls += 1`, never released (the timer was only closed at
+            // `global_exit`).
+            loop_.inc();
+            self.holds_forever_poll = true;
+        }
+    }
+
+    #[cfg(windows)]
+    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+        if self.forever_timer.is_none() {
+            let mut t = uws::Timer::create(
+                loop_,
+                std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+            );
+            // SAFETY: t is a fresh non-null timer handle
+            unsafe {
+                t.as_mut().set(
+                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+                    Some(noop_forever_timer),
+                    1000 * 60 * 4,
+                    1000 * 60 * 4,
+                )
+            };
+            self.forever_timer = Some(t);
+        }
+    }
+
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
         // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
@@ -1065,27 +1108,15 @@ impl EventLoop {
         }
 
         if !loop_.is_active() {
-            if self.forever_timer.is_none() {
-                let mut t = uws::Timer::create(
-                    loop_,
-                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                );
-                // SAFETY: t is a fresh non-null timer handle
-                unsafe {
-                    t.as_mut().set(
-                        std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                        Some(noop_forever_timer),
-                        1000 * 60 * 4,
-                        1000 * 60 * 4,
-                    )
-                };
-                self.forever_timer = Some(t);
-            }
+            self.hold_forever_poll(loop_);
         }
 
         self.process_gc_timer();
         self.process_gc_timer();
-        loop_.tick();
+        // Park in the I/O loop, bounded by the soonest timer deadline, then
+        // fire whatever came due. The body needs `Timer::All`, so it goes
+        // through `RuntimeHooks::poll_and_drain_timers`.
+        self.vm_ref().as_mut().poll_and_drain_timers();
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
@@ -1177,6 +1208,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     Ok(result)
 }
 
+#[cfg(windows)]
 extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
     // do nothing
 }

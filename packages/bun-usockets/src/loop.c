@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
@@ -45,6 +46,8 @@ extern const size_t Bun__lock__size;
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
 
+#ifdef LIBUS_USE_LIBUV
+
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
 // when the sweep timer is disabled, we don't need to do anything
@@ -65,11 +68,71 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
+#else
+
+/* POSIX has no us_timer_t: the sweep is a plain deadline folded into the
+ * epoll/kqueue timeout (us_internal_sweep_timeout_ns) and dispatched from the
+ * same tick (us_internal_sweep_if_due). */
+
+#define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
+
+static long long us_internal_monotonic_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long) ts.tv_sec * 1000000000LL + (long long) ts.tv_nsec;
+}
+
+void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count++;
+    if (loop->data.sweep_timer_count == 1) {
+        loop->data.sweep_next_tick_ns = us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
+        Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
+    }
+}
+
+void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count--;
+    if (loop->data.sweep_timer_count == 0) {
+        loop->data.sweep_next_tick_ns = -1;
+    }
+}
+
+/* Nanoseconds until the next sweep, or -1 when disarmed. Clamped at 0 for an
+ * already-overdue deadline so the caller polls without blocking. */
+long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
+    if (loop->data.sweep_next_tick_ns < 0) {
+        return -1;
+    }
+    long long diff = loop->data.sweep_next_tick_ns - us_internal_monotonic_ns();
+    return diff > 0 ? diff : 0;
+}
+
+void us_internal_sweep_if_due(struct us_loop_t *loop) {
+    if (loop->data.sweep_next_tick_ns < 0) {
+        return;
+    }
+    long long now = us_internal_monotonic_ns();
+    if (now < loop->data.sweep_next_tick_ns) {
+        return;
+    }
+    /* Re-arm before dispatching: a timeout handler may unlink the last socket
+     * and us_internal_disable_sweep_timer would then disarm us — writing the
+     * next deadline afterwards would resurrect a dead timer. */
+    loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
+    us_internal_timer_sweep(loop);
+}
+
+#endif
+
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
+#ifdef LIBUS_USE_LIBUV
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
+#else
+    loop->data.sweep_next_tick_ns = -1;
+#endif
     loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
@@ -95,8 +158,10 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     free(loop->data.recv_buf);
     free(loop->data.send_buf);
 
+#ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
+#endif
     us_internal_async_close(loop->data.wakeup_async);
 }
 
@@ -325,9 +390,11 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     loop->data.closed_connecting_head = NULL;
 }
 
+#ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
 }
+#endif
 
 __attribute__((always_inline)) long long us_loop_iteration_number(struct us_loop_t *loop) {
     return loop->data.iteration_nr;

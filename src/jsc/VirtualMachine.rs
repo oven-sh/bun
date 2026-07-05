@@ -1517,10 +1517,11 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
+            #[cfg(windows)]
             if let Some(t) = self.event_loop_mut().forever_timer.take() {
                 // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
-                // frees it without re-entering the loop.
+                // `EventLoop::tick_possibly_forever`; `close::<true>()`
+                // (fallthrough) frees it without re-entering the loop.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
             // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
@@ -1660,6 +1661,11 @@ pub struct RuntimeHooks {
     /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
     /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
+    /// `eventLoop().tickPossiblyForever()`'s poll step: block in the uSockets
+    /// loop, bounded by `Timer::All`'s soonest deadline, then drain whatever
+    /// came due. Unlike `auto_tick_active` it parks even when the loop has no
+    /// active handles — the caller has already pinned a poll for that.
+    pub poll_and_drain_timers: unsafe fn(vm: *mut VirtualMachine),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier
@@ -2268,6 +2274,23 @@ impl VirtualMachine {
             // No high-tier hook (unit tests) — drain JS tasks only so callers
             // observe forward progress without blocking on the I/O loop.
             self.event_loop_mut().tick();
+        }
+    }
+
+    /// Park in the I/O loop until the soonest timer deadline (or forever when
+    /// the heap is empty), then fire whatever came due. Needs `Timer::All`, so
+    /// it dispatches through [`RuntimeHooks::poll_and_drain_timers`].
+    #[inline]
+    pub fn poll_and_drain_timers(&mut self) {
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (hooks.poll_and_drain_timers)(self) };
+        } else {
+            // No high tier (unit tests) — there is no timer heap to bound the
+            // wait with, so poll the I/O loop without idling.
+            let loop_ = self.event_loop_mut().usockets_loop();
+            // SAFETY: `usockets_loop()` returns the live per-thread uws loop.
+            unsafe { (*loop_).tick_without_idle() };
         }
     }
 

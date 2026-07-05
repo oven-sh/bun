@@ -20,36 +20,48 @@
 
 use core::ffi::c_int;
 
+use bun_core::{Timespec, TimespecMockMode};
+use bun_event_loop::EventLoopTimer::{
+    EventLoopTimer, State as TimerState, Tag as TimerTag, Timespec as ElTimespec,
+};
 use bun_uws as uws;
 
 use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 
+/// Interval of the repeating timer once the heap has been stable for 30 ticks.
+const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
+
 pub struct GarbageCollectionController {
-    // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
-    // freed in Drop. Stored as `Option<NonNull<Timer>>` (None = uninit).
-    pub gc_timer: Option<core::ptr::NonNull<uws::Timer>>,
+    /// Intrusive node in the owning VM's timer heap (`Timer::All`). Embedded,
+    /// never separately allocated; `bun_runtime::dispatch` recovers
+    /// `*mut Self` from it via `container_of`. Neither timer keeps the event
+    /// loop alive (both were fallthrough `us_timer_t`s before).
+    pub gc_timer: EventLoopTimer,
     pub gc_last_heap_size: usize,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
-    // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
-    // freed in Drop.
-    pub gc_repeating_timer: Option<core::ptr::NonNull<uws::Timer>>,
+    pub gc_repeating_timer: EventLoopTimer,
     pub gc_timer_interval: i32,
     pub gc_repeating_timer_fast: bool,
     pub disabled: bool,
 }
 
+bun_event_loop::impl_timer_owner!(GarbageCollectionController;
+    from_gc_timer_ptr => gc_timer,
+    from_gc_repeating_timer_ptr => gc_repeating_timer,
+);
+
 impl Default for GarbageCollectionController {
     fn default() -> Self {
         Self {
-            gc_timer: None,
+            gc_timer: EventLoopTimer::init_paused(TimerTag::GCTimer),
             gc_last_heap_size: 0,
             gc_last_heap_size_on_repeating_timer: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
             gc_timer_state: GCTimerState::Pending,
-            gc_repeating_timer: None,
+            gc_repeating_timer: EventLoopTimer::init_paused(TimerTag::GCRepeatingTimer),
             gc_timer_interval: 0,
             gc_repeating_timer_fast: true,
             disabled: false,
@@ -64,60 +76,45 @@ pub enum GcRepeatSetting {
 }
 
 impl GarbageCollectionController {
-    /// Recover `&mut Self` from a uws timer's ext slot. Single audited deref
-    /// for the two `extern "C"` callbacks below so they stay safe-bodied.
+    /// (Re)arm `timer` for `ms` from now in `vm`'s timer heap.
     ///
-    /// `timer` is the live uws timer whose ext data was set to
-    /// `*mut GarbageCollectionController` in [`Self::init`]; the controller is
-    /// a BACKREF that strictly outlives the timer (`deinit()` closes the timer
-    /// before `self` is dropped). `Timer` is an `opaque_ffi!` ZST handle, so
-    /// [`uws::Timer::opaque_mut`] is the centralised non-null deref proof for
-    /// the handle itself; only the recovered `*mut Self` needs the audited
-    /// deref below.
-    #[inline]
-    fn from_timer_ext<'a>(timer: *mut uws::Timer) -> &'a mut Self {
-        let ptr = uws::Timer::opaque_mut(timer).as_::<*mut Self>();
-        // SAFETY: BACKREF — see doc comment above.
-        unsafe { &mut *ptr }
-    }
-
-    /// Accessor for the init-once `gc_timer` handle. Consolidates the four
-    /// open-coded `(*self.<field>.unwrap().as_ptr())` deref sites into one
-    /// SAFETY block so call sites are safe.
-    #[inline]
-    fn gc_timer_mut(&mut self) -> &mut uws::Timer {
-        // SAFETY: `gc_timer` is set in `init()` (via `Timer::create_fallthrough`)
-        // before any code path reaches a deref site, and remains a live FFI
-        // handle until `deinit()` closes it. The Timer lives on the uws heap,
-        // not inside `self`, so the returned `&mut` cannot alias `self`.
-        unsafe { &mut *self.gc_timer.expect("gc_timer set in init()").as_ptr() }
-    }
-
-    /// Accessor for the init-once `gc_repeating_timer` handle (see
-    /// [`gc_timer_mut`] for the invariant).
-    #[inline]
-    fn gc_repeating_timer_mut(&mut self) -> &mut uws::Timer {
-        // SAFETY: same invariant as `gc_timer_mut` — set in `init()`, live
-        // until `deinit()`, FFI-heap-owned.
+    /// Deadlines follow the mocked clock because `All::next` compares against
+    /// it: pinning them to real time would make every drain under a
+    /// fast-forwarded `jest.useFakeTimers()` clock re-fire immediately.
+    ///
+    /// # Safety
+    /// `vm` is the live VM owning this controller, with `runtime_state`
+    /// installed; `timer` is one of the two `EventLoopTimer` slots embedded in
+    /// that VM's `gc_controller` and is not otherwise borrowed here.
+    unsafe fn schedule(vm: *mut VirtualMachine, timer: *mut EventLoopTimer, ms: i32) {
+        let next = Timespec::now(TimespecMockMode::AllowMockedTime).add_ms(i64::from(ms));
+        // SAFETY: per fn contract. `timer_remove`/`timer_insert` re-deref
+        // `timer` per-field, so no `&mut *timer` may be live across them.
         unsafe {
-            &mut *self
-                .gc_repeating_timer
-                .expect("gc_repeating_timer set in init()")
-                .as_ptr()
+            if (*timer).state == TimerState::ACTIVE {
+                VirtualMachine::timer_remove(vm, timer);
+            }
+            (*timer).next = ElTimespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
+            VirtualMachine::timer_insert(vm, timer);
+        }
+    }
+
+    /// The interval the repeating timer currently re-arms itself with.
+    #[inline]
+    fn repeat_interval(&self) -> i32 {
+        if self.gc_repeating_timer_fast {
+            self.gc_timer_interval
+        } else {
+            SLOW_REPEAT_INTERVAL_MS
         }
     }
 
     pub fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
-        self.gc_timer = Some(uws::Timer::create_fallthrough(
-            actual,
-            std::ptr::from_mut::<Self>(self),
-        ));
-        self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(
-            actual,
-            std::ptr::from_mut::<Self>(self),
-        ));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
         // `Transpiler::init` is deferred to the high-tier
@@ -150,21 +147,25 @@ impl GarbageCollectionController {
 
         self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
 
-        if !self.disabled {
-            let ext = std::ptr::from_mut::<Self>(self);
-            self.gc_repeating_timer_mut().set(
-                ext,
-                Some(on_gc_repeating_timer),
-                gc_timer_interval,
-                gc_timer_interval,
-            );
+        // `init_runtime_state` (and with it `Timer::All`) has already run:
+        // `VirtualMachine::init` calls it before `ensure_waker()`, which is
+        // what gets us here. A null state means there is no high tier at all
+        // (bun_jsc unit tests) and therefore no heap to schedule on.
+        if !self.disabled && !vm.runtime_state.is_null() {
+            let this: *mut Self = self;
+            let vm: *mut VirtualMachine = vm;
+            // SAFETY: the slot is an unaliased field of `*this`, which is
+            // embedded in `*vm`; the heap is live (checked above).
+            unsafe { Self::schedule(vm, &raw mut (*this).gc_repeating_timer, gc_timer_interval) };
         }
     }
 
     pub fn schedule_gc_timer(&mut self) {
         self.gc_timer_state = GCTimerState::Scheduled;
-        let ext = std::ptr::from_mut::<Self>(self);
-        self.gc_timer_mut().set(ext, Some(on_gc_timer), 16, 0);
+        let this: *mut Self = self;
+        // SAFETY: JS-thread-only; the TLS VM is the one embedding `*this`, and
+        // `gc_timer` is an unaliased field of it.
+        unsafe { Self::schedule(VirtualMachine::get_mut_ptr(), &raw mut (*this).gc_timer, 16) };
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
@@ -176,18 +177,29 @@ impl GarbageCollectionController {
         VirtualMachine::get().as_mut()
     }
 
-    /// Explicit teardown. Idempotent — `Drop` forwards here.
-    /// Kept as an inherent method because callers (web_worker, VM exit path)
-    /// need to release the uws timers before the owning VM storage is freed.
+    /// Explicit teardown. Idempotent — `Drop` forwards here. Must run while
+    /// the owning VM's `runtime_state` (and with it the timer heap) is still
+    /// installed; both call sites (`web_worker`, the VM exit path) do.
     pub fn deinit(&mut self) {
-        // SAFETY: timers were created via uws::Timer::create_fallthrough; close::<true>
-        // frees the fallthrough timer. `take()` ensures we close at most once.
+        let Some(vm) = VirtualMachine::get_or_null() else {
+            return;
+        };
+        // SAFETY: `get_or_null` returned the live per-thread VM.
+        if unsafe { (*vm).runtime_state }.is_null() {
+            return;
+        }
+        let this: *mut Self = self;
+        // SAFETY: both slots are embedded fields of `*this`; `timer_remove`
+        // leaves them CANCELLED, so a second call (`Drop` after an explicit
+        // `deinit`) sees a non-ACTIVE state and does nothing.
         unsafe {
-            if let Some(t) = self.gc_timer.take() {
-                uws::Timer::close::<true>(t.as_ptr());
-            }
-            if let Some(t) = self.gc_repeating_timer.take() {
-                uws::Timer::close::<true>(t.as_ptr());
+            for timer in [
+                &raw mut (*this).gc_timer,
+                &raw mut (*this).gc_repeating_timer,
+            ] {
+                if (*timer).state == TimerState::ACTIVE {
+                    VirtualMachine::timer_remove(vm, timer);
+                }
             }
         }
     }
@@ -204,19 +216,25 @@ impl GarbageCollectionController {
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
     pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
-        if setting == GcRepeatSetting::Fast && !self.gc_repeating_timer_fast {
-            self.gc_repeating_timer_fast = true;
-            let ext = std::ptr::from_mut::<Self>(self);
-            let interval = self.gc_timer_interval;
-            self.gc_repeating_timer_mut()
-                .set(ext, Some(on_gc_repeating_timer), interval, interval);
-            self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-        } else if setting == GcRepeatSetting::Slow && self.gc_repeating_timer_fast {
-            self.gc_repeating_timer_fast = false;
-            let ext = std::ptr::from_mut::<Self>(self);
-            self.gc_repeating_timer_mut()
-                .set(ext, Some(on_gc_repeating_timer), 30_000, 30_000);
-            self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        match setting {
+            GcRepeatSetting::Fast if !self.gc_repeating_timer_fast => {
+                self.gc_repeating_timer_fast = true;
+            }
+            GcRepeatSetting::Slow if self.gc_repeating_timer_fast => {
+                self.gc_repeating_timer_fast = false;
+            }
+            _ => return,
+        }
+        self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        let interval = self.repeat_interval();
+        let this: *mut Self = self;
+        // SAFETY: see `schedule_gc_timer`.
+        unsafe {
+            Self::schedule(
+                VirtualMachine::get_mut_ptr(),
+                &raw mut (*this).gc_repeating_timer,
+                interval,
+            );
         }
     }
 
@@ -272,38 +290,66 @@ impl GarbageCollectionController {
         vm.collect_async();
         self.gc_last_heap_size = vm.block_bytes_allocated();
     }
+
+    /// `EventLoopTimer::fire` dispatch arm for [`TimerTag::GCTimer`].
+    ///
+    /// # Safety
+    /// `this` is the container of the `gc_timer` slot just popped from the
+    /// timer heap: the live per-thread VM's `gc_controller`.
+    pub unsafe fn on_gc_timer(this: *mut Self) {
+        // SAFETY: per fn contract — `this` is live and unaliased here.
+        let this = unsafe { &mut *this };
+        this.gc_timer.state = TimerState::FIRED;
+        if this.disabled {
+            return;
+        }
+        this.gc_timer_state = GCTimerState::RunOnNextTick;
+    }
+
+    /// `EventLoopTimer::fire` dispatch arm for [`TimerTag::GCRepeatingTimer`].
+    ///
+    /// # Safety
+    /// `this` is the container of the `gc_repeating_timer` slot just popped
+    /// from `vm`'s timer heap: `vm`'s own `gc_controller`.
+    pub unsafe fn on_gc_repeating_timer(this: *mut Self, vm: *mut VirtualMachine) {
+        {
+            // SAFETY: per fn contract — `this` is live; this borrow ends before
+            // the re-entrant `schedule()` below.
+            let me = unsafe { &mut *this };
+            me.gc_repeating_timer.state = TimerState::FIRED;
+            if me.disabled {
+                return;
+            }
+            let prev_heap_size = me.gc_last_heap_size_on_repeating_timer;
+            me.perform_gc();
+            me.gc_last_heap_size_on_repeating_timer = me.gc_last_heap_size;
+            if prev_heap_size == me.gc_last_heap_size_on_repeating_timer {
+                me.heap_size_didnt_change_for_repeating_timer_ticks_count = me
+                    .heap_size_didnt_change_for_repeating_timer_ticks_count
+                    .saturating_add(1);
+                if me.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30 {
+                    // make the timer interval longer
+                    me.update_gc_repeat_timer(GcRepeatSetting::Slow);
+                }
+            } else {
+                me.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+                me.update_gc_repeat_timer(GcRepeatSetting::Fast);
+            }
+        }
+        // `update_gc_repeat_timer` only re-arms across a Fast↔Slow transition,
+        // so the steady-state tick has to re-arm itself to keep repeating.
+        // SAFETY: per fn contract; re-arming an already-ACTIVE node is a
+        // remove+insert, which `schedule` handles.
+        unsafe {
+            let interval = (*this).repeat_interval();
+            Self::schedule(vm, &raw mut (*this).gc_repeating_timer, interval);
+        }
+    }
 }
 
 impl Drop for GarbageCollectionController {
     fn drop(&mut self) {
         self.deinit();
-    }
-}
-
-pub(crate) extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
-    let this = GarbageCollectionController::from_timer_ext(timer);
-    if this.disabled {
-        return;
-    }
-    this.gc_timer_state = GCTimerState::RunOnNextTick;
-}
-
-pub(crate) extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
-    let this = GarbageCollectionController::from_timer_ext(timer);
-    let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-    this.perform_gc();
-    this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
-    if prev_heap_size == this.gc_last_heap_size_on_repeating_timer {
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = this
-            .heap_size_didnt_change_for_repeating_timer_ticks_count
-            .saturating_add(1);
-        if this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30 {
-            // make the timer interval longer
-            this.update_gc_repeat_timer(GcRepeatSetting::Slow);
-        }
-    } else {
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-        this.update_gc_repeat_timer(GcRepeatSetting::Fast);
     }
 }
 

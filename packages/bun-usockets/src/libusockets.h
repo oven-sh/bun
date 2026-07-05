@@ -203,7 +203,11 @@ void *us_udp_socket_user(struct us_udp_socket_t *s);
 /* Binds the UDP socket to an interface and port */
 int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned int port);
 
-/* Public interfaces for timers */
+/* Public interfaces for timers. libuv (Windows) only: on epoll/kqueue a
+ * us_timer_t cost a file descriptor (timerfd) or a pair of kevent64 syscalls
+ * per arm, so it no longer exists — schedule on bun.JSC.EventLoopTimer. Gated
+ * on the platform because the backend is selected further down this header. */
+#ifdef _WIN32
 
 /* Create a new high precision, low performance timer. May fail and return null */
 struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough, unsigned int ext_size);
@@ -220,6 +224,8 @@ void us_timer_set(struct us_timer_t *timer, void (*cb)(struct us_timer_t *t), in
 
 /* Returns the loop for this timer */
 struct us_loop_t *us_timer_loop(struct us_timer_t *t);
+
+#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Socket groups & dispatch

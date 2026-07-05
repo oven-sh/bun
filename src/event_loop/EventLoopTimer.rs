@@ -203,6 +203,10 @@ pub enum Tag {
     BunTest,
     EventLoopDelayMonitor,
     CronJob,
+    /// One-shot "collect soon" nudge from `GarbageCollectionController`.
+    GCTimer,
+    /// Repeating heap-growth poll from `GarbageCollectionController`.
+    GCRepeatingTimer,
 }
 
 impl Tag {
@@ -212,6 +216,8 @@ impl Tag {
             | Tag::BunTest // for test timeouts
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
+            | Tag::GCTimer // internal
+            | Tag::GCRepeatingTimer // internal
             => false,
             _ => true,
         }

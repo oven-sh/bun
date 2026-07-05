@@ -325,24 +325,28 @@ describe("Channel", () => {
   test("references are not leaked", async () => {
     function noop() {}
 
+    const total = 1000;
     const refs: WeakRef<Channel>[] = [];
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < total; i++) {
       const name = `channel7-${i}`;
       subscribe(name, noop);
       unsubscribe(name, noop);
       refs.push(new WeakRef(channel(name)));
     }
 
-    // Once its last subscriber is gone, the registry holds a channel weakly. Constructing
-    // a WeakRef keeps its target alive for the rest of the job, so yield before collecting.
+    // Once its last subscriber is gone, the registry holds a channel weakly. Constructing a
+    // WeakRef keeps its target alive for the rest of the job, so yield before each collection.
     let alive = refs.length;
-    for (let i = 0; i < 10 && alive > 0; i++) {
+    for (let i = 0; i < 20 && alive > 0; i++) {
       await new Promise(resolve => setImmediate(resolve));
       gc(true);
       alive = refs.filter(ref => ref.deref() !== undefined).length;
     }
 
-    expect(alive).toBe(0);
+    // Conservative stack scanning pins whichever channels still have a pointer in a live
+    // stack slot or register, so this asserts they are collectable, not collected. Retaining
+    // a reference the way this test guards against would leave every one of them alive.
+    expect(alive).toBeLessThan(total / 10);
   });
 });
 

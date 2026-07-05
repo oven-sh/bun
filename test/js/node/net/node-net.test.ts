@@ -1400,6 +1400,78 @@ describe("net.Socket onread", () => {
     );
   });
 
+  // Bytes the callback never took belong to the connection they arrived on:
+  // Node leaves them unread in the fd it is about to close.
+  it("does not replay bytes held back from a previous connection", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(256, 0xbb);
+    const serverA = createServer(c => {
+      // The client destroys mid-stream, so an unflushed write reports ECONNRESET.
+      c.on("error", () => {});
+      c.write(first);
+    });
+    const serverB = createServer(c => {
+      c.on("error", () => {});
+      c.end(second);
+    });
+    const listen = (server: Server) =>
+      new Promise<number>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port));
+      });
+    try {
+      const [portA, portB] = [await listen(serverA), await listen(serverB)];
+      const buffer = Buffer.alloc(64);
+      const afterReconnect: Buffer[] = [];
+      let reconnected = false;
+      let calls = 0;
+      const firstCall = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<void>();
+      const socket = new Socket({
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            if (reconnected) afterReconnect.push(Buffer.from(buf.subarray(0, nread)));
+            if (calls === 1) {
+              // Holds back the rest of the first connection's chunk.
+              firstCall.resolve();
+              return false;
+            }
+          },
+        },
+      });
+      try {
+        socket.on("error", err => {
+          firstCall.reject(err);
+          ended.reject(err);
+        });
+        socket.connect(portA, "127.0.0.1");
+        await firstCall.promise;
+
+        const closed = Promise.withResolvers<void>();
+        socket.once("close", () => closed.resolve());
+        socket.destroy();
+        await closed.promise;
+
+        reconnected = true;
+        socket.once("end", () => ended.resolve());
+        socket.connect(portB, "127.0.0.1");
+        await ended.promise;
+
+        expect({
+          outOfRange: afterReconnect.map(chunk => chunk.length).filter(length => length > buffer.length),
+          payload: Buffer.concat(afterReconnect),
+        }).toEqual({ outOfRange: [], payload: second });
+      } finally {
+        socket.destroy();
+      }
+    } finally {
+      serverA.close();
+      serverB.close();
+    }
+  });
+
   it("ignores an onread option that does not match Node's shape", async () => {
     // Node only installs onread when buffer is a Uint8Array or a function and
     // callback is a function; anything else leaves the socket emitting 'data'.

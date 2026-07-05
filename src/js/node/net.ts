@@ -3841,6 +3841,9 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  // Bytes the onread callback never took belong to the connection they arrived
+  // on. Node leaves them unread in the closed fd, so a reconnect starts clean.
+  self[kBufferPending] = null;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

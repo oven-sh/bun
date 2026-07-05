@@ -1304,6 +1304,67 @@ describe("net.Socket onread", () => {
     );
   });
 
+  // A pause() the user never lifted belongs to the socket, not to one handle:
+  // Node's afterConnect only starts reads when the stream isn't paused, and
+  // that flag survives both the first connect() and a later reconnect.
+  it("carries an unlifted pause() across connect() and a reconnect", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(256, 0xbb);
+    const serverA = createServer(c => {
+      // The client destroys mid-stream, so an unflushed write reports ECONNRESET.
+      c.on("error", () => {});
+      c.write(first);
+    });
+    const everything = Promise.withResolvers<void>();
+    const serverB = createServer(c => {
+      c.on("error", err => everything.reject(err));
+      c.write(second);
+    });
+    try {
+      const [portA, portB] = [await listen(serverA), await listen(serverB)];
+      const buffer = Buffer.alloc(64);
+      const received: Buffer[] = [];
+      let calls = 0;
+      const socket = new Socket({
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            received.push(Buffer.from(buf.subarray(0, nread)));
+            if (Buffer.concat(received).length === second.length) everything.resolve();
+          },
+        },
+      });
+      try {
+        socket.on("error", err => everything.reject(err));
+        socket.pause();
+
+        socket.connect(portA, "127.0.0.1");
+        for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+        expect(calls).toBe(0);
+
+        const closed = Promise.withResolvers<void>();
+        socket.once("close", () => closed.resolve());
+        socket.destroy();
+        await closed.promise;
+
+        socket.connect(portB, "127.0.0.1");
+        for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+        expect(calls).toBe(0);
+
+        // Only the second connection's bytes: the first's were dropped with it.
+        socket.resume();
+        await everything.promise;
+        expect(Buffer.concat(received)).toEqual(second);
+      } finally {
+        socket.destroy();
+      }
+    } finally {
+      serverA.close();
+      serverB.close();
+    }
+  });
+
   it("calls the buffer factory before the first read and after every delivery", async () => {
     const payload = pattern(4096);
     await withServer(

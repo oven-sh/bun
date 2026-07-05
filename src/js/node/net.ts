@@ -3872,8 +3872,10 @@ function initSocketHandle(self) {
   self[kclosed] = false;
   self[kended] = false;
   // Bytes the onread callback never took belong to the connection they arrived
-  // on. Node leaves them unread in the closed fd, so a reconnect starts clean.
-  self[kBufferPending] = null;
+  // on, so a reconnect drops them the way Node drops whatever it left unread in
+  // the fd it closed. A pause() the user never lifted does carry over, which is
+  // what Node's `if (!socket.isPaused()) socket.read(0)` amounts to.
+  self[kBufferPending] = self[kBufferCb] && self.isPaused() ? kEmptyBuffer : null;
   self[kBufferEnded] = false;
 
   // Handle creation may be deferred to bind() or connect() time.

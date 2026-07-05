@@ -108,9 +108,19 @@ test.concurrent("subprocess.send() of a value whose toJSON() returns undefined k
   using forked = forkEchoChild();
   const { child } = forked;
 
-  expect(() => child.send({ toJSON: () => undefined })).toThrow(
-    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-  );
+  // The type guard accepts this (it is an object), so the failure is reported as an invalid
+  // value rather than an invalid type.
+  let thrown;
+  try {
+    child.send({ toJSON: () => undefined });
+  } catch (err) {
+    thrown = err;
+  }
+  expect({ code: thrown?.code, message: thrown?.message }).toEqual({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: 'The "message" argument could not be serialized to JSON. Received an instance of Object',
+  });
+
   expect(await echo(child, { ping: 3 })).toEqual({ echo: { ping: 3 } });
 });
 

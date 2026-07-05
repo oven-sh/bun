@@ -284,14 +284,15 @@ pub enum IPCSerializationError {
 }
 
 impl IPCSerializationError {
-    /// `Some(..)` when serialization left an exception pending on `globalThis`
-    /// (cyclic structure, throwing `toJSON`, structured-clone `DataCloneError`).
-    /// Callers must propagate it instead of replacing it with an error of their own.
-    pub fn pending_exception(&self) -> Option<JsError> {
+    /// Everything except [`Self::SerializationFailed`] is a JS-level failure the caller must
+    /// propagate as-is: a pending exception (cyclic structure, throwing `toJSON`,
+    /// `DataCloneError`) or an allocation failure the host-fn shim turns into an OOM error.
+    pub fn as_js_error(&self) -> Option<JsError> {
         match self {
             Self::JSError => Some(JsError::Thrown),
             Self::JSTerminated => Some(JsError::Terminated),
-            Self::SerializationFailed | Self::OutOfMemory => None,
+            Self::OutOfMemory => Some(JsError::OutOfMemory),
+            Self::SerializationFailed => None,
         }
     }
 }
@@ -592,10 +593,9 @@ mod json {
         // `ensure_unused_capacity`, success) releases it.
         let out = bun_core::OwnedString::new(out);
 
-        // `JSON.stringify` returns `undefined` (a null `WTF::String`, which reaches us as
-        // the `Empty` tag) for values it cannot represent. It never returns `""` for a
-        // value it can, so an empty result means the message is not serializable: writing
-        // it anyway produces a zero-length frame that the peer rejects, closing the channel.
+        // `JSON.stringify` yields `undefined` (a null `WTF::String`, reaching us as the `Empty`
+        // tag) for values it cannot represent, and never `""` for ones it can. Writing an empty
+        // result anyway produces a zero-length frame that the peer rejects, closing the channel.
         if out.is_empty() {
             return Err(IPCSerializationError::SerializationFailed);
         }
@@ -1377,13 +1377,14 @@ impl SendQueue {
         handle: Option<Handle>,
     ) -> Result<SerializeAndSendResult, IPCSerializationError> {
         log!("SendQueue#serializeAndSend");
-        let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
         let mode = self.mode;
         // Serialize before touching the queue: a value that cannot be serialized must not
         // reach the channel, and must leave the queue (and the callback) untouched.
         let mut payload = StreamBuffer::default();
         let payload_length = serialize(mode, &mut payload, global, value, is_internal)?;
         debug_assert!(payload.list.len() == payload_length);
+        // Read the queue state only after serialization, which can run `toJSON` and re-enter.
+        let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
         let msg = self.start_message(global, callback, handle)?;
         handle_oom(msg.data.write(&payload.list));
         log!("IPC call continueSend() from serializeAndSend");

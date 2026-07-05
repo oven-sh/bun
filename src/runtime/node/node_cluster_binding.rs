@@ -74,16 +74,17 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
     let singleton = child_singleton();
+    let seq = singleton.seq;
     if callback.is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
         let _ = singleton
             .callbacks
-            .put(singleton.seq, StrongOptional::create(callback, global));
+            .put(seq, StrongOptional::create(callback, global));
     }
 
     // sequence number for InternalMsgHolder
-    message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
+    message.put(global, b"seq", JSValue::js_number(seq as f64));
     singleton.seq = singleton.seq.wrapping_add(1);
 
     // similar code as Bun__Process__send
@@ -121,7 +122,9 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     let good = match good {
         Ok(good) => good,
         Err(err) => {
-            if let Some(exception) = err.pending_exception() {
+            // Nothing was enqueued, so no ack will ever settle the callback registered above.
+            singleton.callbacks.swap_remove(&seq);
+            if let Some(exception) = err.as_js_error() {
                 return Err(exception);
             }
             let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
@@ -195,19 +198,16 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
+    let seq = ipc_data.internal_msg_queue.seq;
     if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
+        let _ = ipc_data
+            .internal_msg_queue
+            .callbacks
+            .put(seq, StrongOptional::create(callback, global));
     }
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
+    message.put(global, b"seq", JSValue::js_number(seq as f64));
     ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
 
     // similar code as bun.jsc.Subprocess.doSend
@@ -227,7 +227,9 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     let success = match success {
         Ok(success) => success,
         Err(err) => {
-            if let Some(exception) = err.pending_exception() {
+            // Nothing was enqueued, so no ack will ever settle the callback registered above.
+            ipc_data.internal_msg_queue.callbacks.swap_remove(&seq);
+            if let Some(exception) = err.as_js_error() {
                 return Err(exception);
             }
             return Ok(JSValue::FALSE);

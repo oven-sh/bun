@@ -10,10 +10,9 @@
 
 use bun_core::String as BunString;
 use bun_jsc::ipc::{
-    self as IPC, DecodedIPCMessage, Handle, IPCSerializationError, IsInternal, SendQueue,
-    SerializeAndSendResult,
+    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -71,9 +70,8 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
-/// Node's `target._send` guard: `typeof message` must be one of
-/// `string | object | number | boolean`. `JSValue::is_object()` is JSC's notion of
-/// "is a JSObject", which is also true for functions, so callables are excluded here to
+/// Node's `_send` accepts string/object/number/boolean by `typeof`.
+/// `JSValue::is_object()` also matches functions, so exclude callables to
 /// keep `typeof`-equivalence.
 fn is_sendable_message(message: JSValue) -> bool {
     message.is_string()
@@ -81,14 +79,6 @@ fn is_sendable_message(message: JSValue) -> bool {
         || message.is_boolean()
         || message.is_null()
         || (message.is_object() && !message.is_callable())
-}
-
-fn throw_unsendable_message(global_object: &JSGlobalObject, message: JSValue) -> JsError {
-    global_object.throw_invalid_argument_type_value_one_of(
-        b"message",
-        b"string, object, number, or boolean",
-        message,
-    )
 }
 
 pub(crate) fn do_send(
@@ -132,7 +122,11 @@ pub(crate) fn do_send(
         return Err(global_object.throw_missing_arguments_value(&["message"]));
     }
     if !is_sendable_message(message) {
-        return Err(throw_unsendable_message(global_object, message));
+        return Err(global_object.throw_invalid_argument_type_value_one_of(
+            b"message",
+            b"string, object, number, or boolean",
+            message,
+        ));
     }
     // The handle branch below replaces `message` with a `NODE_HANDLE` wrapper.
     let original_message = message;
@@ -181,22 +175,16 @@ pub(crate) fn do_send(
     ) {
         Ok(status) => status,
         Err(err) => {
-            // Serialization never enqueues, so the channel is still usable. Report the
-            // failure to the caller instead of treating it as a transport failure.
-            if let Some(exception) = err.pending_exception() {
-                return Err(exception);
-            }
-            if matches!(err, IPCSerializationError::SerializationFailed) {
-                return Err(throw_unsendable_message(global_object, original_message));
-            }
-            let ex =
-                global_object.create_type_error_instance(format_args!("process.send() failed"));
-            ex.put(
-                global_object,
-                b"syscall",
-                bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
-            );
-            return do_send_err(global_object, callback, ex, from);
+            // Serialization never enqueues, so the channel is untouched: report the failure to
+            // the caller rather than treating it as a transport failure. A value the type guard
+            // accepts but JSON cannot represent (`toJSON()` returning undefined) lands here.
+            return Err(err.as_js_error().unwrap_or_else(|| {
+                global_object.throw_invalid_argument_value_custom(
+                    b"message",
+                    original_message,
+                    b"could not be serialized to JSON",
+                )
+            }));
         }
     };
 

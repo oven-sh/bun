@@ -617,63 +617,17 @@ static SpyWeakHandleOwner& weakValueHandleOwner()
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
-extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
+// The sets are weak, so a mock that has been collected is simply not visited.
+template<typename Functor>
+static void forEachMockInSet(JSC::Strong<JSC::Unknown>& mockSet, const Functor& apply)
 {
-    if (!globalObject->mockModule.activeSpies) {
+    if (!mockSet) {
         return;
     }
-    auto spiesValue = globalObject->mockModule.activeSpies.get();
 
-    ActiveSpySet* activeSpies = uncheckedDowncast<ActiveSpySet>(spiesValue);
+    ActiveSpySet* mocks = uncheckedDowncast<ActiveSpySet>(mockSet.get());
     MarkedArgumentBuffer active;
-    activeSpies->takeSnapshot(active);
-    size_t size = active.size();
-
-    for (size_t i = 0; i < size; ++i) {
-        JSValue spy = active.at(i);
-        if (!spy.isObject())
-            continue;
-
-        auto* spyObject = uncheckedDowncast<JSMockFunction>(spy);
-        spyObject->clearSpy();
-    }
-    globalObject->mockModule.activeSpies.clear();
-}
-
-extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
-{
-    if (!globalObject->mockModule.activeMocks) {
-        return;
-    }
-    auto spiesValue = globalObject->mockModule.activeMocks.get();
-
-    ActiveSpySet* activeSpies = uncheckedDowncast<ActiveSpySet>(spiesValue);
-    MarkedArgumentBuffer active;
-    activeSpies->takeSnapshot(active);
-    size_t size = active.size();
-
-    for (size_t i = 0; i < size; ++i) {
-        JSValue spy = active.at(i);
-        if (!spy.isObject())
-            continue;
-
-        auto* spyObject = uncheckedDowncast<JSMockFunction>(spy);
-        // seems similar to what we do in JSMock__resetSpies,
-        // but we actually only clear calls, context, instances and results
-        spyObject->clear();
-    }
-}
-
-extern "C" void JSMock__resetAllMocks(Zig::GlobalObject* globalObject)
-{
-    if (!globalObject->mockModule.activeMocks) {
-        return;
-    }
-    auto mocksValue = globalObject->mockModule.activeMocks.get();
-
-    ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(mocksValue);
-    MarkedArgumentBuffer active;
-    activeMocks->takeSnapshot(active);
+    mocks->takeSnapshot(active);
     size_t size = active.size();
 
     for (size_t i = 0; i < size; ++i) {
@@ -681,10 +635,27 @@ extern "C" void JSMock__resetAllMocks(Zig::GlobalObject* globalObject)
         if (!mock.isObject())
             continue;
 
-        // mockReset() on every mock: drops the recorded calls *and* the implementations,
-        // without restoring the original of a spy.
-        uncheckedDowncast<JSMockFunction>(mock)->reset();
+        apply(uncheckedDowncast<JSMockFunction>(mock));
     }
+}
+
+extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
+{
+    forEachMockInSet(globalObject->mockModule.activeSpies, [](JSMockFunction* spy) { spy->clearSpy(); });
+    globalObject->mockModule.activeSpies.clear();
+}
+
+extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
+{
+    // mockClear() on every mock: only clears calls, contexts, instances and results.
+    forEachMockInSet(globalObject->mockModule.activeMocks, [](JSMockFunction* mock) { mock->clear(); });
+}
+
+extern "C" void JSMock__resetAllMocks(Zig::GlobalObject* globalObject)
+{
+    // mockReset() on every mock: drops the recorded calls *and* the implementations,
+    // without restoring the original of a spy.
+    forEachMockInSet(globalObject->mockModule.activeMocks, [](JSMockFunction* mock) { mock->reset(); });
 }
 
 JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)

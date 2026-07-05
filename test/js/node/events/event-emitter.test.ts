@@ -867,6 +867,44 @@ describe("EventEmitter captureRejections", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "unhandled:boom", stderr: "", exitCode: 0 });
   });
+
+  test("toggling captureRejections leaves a userland prototype emit patch alone", async () => {
+    // node's setter only flips the flag, so a patched `EventEmitter.prototype.emit`
+    // (what APM/tracing libraries install) has to survive a toggle.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const EventEmitter = require("node:events");
+          const original = EventEmitter.prototype.emit;
+          const seen = [];
+          EventEmitter.prototype.emit = function patched(...args) {
+            seen.push(args[0]);
+            return original.apply(this, args);
+          };
+
+          EventEmitter.captureRejections = true;
+          EventEmitter.captureRejections = false;
+
+          const ee = new EventEmitter();
+          let handled = false;
+          ee.on("x", () => { handled = true; });
+          ee.emit("x");
+          console.log(JSON.stringify({ seen, handled }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `{"seen":["x"],"handled":true}`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 const waysOfCreating = [

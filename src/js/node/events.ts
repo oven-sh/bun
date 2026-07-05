@@ -839,11 +839,14 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
-      // Instances that never ran the EventEmitter constructor (`inherits()`
-      // without a super call) have no own `emit`, so the capturing variant has
-      // to reach them through the prototype. `addCatch` re-checks `kCapture`,
-      // so emitters that opted out still skip capture.
-      EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      // Emitters whose constructor never ran (`inherits()` without a super call)
+      // have no own `emit`, so the capturing variant has to reach them through
+      // the prototype. Only ever swap out our own function: node's setter leaves
+      // `emit` alone, so a userland patch has to survive a toggle.
+      const emit = EventEmitterPrototype.emit;
+      if (emit === emitWithoutRejectionCapture || emit === emitWithRejectionCapture) {
+        EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      }
     },
     enumerable: true,
   },

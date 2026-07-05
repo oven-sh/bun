@@ -2296,6 +2296,11 @@ declare module "bun" {
   type MacroMap = Record<string, Record<string, string>>;
 
   /**
+   * The value an export may be replaced with by {@link TranspilerOptions.exports}.
+   */
+  type ExportReplacement = string | number | boolean | null | undefined;
+
+  /**
    * Hash a string or array buffer using Wyhash
    *
    * This is not a cryptographic hash function.
@@ -2441,8 +2446,12 @@ declare module "bun" {
        * Exports to replace, keyed on the *exported* name.
        *
        * For `export { q as QA }`, that is `"QA"` and not the local `"q"`.
+       *
+       * A `[name, value]` pair exports `value` under `name` instead, so
+       * `{ getStaticProps: ["__N_SSG", true] }` turns an exported
+       * `getStaticProps` into `export var __N_SSG = true`.
        */
-      replace?: Record<string, string>;
+      replace?: Record<string, ExportReplacement | [string, ExportReplacement]>;
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;

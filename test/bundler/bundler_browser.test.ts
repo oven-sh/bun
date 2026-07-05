@@ -177,6 +177,23 @@ describe("bundler", () => {
       stdout: "captured throwing-then-getter\nemit returned true",
     },
   });
+  itBundled("browser/NodeEventsCaptureRejectionsOnceListener", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const ee = new EventEmitter({ captureRejections: true });
+        ee.on("error", err => console.log("captured", err.message));
+        ee.once("boom", async () => { throw new Error("once-rejection"); });
+        ee.prependOnceListener("bang", async () => { throw new Error("prepend-once-rejection"); });
+        ee.emit("boom");
+        ee.emit("bang");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "captured once-rejection\ncaptured prepend-once-rejection",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

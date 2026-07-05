@@ -236,7 +236,8 @@ function overflowWarning(emitter, type, handlers) {
 
 function onceWrapper(type, listener, ...args) {
   this.removeListener(type, listener);
-  listener.apply(this, args);
+  // The return value reaches captureRejections' addCatch, so it must not be swallowed.
+  return listener.apply(this, args);
 }
 
 EventEmitterPrototype.once = function once(type, fn) {

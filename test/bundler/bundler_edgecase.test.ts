@@ -2529,7 +2529,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const entry = api.readFile("out.js").split("// entry.mjs")[1];
-      expect(entry.indexOf("require_a()")).toBeLessThan(entry.indexOf("init_b()"));
+      expect(entry).toMatch(/require_a\(\)[\s\S]*init_b\(\)/);
     },
   });
   itBundled("edgecase/WrappedESMDependencyKeepsImportOrderReversed", {
@@ -2559,6 +2559,10 @@ describe("bundler", () => {
         a cjs
         c esm
       `,
+    },
+    onAfterBundle(api) {
+      const entry = api.readFile("out.js").split("// entry.mjs")[1];
+      expect(entry).toMatch(/init_b\(\)[\s\S]*require_a\(\)/);
     },
   });
   // Adjacent async dependencies still batch into one `__promiseAll`, but the
@@ -2601,8 +2605,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const entry = api.readFile("out.js").split("// entry.mjs")[1];
-      expect(entry.indexOf("require_a()")).toBeLessThan(entry.indexOf("__promiseAll("));
-      expect(entry).toMatch(/__promiseAll\(\s*\[\s*init_x\(\),\s*init_y\(\)\s*\]\)/);
+      expect(entry).toMatch(/require_a\(\)[\s\S]*__promiseAll\(\s*\[\s*init_x\(\),\s*init_y\(\)\s*\]\)/);
     },
   });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {

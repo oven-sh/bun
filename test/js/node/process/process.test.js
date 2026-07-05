@@ -1042,6 +1042,71 @@ describe.concurrent(() => {
     });
   });
 
+  // A callback that throws skips its own checkpoint, so its microtasks and
+  // rejections are held until the immediate batch drains. Scanning at the throw
+  // site instead would report a promise whose .catch() is merely queued.
+  it.each([
+    [
+      "reports nothing when a queued microtask handles the rejection",
+      `setImmediate(() => {
+         const p = Promise.reject(new Error("x"));
+         queueMicrotask(() => p.catch(() => {}));
+         throw new Error("boom");
+       });
+       process.on("rejectionHandled", () => console.log("rejectionHandled"));`,
+      ["uncaughtException"],
+    ],
+    [
+      "reports the rejection before the timer the callback scheduled",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => console.log("later timer"), 0);
+         throw new Error("boom");
+       });`,
+      ["uncaughtException", "unhandledRejection", "later timer"],
+    ],
+    [
+      "defers the rejection past the immediate queued behind it",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+         throw new Error("boom");
+       });
+       setImmediate(() => console.log("second immediate"));`,
+      ["uncaughtException", "second immediate", "unhandledRejection"],
+    ],
+    [
+      // `tick_immediate_tasks` routes on the *last* task's outcome, so pin the
+      // case where an earlier immediate succeeded and the throw ends the batch.
+      "reports the rejection when the throw ends a batch that started clean",
+      `setImmediate(() => console.log("first immediate"));
+       setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => console.log("later timer"), 0);
+         throw new Error("boom");
+       });`,
+      ["first immediate", "uncaughtException", "unhandledRejection", "later timer"],
+    ],
+  ])("a throwing setImmediate %s", async (_name, body, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("uncaughtException", () => console.log("uncaughtException"));
+         process.on("unhandledRejection", () => console.log("unhandledRejection"));
+         ${body}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

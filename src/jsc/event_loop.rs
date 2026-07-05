@@ -375,6 +375,9 @@ impl EventLoop {
     /// turn (`Interpreter::finish`), where reporting a rejection that the caller
     /// is about to handle would be wrong.
     ///
+    /// The caller must have drained the callback's microtasks first: a promise
+    /// whose `.catch()` is still queued is not unhandled yet.
+    ///
     /// # Safety
     /// `loop_` must be the live per-thread `EventLoop`, called right after the
     /// `exit()` that ends one callback.
@@ -869,6 +872,11 @@ impl EventLoop {
         if exception_thrown {
             // SAFETY: as above.
             unsafe { (*this).maybe_drain_microtasks() };
+            // A throwing callback skips its own checkpoint, so its rejections are
+            // reported here instead — still ahead of the timer phase, which is
+            // where Node reports them too.
+            // SAFETY: as above.
+            unsafe { Self::handle_rejected_promises_after_tick(this) };
         }
 
         // SAFETY: as above; this read MUST observe pushes JS made during the

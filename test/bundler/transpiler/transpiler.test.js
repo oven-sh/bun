@@ -1592,11 +1592,20 @@ export default class {
     // `export default <value>` — each value form takes a different branch of s_export_default.
     const defaultValues = [["class X {}"], ["function X() {}"], ["123"]];
 
-    // These two shapes put the eliminated export first, where hoisting it used to abort the
-    // process. Spawn so an abort surfaces as a failed child instead of taking the runner down.
-    const hoistable = [
+    // A declaration with no initializer is a separate branch of visit_decls.
+    // [kind, replace: { f: 42 }, replace: { f: ["__N_SSG", true] }]
+    const uninitialized = [
+      ["let", "export let f = 42;\n", "export let __N_SSG = true;\n"],
+      ["var", "export var f = 42;\n", "export var __N_SSG = true;\n"],
+    ];
+
+    // Eliminating any of these aborted the process: the hoistable two popped an empty parts
+    // list, the uninitialized one unwrapped a missing value. Spawn so an abort is reported
+    // as a failed child rather than taking the test runner down with it.
+    const aborting = [
       ["export class f {}", { eliminate: ["f"] }],
       ["export default class X {}", { eliminate: ["default"] }],
+      ["export let f;", { eliminate: ["f"] }],
     ];
 
     for (const deadCodeElimination of [true, false]) {
@@ -1658,7 +1667,28 @@ export default class {
           expect(transpiler.scan(source).exports).toEqual(["__N_SSG", "keep"]);
         });
 
-        it.concurrent.each(hoistable)("eliminates a leading `%s`", async (source, exports) => {
+        it.each(uninitialized)("replaces an uninitialized exported %s declaration", (kind, replaced) => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { replace: { f: 42 } } });
+          const source = `${lead}export ${kind} f;\nexport const keep = 1;`;
+          expect(transpiler.transformSync(source)).toBe(lead + replaced + "export const keep = 1;\n");
+          expect(transpiler.scan(source).exports).toEqual(["f", "keep"]);
+        });
+
+        it.each(uninitialized)(
+          "injects a renamed export for an uninitialized exported %s declaration",
+          (kind, _repl, injected) => {
+            const transpiler = new Bun.Transpiler({
+              loader: "ts",
+              deadCodeElimination,
+              exports: { replace: { f: ["__N_SSG", true] } },
+            });
+            const source = `${lead}export ${kind} f;\nexport const keep = 1;`;
+            expect(transpiler.transformSync(source)).toBe(lead + injected + "export const keep = 1;\n");
+            expect(transpiler.scan(source).exports).toEqual(["__N_SSG", "keep"]);
+          },
+        );
+
+        it.concurrent.each(aborting)("eliminates a lone `%s`", async (source, exports) => {
           await using proc = Bun.spawn({
             cmd: [
               bunExe(),

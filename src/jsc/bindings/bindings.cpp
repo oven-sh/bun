@@ -4122,41 +4122,6 @@ JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* globa
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
-JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
-    RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(sec_as_nsec.isHeapBigInt());
-    auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
-    ASSERT(big_sec_as_nsec);
-    auto result = JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(result);
-}
-
-JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b)
-{
-    JSC::JSValue a_value = JSC::JSValue::decode(a);
-    JSC::JSValue b_value = JSC::JSValue::decode(b);
-
-    ASSERT(a_value.isHeapBigInt());
-    auto* big_a = a_value.asHeapBigInt();
-    ASSERT(big_a);
-
-    ASSERT(b_value.isHeapBigInt());
-    auto* big_b = b_value.asHeapBigInt();
-    ASSERT(big_b);
-    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_a, big_b));
-}
-
 JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* globalObject, uint64_t val)
 {
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));

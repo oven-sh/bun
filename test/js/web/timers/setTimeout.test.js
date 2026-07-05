@@ -400,7 +400,7 @@ it("setTimeout CPU usage #7790", async () => {
   const code = await process.exited;
   expect(code).toBe(0);
   const stats = process.resourceUsage();
-  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
+  expect(stats.cpuTime.total / 1e6).toBeLessThan(1);
 });
 
 it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {

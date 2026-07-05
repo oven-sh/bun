@@ -36,7 +36,6 @@ use bun_libuv_sys::UvHandle as _;
 
 #[path = "subprocess/ResourceUsage.rs"]
 pub mod resource_usage;
-pub use resource_usage::ResourceUsage;
 
 #[path = "subprocess/SubprocessPipeReader.rs"]
 pub mod subprocess_pipe_reader;
@@ -398,7 +397,7 @@ impl Subprocess<'_> {
 
             return Ok(JSValue::UNDEFINED);
         };
-        ResourceUsage::create(&rusage, global_object)
+        Ok(resource_usage::create(&rusage, global_object))
     }
 
     pub fn has_exited(&self) -> bool {

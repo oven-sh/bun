@@ -1,4 +1,4 @@
-import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
+import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, type ResourceUsage } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
@@ -1253,5 +1253,73 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+describe("resourceUsage", () => {
+  // https://github.com/oven-sh/bun/issues/32254
+  const resourceUsageKeys = [
+    "contextSwitches",
+    "cpuTime",
+    "maxRSS",
+    "messages",
+    "ops",
+    "shmSize",
+    "signalCount",
+    "swapCount",
+  ];
+
+  const burnCPU = "let x = 0; for (let i = 0; i < 1e6; i++) x += i;";
+
+  function checkResourceUsage(usage: ResourceUsage) {
+    expect(Object.keys(usage).sort()).toEqual(resourceUsageKeys);
+
+    const { user, system, total } = usage.cpuTime;
+    expect({ user: typeof user, system: typeof system, total: typeof total }).toEqual({
+      user: "number",
+      system: "number",
+      total: "number",
+    });
+    expect(user).toBeGreaterThanOrEqual(0);
+    expect(system).toBeGreaterThanOrEqual(0);
+    expect(total).toBe(user + system);
+
+    expect(typeof usage.maxRSS).toBe("number");
+
+    const roundTripped = JSON.parse(JSON.stringify(usage));
+    expect(Object.keys(roundTripped).sort()).toEqual(resourceUsageKeys);
+    expect(roundTripped.cpuTime).toEqual({ user, system, total });
+    expect(roundTripped.maxRSS).toBe(usage.maxRSS);
+    expect(roundTripped.contextSwitches).toEqual({ ...usage.contextSwitches });
+  }
+
+  it("spawn().resourceUsage() has own number fields that serialize", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", burnCPU],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+
+    const usage = proc.resourceUsage();
+    expect(usage).toBeDefined();
+    checkResourceUsage(usage!);
+  });
+
+  it("spawnSync().resourceUsage has own number fields that serialize", () => {
+    const { stdout, stderr, exitCode, resourceUsage } = spawnSync({
+      cmd: [bunExe(), "-e", burnCPU],
+      env: bunEnv,
+    });
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    checkResourceUsage(resourceUsage);
   });
 });

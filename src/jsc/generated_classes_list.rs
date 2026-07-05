@@ -54,7 +54,6 @@ pub mod Classes {
     // codegen sees the correct payload.
     pub use crate::api::bun::h2_frame_parser::H2FrameParser;
     pub use crate::api::bun::subprocess as Subprocess;
-    pub use crate::api::bun::subprocess::ResourceUsage;
     pub use crate::api::bun::terminal as Terminal;
     pub use crate::api::cron::CronJob;
     pub use crate::api::filesystem_router::MatchedRoute;

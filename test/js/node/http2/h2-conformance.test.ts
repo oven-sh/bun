@@ -8,10 +8,12 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tempDir } from "harness";
 import { once } from "node:events";
+import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
+import path from "node:path";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -792,6 +794,54 @@ describe("server stream reset (RFC 9113 §6.4)", () => {
     } finally {
       cleanup();
     }
+  });
+
+  test("every response entry point refuses a closed stream", async () => {
+    using dir = tempDir("h2-closed-stream", { "body.txt": "hello" });
+    const body = path.join(String(dir), "body.txt");
+    const entryPoints: Array<[string, (stream: any) => void]> = [
+      ["respond", stream => stream.respond({ ":status": 200 })],
+      ["respondWithFile", stream => stream.respondWithFile(body, { ":status": 200 })],
+      [
+        "respondWithFD",
+        stream => {
+          const fd = fs.openSync(body, "r");
+          try {
+            stream.respondWithFD(fd, { ":status": 200 });
+          } finally {
+            // The guard throws before respondWithFD takes ownership of the descriptor.
+            fs.closeSync(fd);
+          }
+        },
+      ],
+      ["additionalHeaders", stream => stream.additionalHeaders({ ":status": 103 })],
+    ];
+
+    const codes: Record<string, string | undefined> = {};
+    for (const [name, send] of entryPoints) {
+      const { c, cleanup } = await resetServer("GET", stream => {
+        stream.close(ErrorCode.REFUSED_STREAM);
+        try {
+          send(stream);
+        } catch (e: any) {
+          codes[name] = e.code;
+        }
+      });
+      try {
+        await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+        // The reset is all the peer gets: a closed stream emits no HEADERS and no DATA.
+        expect(c.frames.find(f => f.streamId === 1 && f.type !== FrameType.RST_STREAM)).toBeUndefined();
+      } finally {
+        cleanup();
+      }
+    }
+
+    expect(codes).toEqual({
+      respond: "ERR_HTTP2_INVALID_STREAM",
+      respondWithFile: "ERR_HTTP2_INVALID_STREAM",
+      respondWithFD: "ERR_HTTP2_INVALID_STREAM",
+      additionalHeaders: "ERR_HTTP2_INVALID_STREAM",
+    });
   });
 
   test("an inbound RST_STREAM(NO_ERROR) ends the client stream cleanly", async () => {

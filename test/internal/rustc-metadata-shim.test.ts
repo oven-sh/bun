@@ -9,17 +9,19 @@
  * renamed by nearly every commit.
  *
  * The graph assertion is configure-time only and runs everywhere. The
- * behavioural ones compile the wrapper, so they need a rust toolchain.
+ * behavioural ones drive the wrapper `bun bd` already built, so they need a
+ * build directory; CI's test lanes run a downloaded binary and skip them. (The
+ * build-rust lanes are what prove the wrapper compiles and cargo runs through
+ * it on every platform — no need to rebuild it from a test.)
  */
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { resolveConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 import { emitRust, registerRustRules } from "../../scripts/build/rust.ts";
-
-const shimSource = join(import.meta.dirname, "..", "..", "scripts", "build", "rustc-metadata-shim.rs");
 
 test("the wrapper is built before cargo and reaches its env", () => {
   /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
@@ -73,30 +75,20 @@ test("the wrapper is built before cargo and reaches its env", () => {
   expect(cargoEdge!.split("|")[1]).toContain("rustc-metadata-shim");
 });
 
-// Compiling the wrapper needs rustc. It sits next to cargo on both rustup and
-// distro installs — the same assumption registerRustRules() makes.
-const rustc = Bun.which("rustc");
+// emitRust() drops the wrapper in the build directory, which is where the bun
+// under test lives when it came from `bun bd`. A downloaded binary has no build
+// directory next to it, so CI's test lanes skip: they have no business invoking
+// a rust toolchain, and on a rustup proxy the first call downloads a channel.
+const shim = join(dirname(process.execPath), `rustc-metadata-shim${isWindows ? ".exe" : ""}`);
 
-describe.skipIf(rustc === null)("rustc metadata shim", () => {
-  let shim = "";
+describe.skipIf(!existsSync(shim))("rustc metadata shim", () => {
   let fakeRustc = "";
 
-  beforeAll(async () => {
+  beforeAll(() => {
     // Not disposed: bun:test has no `using` for suite-scoped fixtures, and the
     // OS reaps its own temp dir.
-    const dir = String(
-      tempDir("rustc-metadata-shim", { "fake-rustc.ts": `console.log(process.argv.slice(2).join("\\n"))` }),
-    );
-    shim = join(dir, "shim");
-    fakeRustc = join(dir, "fake-rustc.ts");
-
-    await using proc = Bun.spawn({
-      cmd: [rustc!, "--edition", "2024", "-Copt-level=0", "-o", shim, shimSource],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    const dir = tempDir("rustc-metadata-shim", { "fake-rustc.ts": `console.log(process.argv.slice(2).join("\\n"))` });
+    fakeRustc = join(String(dir), "fake-rustc.ts");
   });
 
   /** Run the wrapper; returns the argv it would have handed the real rustc. */

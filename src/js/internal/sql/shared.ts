@@ -1417,10 +1417,10 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
         return Bun.fileURLToPath(str);
       } catch {
         // Not a well-formed file URL, so fall back to the text after the scheme and authority.
-        // On Windows the leading slash of "file:///C:/db" is not part of the path, matching
-        // what fileURLToPath strips when it does accept the URL.
+        // "file:///\\\\server\\share\\db" is a UNC path written after the URL's third slash, which
+        // is not part of it. A posix path like "file:///tmp/db" keeps the slash it starts with.
         const filename = str.slice(prefix.length);
-        if (process.platform === "win32" && filename.startsWith("/")) return filename.slice(1);
+        if (process.platform === "win32" && filename.startsWith("/\\")) return filename.slice(1);
         return filename;
       }
     }

@@ -247,33 +247,11 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        let drained = count == 1
-            && !self.vm_ref().is_inside_deferred_task_queue.get()
-            && self.drain_microtasks().is_ok();
+        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
+            let _ = self.drain_microtasks();
+        }
 
         self.entered_event_loop_count -= 1;
-        if drained {
-            self.handle_rejected_promises_after_tick();
-        }
-    }
-
-    /// The tail of a macrotask callback, once its microtasks have drained:
-    /// report what it left unhandled before anything it scheduled runs. Node
-    /// does this from `processTicksAndRejections`, which its timer and
-    /// immediate queues run after every callback.
-    ///
-    /// Only valid once the enter/exit counter is back at 0: the handler is
-    /// user JS, and its own `enter()`/`exit()` must see depth 0 to drain.
-    fn handle_rejected_promises_after_tick(&mut self) {
-        debug_assert_eq!(self.entered_event_loop_count, 0);
-        // spawnSync's isolated loop shares this VM and global object; running
-        // JS on it is forbidden, which is also why `drain_microtasks` bails.
-        if self.vm_ref().suppress_microtask_drain.get() {
-            return;
-        }
-        // `global_ref()` hands back a `'static` reference, so no borrow of the
-        // loop spans the `unhandledRejection` handler, which re-enters it.
-        self.global_ref().handle_rejected_promises();
     }
 
     /// `enter()` now, `exit()` on drop. Takes the raw VM-owned pointer so the
@@ -297,8 +275,7 @@ impl EventLoop {
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
         let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
-        let drained = allow_drain_microtask && count == 1 && !inside_deferred;
-        let result = if drained {
+        let result = if allow_drain_microtask && count == 1 && !inside_deferred {
             self.drain_microtasks()
         } else {
             Ok(())
@@ -308,9 +285,6 @@ impl EventLoop {
         // decremented.
         if result.is_ok() {
             self.entered_event_loop_count -= 1;
-            if drained {
-                self.handle_rejected_promises_after_tick();
-            }
         }
         result
     }
@@ -387,6 +361,45 @@ impl EventLoop {
         if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
         {
             let _ = self.drain_microtasks();
+        }
+    }
+
+    /// Report what the timer or immediate callback that just finished left
+    /// unhandled, then drain whatever its `unhandledRejection` handler queued,
+    /// so both land before the next macrotask. Node does this from
+    /// `processTicksAndRejections`, a `do { drain } while (rejections)` loop its
+    /// timer and immediate queues run after every callback.
+    ///
+    /// Only the two batch-drain phases call this. `exit()` looks like the same
+    /// hook but is not: native code also uses it to re-enter JS from inside a JS
+    /// turn (`Interpreter::finish`), where reporting a rejection that the caller
+    /// is about to handle would be wrong.
+    ///
+    /// # Safety
+    /// `loop_` must be the live per-thread `EventLoop`, called right after the
+    /// `exit()` that ends one callback.
+    pub unsafe fn handle_rejected_promises_after_tick(loop_: *mut EventLoop) {
+        // The handler is user JS and re-enters this same `EventLoop`
+        // (`setImmediate` -> `enqueue_immediate_task`), so read the guard
+        // through the raw place and hold no borrow of `*loop_` across it.
+        // SAFETY: per fn contract — `loop_` is live.
+        if unsafe { (*loop_).entered_event_loop_count } != 0 {
+            return;
+        }
+        // SAFETY: per fn contract; both accessors hand back `'static` refs that
+        // detach from `*loop_`.
+        let (global, vm) = unsafe { ((*loop_).global_ref(), (*loop_).vm_ref()) };
+        // spawnSync's isolated loop shares this VM and global object; running JS
+        // on it is forbidden, which is also why `drain_microtasks` bails.
+        if vm.is_inside_deferred_task_queue.get() || vm.suppress_microtask_drain.get() {
+            return;
+        }
+        while global.handle_rejected_promises() {
+            // SAFETY: per fn contract. The handler returned before we get here,
+            // so this short-lived `&mut` spans no re-entrant JS of its own.
+            if unsafe { (*loop_).drain_microtasks() }.is_err() {
+                return;
+            }
         }
     }
 

@@ -11,6 +11,7 @@
 use bun_core::{Timespec, TimespecMockMode};
 
 use crate::jsc::JsCell;
+use crate::jsc::event_loop::EventLoop;
 use crate::jsc::{
     Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
     generated::{JSImmediate, JSTimeout},
@@ -430,6 +431,8 @@ impl TimerObjectInternals {
         {
             return true;
         }
+        // SAFETY: `vm` is live; `event_loop()` yields the live per-thread loop.
+        unsafe { EventLoop::handle_rejected_promises_after_tick((*vm).event_loop()) };
 
         exception_thrown
     }
@@ -686,6 +689,8 @@ impl TimerObjectInternals {
 
         // SAFETY: `vm` is live; see `enter()` note above.
         unsafe { (*(*vm).event_loop()).exit() };
+        // SAFETY: `vm` is live; `event_loop()` yields the live per-thread loop.
+        unsafe { EventLoop::handle_rejected_promises_after_tick((*vm).event_loop()) };
     }
 
     /// A `setTimeout` whose

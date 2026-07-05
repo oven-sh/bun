@@ -344,7 +344,8 @@ public:
 
     uint8_t drainMicrotasks();
 
-    void handleRejectedPromises();
+    // Returns whether an `unhandledRejection` handler ran.
+    bool handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>

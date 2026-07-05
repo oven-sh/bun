@@ -284,6 +284,26 @@ describe.concurrent('color(input, "ansi") picks the escape for the detected colo
   });
 });
 
+describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
+  // Reference CIE Lab (D50) for each sRGB color (matches CSS Color 4 to four
+  // decimals). These saturated blues sit on the sRGB gamut boundary, where the
+  // fallback used to desaturate them instead of clipping (#0000ff -> #002cea).
+  const labBlues: [string, string][] = [
+    ["#0000ff", "lab(29.5683% 68.2874 -112.0297)"],
+    ["#0000ee", "lab(27.2497% 64.8129 -106.3296)"],
+    ["#0000cc", "lab(22.5153% 57.7180 -94.6900)"],
+    ["#0000aa", "lab(17.6303% 50.3974 -82.6800)"],
+  ];
+
+  test.each(labBlues)("color(%s via lab) clips to the boundary", (expected, lab) => {
+    expect(color(lab, "hex")).toBe(expected);
+  });
+
+  test("oklab blue is not desaturated", () => {
+    expect(color("oklab(45.2% -0.032 -0.312)", "hex")).toBe("#0200ff");
+  });
+});
+
 // 2^24 color() calls take minutes on debug builds, past the per-test timeout.
 test.skipIf(isDebug)("fuzz ansi256", () => {
   withoutAggressiveGC(() => {

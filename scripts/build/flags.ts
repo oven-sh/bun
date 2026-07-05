@@ -748,7 +748,7 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Warn on unused vars in debug (catches dead code)",
   },
   {
-    // Windows: suppress noisy warnings from headers we don't control
+    // Suppress noisy warnings from system/dependency headers
     flag: [
       "-Wno-nullability-completeness",
       "-Wno-inconsistent-dllimport",
@@ -756,7 +756,7 @@ export const bunOnlyFlags: Flag[] = [
       "-Wno-deprecated-declarations",
       "-Wno-character-conversion",
     ],
-    when: c => c.windows,
+    when: c => c.windows || c.linux,
     desc: "Suppress noisy warnings from system/dependency headers",
   },
 ];

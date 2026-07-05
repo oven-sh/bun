@@ -47,6 +47,8 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const TypedArrayPrototypeSet = Uint8Array.prototype.set;
 const TypedArrayPrototypeSubarray = Uint8Array.prototype.subarray;
+// Marks an onread socket as stopped while holding no bytes back.
+const kEmptyBuffer = Buffer.alloc(0);
 const MathMax = Math.max;
 
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
@@ -1279,9 +1281,10 @@ function onreadDeliver(self, chunk) {
       self.bytesRead += length;
       const result = self[kBufferCb].$call(self, length, buffer);
       onreadNextBuffer(self);
-      // The callback runs user JS: it may have destroyed the socket, and the
-      // remaining slices of this chunk must not reach it.
-      if (result === false || self.destroyed) {
+      // The callback runs user JS: it may have destroyed or paused the socket,
+      // and the remaining slices of this chunk must not reach it. Reads are
+      // never stopped on entry, so a set kBufferPending means pause() did it.
+      if (result === false || self.destroyed || onreadIsPaused(self)) {
         stopped = true;
         break;
       }
@@ -2168,6 +2171,12 @@ Socket.prototype.pause = function pause() {
     if (!this[kupgraded] || this[kupgraded] instanceof Socket) {
       this[kPausedUnref] = true;
     }
+  }
+  // Node documents pause() as behaving the way returning false does, and its
+  // readStop() stops the next delivery even mid-chunk. Park an onread socket in
+  // the same state, holding nothing yet, so resume() is what restarts it.
+  if (this[kBufferCb] && !onreadIsPaused(this)) {
+    this[kBufferPending] = kEmptyBuffer;
   }
   return Duplex.prototype.pause.$call(this);
 };

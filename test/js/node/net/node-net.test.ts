@@ -1245,6 +1245,59 @@ describe("net.Socket onread", () => {
     );
   });
 
+  // Node documents pause() as behaving the way returning false does, and its
+  // readStop() halts the next delivery even part-way through a chunk.
+  it("stops reading when the callback pauses the socket rather than returning false", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.write(payload);
+      },
+      async target => {
+        const buffer = Buffer.alloc(64);
+        const received: Buffer[] = [];
+        let calls = 0;
+        let paused = true;
+        const firstCall = Promise.withResolvers<void>();
+        const everything = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback(nread, buf) {
+              calls++;
+              received.push(Buffer.from(buf.subarray(0, nread)));
+              if (paused) {
+                // Back-pressure through pause(), not a false return.
+                this.pause();
+                firstCall.resolve();
+              } else if (Buffer.concat(received).length === payload.length) {
+                everything.resolve();
+              }
+            },
+          },
+        });
+        try {
+          socket.on("error", err => {
+            firstCall.reject(err);
+            everything.reject(err);
+          });
+          await firstCall.promise;
+          for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+          expect({ calls, bytesRead: socket.bytesRead }).toEqual({ calls: 1, bytesRead: buffer.length });
+
+          paused = false;
+          socket.resume();
+          await everything.promise;
+          expect(Buffer.concat(received)).toEqual(payload);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
   it("calls the buffer factory before the first read and after every delivery", async () => {
     const payload = pattern(4096);
     await withServer(

@@ -772,7 +772,8 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
     return true;
   }
 
-  const what = tried === 0 ? "found no earlier build to inherit from" : `none of the ${tried} builds tried published it`;
+  const what =
+    tried === 0 ? "found no earlier build to inherit from" : `none of the ${tried} builds tried published it`;
   console.log(`~ symbol order: ${what} (${since(start)})`);
   return false;
 }
@@ -852,12 +853,7 @@ export function reportOrderFileFailure(error: Error): void {
  * binary indistinguishable from an unordered one. Scale-free — compare where the
  * hot functions landed against where a typical function landed.
  */
-export function verifyOrderFileApplied(
-  cfg: Config,
-  ctx: OrderFileContext,
-  exe: string,
-  { strict = true } = {},
-): void {
+export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: string, { strict = true } = {}): void {
   const SAMPLE = 1000;
   /** Ordered, the hot set sits near the front; unordered, at ~100% of the control. */
   const MAX_FRACTION_OF_CONTROL = 0.4;

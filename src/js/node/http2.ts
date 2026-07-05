@@ -2050,8 +2050,9 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
-  // respond() is ending the writable side ahead of a HEADERS frame that carries
-  // END_STREAM, so `_final` must not write an empty DATA frame of its own.
+  // Set only while respond() has a HEADERS frame carrying END_STREAM in flight: the writable
+  // side is finished even though this.end() has not run yet. Read by _destroy, which the native
+  // request() reaches synchronously when that frame closes an already half-closed stream.
   EndStreamOnHeaders = 1 << 7, // 10000000 = 128
 }
 function markWritableDone(stream: Http2Stream) {
@@ -2341,8 +2342,10 @@ class Http2Stream extends Duplex {
     // closed by definition — closing it is not an abort and nothing must be sent on the wire.
     if (!ending && !this[kPush]) {
       // If the writable side of the Http2Stream is still open, emit the
-      // 'aborted' event and set the aborted flag.
-      if (!this.aborted) {
+      // 'aborted' event and set the aborted flag. EndStreamOnHeaders means respond() is
+      // submitting END_STREAM on the HEADERS frame right now and will call end() once the
+      // native call returns, so the response completed - nothing was cut short.
+      if (!this.aborted && (this[bunHTTP2StreamStatus] & StreamState.EndStreamOnHeaders) === 0) {
         this[kAborted] = true;
         this.emit("aborted");
       }
@@ -2424,13 +2427,6 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native) {
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
-        // respond() is about to submit a HEADERS frame carrying END_STREAM, so there is no DATA
-        // frame left to write. Settle now, like node's _final does for this case; 'finish' is
-        // queued on the next tick, after request() has put the frame on the wire.
-        if ((status & StreamState.EndStreamOnHeaders) !== 0) {
-          callback();
-          return;
-        }
         // When waitForTrailers is active, writing an empty DATA frame with
         // close=true emits a bare empty DATA frame (flags=0) to the wire
         // before the trailer/noTrailers path runs, which then emits ANOTHER
@@ -3126,34 +3122,39 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-    if (endStream) {
-      // node ends the writable side before submitting the HEADERS frame. request() below can
-      // close an already half-closed stream and destroy it synchronously, and _destroy reads a
-      // still-open writable side as a client abort - ending first keeps 'aborted' from firing.
-      this[bunHTTP2StreamStatus] |= StreamState.EndStreamOnHeaders;
-      this.end();
-    }
-    if (typeof options === "undefined") {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
-    } else {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
-      // Only track waitForTrailers when the HEADERS frame above did NOT end
-      // the stream. Status codes 204/205/304 and HEAD requests force
-      // endStream=true earlier in this method, which means the native
-      // request() already wrote END_STREAM on the HEADERS frame — driving
-      // the wantTrailers path from `_final` on such a stream would call
-      // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
-      // stream and corrupt state. Use optional chaining: `options` may be
-      // `null` here (typeof null === "object" enters this else branch).
-      if (options?.waitForTrailers && !endStream) {
-        this[bunHTTP2WaitForTrailers] = true;
+    // An END_STREAM HEADERS frame can close an already half-closed stream outright, and the
+    // native request() then destroys it synchronously - before the this.end() below runs. Tell
+    // _destroy the writable side is finished, and clear it again once the frame is out: a
+    // request() that threw submitted nothing, so the writable side is still genuinely open.
+    if (endStream) this[bunHTTP2StreamStatus] |= StreamState.EndStreamOnHeaders;
+    try {
+      if (typeof options === "undefined") {
+        session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
+      } else {
+        session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
+        // Only track waitForTrailers when the HEADERS frame above did NOT end
+        // the stream. Status codes 204/205/304 and HEAD requests force
+        // endStream=true earlier in this method, which means the native
+        // request() already wrote END_STREAM on the HEADERS frame — driving
+        // the wantTrailers path from `_final` on such a stream would call
+        // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
+        // stream and corrupt state. Use optional chaining: `options` may be
+        // `null` here (typeof null === "object" enters this else branch).
+        if (options?.waitForTrailers && !endStream) {
+          this[bunHTTP2WaitForTrailers] = true;
+        }
       }
+    } finally {
+      this[bunHTTP2StreamStatus] &= ~StreamState.EndStreamOnHeaders;
     }
     this.headersSent = true;
     if (onServerStreamFinishChannel.hasSubscribers) {
       onServerStreamFinishChannel.publish({ stream: this, headers, flags: 0 });
     }
     this[bunHTTP2Headers] = headers;
+    if (endStream) {
+      this.end();
+    }
 
     return;
   }

@@ -11,10 +11,12 @@ import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
-// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
-// there; the 10k-request maxSessionMemory stress test takes ~90s under
-// debug+ASAN vs ~2s release, so scale for either.
+// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false there.
 const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
+// The maxSessionMemory stress test costs ~2s for 10k requests in release but ~90s under
+// debug+ASAN, close enough to its timeout that a loaded machine trips it. Shrink the workload
+// rather than the deadline; 1k sequential requests still exercises the memory accounting.
+const MAX_SESSION_MEMORY_REQUESTS = isDebug || isASAN ? 1_000 : 10_000;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -1874,7 +1876,7 @@ it(
         const client = http2.connect(`http://localhost:${port}`);
 
         function next(i) {
-          if (i === 10000) {
+          if (i === MAX_SESSION_MEMORY_REQUESTS) {
             client.close();
             server.close();
             resolve();
@@ -3277,4 +3279,47 @@ it("http2 server respond() with END_STREAM after the request body does not emit 
   expect(results).toEqual(
     cases.map(({ name, status }) => ({ name, events: ["finish", "close"], aborted: false, status, body: "" })),
   );
+});
+
+it("http2 a respond() that throws on invalid headers leaves the writable side open", async () => {
+  // 304 forces END_STREAM, and the invalid response pseudo-header makes respond() throw. Nothing
+  // was submitted, so the handler can still recover with a fresh respond() + end().
+  const server = http2.createServer();
+  let thrownCode = null;
+  server.on("stream", stream => {
+    try {
+      stream.respond({ ":status": 304, ":path": "/" });
+    } catch (err) {
+      thrownCode = err.code;
+      stream.respond({ ":status": 500 });
+      stream.end("err");
+    }
+  });
+
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const req = client.request({ ":path": "/" });
+    const headers = await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", resolve);
+      req.end();
+    });
+    const body = [];
+    req.on("data", chunk => body.push(chunk));
+    await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("end", resolve);
+    });
+
+    expect({
+      thrownCode,
+      status: headers[":status"],
+      body: Buffer.concat(body).toString(),
+    }).toEqual({ thrownCode: "ERR_HTTP2_INVALID_PSEUDOHEADER", status: 500, body: "err" });
+  } finally {
+    client.close();
+    server.close();
+  }
 });

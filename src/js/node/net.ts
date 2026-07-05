@@ -1314,6 +1314,21 @@ function onreadIsPaused(self) {
   return !!self[kBufferPending];
 }
 
+// The TLS read loops keep decrypting and dispatching without re-checking the
+// socket's pause flag, so bytes still arrive after the callback stopped reads.
+// Hold them behind the ones it has not taken instead of dropping them.
+function onreadQueuePending(self, chunk) {
+  const pending = self[kBufferPending];
+  if (pending.length === 0) {
+    self[kBufferPending] = chunk;
+    return;
+  }
+  const queued = Buffer.allocUnsafe(pending.length + chunk.length);
+  TypedArrayPrototypeSet.$call(queued, pending);
+  TypedArrayPrototypeSet.$call(queued, chunk, pending.length);
+  self[kBufferPending] = queued;
+}
+
 // Reads restart only once the callback has taken the bytes it left behind.
 // Returns false when it paused again, so the handle stays stopped.
 function onreadFlushPending(self) {
@@ -1334,6 +1349,11 @@ const SocketHandlersOnRead: typeof SocketHandlers2 = {
     if (!self) return;
     self._unrefTimer();
     if (self.destroyed) return;
+    if (onreadIsPaused(self)) {
+      onreadQueuePending(self, chunk);
+      onreadStop(self);
+      return;
+    }
     if (!onreadDeliver(self, chunk)) onreadStop(self);
   },
 };

@@ -1,7 +1,16 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  isASAN,
+  isDebug,
+  isWindows,
+  tls as tlsCert,
+  tmpdirSync,
+} from "harness";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
@@ -17,6 +26,8 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
+import tls from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -1070,6 +1081,31 @@ describe("net.Socket onread", () => {
     return buf;
   }
 
+  // A generic Duplex in front of a socket, so tls.connect({ socket }) takes the
+  // TLS-over-Duplex path rather than upgrading the native handle.
+  class SocketProxy extends Duplex {
+    constructor(readonly socket: Socket) {
+      super();
+      socket.on("data", chunk => {
+        if (!this.push(chunk)) socket.pause();
+      });
+      socket.on("end", () => this.push(null));
+      socket.on("close", () => this.push(null));
+      socket.on("error", err => this.destroy(err));
+      socket.on("drain", () => this.emit("drain"));
+    }
+    _read() {
+      if (this.socket.isPaused()) this.socket.resume();
+    }
+    _write(chunk: Buffer, encoding: BufferEncoding, callback: (err?: Error | null) => void) {
+      this.socket.write(chunk, encoding, callback);
+    }
+    _final(callback: (err?: Error | null) => void) {
+      this.socket.end();
+      callback();
+    }
+  }
+
   // `fail` races the server's errors against the test body, so a server-side
   // failure surfaces as that error instead of hanging on a promise the server
   // can no longer settle.
@@ -1124,14 +1160,14 @@ describe("net.Socket onread", () => {
           await promise;
           expect({
             sameBuffer,
-            maxNread: Math.max(...nreads),
-            minNread: Math.min(...nreads),
+            // How many deliveries there are and how big each one is depends on
+            // how the kernel frames the payload; the bound does not.
+            outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
             dataEvents,
             payload: Buffer.concat(received),
           }).toEqual({
             sameBuffer: true,
-            maxNread: buffer.length,
-            minNread: payload.length % buffer.length,
+            outOfRange: [],
             dataEvents: 0,
             payload,
           });
@@ -1193,10 +1229,10 @@ describe("net.Socket onread", () => {
           socket.resume();
           await everything.promise;
           expect({
-            maxNread: Math.max(...nreads),
+            outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
             payload: Buffer.concat(received),
           }).toEqual({
-            maxNread: buffer.length,
+            outOfRange: [],
             payload: Buffer.concat([first, second]),
           });
         } finally {
@@ -1253,6 +1289,82 @@ describe("net.Socket onread", () => {
     );
   });
 
+  // TLS over a generic Duplex decrypts and dispatches without re-checking the
+  // socket's pause flag, so a stopped callback can still be handed more bytes.
+  // Those have to queue up behind the ones it never took.
+  it("queues bytes that arrive after the callback stopped reads", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(4096, 0x5a);
+    const secondWritten = Promise.withResolvers<void>();
+    const server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, c => {
+      c.on("error", () => secondWritten.reject(new Error("server socket errored")));
+      c.write(first);
+      c.on("data", () => c.write(second, () => secondWritten.resolve()));
+    });
+    let raw: Socket | undefined;
+    let socket: import("node:tls").TLSSocket | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const { port } = server.address() as import("node:net").AddressInfo;
+      raw = connect({ port, host: "127.0.0.1" });
+      const proxy = new SocketProxy(raw);
+
+      const buffer = Buffer.alloc(512);
+      const received: Buffer[] = [];
+      const nreads: number[] = [];
+      let calls = 0;
+      let total = 0;
+      const firstCall = Promise.withResolvers<void>();
+      const everything = Promise.withResolvers<void>();
+      socket = tls.connect({
+        socket: proxy,
+        servername: "localhost",
+        rejectUnauthorized: false,
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            total += nread;
+            nreads.push(nread);
+            received.push(Buffer.from(buf.subarray(0, nread)));
+            if (calls === 1) {
+              firstCall.resolve();
+              return false;
+            }
+            if (total === first.length + second.length) everything.resolve();
+          },
+        },
+      });
+      socket.on("error", err => {
+        firstCall.reject(err);
+        everything.reject(err);
+      });
+
+      await firstCall.promise;
+      socket.write("go");
+      await secondWritten.promise;
+      for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+      expect(calls).toBe(1);
+
+      socket.resume();
+      await everything.promise;
+      expect({
+        outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
+        payload: Buffer.concat(received),
+      }).toEqual({
+        outOfRange: [],
+        payload: Buffer.concat([first, second]),
+      });
+    } finally {
+      socket?.destroy();
+      raw?.destroy();
+      server.close();
+    }
+  });
+
   it("stops delivering a chunk the moment the callback destroys the socket", async () => {
     const payload = pattern(4096);
     await withServer(
@@ -1280,7 +1392,10 @@ describe("net.Socket onread", () => {
         socket.on("close", () => closed.resolve());
         await closed.promise;
         // The remaining slices of that chunk must not reach a destroyed socket.
-        expect(nreads).toEqual([buffer.length]);
+        expect({
+          deliveries: nreads.length,
+          outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
+        }).toEqual({ deliveries: 1, outOfRange: [] });
       },
     );
   });

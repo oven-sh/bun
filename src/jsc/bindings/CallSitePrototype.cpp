@@ -100,19 +100,14 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObjec
     return JSC::JSValue::encode(callSite->thisValue());
 }
 
-// Matches V8's CallSiteInfo::GetTypeName: returns the name of the constructor
-// that produced the receiver (or its prototype's constructor), falling back to
-// @@toStringTag / [[Class]]. Returns null for strict-mode frames and for
-// null/undefined receivers, never the string "undefined" or an empty string.
+// Matches V8's GetTypeName: the receiver's constructor name, else null for
+// null/undefined/global/strict receivers. Never the string "undefined" (the
+// previous typeof-based behavior that broke source-map-support formatting).
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
 
     JSC::JSValue thisValue = callSite->thisValue();
-
-    // V8 returns null when the receiver can't be identified: strict-mode
-    // frames, explicit `this === null`/`undefined`, and calls on the global
-    // object.
     if (!thisValue || thisValue.isUndefinedOrNull()) {
         return JSC::JSValue::encode(JSC::jsNull());
     }
@@ -123,8 +118,8 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalO
         return JSC::JSValue::encode(JSC::jsNull());
     }
 
-    // JSObject::calculatedClassName implements the V8 cascade: own
-    // constructor -> proto's constructor -> @@toStringTag -> classInfo -> "Object".
+    // calculatedClassName is V8's cascade: own/proto constructor, then
+    // @@toStringTag, then [[Class]], then "Object".
     String className = JSObject::calculatedClassName(thisObject);
     if (className.isEmpty()) {
         return JSC::JSValue::encode(JSC::jsNull());
@@ -153,14 +148,9 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName, (JSGlobalObject * glo
     return JSC::JSValue::encode(JSC::jsNull());
 }
 
-// V8's CallSiteInfo::GetMethodName resolves the method name by matching the
-// frame's function against the receiver's own and inherited properties. Bun's
-// captured stack frames don't retain the receiver (CallSite::thisValue() is
-// undefined for them), so the property holding the function can't be
-// identified, and we return null. This also matches what V8 returns when it
-// can't determine a method name (e.g. plain function calls). Previously this
-// delegated to getFunctionName, which reported the function's own name even
-// for non-method frames.
+// V8 resolves the method name by matching the frame's function against the
+// receiver's properties, but Bun's captured frames don't retain the receiver
+// (thisValue() is undefined), so we return null as V8 does when it can't tell.
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();

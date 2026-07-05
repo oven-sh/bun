@@ -534,7 +534,12 @@ impl Connection {
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
-            if s.state == State::Closed {
+            // A Closed stream whose header block is still being reassembled across CONTINUATION
+            // frames (§4.3) must survive to finish_header_block: the entry carries the message
+            // state that categorizes the block and validates it (a pushed request's `:method`).
+            if s.state == State::Closed
+                && (self.continuation_stream == 0 || *id != self.header_target)
+            {
                 evict.push(*id);
             }
         }

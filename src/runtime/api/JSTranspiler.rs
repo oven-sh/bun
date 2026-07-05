@@ -1084,6 +1084,10 @@ impl JSTranspiler {
             transpiler.options.minify_identifiers = true;
         }
 
+        // Reads the target-derived default, not `allowBunRuntime`. Assigning
+        // `allow_runtime` first would make this true for every `Bun.Transpiler`,
+        // which flips `module_type` to `output_format` for `target: "bun"` and
+        // stops `import.meta.main` lowering to `require.main == module`.
         transpiler.options.transform_only = !transpiler.options.allow_runtime;
 
         transpiler.options.tree_shaking = config.tree_shaking;

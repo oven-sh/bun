@@ -183,6 +183,9 @@ export var __merge = (props, defaultProps) => {
       : __mergeDefaultProps(props, defaultProps);
 };
 
+// The decorator and `using` helpers below are mirrored (with their internal
+// dependencies inlined) in src/ast/runtime_inline.rs, which the printer emits
+// directly when the output cannot import "bun:wrap". Keep both in sync.
 export var __legacyDecorateClassTS = function (decorators, target, key, desc) {
   var c = arguments.length,
     r = c < 3 ? target : desc === null ? (desc = Object.getOwnPropertyDescriptor(target, key)) : desc,

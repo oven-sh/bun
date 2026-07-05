@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, nodeExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -4003,8 +4003,13 @@ console.log("boop");
   const expectCapturePrintedSnapshot = code => {
     const result = parsed(`(async() => {${code}})()`, false, false);
     expect(result).toEndWith("})();\n");
+    // Inlined runtime helpers are printed above the wrapper this test added, so
+    // anchor on the wrapper itself rather than on the first arrow function.
+    const wrapper = "(async () => {";
+    const start = result.lastIndexOf(wrapper);
+    expect(start).toBeGreaterThan(-1);
     const of_relevance = result
-      .slice(result.indexOf("() => {") + 9, result.lastIndexOf("})();") - 1)
+      .slice(start + wrapper.length, result.lastIndexOf("})();") - 1)
       .trim()
       .split("\n")
       .map(x => x.trim())
@@ -4063,6 +4068,135 @@ console.log("boop");
       await using p = await using;
       export var q = r;
     `);
+  });
+
+  describe("lowering helpers are inlined instead of imported from bun:wrap", () => {
+    const legacyTsconfig = JSON.stringify({ compilerOptions: { experimentalDecorators: true } });
+
+    const cases = {
+      "legacy decorators": {
+        tsconfig: legacyTsconfig,
+        code: `
+          const order: string[] = [];
+          function dec(target: any, key?: any, desc?: any) {
+            order.push(key ?? target.name);
+            return desc;
+          }
+          @dec
+          class Legacy {
+            @dec method() { return 21; }
+          }
+          console.log(order.join(","), new Legacy().method() * 2);
+        `,
+        stdout: "method,Legacy 42\n",
+      },
+      "tc39 decorators": {
+        code: `
+          const order: string[] = [];
+          function dec(value: any, ctx: any) {
+            order.push(ctx.kind + ":" + String(ctx.name));
+            return value;
+          }
+          @dec
+          class Modern {
+            @dec accessor field = 1;
+            @dec method() { return 21; }
+          }
+          console.log(order.join(","), new Modern().method() * 2, new Modern().field);
+        `,
+        stdout: "accessor:field,method:method,class:Modern 42 1\n",
+      },
+      "using declarations": {
+        code: `
+          const order: string[] = [];
+          function make(name: string) {
+            return { [Symbol.dispose]() { order.push(name); } };
+          }
+          function body() {
+            using a = make("a");
+            using b = make("b");
+            order.push("body");
+          }
+          body();
+          console.log(order.join(","));
+        `,
+        stdout: "body,b,a\n",
+      },
+    };
+
+    for (const [name, { code, tsconfig, stdout: expectedStdout }] of Object.entries(cases)) {
+      for (const target of ["node", "browser", "bun"]) {
+        it(`${name} (target: ${target})`, async () => {
+          const out = new Bun.Transpiler({ loader: "ts", target, tsconfig }).transformSync(code);
+          expect(out).not.toContain("bun:wrap");
+          expect(out).not.toContain('from "bun:');
+
+          using dir = tempDir(`inline-runtime-${target}`, { "out.mjs": out });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "run", join(String(dir), "out.mjs")],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout).toBe(expectedStdout);
+          expect(stderr).not.toContain("error:");
+          expect(exitCode).toBe(0);
+        });
+      }
+    }
+
+    it("allowBunRuntime keeps the bun:wrap import", () => {
+      const out = new Bun.Transpiler({
+        loader: "ts",
+        target: "node",
+        allowBunRuntime: true,
+        tsconfig: legacyTsconfig,
+      }).transformSync(cases["legacy decorators"].code);
+      expect(out).toContain('from "bun:wrap"');
+    });
+
+    it.skipIf(!nodeExe())("transformed output for target node runs under node", async () => {
+      const files = {};
+      for (const [name, { code, tsconfig }] of Object.entries(cases)) {
+        files[`${name.replaceAll(" ", "-")}.mjs`] = new Bun.Transpiler({
+          loader: "ts",
+          target: "node",
+          tsconfig,
+        }).transformSync(code);
+      }
+      using dir = tempDir("inline-runtime-node", files);
+
+      for (const [name, { stdout: expectedStdout }] of Object.entries(cases)) {
+        await using proc = Bun.spawn({
+          cmd: [nodeExe(), join(String(dir), `${name.replaceAll(" ", "-")}.mjs`)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ name, stdout, stderr, exitCode }).toEqual({ name, stdout: expectedStdout, stderr: "", exitCode: 0 });
+      }
+    });
+
+    it("bun build --no-bundle does not emit a bun:wrap import", async () => {
+      using dir = tempDir("inline-runtime-no-bundle", {
+        "tsconfig.json": legacyTsconfig,
+        "input.ts": cases["legacy decorators"].code,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "--target=node", "input.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).not.toContain("bun:wrap");
+      expect(stdout).toContain("__legacyDecorateClassTS");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

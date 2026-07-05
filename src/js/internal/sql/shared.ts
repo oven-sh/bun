@@ -1416,9 +1416,12 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
       try {
         return Bun.fileURLToPath(str);
       } catch {
-        // if it cant pass it's probably query string, we can just strip it
-        // slicing off the file:// at the beginning
-        return str.slice(7);
+        // Not a well-formed file URL, so fall back to the text after the scheme and authority.
+        // On Windows the leading slash of "file:///C:/db" is not part of the path, matching
+        // what fileURLToPath strips when it does accept the URL.
+        const filename = str.slice(prefix.length);
+        if (process.platform === "win32" && filename.startsWith("/")) return filename.slice(1);
+        return filename;
       }
     }
 

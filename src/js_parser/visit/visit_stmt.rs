@@ -1165,10 +1165,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
         let was_const = data.kind == S::Kind::KConst;
-        let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
-            p.visit_decls::<false>(data.decls.slice_mut(), was_const)
-        } else {
+        // `replace_exports` targets module-level exports. A declaration exported from a
+        // namespace becomes a property of the namespace object, not a module export.
+        let should_replace_export = data.is_export
+            && p.enclosing_namespace_arg_ref.is_none()
+            && p.options.features.replace_exports.entries.len() > 0;
+        let new_len = if should_replace_export {
             p.visit_decls::<true>(data.decls.slice_mut(), was_const)
+        } else {
+            p.visit_decls::<false>(data.decls.slice_mut(), was_const)
         };
         // Drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.

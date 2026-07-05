@@ -3,6 +3,7 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
+use crate::shell::EnvMap;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
@@ -23,6 +24,10 @@ pub struct Cmd {
     pub io: IO,
     pub state: CmdState,
     pub args: Vec<Vec<u8>>,
+    /// `FOO=bar cmd` prefix assignments. POSIX scopes these to this one
+    /// command, so they live here (freed with the node) instead of in the
+    /// `ShellExecEnv` that every command in the scope shares.
+    pub cmd_local_env: EnvMap,
     pub redirection_file: Vec<u8>,
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
@@ -212,6 +217,7 @@ impl Cmd {
             io,
             state: CmdState::Idle,
             args: Vec::new(),
+            cmd_local_env: EnvMap::init(),
             redirection_file: Vec::new(),
             redirection_fd: None,
             exec: Exec::None,
@@ -429,6 +435,20 @@ impl Cmd {
         Yield::Next(this)
     }
 
+    /// POSIX: when a simple command has no command name, its variable
+    /// assignments affect the current execution environment. Mirrors a bare
+    /// `FOO=bar` statement, which also lands in `shell_env`.
+    fn promote_assigns_to_shell(interp: &Interpreter, this: NodeId) {
+        let cmd = interp.as_cmd_mut(this);
+        if cmd.cmd_local_env.is_empty() {
+            return;
+        }
+        let shell = cmd.base.shell_mut();
+        for (label, value) in cmd.cmd_local_env.iter() {
+            shell.shell_env.insert(*label, *value);
+        }
+    }
+
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
     /// (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
@@ -442,19 +462,18 @@ impl Cmd {
         // Empty/null argv[0] → exit
         // with the exit code from a sole command-substitution (stashed by
         // `child_done` from `Expansion::out_exit_code`), else 0.
-        let first_arg: Vec<u8> = {
+        let first_arg: Option<Vec<u8>> = interp
+            .as_cmd(this)
+            .args
+            .first()
+            // strip the trailing NUL we just added
+            .and_then(|a| (a.len() > 1).then(|| a[..a.len() - 1].to_vec()));
+        let Some(first_arg) = first_arg else {
+            Self::promote_assigns_to_shell(interp, this);
             let me = interp.as_cmd(this);
-            match me.args.first() {
-                Some(a) if a.len() > 1 => {
-                    // strip the trailing NUL we just added
-                    a[..a.len() - 1].to_vec()
-                }
-                _ => {
-                    let exit = me.exit_code.unwrap_or(0);
-                    let parent = me.base.parent;
-                    return interp.child_done(parent, this, exit);
-                }
-            }
+            let exit = me.exit_code.unwrap_or(0);
+            let parent = me.base.parent;
+            return interp.child_done(parent, this, exit);
         };
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
@@ -538,12 +557,12 @@ impl Cmd {
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
 
-        // Fill env from export_env + cmd_local_env.
+        // Fill env from export_env + this command's prefix assignments.
         {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
-            let mut iter = env.export_env.iterator();
+            let cmd = interp.as_cmd_mut(this);
+            let mut iter = cmd.base.shell_mut().export_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
-            let mut iter = env.cmd_local_env.iterator();
+            let mut iter = cmd.cmd_local_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
         }
 

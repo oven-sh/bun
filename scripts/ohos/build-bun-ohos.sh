@@ -79,6 +79,13 @@ sync_source() {
     # src/ 目录
     (cd "$DEV_SRC" && tar cf - "${excludes[@]}" src/) | (cd "$CI_SRC" && tar xf -)
 
+    # 清理 CI_SRC 中已被上游删除的陈旧源文件（tar 只添加不删除）
+    (cd "$DEV_SRC" && find src/ -type f) | sort > /tmp/dev_files.txt
+    (cd "$CI_SRC" && find src/ -type f) | sort > /tmp/ci_files.txt
+    comm -13 /tmp/dev_files.txt /tmp/ci_files.txt | while IFS= read -r f; do
+        rm -f "$CI_SRC/$f"
+    done 2>/dev/null || true
+
     # scripts/ 目录
     (cd "$DEV_SRC" && tar cf - "${excludes[@]}" scripts/) | (cd "$CI_SRC" && tar xf -)
 

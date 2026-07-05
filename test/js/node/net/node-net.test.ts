@@ -1106,6 +1106,12 @@ describe("net.Socket onread", () => {
     }
   }
 
+  const listen = (server: Server | import("node:tls").Server) =>
+    new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port));
+    });
+
   // `fail` races the server's errors against the test body, so a server-side
   // failure surfaces as that error instead of hanging on a promise the server
   // can no longer settle.
@@ -1304,11 +1310,7 @@ describe("net.Socket onread", () => {
     let raw: Socket | undefined;
     let socket: import("node:tls").TLSSocket | undefined;
     try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const { port } = server.address() as import("node:net").AddressInfo;
+      const port = await listen(server);
       raw = connect({ port, host: "127.0.0.1" });
       const proxy = new SocketProxy(raw);
 
@@ -1365,6 +1367,66 @@ describe("net.Socket onread", () => {
     }
   });
 
+  // Same transport: the FIN arrives while the callback is stopped, and ending the
+  // readable side there would strand the bytes queued in front of it.
+  it("delays the end of the readable side until the callback takes the held bytes", async () => {
+    const payload = pattern(4096);
+    const server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, c => {
+      c.on("error", () => {});
+      c.end(payload); // payload and FIN in one go
+    });
+    let raw: Socket | undefined;
+    let socket: import("node:tls").TLSSocket | undefined;
+    try {
+      const port = await listen(server);
+      raw = connect({ port, host: "127.0.0.1" });
+      const proxy = new SocketProxy(raw);
+
+      const buffer = Buffer.alloc(512);
+      const received: Buffer[] = [];
+      let calls = 0;
+      let ended = false;
+      const firstCall = Promise.withResolvers<void>();
+      const endEvent = Promise.withResolvers<void>();
+      socket = tls.connect({
+        socket: proxy,
+        servername: "localhost",
+        rejectUnauthorized: false,
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            received.push(Buffer.from(buf.subarray(0, nread)));
+            if (calls === 1) {
+              firstCall.resolve();
+              return false;
+            }
+          },
+        },
+      });
+      socket.on("error", err => {
+        firstCall.reject(err);
+        endEvent.reject(err);
+      });
+      socket.on("end", () => {
+        ended = true;
+        endEvent.resolve();
+      });
+
+      await firstCall.promise;
+      for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+      expect({ ended, calls }).toEqual({ ended: false, calls: 1 });
+
+      socket.resume();
+      await endEvent.promise;
+      expect(Buffer.concat(received)).toEqual(payload);
+    } finally {
+      socket?.destroy();
+      raw?.destroy();
+      server.close();
+    }
+  });
+
   it("stops delivering a chunk the moment the callback destroys the socket", async () => {
     const payload = pattern(4096);
     await withServer(
@@ -1414,11 +1476,6 @@ describe("net.Socket onread", () => {
       c.on("error", () => {});
       c.end(second);
     });
-    const listen = (server: Server) =>
-      new Promise<number>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port));
-      });
     try {
       const [portA, portB] = [await listen(serverA), await listen(serverB)];
       const buffer = Buffer.alloc(64);

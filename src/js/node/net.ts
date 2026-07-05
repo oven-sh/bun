@@ -165,6 +165,8 @@ const kBufferGen = Symbol("kBufferGen");
 // Bytes of an already-read chunk the onread callback has not accepted. Set
 // means reads are stopped, the way Node leaves them unread in the kernel.
 const kBufferPending = Symbol("kBufferPending");
+// A FIN that arrived while those bytes were still held back.
+const kBufferEnded = Symbol("kBufferEnded");
 
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -1057,8 +1059,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (self[kended]) return;
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
-    self.push(null);
-    self.read(0);
+    endReadableSide(self);
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -1112,8 +1113,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     }
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
-    self.push(null);
-    self.read(0);
+    endReadableSide(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
@@ -1321,12 +1321,12 @@ function onreadQueuePending(self, chunk) {
   const pending = self[kBufferPending];
   if (pending.length === 0) {
     self[kBufferPending] = chunk;
-    return;
+  } else if ($isJSArray(pending)) {
+    ArrayPrototypePush.$call(pending, chunk);
+  } else {
+    // Chunks are concatenated once, on flush, rather than on every arrival.
+    self[kBufferPending] = [pending, chunk];
   }
-  const queued = Buffer.allocUnsafe(pending.length + chunk.length);
-  TypedArrayPrototypeSet.$call(queued, pending);
-  TypedArrayPrototypeSet.$call(queued, chunk, pending.length);
-  self[kBufferPending] = queued;
 }
 
 // Reads restart only once the callback has taken the bytes it left behind.
@@ -1335,8 +1335,28 @@ function onreadFlushPending(self) {
   const pending = self[kBufferPending];
   if (!pending) return true;
   self[kBufferPending] = null;
-  if (pending.length === 0 || self.destroyed) return true;
-  return onreadDeliver(self, pending);
+  const bytes = $isJSArray(pending) ? Buffer.concat(pending) : pending;
+  if (bytes.length !== 0 && !self.destroyed && !onreadDeliver(self, bytes)) return false;
+  // A FIN that landed while the callback was stopped ends the readable side
+  // now that it has everything that arrived before it.
+  if (self[kBufferEnded] && !self.destroyed) {
+    self[kBufferEnded] = false;
+    self.push(null);
+    self.read(0);
+  }
+  return true;
+}
+
+// The peer is done sending. An onread callback that stopped reads has not seen
+// the bytes still held for it, and Node would not have read the FIN behind them
+// yet either, so hold the end of the readable side until resume() drains them.
+function endReadableSide(self) {
+  if (onreadIsPaused(self)) {
+    self[kBufferEnded] = true;
+    return;
+  }
+  self.push(null);
+  self.read(0);
 }
 
 // An onread socket never pushes into its readable side: every chunk is handed
@@ -1512,6 +1532,7 @@ function Socket(options?) {
   this[kBufferCb] = null;
   this[kBufferGen] = null;
   this[kBufferPending] = null;
+  this[kBufferEnded] = false;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -3844,6 +3865,7 @@ function initSocketHandle(self) {
   // Bytes the onread callback never took belong to the connection they arrived
   // on. Node leaves them unread in the closed fd, so a reconnect starts clean.
   self[kBufferPending] = null;
+  self[kBufferEnded] = false;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

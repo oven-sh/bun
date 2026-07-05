@@ -24,6 +24,7 @@ export const Handlers = b.dictionary(
     connectError: { type: b.RawAny, internalName: "onConnectError" },
     timeout: { type: b.RawAny, internalName: "onTimeout" },
     session: { type: b.RawAny, internalName: "onSession" },
+    resumeSession: { type: b.RawAny, internalName: "onResumeSession" },
     keylog: { type: b.RawAny, internalName: "onKeylog" },
     serverName: { type: b.RawAny, internalName: "onServerName" },
     alpnCallback: { type: b.RawAny, internalName: "onALPNCallback" },

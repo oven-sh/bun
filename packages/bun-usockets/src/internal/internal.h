@@ -133,8 +133,9 @@ extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
-extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
+extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length, int id_length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
+extern void us_dispatch_resume_session(us_socket_r s, const unsigned char *id, int id_length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);

@@ -145,6 +145,10 @@ const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 const kpendingSession = Symbol("pendingSession");
+// A server handshake completion deferred until the 'newSession' listener's
+// done callback runs (Node holds secureConnection for the external session
+// store). Holds the verifyError it needs; `undefined` = nothing deferred.
+const kdeferredSecure = Symbol("deferredSecure");
 const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
@@ -597,6 +601,60 @@ function onSNIResolution(state, err, context) {
   }
 }
 
+// The success tail of the server handshake: client-cert authorization, then
+// secureConnection/secure/secureConnect. Split out so a pending 'newSession'
+// can defer it until its done callback runs (Node's _newSessionPending).
+function completeServerHandshake(self, verifyError) {
+  // Cleared here, not at the top of the handshake callback, so a 'newSession'
+  // listener that never invokes its done callback is still bounded by
+  // handshakeTimeout. The failure branch clears it separately.
+  if (self[khandshakeTimer]) {
+    clearTimeout(self[khandshakeTimer]);
+    self[khandshakeTimer] = undefined;
+  }
+  const handle = self._handle;
+  const server = self.server;
+  self._securePending = false;
+  self.secureConnecting = false;
+  self._secureEstablished = true;
+  self.servername = handle.getServername();
+  self.alpnProtocol = handle.alpnProtocol;
+  // The native verifier reports a non-OK code when there is no peer certificate,
+  // which is the normal case for plain TLS servers.
+  if (self._requestCert) {
+    if (verifyError) {
+      self.authorized = false;
+      self.authorizationError = verifyError.code || verifyError.message;
+      server?.emit("tlsClientError", verifyError, self);
+      if (self._rejectUnauthorized) {
+        // if we reject we still need to emit secure
+        self.emit("secure", self);
+        // No error argument: the socket has no 'error' listener yet, so destroy(err)
+        // would surface as an uncaught exception.
+        self.destroy();
+        return;
+      }
+    } else {
+      self.authorized = true;
+    }
+  }
+  if (server) {
+    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+    if (typeof connectionListener === "function") {
+      server.prependOnceListener("secureConnection", connectionListener);
+    }
+    server.emit("secureConnection", self);
+  }
+  // after secureConnection event we emmit secure and secureConnect
+  self.emit("secure", self);
+  self.emit("secureConnect", verifyError);
+  if (server?.pauseOnConnect) {
+    self.pause();
+  } else {
+    self.resume();
+  }
+}
+
 const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
@@ -734,20 +792,88 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       handle.onconnection(0, socket);
     }
   },
+  // A resumable session was minted for an accepted connection (TLS <= 1.2;
+  // BoringSSL's TLS 1.3 server is stateless). Emit 'newSession' on the Server;
+  // 'secureConnection' is HELD until `done` so the external store is populated.
+  session(socket, sessionData, sessionId) {
+    const self = socket.data;
+    if (!self) return;
+    const server = self.server;
+    if (!server || server.listenerCount("newSession") === 0) return;
+    self._newSessionPending = true;
+    let once = false;
+    const done = () => {
+      if (once) return;
+      once = true;
+      self._newSessionPending = false;
+      // The native handshake callback arrived while 'newSession' was still
+      // pending and was deferred; deliver secureConnection now. The socket
+      // may have been torn down while the listener's store was in flight.
+      const deferred = self[kdeferredSecure];
+      if (deferred === undefined) return;
+      self[kdeferredSecure] = undefined;
+      if (self.destroyed || !self._handle) return;
+      completeServerHandshake(self, deferred.verifyError);
+    };
+    // A throwing listener must not leave secureConnection deferred forever:
+    // complete the handshake, then surface the throw as an uncaughtException
+    // the way Node does for a 'newSession' listener that throws.
+    try {
+      server.emit("newSession", sessionId, sessionData, done);
+    } catch (err) {
+      done();
+      process.nextTick(() => reportError(err));
+    }
+  },
+  // A TLS <= 1.2 client offered a session_id: the handshake is suspended on
+  // the external-cache lookup until the 'resumeSession' callback replies. With
+  // no listener, resolve immediately as a miss so the handshake never stalls.
+  resumeSession(socket, sessionId) {
+    const self = socket.data;
+    const server = self?.server;
+    if (!server || server.listenerCount("resumeSession") === 0) {
+      socket.resolveSession(null);
+      return;
+    }
+    let once = false;
+    const onresume = (err, sessionData) => {
+      if (once) return;
+      once = true;
+      // Node destroys the socket when the lookup errors; an invalid or
+      // missing sessionData falls through to a full handshake.
+      if (err) {
+        socket.resolveSession(null);
+        if (!self.destroyed) self.destroy(err);
+        return;
+      }
+      // Node's loadSession treats a non-Buffer sessionData as a miss (full
+      // handshake) rather than throwing; resolveSession requires a Buffer.
+      socket.resolveSession(Buffer.isBuffer(sessionData) ? sessionData : null);
+    };
+    // A throwing listener must not leave the handshake suspended: resolve as
+    // a miss, then surface the throw as an uncaughtException the way Node
+    // does (same as the 'newSession' handler above).
+    try {
+      server.emit("resumeSession", sessionId, onresume);
+    } catch (err) {
+      onresume(null, null);
+      process.nextTick(() => reportError(err));
+    }
+  },
   handshake(socket, success, verifyError) {
     const self = socket.data;
     // `server` is null for a standalone `new tls.TLSSocket(socket, { isServer: true })`
     // (no listening server owns it) — guard every server.emit / server option read.
     const server = self.server;
-    if (self[khandshakeTimer]) {
-      clearTimeout(self[khandshakeTimer]);
-      self[khandshakeTimer] = undefined;
-    }
     // On the server side the second argument is the raw handshake result
     // (client-certificate verification is reported separately through
     // `verifyError` and handled below), so !success always means the TLS
     // session was never established.
     if (!success) {
+      if (self[khandshakeTimer]) {
+        clearTimeout(self[khandshakeTimer]);
+        self[khandshakeTimer] = undefined;
+      }
       // The handshake never completed: there is no TLS session, so there is
       // no secureConnection. Report the failure through tlsClientError the
       // way Node does and tear the connection down. A connection that was
@@ -785,45 +911,15 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       self.destroy();
       return;
     }
-    self._securePending = false;
-    self.secureConnecting = false;
-    self._secureEstablished = !!success;
-    self.servername = socket.getServername();
-    self.alpnProtocol = socket.alpnProtocol;
-    // The native verifier reports a non-OK code when there is no peer certificate,
-    // which is the normal case for plain TLS servers.
-    if (self._requestCert) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
-        if (self._rejectUnauthorized) {
-          // if we reject we still need to emit secure
-          self.emit("secure", self);
-          // No error argument: the socket has no 'error' listener yet, so destroy(err)
-          // would surface as an uncaught exception.
-          self.destroy();
-          return;
-        }
-      } else {
-        self.authorized = true;
-      }
+    // The native session callback (delivered just before this) emitted
+    // 'newSession' and its `done` has not run yet: hold secureConnection
+    // until it does, the way Node's _newSessionPending defers _finishInit.
+    if (self._newSessionPending) {
+      self._securePending = true;
+      self[kdeferredSecure] = { verifyError };
+      return;
     }
-    if (server) {
-      const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-      if (typeof connectionListener === "function") {
-        server.prependOnceListener("secureConnection", connectionListener);
-      }
-      server.emit("secureConnection", self);
-    }
-    // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
-    if (server?.pauseOnConnect) {
-      self.pause();
-    } else {
-      self.resume();
-    }
+    completeServerHandshake(self, verifyError);
   },
   error(socket, error) {
     const data = this.data;

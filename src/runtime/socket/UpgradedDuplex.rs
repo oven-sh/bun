@@ -67,9 +67,10 @@ pub struct Handlers {
     pub on_writable: fn(*mut ()),
     pub on_error: fn(*mut (), JSValue),
     pub on_timeout: fn(*mut ()),
-    /// A new resumable TLS session (serialized SSL_SESSION) - node's
-    /// `'session'` event on the wrapping TLSSocket.
-    pub on_session: fn(*mut (), &[u8]),
+    /// A new resumable TLS session (serialized SSL_SESSION, plus its
+    /// `SSL_SESSION_get_id` bytes) - node's `'session'` event on the
+    /// wrapping TLSSocket (and the server's `'newSession'`).
+    pub on_session: fn(*mut (), &[u8], &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub on_keylog: fn(*mut (), &[u8]),
 }
@@ -115,11 +116,11 @@ impl UpgradedDuplex {
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
     }
 
-    fn on_session(this: *mut Self, session: &[u8]) {
+    fn on_session(this: *mut Self, session: &[u8], id: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
-        (this.handlers.on_session)(this.handlers.ctx, session);
+        (this.handlers.on_session)(this.handlers.ctx, session, id);
     }
 
     fn on_keylog(this: *mut Self, line: &[u8]) {

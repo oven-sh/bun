@@ -165,12 +165,22 @@ static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
+/* Per-connection async session-id lookup state (get_session_cb retry). */
+static int us_ssl_resume_pending_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
-/* Set (to a non-NULL marker) only on SSLs attached to a real us_socket_t via
- * us_internal_ssl_attach. The new-session callback uses it to ignore SSLs
- * owned by other engines (the JS-stream SSL wrapper used for TLS-over-duplex)
- * whose BIOs do not point at the loop's shared BIO data. */
+/* Set (to a non-NULL marker) on SSLs with a consumer for the parked
+ * new-session / keylog queues: real us_socket_t attaches (via
+ * us_internal_ssl_attach) AND the Rust SSLWrapper behind TLS-over-duplex /
+ * named pipes (via us_ssl_enable_pending_events). Everything else (fetch,
+ * Bun.serve, WebSocket tunnels) is skipped by the new-session / keylog
+ * callbacks instead of serializing a session per handshake they discard. */
 static int us_ssl_is_socket_ex_idx = -1;
+/* Set ONLY on SSLs whose handshake driver handles SSL_ERROR_PENDING_SESSION
+ * (real us_socket_t attaches / the lazy on_data set). The server session-id
+ * lookup (us_ssl_get_session_cb) gates on THIS one, not the marker above:
+ * the SSLWrapper has no us_socket_t and no resume path, so suspending its
+ * handshake would hang the connection forever. */
+static int us_ssl_can_suspend_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 /* Serialized resumable session parked by the new-session callback until the
@@ -207,6 +217,34 @@ static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   us_free(st);
 }
 
+/* Async 'resumeSession' suspension state (node:tls server session-id cache
+ * lookup). Allocated the first time get_session_cb sees a session_id on an
+ * SSL whose owner wants to be asked; freed with the SSL. */
+struct us_ssl_resume_pending_t {
+  /* 0 = none
+   * 1 = get_session_cb parked the id; the JS dispatch has not run yet
+   * 3 = dispatched to the JS 'resumeSession' handler; awaiting its reply
+   * 2 = resolved; get_session_cb consumes `resolved` on the next re-drive
+   * The 1/3 split keeps a spurious handshake re-drive (a poll writable
+   * between suspension and resolution) from dispatching the event twice. */
+  int state;
+  /* The session the JS callback supplied (d2i_SSL_SESSION of the user's
+   * Buffer), or NULL for a cache miss. Owned by this struct until
+   * get_session_cb hands it to BoringSSL on the resume re-drive. */
+  SSL_SESSION *resolved;
+  unsigned int id_length;
+  unsigned char id[SSL_MAX_SSL_SESSION_ID_LENGTH];
+};
+
+static void us_ssl_resume_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                       int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  struct us_ssl_resume_pending_t *st = ptr;
+  if (!st) return;
+  if (st->resolved) SSL_SESSION_free(st->resolved);
+  us_free(st);
+}
+
 struct us_ssl_reneg_state_t {
   uint64_t window_start_ms;
   uint32_t count;
@@ -238,6 +276,10 @@ static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 struct us_ssl_pending_session_t {
   struct us_ssl_pending_session_t *next;
   uint32_t length;
+  /* For new-session entries: the first `id_length` bytes of `data` are the
+   * `SSL_SESSION_get_id` bytes (node:tls server 'newSession' emits the id
+   * separately from the i2d blob). 0 for keylog entries. */
+  uint32_t id_length;
   unsigned char data[];
 };
 static void us_ssl_pending_session_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
@@ -271,6 +313,7 @@ static void us_ssl_keylog_cb(const SSL *cssl, const char *line) {
   memcpy(pending->data, line, line_len);
   pending->data[line_len] = '\n';
   pending->length = (uint32_t)(line_len + 1);
+  pending->id_length = 0;
   pending->next = NULL;
   struct us_ssl_pending_session_t *head = SSL_get_ex_data(ssl, us_ssl_pending_keylog_idx);
   if (!head) {
@@ -311,17 +354,30 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
   if (!SSL_get_ex_data(ssl, us_ssl_is_socket_ex_idx)) {
     return 0;
   }
+  /* node:tls server 'newSession' emits (sessionId, sessionData, cb) - the id
+   * is SSL_SESSION_get_id, separate from the i2d blob. Stash both as one
+   * parked entry; `id_length` bounds the id prefix inside `data`. */
+  unsigned int id_len = 0;
+  const unsigned char *id = SSL_SESSION_get_id(session, &id_len);
+  if (id_len > SSL_MAX_SSL_SESSION_ID_LENGTH) {
+    id_len = 0;
+  }
+  /* The cap bounds the whole parked entry, id prefix included, so
+   * `pending->length <= US_SSL_PENDING_SESSION_MAX` holds and the oversize
+   * branch in us_ssl_pop_pending stays unreachable. */
   int length = i2d_SSL_SESSION(session, NULL);
-  if (length <= 0 || length > US_SSL_PENDING_SESSION_MAX) {
+  if (length <= 0 || length > US_SSL_PENDING_SESSION_MAX - (int)id_len) {
     return 0;
   }
   struct us_ssl_pending_session_t *pending =
-      malloc(sizeof(struct us_ssl_pending_session_t) + (size_t)length);
+      malloc(sizeof(struct us_ssl_pending_session_t) + (size_t)id_len + (size_t)length);
   if (!pending) {
     return 0;
   }
-  unsigned char *out = pending->data;
-  pending->length = (uint32_t)i2d_SSL_SESSION(session, &out);
+  if (id_len) memcpy(pending->data, id, id_len);
+  unsigned char *out = pending->data + id_len;
+  pending->length = (uint32_t)id_len + (uint32_t)i2d_SSL_SESSION(session, &out);
+  pending->id_length = (uint32_t)id_len;
   pending->next = NULL;
   /* Append: each NewSessionTicket is a distinct resumable session and gets
    * its own 'session' event, in arrival order. */
@@ -334,6 +390,50 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
   }
   /* 0: we serialized a copy; the caller keeps ownership of `session`. */
   return 0;
+}
+
+/* Server-side session-id lookup (TLS <= 1.2, no ticket): the ClientHello
+ * offered a session_id and BoringSSL is asking for the matching SSL_SESSION.
+ * Park the id and return SSL_magic_pending_session_ptr() so the handshake
+ * suspends (SSL_ERROR_PENDING_SESSION); the JS 'resumeSession' callback's
+ * reply arrives via us_socket_session_resolve, which re-drives the handshake
+ * and this callback fires again with the stored result. Only fires for
+ * servers (BoringSSL's ssl_get_prev_session is server-only), and only
+ * suspends SSLs attached to a real us_socket_t (us_ssl_can_suspend_ex_idx):
+ * the SSLWrapper behind TLS-over-duplex / named pipes has no resume path, so
+ * suspending its handshake would hang. fetch, Bun.serve and clients never
+ * carry the marker and never suspend. */
+static SSL_SESSION *us_ssl_get_session_cb(SSL *ssl, const uint8_t *id, int id_len,
+                                          int *out_copy) {
+  *out_copy = 0;
+  if (us_ssl_resume_pending_idx < 0 || !SSL_get_ex_data(ssl, us_ssl_can_suspend_ex_idx)) {
+    return NULL;
+  }
+  struct us_ssl_resume_pending_t *pending =
+      SSL_get_ex_data(ssl, us_ssl_resume_pending_idx);
+  if (pending && pending->state == 2) {
+    pending->state = 0;
+    SSL_SESSION *resolved = pending->resolved;
+    pending->resolved = NULL;
+    /* Ownership of `resolved` passes to BoringSSL (out_copy = 0). */
+    return resolved;
+  }
+  if (pending && (pending->state == 1 || pending->state == 3)) {
+    /* Still waiting (a spurious re-drive); keep suspending. */
+    return SSL_magic_pending_session_ptr();
+  }
+  if (id_len <= 0 || (unsigned int)id_len > SSL_MAX_SSL_SESSION_ID_LENGTH) {
+    return NULL;
+  }
+  if (!pending) {
+    pending = us_calloc(1, sizeof(*pending));
+    if (!pending) return NULL;
+    SSL_set_ex_data(ssl, us_ssl_resume_pending_idx, pending);
+  }
+  pending->state = 1;
+  pending->id_length = (unsigned int)id_len;
+  memcpy(pending->id, id, (size_t)id_len);
+  return SSL_magic_pending_session_ptr();
 }
 
 /* Deliver a session parked by the new-session callback. Must only be called
@@ -352,7 +452,7 @@ static void ssl_flush_pending_session(struct us_socket_t *s) {
   while (pending) {
     struct us_ssl_pending_session_t *next = pending->next;
     if (!us_socket_is_closed(s) && s->ssl) {
-      us_dispatch_session(s, pending->data, (int)pending->length);
+      us_dispatch_session(s, pending->data, (int)pending->length, (int)pending->id_length);
     }
     free(pending);
     pending = next;
@@ -372,8 +472,10 @@ static void us_ex_idx_init(void) {
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
+  us_ssl_resume_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_resume_pending_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_can_suspend_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
 }
@@ -409,7 +511,7 @@ void us_ssl_enable_pending_events(SSL *ssl) {
   SSL_set_ex_data(ssl, us_ssl_is_socket_ex_idx, (void *)1);
 }
 
-static int us_ssl_pop_pending(SSL *ssl, int idx, unsigned char *out, int out_cap) {
+static int us_ssl_pop_pending(SSL *ssl, int idx, unsigned char *out, int out_cap, int *out_id_len) {
   if (idx < 0) return 0;
   struct us_ssl_pending_session_t *pending = SSL_get_ex_data(ssl, idx);
   if (!pending) return 0;
@@ -423,20 +525,26 @@ static int us_ssl_pop_pending(SSL *ssl, int idx, unsigned char *out, int out_cap
   } else {
     memcpy(out, pending->data, (size_t)len);
   }
+  if (out_id_len) *out_id_len = len ? (int)pending->id_length : 0;
   free(pending);
   return len;
 }
 
 /* Pop the oldest parked session/keylog entry into `out` (cap `out_cap`).
  * Returns the byte length, or 0 when the queue is empty. Entries arrive in
- * parking order; each pop hands over exactly one entry. */
-int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap) {
-  return us_ssl_pop_pending(ssl, us_ssl_pending_session_idx, out, out_cap);
+ * parking order; each pop hands over exactly one entry. `out_id_len` (may be
+ * NULL) receives the session-id prefix length inside the popped entry. */
+int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap, int *out_id_len) {
+  return us_ssl_pop_pending(ssl, us_ssl_pending_session_idx, out, out_cap, out_id_len);
 }
 
 int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
-  return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
+  return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap, NULL);
 }
+
+/* Forward declaration: defined with the resolve/resume machinery below, used
+ * from the handshake drivers above it. */
+static void ssl_dispatch_pending_resume(struct us_socket_t *s);
 
 int us_ssl_ctx_cache_ex_idx(void) {
   us_ex_idx_ensure();
@@ -1083,6 +1191,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                                   SSL_SESS_CACHE_NO_INTERNAL |
                                                   SSL_SESS_CACHE_NO_AUTO_CLEAR);
   SSL_CTX_sess_set_new_cb(ssl_context, us_ssl_new_session_cb);
+  /* node:tls server 'resumeSession': BoringSSL consults this for a TLS <= 1.2
+   * ClientHello that offers a session_id. The callback is a no-op for every
+   * SSL without the bun-socket marker (fetch, Bun.serve, clients). */
+  SSL_CTX_sess_set_get_cb(ssl_context, us_ssl_get_session_cb);
   SSL_CTX_set_keylog_callback(ssl_context, us_ssl_keylog_cb);
   return ssl_context;
 }
@@ -1290,6 +1402,9 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * (size_t)-1. */
     us_ex_idx_ensure();
     SSL_set_ex_data(ssl, us_ssl_is_socket_ex_idx, (void *)1);
+    /* A real us_socket_t: ssl_update_handshake / on_data handle
+     * SSL_ERROR_PENDING_SESSION, so the server session-id lookup may suspend. */
+    SSL_set_ex_data(ssl, us_ssl_can_suspend_ex_idx, (void *)1);
   }
   SSL_set_bio(ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
   BIO_up_ref(loop_ssl_data->shared_rbio);
@@ -1683,6 +1798,9 @@ static void ssl_update_handshake(struct us_socket_t *s) {
    * already closed — RECEIVED_SHUTDOWN after a completed handshake is a clean
    * close, not a handshake failure. */
   if (SSL_is_init_finished(s_ssl(s))) {
+    ssl_flush_pending_session(s);
+    ssl_flush_pending_keylog(s);
+    if (ssl_gone(s)) return;
     ssl_trigger_handshake(s, 1);
     return;
   }
@@ -1719,6 +1837,15 @@ static void ssl_update_handshake(struct us_socket_t *s) {
       s->ssl_handshake_state = HANDSHAKE_PENDING;
       return;
     }
+    if (err == SSL_ERROR_PENDING_SESSION) {
+      /* Suspended by the server session-id lookup (get_session_cb returned
+       * the magic pending pointer): hand the offered id to the owner's
+       * 'resumeSession' handler; us_socket_session_resolve re-drives the
+       * handshake when the JS reply arrives. */
+      s->ssl_handshake_state = HANDSHAKE_PENDING;
+      ssl_dispatch_pending_resume(s);
+      return;
+    }
     if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         ssl_park_fatal_reason(s);
@@ -1732,6 +1859,13 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     return;
   }
 
+  /* A TLS 1.2 server whose final flight hit WANT_WRITE and then completed
+   * here (on_writable -> SSL_do_handshake -> do_finish_server_handshake)
+   * parked its new session inside this call: flush it so 'newSession' fires
+   * before 'secureConnection', same as the on_data completion sites. */
+  ssl_flush_pending_session(s);
+  ssl_flush_pending_keylog(s);
+  if (ssl_gone(s)) return;
   ssl_trigger_handshake(s, 1);
   if (ssl_gone(s)) return;
   s->ssl_write_wants_read = 1;
@@ -1814,14 +1948,14 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */
   ERR_clear_error();
-  /* An accepted node:tls socket's kind is only assigned after its SSL was
-   * attached, so the is-a-bun-socket marker the session/keylog callbacks key
-   * on may still be missing. Set it lazily before the SSL_read that will
-   * fire those callbacks. */
+  /* An accepted node:tls socket's kind is only stamped after SSL attach, so
+   * the markers the session/keylog/get_session callbacks key on may still be
+   * missing; set them before SSL_read. A real us_socket_t may suspend. */
   if (s->ssl && us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
       !SSL_get_ex_data(s->ssl, us_ssl_is_socket_ex_idx)) {
     us_ex_idx_ensure();
     SSL_set_ex_data(s->ssl, us_ssl_is_socket_ex_idx, (void *)1);
+    SSL_set_ex_data(s->ssl, us_ssl_can_suspend_ex_idx, (void *)1);
   }
   /* upgradeTLS [raw, _] half observes ciphertext before SSL_read consumes it.
    * Skip the empty-flush call from on_writable (length==0 → no real wire bytes). */
@@ -1874,13 +2008,12 @@ restart:
 
     if (just_read <= 0) {
       int err = SSL_get_error(s_ssl(s), just_read);
-      /* SSL_ERROR_PENDING_CERTIFICATE: the handshake is suspended waiting for
-       * an async SNICallback (us_select_cert_cb returned retry). Treat it
-       * like WANT_READ - stop the read loop, deliver whatever was decrypted,
-       * and park the socket; us_socket_sni_resolve() re-drives the handshake
-       * when the JS resolution arrives. */
+      /* PENDING_CERTIFICATE (async SNICallback) and PENDING_SESSION (server
+       * session-id lookup) park the socket like WANT_READ; the session case's
+       * 'resumeSession' dispatch runs from the loop tail once this unwinds. */
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
-          err != SSL_ERROR_PENDING_CERTIFICATE) {
+          err != SSL_ERROR_PENDING_CERTIFICATE &&
+          err != SSL_ERROR_PENDING_SESSION) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
@@ -1924,6 +2057,12 @@ restart:
          * loads. The save/restore below makes this safe even if the JS
          * callback writes; with read==0 the buffer is empty anyway. */
         if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+          /* Node emits server 'newSession' BEFORE 'secureConnection' (the
+           * cache store precedes the connection listener), so flush the
+           * session this SSL_read parked before the handshake callback. */
+          ssl_flush_pending_session(s);
+          ssl_flush_pending_keylog(s);
+          if (ssl_gone(s)) return NULL;
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
           loop_ssl_data->ssl_socket = s;
@@ -1958,6 +2097,12 @@ restart:
       char *saved_input = loop_ssl_data->ssl_read_input;
       unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
       unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+      /* False-Start branch, same ordering as above: the session this
+       * SSL_read parked must reach 'newSession' before the handshake
+       * callback emits secureConnection. */
+      ssl_flush_pending_session(s);
+      ssl_flush_pending_keylog(s);
+      if (ssl_gone(s)) return NULL;
       ssl_trigger_handshake(s, 1);
       if (ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
@@ -2005,6 +2150,12 @@ restart:
    * close the socket. */
   ssl_flush_pending_session(s);
   ssl_flush_pending_keylog(s);
+  if (ssl_gone(s)) return NULL;
+
+  /* A session-id lookup that suspended this read (PENDING_SESSION) could not
+   * dispatch 'resumeSession' from inside SSL_read; run it now that the stack
+   * has unwound. No-op unless get_session_cb parked a lookup. */
+  ssl_dispatch_pending_resume(s);
   if (ssl_gone(s)) return NULL;
 
   return s;
@@ -2214,6 +2365,46 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
     pending->resolved_ctx = ctx; /* may be NULL = default ctx */
   }
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
+  ssl_set_loop_data(s);
+  ssl_update_handshake(s);
+}
+
+/* Dispatch the session_id parked by get_session_cb to the owner's
+ * 'resumeSession' handler. Must only run once the SSL_read/SSL_do_handshake
+ * stack that suspended has unwound: the JS handler may synchronously close
+ * the socket or call us_socket_session_resolve (which re-drives the
+ * handshake). A no-op unless a lookup is actually pending, so it is safe to
+ * call unconditionally from the drivers' tails. */
+static void ssl_dispatch_pending_resume(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s) || us_ssl_resume_pending_idx < 0) return;
+  struct us_ssl_resume_pending_t *pending =
+      SSL_get_ex_data(s_ssl(s), us_ssl_resume_pending_idx);
+  if (!pending || pending->state != 1) return;
+  /* Move to "dispatched" BEFORE the call: the JS handler may resolve
+   * synchronously (re-entering us_socket_session_resolve from under us). */
+  pending->state = 3;
+  us_dispatch_resume_session(s, pending->id, (int)pending->id_length);
+}
+
+/* Resume a handshake suspended by the server session-id lookup. `data` is
+ * the serialized SSL_SESSION the JS callback supplied (d2i_SSL_SESSION), or
+ * NULL/0 for a cache miss. No-op when the socket already closed, or when
+ * nothing is actually awaiting a resolution (a late/duplicate call). */
+void us_socket_session_resolve(struct us_socket_t *s, const unsigned char *data, int length) {
+  if (!s || us_socket_is_closed(s) || !s->ssl || !s_ssl(s)) return;
+  if (us_ssl_resume_pending_idx < 0) return;
+  struct us_ssl_resume_pending_t *pending =
+      SSL_get_ex_data(s_ssl(s), us_ssl_resume_pending_idx);
+  if (!pending || pending->state != 3) return;
+  pending->state = 2;
+  pending->resolved = NULL;
+  if (data && length > 0) {
+    const unsigned char *p = data;
+    /* An invalid blob parses to NULL -> treated as a miss; the handshake
+     * falls through to a full negotiation the way Node's loadSession does. */
+    pending->resolved = d2i_SSL_SESSION(NULL, &p, (long)length);
+  }
+  /* Re-drive; get_session_cb re-fires and consumes the stored result. */
   ssl_set_loop_data(s);
   ssl_update_handshake(s);
 }

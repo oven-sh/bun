@@ -565,6 +565,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Resume a handshake suspended by the server session-id lookup
+    /// (node:tls `'resumeSession'`). An empty slice means a cache miss.
+    /// No-op when the socket is no longer a real connected socket.
+    pub fn session_resolve(&self, data: &[u8]) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).session_resolve(data);
+        }
+    }
+
     // ── TLS ─────────────────────────────────────────────────────────────────
 
     /// Kick TLS open (ClientHello / accept) on an already-connected socket.

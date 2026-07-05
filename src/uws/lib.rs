@@ -344,10 +344,10 @@ pub mod ssl_wrapper {
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
-        /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
-        /// - node's `'session'` event. `None` opts the SSL out of session
-        /// parking entirely (fetch / WebSocket tunnels have no consumer).
-        pub on_session: Option<fn(T, &[u8])>,
+        /// A new resumable TLS session: serialized SSL_SESSION bytes plus its
+        /// `SSL_SESSION_get_id` bytes (node's `'session'` / server
+        /// `'newSession'`). `None` opts the SSL out of session parking.
+        pub on_session: Option<fn(T, &[u8], &[u8])>,
         /// An NSS key-log line (with the trailing newline node appends) -
         /// node's `'keylog'` event. Same opt-in rules as `on_session`.
         pub on_keylog: Option<fn(T, &[u8])>,
@@ -1179,6 +1179,7 @@ pub mod ssl_wrapper {
             if Self::r(this).handlers.on_session.is_some() {
                 loop {
                     let Some(ssl) = Self::r(this).ssl else { return };
+                    let mut id_len: c_int = 0;
                     // SAFETY: ssl is live (checked above); buffer is writable
                     // for BUFFER_SIZE bytes, which covers the 64 KB parking cap.
                     let len = unsafe {
@@ -1186,13 +1187,18 @@ pub mod ssl_wrapper {
                             ssl.as_ptr(),
                             buffer.as_mut_ptr(),
                             c_int::try_from(BUFFER_SIZE).expect("int cast"),
+                            &raw mut id_len,
                         )
                     };
                     if len <= 0 {
                         break;
                     }
                     if let Some(on_session) = Self::r(this).handlers.on_session {
-                        on_session(Self::r(this).handlers.ctx, &buffer[..len as usize]);
+                        let entry = &buffer[..len as usize];
+                        let id_len = usize::try_from(id_len).unwrap_or(0).min(entry.len());
+                        // The parked entry is `[id bytes][i2d_SSL_SESSION blob]`.
+                        let (id, session) = entry.split_at(id_len);
+                        on_session(Self::r(this).handlers.ctx, session, id);
                     }
                 }
             }
@@ -1251,12 +1257,15 @@ pub mod ssl_wrapper {
         // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
         fn us_ssl_enable_pending_events(ssl: *mut boring_sys::SSL);
         /// Pop the oldest parked session/keylog entry into `out`; returns the
-        /// entry length or 0 when the queue is empty.
-        // SAFETY (unsafe fn): `ssl` live; `out` writable for `out_cap` bytes.
+        /// entry length or 0 when the queue is empty. `out_id_len` receives
+        /// the session-id prefix length inside the popped entry.
+        // SAFETY (unsafe fn): `ssl` live; `out` writable for `out_cap` bytes;
+        // `out_id_len` writable for one c_int.
         fn us_ssl_pop_pending_session(
             ssl: *mut boring_sys::SSL,
             out: *mut u8,
             out_cap: c_int,
+            out_id_len: *mut c_int,
         ) -> c_int;
         // SAFETY (unsafe fn): `ssl` live; `out` writable for `out_cap` bytes.
         fn us_ssl_pop_pending_keylog(

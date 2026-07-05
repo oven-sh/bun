@@ -32,18 +32,19 @@ async function countTimerFdsIn(body: string) {
 
 test.concurrent.skipIf(process.platform !== "linux")("idle runtime holds no timerfd", async () => {
   // Allocating churns the heap, which is what arms the GC controller's timers.
-  const { stdout, exitCode } = await countTimerFdsIn(`
+  const { stdout, stderr, exitCode } = await countTimerFdsIn(`
     for (let i = 0; i < 100; i++) new Uint8Array(4096);
     console.log(countTimerFds());
   `);
   expect(stdout).toBe("0");
+  if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
 test.concurrent.skipIf(process.platform !== "linux")(
   "a live server, the HTTP client thread, and JS timers hold no timerfd",
   async () => {
-    const { stdout, exitCode } = await countTimerFdsIn(`
+    const { stdout, stderr, exitCode } = await countTimerFdsIn(`
       using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
       // fetch() spins up the HTTP client thread, which owns a second uws loop
       // and therefore a second socket-timeout sweep.
@@ -57,6 +58,7 @@ test.concurrent.skipIf(process.platform !== "linux")(
       clearTimeout(timeout);
     `);
     expect(stdout).toBe("0");
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },
 );

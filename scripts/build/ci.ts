@@ -11,8 +11,8 @@ import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import { generateOrderFile } from "../orderfile/generate.ts";
+// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
@@ -581,38 +581,58 @@ function runAsync(argv: string[], cwd: string): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Symbol ordering file
 //
-// The order file is a build artifact, never committed. Two ways a build gets one:
-//
-//   generate — trace this build's own bun-profile, then relink against the
-//              result, so the shipped binary is ordered by exactly the
-//              functions it runs. Costs a second link (~15-20min on linux).
-//              Release builds always do this; any commit can opt in with
-//              [generate symbol order].
-//   inherit  — download the last successful build's order file for this target
-//              and link once. ~90% of symbols still resolve one commit later
-//              (100% of the hottest 1000), and lld skips the rest. Free.
-//
-// Canary inherits; release generates. Nothing on PRs, so a PR can neither pay
-// for a relink nor publish a file the next build would inherit.
+// A build either generates one (trace its own binary, relink against the result)
+// or inherits an earlier build's and links once. Releases generate, canaries
+// inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * How far back to look for a publishable order file. Builds get cancelled
- * constantly, and a run of them can be long, so walk generously — this only
- * costs anything when the chain really is broken that far back, and the
- * alternative (giving up) means the next build publishes nothing either and
- * the chain never heals until a release regenerates one.
- */
+/** Cap on builds we ask for an order file before giving up and generating one. */
 const PREVIOUS_BUILDS_TO_TRY = 50;
 
-/** Per-attempt cap. 50 hops × a hung agent must not blow the step's budget. */
+/** Bound on the number-probe fallback: a branch is sparse among build numbers. */
+const NUMBER_PROBE_BUDGET = 200;
+
+/** Per-attempt cap, so a hung agent cannot blow the step's budget. */
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 30_000;
 
+/**
+ * The CI facts the order-file decisions depend on. Passed in rather than read
+ * from `process.env` inside, so the decisions are pure and testable.
+ */
+export interface OrderFileContext {
+  buildkite: boolean;
+  /** Buildkite build URL of the running build, for walking the branch. */
+  buildUrl: string | undefined;
+  branch: string | undefined;
+  buildNumber: number | undefined;
+  stepKey: string | undefined;
+  commitMessage: string;
+  pullRequest: boolean;
+}
+
+/** Read the environment once, at the edge. */
+export function orderFileContext(): OrderFileContext {
+  const pr = process.env.BUILDKITE_PULL_REQUEST;
+  return {
+    buildkite: isBuildkite,
+    buildUrl: process.env.BUILDKITE_BUILD_URL,
+    branch: process.env.BUILDKITE_BRANCH,
+    buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
+    stepKey: process.env.BUILDKITE_STEP_KEY,
+    commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
+    pullRequest: pr !== undefined && pr !== "" && pr !== "false",
+  };
+}
+
 /** Only builds that link, on targets that use an order file, outside PRs. */
-export function orderFileEligible(cfg: Config): boolean {
-  if (!usesOrderFile(cfg) || !isBuildkite) return false;
-  if (cfg.mode !== "full" && cfg.mode !== "link-only") return false;
-  return !process.env.BUILDKITE_PULL_REQUEST || process.env.BUILDKITE_PULL_REQUEST === "false";
+export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
+  if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
+  return cfg.mode === "full" || cfg.mode === "link-only";
+}
+
+/** Tracing runs the binary we just linked, which a cross build cannot execute. */
+function canTraceOrderFile(cfg: Config): boolean {
+  return cfg.crossTarget === undefined;
 }
 
 /** Artifact name for the standalone order file: `bun-linux-x64.order`. */
@@ -636,105 +656,140 @@ function orderFileFunctionCount(cfg: Config): number {
 }
 
 /**
- * Regenerate from this build's own binary and relink? Always for a release —
- * the artifact people actually install is worth the second link. Otherwise
- * opt-in per commit, so a canary can be asked for a fresh file on demand
- * (e.g. after a big refactor moves a lot of code).
+ * Releases always trace their own binary — it is the artifact people install.
+ * A canary only does so on request, since it costs a second link.
  */
-export function shouldGenerateOrderFile(cfg: Config): boolean {
-  if (!orderFileEligible(cfg)) return false;
+export function shouldGenerateOrderFile(cfg: Config, ctx: OrderFileContext): boolean {
+  if (!orderFileEligible(cfg, ctx) || !canTraceOrderFile(cfg)) return false;
   if (!cfg.canary) return true;
-  return /\[generate symbol order\]/i.test(process.env.BUILDKITE_MESSAGE ?? "");
+  return /\[generate symbol order\]/i.test(ctx.commitMessage);
 }
 
 /**
- * Previous builds on this branch, newest first, walking `prev_branch_build`.
- *
- * Deliberately does NOT filter on build state, unlike `getLastSuccessfulBuild()`
- * — that helper stops at the first terminal build and gives up if its `build-bun`
- * steps didn't all pass, so a single cancelled build (which happens constantly)
- * would break the chain. Here the artifact's *existence* is the success signal:
- * only a build that linked and packaged ever uploads one. So just walk back and
- * take the first build that has the file.
+ * A build that inherited nothing must generate: otherwise it publishes nothing,
+ * the next build inherits nothing either, and the chain never recovers.
  */
-async function previousBuilds(limit: number): Promise<{ id: string; number?: number }[]> {
-  const builds: { id: string; number?: number }[] = [];
-  let url = utils.getBuildUrl() as URL | undefined;
-  if (!url) return builds;
-  url.hash = "";
+export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inherited: boolean): boolean {
+  if (shouldGenerateOrderFile(cfg, ctx)) return true;
+  return orderFileEligible(cfg, ctx) && canTraceOrderFile(cfg) && !inherited;
+}
 
-  for (let depth = 0; url && builds.length < limit; depth++) {
-    const response: { error?: unknown; body?: any } = await utils.curl(`${url}.json`, { json: true, cache: true });
-    const body = response.body;
-    if (response.error || !body) break;
-    if (depth > 0 && body.id) builds.push({ id: body.id, number: body.number });
-    if (!body.prev_branch_build) break;
-    url = new URL(body.prev_branch_build["url"], url);
+/**
+ * Builds on this branch that might have published an order file, newest first.
+ * Lazy: the first candidate is nearly always the answer and the caller stops
+ * there, so the happy path is one lookup.
+ */
+async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: string; number?: number }> {
+  const { branch, buildUrl } = ctx;
+  if (!branch || !buildUrl) return;
+
+  // https://buildkite.com/<org>/<pipeline>/builds/<n> -> https://buildkite.com/<org>/<pipeline>
+  const url = new URL(buildUrl);
+  const pipeline = new URL(url.pathname.replace(/\/builds\/.*$/, ""), url.origin).toString();
+
+  const fetchBuild = async (target: string): Promise<any | undefined> => {
+    const response: { error?: unknown; body?: any } = await utils.curl(target, { json: true, cache: true });
+    return response.error ? undefined : response.body;
+  };
+
+  const seen = new Set<string>();
+
+  // Buildkite dropped `prev_branch_build` from the public build JSON, so
+  // `utils.getLastSuccessfulBuild()` always returns undefined. This redirect is
+  // what works unauthenticated; it drops the `.json`, so read it rather than follow it.
+  const newest = await (async () => {
+    try {
+      const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
+      const location = (await fetch(latest, { redirect: "manual" })).headers.get("location");
+      return location ? await fetchBuild(`${location}.json`) : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (newest?.id) {
+    seen.add(newest.id);
+    yield { id: newest.id, number: newest.number };
   }
-  return builds;
+
+  // Probe downwards from this build, not from the newest passed one: a build can
+  // fail its tests and still have linked and published.
+  let number = ctx.buildNumber;
+  if (number === undefined) return;
+
+  for (let probes = 0; probes < NUMBER_PROBE_BUDGET; probes++) {
+    number -= 1;
+    if (number < 1) return;
+    const body = await fetchBuild(`${pipeline}/builds/${number}.json`);
+    if (!body?.id || body.branch_name !== branch || seen.has(body.id)) continue;
+    seen.add(body.id);
+    yield { id: body.id, number: body.number };
+  }
 }
 
 /**
- * Pull a previous build's order file for this target, so a build that isn't
- * generating its own still links ordered. Cheap: the standalone `.order`
- * artifact, not the 170MB profile zip it also rides in.
- *
- * Best-effort. No previous file means an unordered link: costs pages, not a build.
+ * Pull an earlier build's order file so this build links ordered without tracing.
+ * Downloads the small standalone `.order` artifact, not the profile zip it also
+ * rides in. Best-effort: no file means an unordered link, never a failed build.
  */
-export async function inheritOrderFile(cfg: Config): Promise<void> {
-  if (!orderFileEligible(cfg) || shouldGenerateOrderFile(cfg)) return;
+export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Promise<boolean> {
+  if (!orderFileEligible(cfg, ctx) || shouldGenerateOrderFile(cfg, ctx)) return false;
   const start = Date.now();
   const artifact = orderFileArtifact(cfg);
 
-  const stepKey = process.env.BUILDKITE_STEP_KEY;
-  if (!stepKey) {
+  if (!ctx.stepKey) {
     console.log("~ symbol order: BUILDKITE_STEP_KEY unset — linking unordered");
-    return;
+    return false;
   }
 
-  console.log(`Looking for ${artifact} in the last ${PREVIOUS_BUILDS_TO_TRY} builds on this branch...`);
-  const candidates = await previousBuilds(PREVIOUS_BUILDS_TO_TRY);
-  if (candidates.length === 0) {
-    console.log(`~ symbol order: no previous build on this branch (${since(start)}) — linking unordered`);
-    return;
-  }
-
+  console.log(`Looking for ${artifact} published by an earlier build on ${ctx.branch}...`);
   const downloaded = resolve(cfg.buildDir, artifact);
-  for (const build of candidates) {
+  let tried = 0;
+
+  for await (const build of candidateBuilds(ctx)) {
+    if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
     const result = spawnSync(
       "buildkite-agent",
-      ["artifact", "download", artifact, ".", "--step", stepKey, "--build", build.id],
+      ["artifact", "download", artifact, ".", "--step", ctx.stepKey, "--build", build.id],
       { cwd: cfg.buildDir, stdio: "ignore", timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS },
     );
     if (result.status !== 0 || !existsSync(downloaded)) {
-      console.log(`  #${build.number ?? "?"}: no ${artifact} (cancelled, failed, or too old) — walking back`);
+      console.log(`  #${build.number ?? "?"}: no ${artifact} (cancelled, failed, or too old) — looking further back`);
       continue;
     }
 
     cpSync(downloaded, orderFilePath(cfg));
     rmSync(downloaded, { force: true });
+    // An empty artifact would make us publish nothing, breaking the next build.
+    const functions = orderFileFunctionCount(cfg);
+    if (functions === 0) {
+      console.log(`  #${build.number ?? "?"}: ${artifact} is empty — looking further back`);
+      continue;
+    }
+
     console.log(
-      `+ symbol order: inherited ${artifact}, ${orderFileFunctionCount(cfg)} functions ` +
-        `from build #${build.number ?? "?"} in ${since(start)}`,
+      `+ symbol order: inherited ${artifact}, ${functions} functions from #${build.number ?? "?"} in ${since(start)}`,
     );
-    return;
+    return true;
   }
 
-  console.log(
-    `~ symbol order: none of the last ${candidates.length} builds published ${artifact} ` +
-      `(${since(start)}) — linking unordered`,
-  );
+  const what = tried === 0 ? "found no earlier build to inherit from" : `none of the ${tried} builds tried published it`;
+  console.log(`~ symbol order: ${what} (${since(start)})`);
+  return false;
 }
 
 /**
- * After pass 1: trace this build's binary and overwrite the order file. The
- * caller must re-run ninja, which relinks and nothing else — `linkDepends()`
- * lists the order file, so it is the only edge whose input changed.
+ * Trace the binary from pass 1 and overwrite the order file. The caller re-runs
+ * ninja, which relinks and nothing else: `linkDepends()` lists the order file,
+ * so it is the only edge whose input changed.
  */
-export function regenerateOrderFile(cfg: Config): void {
+export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
   const start = Date.now();
   const exeName = bunExeName(cfg); // bun-profile, or bun-assertions on an assertions build
-  const why = cfg.canary ? "[generate symbol order] in the commit message" : "release build";
+  const why = !cfg.canary
+    ? "release build"
+    : shouldGenerateOrderFile(cfg, ctx)
+      ? "[generate symbol order] in the commit message"
+      : "nothing to inherit";
   console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
   console.log("Each workload runs under an LD_PRELOAD page-fault tracer, so it is slower than a normal run.\n");
 
@@ -744,17 +799,41 @@ export function regenerateOrderFile(cfg: Config): void {
 }
 
 /**
- * The trace failed. Ship the unordered binary — it is correct, just fatter in
- * resident pages — but leave a PR-visible annotation so this cannot rot into a
- * permanently unordered release nobody notices.
+ * A canary found nothing to inherit and is paying a second link to seed the
+ * chain. Expected once; on every build it means inheriting is broken.
+ */
+export function reportOrderFileBootstrap(cfg: Config): void {
+  if (!cfg.canary) return; // a release always generates — nothing to report
+  const message =
+    `No earlier build published ${orderFileArtifact(cfg)}, so this build is tracing its own binary and ` +
+    `relinking (one extra link). Expected once, to seed the chain. If every build on this branch says ` +
+    `this, inheriting is broken — check the "Inherit symbol order file" step.`;
+  console.log(`~ symbol order: ${message}`);
+  if (!isBuildkite) return;
+  utils.reportAnnotationToBuildKite({
+    style: "warning",
+    priority: 5,
+    label: "symbol order file",
+    content: utils.formatAnnotationToHtml({
+      filename: "scripts/build/ci.ts",
+      title: "symbol order file: nothing to inherit, generating from scratch",
+      content: message,
+      source: "build",
+      level: "warning",
+    }),
+  });
+}
+
+/**
+ * The trace failed. Ship the unordered binary — correct, just fatter in resident
+ * pages — but annotate, so this cannot rot into a permanently unordered release.
  */
 export function reportOrderFileFailure(error: Error): void {
   console.error(`- symbol order: FAILED to generate — ${error.message}`);
   console.error("- symbol order: linking unordered. The binary is correct; it just faults in more pages at startup.");
   if (!isBuildkite) return;
   utils.reportAnnotationToBuildKite({
-    // Not an error: the build is fine, the binary is correct, it just faults in
-    // more pages. A red annotation here would read as a failed release.
+    // Not an error: the build is fine. A red annotation would read as a failure.
     style: "warning",
     priority: 5,
     label: "symbol order file",
@@ -769,26 +848,24 @@ export function reportOrderFileFailure(error: Error): void {
 }
 
 /**
- * Prove the relink honoured the order file. An order file lld silently ignores
- * (wrong symbol spellings, `-ffunction-sections` lost, flag dropped) produces a
- * binary indistinguishable from an unordered one, and we would never notice.
- *
- * The test is scale-free: compare where the order file's hottest functions
- * landed against where a typical function landed. Ordered, the hot set clusters
- * near the front of `.text` and its median offset is a small fraction of the
- * median over all functions. Unordered, the two medians are the same number.
- * (A fixed byte threshold would not do: `.text` grows, and a hot set that
- * happens to sit in the first 40% of an unordered `.text` would sail past it.)
+ * Prove the relink honoured the order file: one lld silently ignores produces a
+ * binary indistinguishable from an unordered one. Scale-free — compare where the
+ * hot functions landed against where a typical function landed.
  */
-export function verifyOrderFileApplied(cfg: Config, exe: string, { strict = true } = {}): void {
+export function verifyOrderFileApplied(
+  cfg: Config,
+  ctx: OrderFileContext,
+  exe: string,
+  { strict = true } = {},
+): void {
   const SAMPLE = 1000;
-  /** Ordered, hot symbols land within a few percent of .text. Unordered, at ~100% of the control. */
+  /** Ordered, the hot set sits near the front; unordered, at ~100% of the control. */
   const MAX_FRACTION_OF_CONTROL = 0.4;
   /** Strict mode traced this exact binary, so nearly every name must resolve. */
   const MIN_STRICT_MATCH_RATE = 0.75;
 
   const start = Date.now();
-  if (!orderFileEligible(cfg)) return;
+  if (!orderFileEligible(cfg, ctx)) return;
   const wanted = readFileSync(orderFilePath(cfg), "utf8")
     .split("\n")
     .filter((line: string) => line && !line.startsWith("#"))
@@ -827,14 +904,11 @@ export function verifyOrderFileApplied(cfg: Config, exe: string, { strict = true
       .filter((address): address is number => address !== undefined)
       .map(address => address - textBase),
   );
-  // The control: where a typical function sits. Ordering does not move this.
+  // Where a typical function sits. Ordering does not move this.
   const control = median(sorted([...addresses.values()].map(address => address - textBase)));
 
-  // An inherited file legitimately loses symbols to code churn (~10% one commit
-  // later), so a soft failure there is information, not a broken build. A file
-  // we just generated from this exact binary has no such excuse — and an order
-  // file the linker ignored is a real bug in the build, not a flaky workload,
-  // so unlike a failed trace it does stop the build.
+  // An inherited file legitimately loses symbols to code churn; one we just
+  // generated from this binary has no such excuse, so only that case is fatal.
   const fail = (message: string, hint: string) => {
     if (strict) throw new BuildError(`symbol order: ${message}`, { hint });
     console.log(`~ symbol order: ${message} — ${hint}`);

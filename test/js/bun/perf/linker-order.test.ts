@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import {
+  mustGenerateOrderFile,
+  orderFileEligible,
+  shouldGenerateOrderFile,
+  type OrderFileContext,
+} from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
 import { linkDepends, linkerFlags, orderFilePath, usesOrderFile } from "../../../../scripts/build/flags.ts";
 import { generateOrderFile } from "../../../../scripts/orderfile/generate.ts";
@@ -26,10 +32,25 @@ const cfg = (overrides: Partial<Config> = {}) =>
     darwin: false,
     windows: false,
     freebsd: false,
+    canary: true,
+    mode: "link-only",
+    crossTarget: undefined,
     buildDir: "/tmp/build",
     cwd: "/repo",
     ...overrides,
   }) as Config;
+
+/** A canary build on Buildkite, off a pull request. */
+const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
+  buildkite: true,
+  buildUrl: "https://buildkite.com/bun/bun/builds/68425",
+  branch: "main",
+  buildNumber: 68425,
+  stepKey: "linux-x64-build-bun",
+  commitMessage: "some ordinary commit",
+  pullRequest: false,
+  ...overrides,
+});
 
 describe("symbol ordering file", () => {
   it("is enabled for the linux release link", () => {
@@ -80,6 +101,45 @@ describe("symbol ordering file", () => {
     // ninja, and the link is the only edge whose input changed.
     expect(linkDepends(cfg())).toContain(orderFilePath(cfg()));
     expect(linkDepends(cfg({ release: false }))).not.toContain(orderFilePath(cfg({ release: false })));
+  });
+});
+
+describe("deciding whether a build generates its own order file", () => {
+  it("a release always does — it is the binary people install", () => {
+    expect(shouldGenerateOrderFile(cfg({ canary: false }), ctx())).toBe(true);
+  });
+
+  it("a canary does not by default — it inherits, and pays no second link", () => {
+    expect(shouldGenerateOrderFile(cfg(), ctx())).toBe(false);
+  });
+
+  it("a canary does when the commit asks for it", () => {
+    expect(shouldGenerateOrderFile(cfg(), ctx({ commitMessage: "perf: x [generate symbol order]" }))).toBe(true);
+  });
+
+  it("a pull request never does, and never publishes", () => {
+    const pr = ctx({ pullRequest: true });
+    expect(orderFileEligible(cfg(), pr)).toBe(false);
+    expect(shouldGenerateOrderFile(cfg({ canary: false }), pr)).toBe(false);
+    expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
+  });
+
+  it("a cross-compiled target never does — it cannot run the binary it linked", () => {
+    const cross = cfg({ crossTarget: "aarch64-unknown-linux-gnu" } as Partial<Config>);
+    expect(shouldGenerateOrderFile(cfg({ ...cross, canary: false } as Partial<Config>), ctx())).toBe(false);
+    expect(mustGenerateOrderFile(cross, ctx(), false)).toBe(false);
+    expect(orderFileEligible(cross, ctx())).toBe(true); // ...but it can still inherit one
+  });
+
+  it("a canary that inherited nothing generates anyway, seeding the chain", () => {
+    // Without this the first build publishes nothing, so the next inherits
+    // nothing, so it publishes nothing — and no canary is ever ordered.
+    expect(mustGenerateOrderFile(cfg(), ctx(), false)).toBe(true);
+    expect(mustGenerateOrderFile(cfg(), ctx(), true)).toBe(false);
+  });
+
+  it("nothing happens off Buildkite", () => {
+    expect(orderFileEligible(cfg(), ctx({ buildkite: false }))).toBe(false);
   });
 });
 

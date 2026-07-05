@@ -30,7 +30,10 @@ import {
   orderFileEligible,
   packageAndUpload,
   printEnvironment,
+  mustGenerateOrderFile,
+  orderFileContext,
   regenerateOrderFile,
+  reportOrderFileBootstrap,
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
@@ -130,10 +133,13 @@ async function main(): Promise<void> {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
 
-    // Builds that don't trace their own binary link against the last successful
-    // build's order file. Must land before ninja: it is a link input.
-    if (orderFileEligible(result.cfg) && !shouldGenerateOrderFile(result.cfg)) {
-      await startGroup("Inherit symbol order file", () => inheritOrderFile(result.cfg));
+    // The order file is a link input, so it must land before ninja.
+    const orderCtx = orderFileContext();
+    let inherited = false;
+    if (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)) {
+      inherited = (await startGroup("Inherit symbol order file", () =>
+        inheritOrderFile(result.cfg, orderCtx),
+      )) as boolean;
     }
 
     const runNinja = () =>
@@ -141,16 +147,15 @@ async function main(): Promise<void> {
 
     await startGroup("Build", runNinja);
 
-    // Release (and [generate symbol order]) trace the binary they just linked
-    // and relink against the result. Overwriting the order file dirties exactly
-    // one ninja edge — the link — so this second pass relinks and nothing else.
-    // The order file is an optimization, not correctness: a flaky trace workload
-    // must not fail a release build 40 minutes in. Link unordered, loudly.
-    if (shouldGenerateOrderFile(result.cfg)) {
+    // Trace and relink when we are a release, when a commit asked for it, or when
+    // there was nothing to inherit. A failed trace is not fatal: the order file is
+    // an optimization, and a flaky workload must not kill a release 40 minutes in.
+    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
+      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
       let traced = true;
       await startGroup("Generate symbol order file", () => {
         try {
-          regenerateOrderFile(result.cfg);
+          regenerateOrderFile(result.cfg, orderCtx);
         } catch (error) {
           traced = false;
           reportOrderFileFailure(error as Error);
@@ -158,13 +163,12 @@ async function main(): Promise<void> {
       });
       if (traced) {
         await startGroup("Relink against symbol order file", runNinja);
-        // We traced this exact binary: every symbol must resolve. Hard-fail.
-        if (result.output.exe) verifyOrderFileApplied(result.cfg, result.output.exe);
+        // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
+        if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
       }
-    } else if (orderFileEligible(result.cfg) && result.output.exe) {
-      // Inherited: report how much of it still resolved (code moved since), but
-      // a stale file is a slower binary, not a broken one — never fail here.
-      verifyOrderFileApplied(result.cfg, result.output.exe, { strict: false });
+    } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
+      // Inherited: a stale file is a slower binary, not a broken one.
+      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
     }
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.

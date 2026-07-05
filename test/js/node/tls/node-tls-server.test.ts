@@ -1318,3 +1318,93 @@ it("tls.connect honors secureOptions when negotiating the protocol version", asy
   }
   await once(server, "close");
 });
+
+describe("tls.createServer cipher configuration", () => {
+  async function withServer(options: object, fn: (port: number) => Promise<void>) {
+    const server: Server = createServer({ ...COMMON_CERT, ...options });
+    server.on("secureConnection", socket => socket.end());
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      await fn((server.address() as AddressInfo).port);
+    } finally {
+      server.close();
+    }
+    await once(server, "close");
+  }
+
+  async function handshake(port: number, clientOptions: object = {}) {
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...clientOptions });
+    try {
+      await once(client, "secureConnect");
+      return { cipher: client.getCipher().name, protocol: client.getProtocol() };
+    } finally {
+      client.destroy();
+    }
+  }
+
+  // The TLS 1.3 suite names belong to a separate OpenSSL API and must not reach
+  // the TLS<=1.2 cipher-list parser, which rejects them.
+  it("accepts a cipher list that only names TLS 1.3 suites", async () => {
+    await withServer({ ciphers: "TLS_CHACHA20_POLY1305_SHA256" }, async port => {
+      const { protocol } = await handshake(port, { minVersion: "TLSv1.3" });
+      expect(protocol).toBe("TLSv1.3");
+    });
+  });
+
+  it("raises the protocol floor to TLS 1.3 when no TLS 1.2 cipher remains", async () => {
+    await withServer({ ciphers: "TLS_CHACHA20_POLY1305_SHA256" }, async port => {
+      const error = await handshake(port, { maxVersion: "TLSv1.2" }).then(
+        result => new Error(`handshake unexpectedly succeeded: ${JSON.stringify(result)}`),
+        (err: NodeJS.ErrnoException) => err,
+      );
+      expect(error.code).toBe("ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION");
+    });
+  });
+
+  it("applies the TLS 1.2 half of a mixed TLS 1.3 + TLS 1.2 cipher list", async () => {
+    await withServer({ ciphers: "TLS_CHACHA20_POLY1305_SHA256:ECDHE-RSA-AES128-GCM-SHA256" }, async port => {
+      expect(await handshake(port, { maxVersion: "TLSv1.2" })).toEqual({
+        cipher: "ECDHE-RSA-AES128-GCM-SHA256",
+        protocol: "TLSv1.2",
+      });
+      expect((await handshake(port, { minVersion: "TLSv1.3" })).protocol).toBe("TLSv1.3");
+    });
+  });
+
+  // honorCipherOrder is SSL_OP_CIPHER_SERVER_PREFERENCE: the server's list
+  // decides, not the client's. The two sides below disagree on purpose.
+  const serverCiphers = "ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256";
+  const clientCiphers = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305";
+
+  it.each([
+    ["defaults to on", {}, "ECDHE-RSA-CHACHA20-POLY1305"],
+    ["honored when true", { honorCipherOrder: true }, "ECDHE-RSA-CHACHA20-POLY1305"],
+    ["yields to the client when false", { honorCipherOrder: false }, "ECDHE-RSA-AES128-GCM-SHA256"],
+  ])("honorCipherOrder %s", async (_label, serverOptions, expected) => {
+    await withServer({ ciphers: serverCiphers, maxVersion: "TLSv1.2", ...serverOptions }, async port => {
+      expect(await handshake(port, { ciphers: clientCiphers, maxVersion: "TLSv1.2" })).toEqual({
+        cipher: expected,
+        protocol: "TLSv1.2",
+      });
+    });
+  });
+
+  it("honorCipherOrder applies to a secure context handed to setSecureContext", async () => {
+    const server: Server = createServer({ ...COMMON_CERT });
+    server.setSecureContext({ ...COMMON_CERT, ciphers: serverCiphers, maxVersion: "TLSv1.2" });
+    server.on("secureConnection", socket => socket.end());
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const port = (server.address() as AddressInfo).port;
+      expect(await handshake(port, { ciphers: clientCiphers, maxVersion: "TLSv1.2" })).toEqual({
+        cipher: "ECDHE-RSA-CHACHA20-POLY1305",
+        protocol: "TLSv1.2",
+      });
+    } finally {
+      server.close();
+    }
+    await once(server, "close");
+  });
+});

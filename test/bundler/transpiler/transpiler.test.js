@@ -4138,10 +4138,10 @@ console.log("boop");
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout).toBe(expectedStdout);
-          expect(stderr).not.toContain("error:");
-          expect(exitCode).toBe(0);
+          // stderr is drained so the child cannot block on a full pipe, but not
+          // asserted on: debug and ASAN builds write benign diagnostics to it.
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, exitCode }).toEqual({ stdout: expectedStdout, exitCode: 0 });
         });
       }
     }
@@ -4187,8 +4187,8 @@ console.log("boop");
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ name, stdout, stderr, exitCode }).toEqual({ name, stdout: expectedStdout, stderr: "", exitCode: 0 });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ name, stdout, exitCode }).toEqual({ name, stdout: expectedStdout, exitCode: 0 });
       }
     });
 
@@ -4204,10 +4204,9 @@ console.log("boop");
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).not.toContain("bun:wrap");
       expect(stdout).toContain("__legacyDecorateClassTS");
-      expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
     });
 

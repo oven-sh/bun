@@ -442,15 +442,27 @@ describe("css string output parses back to the same color", () => {
     expect(color("#000000", "hsl")).toBe("hsl(0, 0%, 0%)");
   });
 
-  test("lab output is CSS that Bun can parse back", () => {
-    for (const input of [...inputs, "#808080", "lime", "rebeccapurple"]) {
-      expect(color(color(input, "lab") as string, "hex")).not.toBeNull();
+  // #0000ff is https://github.com/oven-sh/bun/issues/33331; the cube sweep below
+  // steps over 255, so it never reaches pure blue.
+  test("lab round-trips", () => {
+    for (const input of [...inputs, "#808080", "lime", "rebeccapurple", "#0000ff"]) {
+      expect(color(color(input, "lab") as string, "hex")).toBe(color(input, "hex"));
     }
   });
 
-  // https://github.com/oven-sh/bun/issues/33331
-  test.failing("lab round-trips", () => {
-    expect(color(color("#0000ff", "lab") as string, "hex")).toBe("#0000ff");
+  test("lab round-trips across the color cube", () => {
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += 37) {
+        for (let g = 0; g < 256; g += 53) {
+          for (let b = 0; b < 256; b += 61) {
+            const back = color(color({ r, g, b }, "lab") as string, "hex");
+            if (back !== color({ r, g, b }, "hex")) {
+              throw new Error(`lab(${r},${g},${b}) round-tripped to ${back}`);
+            }
+          }
+        }
+      }
+    });
   });
 
   // The forward direction is exact, so the inverse is the broken one. It goes

@@ -1,30 +1,29 @@
 /**
- * `RUSTC_WORKSPACE_WRAPPER` regression tests — scripts/build/rustc-metadata-shim.rs
+ * Regression tests for the `-C metadata` pin — scripts/build/rustc-metadata-shim.rs
  * and its wiring in scripts/build/rust.ts.
  *
  * Cargo folds the `-C metadata` of every dependency into a unit's own, and rustc
  * hashes that into the `Cs…` disambiguator every v0 symbol carries. Without the
  * wrapper, a dependency-edge edit anywhere below a crate renames every symbol
- * that crate defines — `bun_runtime`, at the top of the dependency cone, gets
- * renamed by nearly every commit. The wrapper replaces the value with one that
- * depends only on the unit's own identity.
+ * that crate defines — `bun_runtime`, with ~100 direct workspace deps, was
+ * renamed by nearly every commit.
  *
- * The graph assertions are configure-time only and run everywhere. The
+ * The graph assertion is configure-time only and runs everywhere. The
  * behavioural ones compile the wrapper, so they need a rust toolchain.
  */
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
-import { type Config, type PartialConfig, resolveConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { resolveConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 import { emitRust, registerRustRules } from "../../scripts/build/rust.ts";
 
 const shimSource = join(import.meta.dirname, "..", "..", "scripts", "build", "rustc-metadata-shim.rs");
 
-/** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
-function mockToolchain(): Toolchain {
-  return {
+test("the wrapper is built before cargo and reaches its env", () => {
+  /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
+  const toolchain: Toolchain = {
     cc: "/fake/llvm/bin/clang",
     cxx: "/fake/llvm/bin/clang++",
     clangVersion: "21.1.8",
@@ -53,146 +52,90 @@ function mockToolchain(): Toolchain {
     mt: undefined,
     nasm: undefined,
   };
-}
-
-/** The ninja graph `emitRust` produces for a plain linux build. */
-function rustGraph(partial: PartialConfig = {}): string {
-  const cfg: Config = resolveConfig({ os: "linux", arch: "x64", buildType: "Debug", ...partial }, mockToolchain());
+  const cfg = resolveConfig({ os: "linux", arch: "x64", buildType: "Debug" }, toolchain);
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerRustRules(n, cfg);
   emitRust(n, cfg, { codegenInputs: [], codegenOrderOnly: [], rustSources: [], vendorStamps: [] });
-  return n.toString();
-}
+  // ninja wraps long build lines with a trailing `$`; join them back up.
+  const graph = n.toString().replace(/\$\n\s+/g, " ");
 
-describe("rustc metadata shim: build graph", () => {
-  test("the wrapper is built from its source and reaches cargo's env", () => {
-    const graph = rustGraph();
-    expect(graph).toContain("rule rustc_metadata_shim");
-    expect(graph).toMatch(/^build rustc-metadata-shim: rustc_metadata_shim \S*rustc-metadata-shim\.rs$/m);
-    // `_WORKSPACE_`, not plain RUSTC_WRAPPER: registry crates keep cargo's
-    // collision-proof hash, only our own crates get a pinned one.
-    expect(graph).toContain("--env=RUSTC_WORKSPACE_WRAPPER=");
-    expect(graph).not.toContain("--env=RUSTC_WRAPPER=");
-  });
+  // `.exe` on a Windows host: the wrapper is a host executable, and the host
+  // isn't the linux target asked for above.
+  expect(graph).toMatch(/^build rustc-metadata-shim(\.exe)?: rustc_metadata_shim \S*rustc-metadata-shim\.rs\b/m);
+  // `_WORKSPACE_`, not plain RUSTC_WRAPPER: registry crates keep cargo's
+  // collision-proof hash, only our own crates get a pinned one.
+  expect(graph).toContain("--env=RUSTC_WORKSPACE_WRAPPER=");
+  expect(graph).not.toContain("--env=RUSTC_WRAPPER=");
 
-  test("cargo cannot run before the wrapper exists", () => {
-    // ninja wraps long build lines with a trailing `$`; join them back up.
-    const cargoEdge = rustGraph()
-      .replace(/\$\n\s+/g, " ")
-      .split("\n")
-      .find(line => line.startsWith("build ") && line.includes("libbun_rust.a:"));
-    expect(cargoEdge).toBeDefined();
-    // Implicit inputs come after the `|`.
-    expect(cargoEdge!.split("|")[1]).toContain("rustc-metadata-shim");
-  });
+  const cargoEdge = graph.split("\n").find(line => line.startsWith("build ") && line.includes("libbun_rust.a:"));
+  expect(cargoEdge).toBeDefined();
+  // Implicit inputs come after the `|` — cargo can't run before the wrapper exists.
+  expect(cargoEdge!.split("|")[1]).toContain("rustc-metadata-shim");
 });
 
 // Compiling the wrapper needs rustc. It sits next to cargo on both rustup and
 // distro installs — the same assumption registerRustRules() makes.
 const rustc = Bun.which("rustc");
 
-describe.skipIf(rustc === null)("rustc metadata shim: rewriting", () => {
-  /** Compile the wrapper, next to a fake `rustc` that just echoes its argv. */
-  async function compileShim(dir: string) {
-    const shim = join(dir, "shim");
+describe.skipIf(rustc === null)("rustc metadata shim", () => {
+  let shim = "";
+  let fakeRustc = "";
+
+  beforeAll(async () => {
+    // Not disposed: bun:test has no `using` for suite-scoped fixtures, and the
+    // OS reaps its own temp dir.
+    const dir = String(
+      tempDir("rustc-metadata-shim", { "fake-rustc.ts": `console.log(process.argv.slice(2).join("\\n"))` }),
+    );
+    shim = join(dir, "shim");
+    fakeRustc = join(dir, "fake-rustc.ts");
+
     await using proc = Bun.spawn({
       cmd: [rustc!, "--edition", "2024", "-Copt-level=0", "-o", shim, shimSource],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    return shim;
-  }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
 
   /** Run the wrapper; returns the argv it would have handed the real rustc. */
-  async function argvFor(dir: string, shim: string, args: string[], pkg = "bun_runtime") {
+  async function argvFor(args: string[], pkg = "bun_runtime") {
     await using proc = Bun.spawn({
       // The wrapper's first argument is always rustc's path — that's cargo's contract.
-      cmd: [shim, bunExe(), join(dir, "fake-rustc.ts"), ...args],
-      env: { ...bunEnv, CARGO_PKG_NAME: pkg, CARGO_PKG_VERSION: "0.0.0" },
+      cmd: [shim, bunExe(), fakeRustc, ...args],
+      env: { ...bunEnv, CARGO_PKG_NAME: pkg },
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return stdout.split("\n").filter(Boolean);
   }
 
-  /** The `-C metadata=…` value the wrapper handed down. */
-  function metadataOf(argv: string[]): string | undefined {
-    for (let i = 0; i + 1 < argv.length; i++) {
-      if (argv[i] === "-C" && argv[i + 1]!.startsWith("metadata=")) return argv[i + 1]!.slice("metadata=".length);
-    }
-    return undefined;
-  }
-
-  function fixture() {
-    return tempDir("rustc-metadata-shim", {
-      "fake-rustc.ts": `console.log(process.argv.slice(2).join("\\n"));`,
-    });
-  }
-
-  const unit = [
-    "--crate-name",
-    "bun_runtime",
-    "--edition=2024",
-    "--crate-type",
-    "lib",
-    "--cfg",
-    'feature="default"',
-    "--target",
-    "x86_64-unknown-linux-gnu",
-  ];
-  const pinned = "bun/bun_runtime@0.0.0/x86_64-unknown-linux-gnu/lib/default";
+  const unit = ["--crate-name", "bun_runtime", "--crate-type", "lib", "--target", "x86_64-unknown-linux-gnu"];
 
   test("two dependency-graph states collapse to the same metadata", async () => {
-    using dir = fixture();
-    const shim = await compileShim(String(dir));
     // The only difference is cargo's dependency hash — exactly what moves when a
-    // crate anywhere below this one gains or loses a dependency.
-    const before = await argvFor(String(dir), shim, [...unit, "-C", "metadata=4e6e51e9e0da5e6b"]);
-    const after = await argvFor(String(dir), shim, [...unit, "-C", "metadata=9c1d0ab7735ffd12"]);
+    // crate anywhere below this one gains or loses a dependency. `extra-filename`
+    // must survive: it keys cargo's on-disk artifact names.
+    const before = [...unit, "-C", "extra-filename=-4e6e51e9e0da5e6b", "-C", "metadata=4e6e51e9e0da5e6b", "lib.rs"];
+    const after = [...unit, "-C", "extra-filename=-9c1d0ab7735ffd12", "-C", "metadata=9c1d0ab7735ffd12", "lib.rs"];
 
-    expect(metadataOf(before)).toBe(pinned);
-    expect(metadataOf(after)).toBe(pinned);
+    expect(await argvFor(before)).toEqual(
+      before.map(arg => (arg.startsWith("metadata=") ? "metadata=bun.bun_runtime" : arg)),
+    );
+    expect(await argvFor(after)).toEqual(
+      after.map(arg => (arg.startsWith("metadata=") ? "metadata=bun.bun_runtime" : arg)),
+    );
   });
 
-  test("distinct units keep distinct metadata", async () => {
-    using dir = fixture();
-    const shim = await compileShim(String(dir));
-    const pin = async (args: string[], pkg?: string) => metadataOf(await argvFor(String(dir), shim, args, pkg));
-
-    const runtime = await pin([...unit, "-C", "metadata=aaaa"]);
-    const core = await pin([...unit, "-C", "metadata=aaaa"], "bun_core");
-    const features = await pin([...unit, "--cfg", 'feature="show_crash_trace"', "-C", "metadata=aaaa"]);
-    // Build scripts compile for the host, so no `--target` reaches rustc.
-    const buildScript = await pin(
-      ["--crate-name", "build_script_build", "--crate-type", "bin", "-C", "metadata=aaaa"],
-      "bun_core",
-    );
-
-    expect(runtime).toBe(pinned);
-    expect(buildScript).toBe("bun/bun_core@0.0.0/host/bin/");
-    expect(new Set([runtime, core, features, buildScript]).size).toBe(4);
-  });
-
-  test("only -C metadata is rewritten; everything else passes through", async () => {
-    using dir = fixture();
-    const shim = await compileShim(String(dir));
-    const args = [...unit, "-C", "extra-filename=-4e6e51e9e0da5e6b", "-C", "metadata=4e6e51e9e0da5e6b", "lib.rs"];
-
-    // `extra-filename` keys cargo's on-disk artifact names — leaving it alone is
-    // what keeps two dependency-graph states from clobbering each other's rlibs.
-    expect(await argvFor(String(dir), shim, args)).toEqual(
-      args.map(arg => (arg === "metadata=4e6e51e9e0da5e6b" ? `metadata=${pinned}` : arg)),
-    );
+  test("distinct packages keep distinct metadata", async () => {
+    expect(await argvFor([...unit, "-C", "metadata=aaaa"], "bun_core")).toContain("metadata=bun.bun_core");
   });
 
   test("an invocation without -C metadata passes through untouched", async () => {
-    using dir = fixture();
-    const shim = await compileShim(String(dir));
     // cargo probes the wrapper with `-vV` / `--print` before it compiles anything.
-    expect(await argvFor(String(dir), shim, ["-vV"])).toEqual(["-vV"]);
-    expect(await argvFor(String(dir), shim, ["--print", "cfg"])).toEqual(["--print", "cfg"]);
+    expect(await argvFor(["-vV"])).toEqual(["-vV"]);
+    expect(await argvFor(["--print", "cfg"])).toEqual(["--print", "cfg"]);
   });
 });

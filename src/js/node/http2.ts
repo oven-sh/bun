@@ -2050,6 +2050,9 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
+  // respond() is ending the writable side ahead of a HEADERS frame that carries
+  // END_STREAM, so `_final` must not write an empty DATA frame of its own.
+  EndStreamOnHeaders = 1 << 7, // 10000000 = 128
 }
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
@@ -2421,6 +2424,13 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native) {
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        // respond() is about to submit a HEADERS frame carrying END_STREAM, so there is no
+        // DATA frame left to write. Park the callback: the onStreamEnd dispatch that the
+        // native request() makes runs markWritableDone, which invokes it.
+        if ((status & StreamState.EndStreamOnHeaders) !== 0) {
+          this[bunHTTP2StreamFinal] = callback;
+          return;
+        }
         // When waitForTrailers is active, writing an empty DATA frame with
         // close=true emits a bare empty DATA frame (flags=0) to the wire
         // before the trailer/noTrailers path runs, which then emits ANOTHER
@@ -3116,6 +3126,13 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+    if (endStream) {
+      // node ends the writable side before submitting the HEADERS frame. request() below can
+      // close an already half-closed stream and destroy it synchronously, and _destroy reads a
+      // still-open writable side as a client abort - ending first keeps 'aborted' from firing.
+      this[bunHTTP2StreamStatus] |= StreamState.EndStreamOnHeaders;
+      this.end();
+    }
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
     } else {
@@ -3132,14 +3149,17 @@ class ServerHttp2Stream extends Http2Stream {
         this[bunHTTP2WaitForTrailers] = true;
       }
     }
+    if (endStream) {
+      // The onStreamEnd dispatch request() makes normally settles the `_final` callback parked
+      // above. Idempotent here, and it keeps a submit the native layer rejected (no dispatch)
+      // from leaving the writable side hanging.
+      markWritableDone(this);
+    }
     this.headersSent = true;
     if (onServerStreamFinishChannel.hasSubscribers) {
       onServerStreamFinishChannel.publish({ stream: this, headers, flags: 0 });
     }
     this[bunHTTP2Headers] = headers;
-    if (endStream) {
-      this.end();
-    }
 
     return;
   }

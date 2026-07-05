@@ -7430,7 +7430,11 @@ impl NodeFS {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
-                match sys::openat(args.dirfd, path, args.flag.as_int(), args.mode) {
+                // O_TRUNC is dropped on purpose: leaving the existing blocks
+                // allocated makes repeatedly rewriting a large file cheaper. The
+                // `ftruncate` after the write sets the final size instead.
+                let flags = args.flag.as_int() & !sys::O::TRUNC;
+                match sys::openat(args.dirfd, path, flags, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => fd,
                 }
@@ -7508,9 +7512,9 @@ impl NodeFS {
 
         // https://github.com/oven-sh/bun/issues/2931
         // https://github.com/oven-sh/bun/issues/10222
-        // Only resize when the flags asked to truncate: `r+` & co. overwrite in
-        // place, and Node never resizes a descriptor it was handed. This also
-        // undoes any over-allocation from the preallocate above.
+        // Resize only when the flags asked to truncate (the open above dropped
+        // O_TRUNC): `r+` & co. overwrite in place, and Node never resizes a
+        // descriptor it was handed.
         if (args.flag.as_int() & sys::O::TRUNC) != 0
             && matches!(args.file, PathOrFileDescriptor::Path(_))
         {

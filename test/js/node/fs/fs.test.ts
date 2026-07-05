@@ -529,6 +529,47 @@ describe("writeFile with a non-truncating flag", () => {
     expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
   });
 
+  // An iterable `data` takes a separate slow path in fs.promises, with its own
+  // truncate.
+  it.each(["r+", "rs+"])("promises.writeFile of an async iterable with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place-async-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (async function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["r+", "rs+"])("promises.writeFile of a sync iterable with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place-sync-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["w", "w+"])("promises.writeFile of an async iterable with flag %p still truncates", async flag => {
+    const path = join(tmpdirSync(), "truncating-async-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (async function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+
   it("writeFileSync on a file descriptor does not truncate", () => {
     const path = join(tmpdirSync(), "in-place-fd.txt");
     writeFileSync(path, "0123456789");

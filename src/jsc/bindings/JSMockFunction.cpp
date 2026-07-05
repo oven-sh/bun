@@ -33,6 +33,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 
@@ -660,6 +661,29 @@ extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
         // seems similar to what we do in JSMock__resetSpies,
         // but we actually only clear calls, context, instances and results
         spyObject->clear();
+    }
+}
+
+extern "C" void JSMock__resetAllMocks(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->mockModule.activeMocks) {
+        return;
+    }
+    auto mocksValue = globalObject->mockModule.activeMocks.get();
+
+    ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(mocksValue);
+    MarkedArgumentBuffer active;
+    activeMocks->takeSnapshot(active);
+    size_t size = active.size();
+
+    for (size_t i = 0; i < size; ++i) {
+        JSValue mock = active.at(i);
+        if (!mock.isObject())
+            continue;
+
+        // mockReset() on every mock: drops the recorded calls *and* the implementations,
+        // without restoring the original of a spy.
+        uncheckedDowncast<JSMockFunction>(mock)->reset();
     }
 }
 
@@ -1466,6 +1490,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globa
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsClearAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSMock__clearAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    return JSValue::encode(jsUndefined());
+}
+
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    JSMock__resetAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     return JSValue::encode(jsUndefined());
 }
 

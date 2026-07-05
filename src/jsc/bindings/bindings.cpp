@@ -3181,10 +3181,24 @@ bool JSC__JSValue__asArrayBuffer(
 }
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// transfer()/detach() throw while a native borrower holds a slice into it.
-// SharedArrayBuffer is never detachable and never moves, so it is left
+// its storage cannot move or be freed while a native borrower holds a slice
+// into it. SharedArrayBuffer is never detachable and never moves, so it is left
 // unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
 // impl.
+//
+// A pin does not make detaching fail, it makes it copy. `pin()` clears
+// `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
+// undetachable buffer by copying the bytes into the destination and reporting
+// success (`if (!isDetachable()) m_contents.copyTo(result)`). So while a borrow
+// is live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
+// `port.postMessage(v, [ab])` each return normally, give the destination an
+// independent copy, and leave `ab` attached; the bytes being read never move.
+//
+// That departs from ES2024, where transfer() must detach or throw, and from
+// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
+// common case and memory-safe in every case, at the cost of a transfer that
+// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
+// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))

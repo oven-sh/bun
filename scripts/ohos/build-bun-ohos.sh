@@ -225,9 +225,9 @@ deploy_artifact() {
         return 1
     fi
 
-    # 获取版本信息
+    # 获取版本信息（从 DEV_SRC，因为 CI_SRC 的 .git 未被同步）
     local version_info
-    version_info=$(cd "$CI_SRC" && git log --oneline -1 --format="%h %s" 2>/dev/null || echo "unknown")
+    version_info=$(cd "$DEV_SRC" && git log --oneline -1 --format="%h %s" 2>/dev/null || echo "unknown")
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
 

@@ -672,7 +672,6 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
 /// no CONFIG_PROC_CHILDREN needed. ~30 syscalls per 4096 entries.
 #[cfg(target_env = "ohos")]
 fn list_child_pids_fallback(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
-    use std::io::Write;
     let mut dir_buf = [0u8; 4096];
     let mut entry_buf = [0u8; 512];
     let mut written = 0usize;
@@ -722,7 +721,7 @@ fn list_child_pids_fallback(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Opt
 /// `parent`. Each file is a space-separated list of child pids whose
 /// `getppid()` is `parent` and which were created by that specific thread.
 /// Requires CONFIG_PROC_CHILDREN (enabled on every distro kernel that matters).
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
 fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
     use std::io::Write;
 

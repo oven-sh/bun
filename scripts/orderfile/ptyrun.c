@@ -11,9 +11,9 @@
 // ours, so a workload looks the same to the caller either way. Exits with the
 // child's status.
 //
-// PTYRUN_PRELOAD becomes the child's LD_PRELOAD. The page tracer has to load
-// into the binary being traced and nowhere else: preloaded here it would create
-// and truncate a trace file for a process it cannot trace.
+// PTYRUN_PRELOAD becomes the child's LD_PRELOAD. The page tracer belongs in the
+// binary being traced and nowhere else, and it drops itself from the environment
+// once loaded, so it is handed down here rather than inherited.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <poll.h>

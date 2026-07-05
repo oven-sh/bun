@@ -34,6 +34,16 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
+/// Can `name` spell the binding of an `export var <name> = ...` in a module?
+/// `exports.replace` keys only pass `is_identifier`, which accepts every
+/// keyword, so `default` and friends reach here and have no binding form.
+fn can_bind_exported_name(name: &[u8]) -> bool {
+    js_ast::lexer_tables::keyword(name).is_none()
+        && !js_lexer::is_strict_mode_reserved_word(name)
+        && name != b"eval"
+        && name != b"arguments"
+}
+
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
@@ -189,20 +199,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // reshaped for borrowck — get_ptr borrows options; clone the
                 // small enum payload so `inject_replacement_export(&mut self, ...)` can run.
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    if !entry.is_replace() {
-                        p.ignore_usage(ref_);
+                    // `Replace` emits `export var <name> = value`, and the name it
+                    // has to export is the alias, so a renamed export needs an alias
+                    // that can bind. `Hoisted` lets a local of that name merge.
+                    let rename = entry.is_replace() && alias != name;
+                    if !rename || can_bind_exported_name(alias) {
+                        if !entry.is_replace() {
+                            p.ignore_usage(ref_);
+                        }
+                        let export_ref = if rename {
+                            p.declare_symbol(
+                                js_ast::symbol::Kind::Hoisted,
+                                items[i].alias_loc,
+                                alias,
+                            )?
+                        } else {
+                            ref_
+                        };
+                        let _ = p.inject_replacement_export(stmts, export_ref, stmt.loc, &entry);
+                        any_replaced = true;
+                        continue;
                     }
-                    // `Replace` emits `export var <name> = value`, and the name
-                    // it has to export is the alias. `Hoisted` matches that `var`:
-                    // a local of the same name merges instead of colliding.
-                    let export_ref = if entry.is_replace() && alias != name {
-                        p.declare_symbol(js_ast::symbol::Kind::Hoisted, items[i].alias_loc, alias)?
-                    } else {
-                        ref_
-                    };
-                    let _ = p.inject_replacement_export(stmts, export_ref, stmt.loc, &entry);
-                    any_replaced = true;
-                    continue;
                 }
 
                 if p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound {
@@ -299,18 +316,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias: &'a [u8] = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    // `Replace` emits `export var <name> = value`, and the name
-                    // it has to export is the alias, not the re-exported name.
-                    let export_ref = if entry.is_replace()
-                        && alias != items[i].original_name.slice()
-                    {
-                        p.declare_symbol(js_ast::symbol::Kind::Hoisted, items[i].alias_loc, alias)?
-                    } else {
-                        old_ref
-                    };
-                    let _ =
-                        p.inject_replacement_export(stmts, export_ref, bun_ast::Loc::EMPTY, &entry);
-                    continue;
+                    // `Replace` emits `export var <name> = value`, and the name it
+                    // has to export is the alias, not the re-exported name. A
+                    // renamed export therefore needs an alias that can bind.
+                    let rename = entry.is_replace() && alias != items[i].original_name.slice();
+                    if !rename || can_bind_exported_name(alias) {
+                        let export_ref = if rename {
+                            p.declare_symbol(
+                                js_ast::symbol::Kind::Hoisted,
+                                items[i].alias_loc,
+                                alias,
+                            )?
+                        } else {
+                            old_ref
+                        };
+                        let _ = p.inject_replacement_export(
+                            stmts,
+                            export_ref,
+                            bun_ast::Loc::EMPTY,
+                            &entry,
+                        );
+                        continue;
+                    }
                 }
 
                 let _name = p.load_name_from_ref(old_ref);

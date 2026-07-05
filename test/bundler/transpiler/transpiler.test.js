@@ -1616,6 +1616,24 @@ export default class {
       );
     });
 
+    // `export var default = ...` / `export var class = ...` are syntax errors, so a
+    // `replace` entry keyed on a reserved word has no binding to emit.
+    it.each(["default", "class", "let", "eval"])("leaves `export { q as %s }` alone when replacing", keyword => {
+      expect(transform(`var q = 1; export { q as ${keyword} };`, { replace: { [keyword]: 9 } })).toBe(
+        `var q = 1;\nexport { q as ${keyword} };`,
+      );
+    });
+
+    it("leaves a renamed re-export of a reserved word alone when replacing", () => {
+      expect(transform(`export { rr as default } from "./d";`, { replace: { default: 9 } })).toBe(
+        `export { rr as default } from "./d";`,
+      );
+    });
+
+    it("still eliminates exports named with a reserved word", () => {
+      expect(transform(`const q = 1; export { q as class };`, { eliminate: ["class"] })).toBe(`const q = 1;`);
+    });
+
     it("rejects a non-identifier exports.replace key", () => {
       expect(() => new Bun.Transpiler({ loader: "ts", exports: { replace: { "a-b": 9 } } })).toThrow(
         `"a-b" is not a valid ECMAScript identifier`,

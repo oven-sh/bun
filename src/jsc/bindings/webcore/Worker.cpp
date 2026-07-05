@@ -750,11 +750,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() < 1) {
-        throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
-        return {};
-    }
-
+    // A missing argument reads back as jsUndefined(), which falls through to the
+    // same ERR_INVALID_ARG_TYPE node throws for it.
     auto port = callFrame->argument(0);
 
     if (!port.isObject()) {

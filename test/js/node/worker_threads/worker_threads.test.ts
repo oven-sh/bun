@@ -252,6 +252,22 @@ test("receiveMessageOnPort works as FIFO", () => {
   }
 }, 9999999);
 
+test("receiveMessageOnPort rejects arguments that are not a MessagePort", () => {
+  const call = receiveMessageOnPort as (...args: unknown[]) => unknown;
+
+  for (const args of [[], [undefined], [null], [0], [-1], [""], [{}], [[]]]) {
+    let error: any;
+    try {
+      call(...args);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(error.message).toBe('The "port" argument must be a MessagePort instance');
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/26501
 test("receiveMessageOnPort preserves a queue of interleaved falsy and truthy messages", () => {
   const { port1, port2 } = new MessageChannel();
@@ -409,7 +425,10 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+  // The fixture spawns six workers that each parse 100 MiB of source, which the
+  // default 5s budget cannot cover on a debug/ASAN build (~27s there, ~2s in
+  // release). The sizes are load-bearing: they keep RSS growth above the noise.
+}, 120_000);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is

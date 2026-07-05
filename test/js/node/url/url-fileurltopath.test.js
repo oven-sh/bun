@@ -197,7 +197,10 @@ describe("url.fileURLToPath", () => {
     test("applies win32 path rules regardless of platform", () => {
       assert.strictEqual(url.fileURLToPath("file:///C:/foo", { windows: true }), "C:\\foo");
       assert.strictEqual(url.fileURLToPath("file:///C:/dir/foo%20bar", { windows: true }), "C:\\dir\\foo bar");
-      assert.strictEqual(url.fileURLToPath("file://nas/My%20Docs/File.doc", { windows: true }), "\\\\nas\\My Docs\\File.doc");
+      assert.strictEqual(
+        url.fileURLToPath("file://nas/My%20Docs/File.doc", { windows: true }),
+        "\\\\nas\\My Docs\\File.doc",
+      );
     });
 
     test("rejects encoded separators", () => {

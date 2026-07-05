@@ -877,6 +877,85 @@ test("using addAbortListener", async () => {
   expect(mocked).not.toHaveBeenCalled();
 });
 
+describe("addAbortListener resists stopImmediatePropagation", () => {
+  test("runs after an earlier listener stopped propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    EventEmitter.addAbortListener(signal, e => {
+      order.push(`cleanup:${(e as Event).target === signal}`);
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["stopper", "cleanup:true"]);
+  });
+
+  test("runs when it was registered before the listener that stops propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    EventEmitter.addAbortListener(signal, () => order.push("cleanup"));
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["cleanup", "stopper"]);
+  });
+
+  test("is not run once disposed", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const mocked = mock();
+
+    signal.addEventListener("abort", e => e.stopImmediatePropagation());
+    {
+      using _ = EventEmitter.addAbortListener(signal, mocked);
+    }
+
+    controller.abort();
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  test("once(emitter, event, { signal }) still rejects on a suppressed signal", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+
+    const promise = EventEmitter.once(emitter, "never", { signal: controller.signal });
+    expect(emitter.listenerCount("never")).toBe(1);
+    controller.abort();
+
+    // once()'s abort listener detaches the emitter listener and rejects, both synchronously.
+    expect(emitter.listenerCount("never")).toBe(0);
+    expect(await promise.catch(err => err.code)).toBe("ABORT_ERR");
+  });
+
+  test("stopImmediatePropagation still suppresses ordinary listeners", () => {
+    const target = new EventTarget();
+    const order: string[] = [];
+
+    target.addEventListener("x", () => order.push("a"));
+    target.addEventListener("x", e => {
+      order.push("b");
+      e.stopImmediatePropagation();
+    });
+    target.addEventListener("x", () => order.push("c"));
+
+    target.dispatchEvent(new Event("x"));
+    expect(order).toEqual(["a", "b"]);
+  });
+});
+
 test("getMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);

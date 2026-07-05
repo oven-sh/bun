@@ -144,6 +144,15 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+// Marks an addEventListener() options object so that dispatch still invokes the
+// listener after an unrelated listener called event.stopImmediatePropagation().
+// `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
+// only these internal modules can reach it.
+function resistStopPropagation<T extends object>(options: T): T {
+  (options as AddEventListenerOptions).$kResistStopPropagation = true;
+  return options;
+}
+
 function getLazy<T>(initializer: () => T) {
   let value: T;
   let initialized = false;
@@ -321,6 +330,7 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  resistStopPropagation,
 
   hasObserver,
   startPerf,
@@ -332,7 +342,6 @@ export default {
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
-  kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,

@@ -40,6 +40,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kSNIContexts = Symbol("sniContexts");
 
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
@@ -514,6 +515,7 @@ export {
   kProxyConfig,
   kRealListen,
   kRequest,
+  kSNIContexts,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

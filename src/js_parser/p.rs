@@ -6246,8 +6246,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.features.replace_exports.contains(symbol_name)
     }
 
-    /// Whether `declare_symbol` would accept a `var` named `name` here, rather
-    /// than reporting a redeclaration. Asking `can_merge_symbol_kinds` directly
+    /// Whether a `var` named `name` can share this scope with whatever already
+    /// binds it. `can_merge_symbol_kinds` answers that for declarations, and
     /// keeps this in step with what `declare_symbol` goes on to decide.
     fn can_declare_hoisted(&self, name: &[u8]) -> bool {
         let hash = js_ast::Scope::get_member_hash(name);
@@ -6255,6 +6255,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return true;
         };
         let existing = self.symbols[member.ref_.inner_index() as usize].kind;
+        // TypeScript merges a `var` into an import rather than refusing it, since
+        // the import may be type-only. The two still bind the same name, and
+        // `scan_imports` reports that once the import is used as a value.
+        if existing == js_ast::symbol::Kind::Import {
+            return false;
+        }
         !matches!(
             js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
                 self.current_scope.kind,

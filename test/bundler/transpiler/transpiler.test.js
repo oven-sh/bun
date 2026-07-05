@@ -1635,6 +1635,26 @@ export default class {
       expect(transform(`var QA = 5; var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
         `var QA = 5;\nvar q = 1;\nexport var QA = 9;`,
       );
+      expect(transform(`function QA() {} var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `function QA() {}\nvar q = 1;\nexport var QA = 9;`,
+      );
+    });
+
+    // An unbound name is not a declaration, so the injected `var` still binds it.
+    it("replaces a renamed export whose exported name is unbound", () => {
+      expect(transform(`console.log(QA); var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `console.log(QA);\nvar q = 1;\nexport var QA = 9;`,
+      );
+    });
+
+    // TypeScript merges a `var` into an import rather than refusing it, but then
+    // both bind the name and `scan_imports` rejects the file.
+    it("leaves a renamed export colliding with an import alone", () => {
+      expect(
+        transform(`import { QA } from "./d"; console.log(QA); var q = 1; export { q as QA };`, {
+          replace: { QA: 9 },
+        }),
+      ).toBe(`import { QA } from "./d";\nconsole.log(QA);\nvar q = 1;\nexport { q as QA };`);
     });
 
     // The injected `export var QA` merges with a `var`, but a lexical binding of

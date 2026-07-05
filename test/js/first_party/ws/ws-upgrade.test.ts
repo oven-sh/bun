@@ -68,19 +68,23 @@ describe("ws client upgrade event", () => {
 
     const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
     const ws = new WebSocket(server.url.href);
-    ws.on("upgrade", resolve);
-    ws.on("error", reject);
-    // Close only after the connection is established to avoid racing the
-    // in-flight handshake (upgrade fires while still CONNECTING).
-    ws.on("open", () => ws.close());
+    try {
+      ws.on("upgrade", resolve);
+      ws.on("error", reject);
+      // Close only after the connection is established to avoid racing the
+      // in-flight handshake (upgrade fires while still CONNECTING).
+      ws.on("open", () => ws.close());
 
-    const res = await promise;
-    expect(res.statusCode).toBe(101);
-    expect(res.headers["x-custom-header"]).toBe("custom-value");
-    // node's IncomingMessage represents set-cookie as an array.
-    expect(res.headers["set-cookie"]).toEqual(["a=1"]);
+      const res = await promise;
+      expect(res.statusCode).toBe(101);
+      expect(res.headers["x-custom-header"]).toBe("custom-value");
+      // node's IncomingMessage represents set-cookie as an array.
+      expect(res.headers["set-cookie"]).toEqual(["a=1"]);
 
-    await once(ws, "close");
+      await once(ws, "close");
+    } finally {
+      ws.close();
+    }
   });
 
   it("supports once() for upgrade", async () => {
@@ -194,4 +198,44 @@ describe("ws client upgrade event", () => {
       wss.close();
     }
   });
+});
+
+// The native forwarder is armed once per event type; EventEmitter fans each
+// emit out to every on/once listener. A once-style registration followed by a
+// persistent on() must not install a second forwarder (that would emit twice).
+describe("ws client event listener bridging", () => {
+  for (const register of ["once", "prependOnceListener"] as const) {
+    it(`${register}() + on() for the same event each fire exactly once`, async () => {
+      const wss = new WebSocketServer({ port: 0 });
+      wss.on("connection", () => {});
+
+      const ws = new WebSocket("ws://localhost:" + wss.address().port);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        let onceCount = 0;
+        let onCount = 0;
+        ws[register]("open", () => {
+          onceCount++;
+        });
+        ws.on("open", () => {
+          onCount++;
+          resolve();
+        });
+        ws.on("error", reject);
+
+        await promise;
+        // A duplicate native forwarder re-emits within the same dispatch, so
+        // onCount is already final here; a macrotask turn makes that certain.
+        await Bun.sleep(0);
+        expect(onceCount).toBe(1);
+        expect(onCount).toBe(1);
+
+        ws.close();
+        await once(ws, "close");
+      } finally {
+        ws.close();
+        wss.close();
+      }
+    });
+  }
 });

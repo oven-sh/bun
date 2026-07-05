@@ -2424,11 +2424,11 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native) {
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
-        // respond() is about to submit a HEADERS frame carrying END_STREAM, so there is no
-        // DATA frame left to write. Park the callback: the onStreamEnd dispatch that the
-        // native request() makes runs markWritableDone, which invokes it.
+        // respond() is about to submit a HEADERS frame carrying END_STREAM, so there is no DATA
+        // frame left to write. Settle now, like node's _final does for this case; 'finish' is
+        // queued on the next tick, after request() has put the frame on the wire.
         if ((status & StreamState.EndStreamOnHeaders) !== 0) {
-          this[bunHTTP2StreamFinal] = callback;
+          callback();
           return;
         }
         // When waitForTrailers is active, writing an empty DATA frame with
@@ -3148,12 +3148,6 @@ class ServerHttp2Stream extends Http2Stream {
       if (options?.waitForTrailers && !endStream) {
         this[bunHTTP2WaitForTrailers] = true;
       }
-    }
-    if (endStream) {
-      // The onStreamEnd dispatch request() makes normally settles the `_final` callback parked
-      // above. Idempotent here, and it keeps a submit the native layer rejected (no dispatch)
-      // from leaving the writable side hanging.
-      markWritableDone(this);
     }
     this.headersSent = true;
     if (onServerStreamFinishChannel.hasSubscribers) {

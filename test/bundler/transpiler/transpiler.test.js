@@ -1607,6 +1607,24 @@ export default class {
       );
     });
 
+    // A re-export has no local binding to reuse, so `Replace` has to declare the
+    // alias even when the clause does not rename it.
+    it("replaces an unrenamed re-export clause", () => {
+      expect(transform(`export { RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
+        `export var RR = 9;\nexport {  } from "./dep";`,
+      );
+      expect(transform(`export { RR } from "./dep";`, { replace: { RR: ["INJ", true] } })).toBe(
+        `export var INJ = true;\nexport {  } from "./dep";`,
+      );
+      expect(transform(`export { RR } from "./dep";`, { eliminate: ["RR"] })).toBe(`export {  } from "./dep";`);
+    });
+
+    it("replaces an unrenamed re-export whose exported name is also a local var", () => {
+      expect(transform(`var RR = 5; export { RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
+        `var RR = 5;\nexport var RR = 9;\nexport {  } from "./dep";`,
+      );
+    });
+
     it("replaces an unrenamed export clause", () => {
       expect(transform(`var foo = 1; export { foo };`, { replace: { foo: 9 } })).toBe(
         `var foo = 1;\nexport var foo = 9;`,

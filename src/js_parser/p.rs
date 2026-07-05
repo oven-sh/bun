@@ -6285,11 +6285,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !can_be_binding_identifier(alias) {
             return Ok(None);
         }
-        if alias == local_name {
+        // Reusing the local binding only works when there is one. A re-export
+        // has no local symbol, just the parse-time name ref.
+        if alias == local_name && local_ref.is_symbol() {
             return Ok(Some(local_ref));
         }
-        // A renamed export binds the alias itself. That merges with a `var` of
-        // the same name, but a lexical one would make `declare_symbol` report a
+        // Otherwise bind the alias itself. That merges with a `var` of the same
+        // name, but a lexical one would make `declare_symbol` report a
         // redeclaration the source never wrote.
         if !self.can_declare_hoisted(alias) {
             return Ok(None);

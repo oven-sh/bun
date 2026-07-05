@@ -59,9 +59,9 @@ pub struct FileReader {
     pub event_loop: Cell<EventLoopHandle>,
     pub lazy: JsCell<Lazy>,
     pub buffered: JsCell<Vec<u8>>,
-    /// A reader error that arrived with no armed `pending` read to settle it —
-    /// every error from the synchronous `read()` inside `on_pull` lands here.
-    /// The next `on_pull` takes it and errors the stream instead of reading on.
+    /// A reader error that arrived with no armed `pending` read to settle it.
+    /// Every error from the synchronous `read()` inside `on_pull` lands here;
+    /// the next `on_pull` takes it and errors the stream instead of reading on.
     pub read_error: JsCell<Option<sys::Error>>,
     pub read_inside_on_pull: JsCell<ReadDuringJSOnPullResult>,
     /// Read-only after construction.

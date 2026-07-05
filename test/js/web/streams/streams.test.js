@@ -1424,10 +1424,9 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
-// On POSIX a file is read synchronously inside the stream's pull, so a failing
-// read(2) arrives with no pending read to reject. It used to be dropped, and
-// the pull promise then never settled. Windows reads files through libuv, so
-// the error always had a pending read waiting for it.
+// A POSIX file is read synchronously inside the stream's pull, so a failing
+// read(2) arrives with no pending read to reject. Windows reads files through
+// libuv, where the error always lands on a pending read.
 describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
   const eioPath = "/proc/self/mem";

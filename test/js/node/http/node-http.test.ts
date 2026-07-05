@@ -1542,6 +1542,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
     // Close the server if it's still running
     if (server.listening) {
       server.closeAllConnections();
+      server.close();
+      await once(server, "close");
     }
   });
 

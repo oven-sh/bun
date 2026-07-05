@@ -246,6 +246,7 @@ describe.concurrent("fetch() with streaming", () => {
         expect(true).toBe(true);
       } finally {
         server?.closeAllConnections();
+        server?.close();
       }
     });
   }

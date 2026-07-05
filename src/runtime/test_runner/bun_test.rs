@@ -1120,17 +1120,16 @@ impl BunTest {
         if !value.is_object() || value.as_promise().is_some() {
             return Ok(value);
         }
-        let Some(then) = value.get_if_property_exists(global_this, "then")? else {
-            return Ok(value);
-        };
-        if !then.is_callable() {
-            return Ok(value);
-        }
-        // `resolve()` runs the spec's ResolvePromise: it queues the job that calls
-        // `then`, and rejects the promise if that job throws.
+        // `resolve()` is the spec's ResolvePromise, which reads `then` exactly once:
+        // a thenable leaves the promise pending until the job it queued calls `then`,
+        // a `then` getter that throws rejects it, and anything else fulfills it here.
         let promise = bun_jsc::JSPromise::create(global_this);
         promise.resolve(global_this, value)?;
-        Ok(promise.to_js())
+        match promise.status() {
+            // Not a thenable. Keep the original value on the synchronous path.
+            PromiseStatus::Fulfilled => Ok(value),
+            PromiseStatus::Pending | PromiseStatus::Rejected => Ok(promise.to_js()),
+        }
     }
 
     /// if sync, the result is returned. if async, None is returned.

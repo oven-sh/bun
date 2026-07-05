@@ -15,8 +15,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSBoundFunction.h>
-#include <JavaScriptCore/PropertyNameArray.h>
-#include <JavaScriptCore/ProxyObject.h>
 using namespace JSC;
 
 namespace Zig {
@@ -155,108 +153,18 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName, (JSGlobalObject * glo
     return JSC::JSValue::encode(JSC::jsNull());
 }
 
-// Matches V8's CallSiteInfo::GetMethodName: walks the receiver and its
-// prototype chain looking for a property whose value is identity-equal to the
-// frame's function. Returns null if the receiver is nullish, if no matching
-// property is found, or if more than one distinct property name matches.
+// V8's CallSiteInfo::GetMethodName resolves the method name by matching the
+// frame's function against the receiver's own and inherited properties. Bun's
+// captured stack frames don't retain the receiver (CallSite::thisValue() is
+// undefined for them), so the property holding the function can't be
+// identified, and we return null. This also matches what V8 returns when it
+// can't determine a method name (e.g. plain function calls). Previously this
+// delegated to getFunctionName, which reported the function's own name even
+// for non-method frames.
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-
-    JSC::JSValue thisValue = callSite->thisValue();
-    if (!thisValue || thisValue.isUndefinedOrNull()) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    JSC::JSValue functionValue = callSite->function();
-    if (!functionValue || !functionValue.isCell()) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-    JSC::JSCell* functionCell = functionValue.asCell();
-
-    JSC::JSObject* thisObject = thisValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!thisObject) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    // Walk `this` and its prototype chain. Collect property names whose value
-    // is identity-equal to the frame's function. Bound functions and proxies
-    // aren't inspected (V8 gives up on them too).
-    Identifier foundName;
-    bool foundMultiple = false;
-
-    JSC::JSObject* current = thisObject;
-    // Cap the depth to avoid pathological prototype chains; 128 matches other
-    // JSC traversals and is more than any real chain.
-    constexpr unsigned maxDepth = 128;
-    for (unsigned depth = 0; current && depth < maxDepth; ++depth) {
-        if (current->type() == JSC::ProxyObjectType) {
-            break;
-        }
-
-        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        {
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            current->methodTable()->getOwnPropertyNames(current, globalObject, properties, DontEnumPropertiesMode::Include);
-            if (topExceptionScope.exception()) [[unlikely]] {
-                (void)topExceptionScope.tryClearException();
-                break;
-            }
-        }
-
-        for (const auto& propertyName : properties) {
-            PropertySlot slot(current, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            bool hasProperty = current->methodTable()->getOwnPropertySlot(current, globalObject, propertyName, slot);
-            if (topExceptionScope.exception()) [[unlikely]] {
-                (void)topExceptionScope.tryClearException();
-                continue;
-            }
-            if (!hasProperty) {
-                continue;
-            }
-            // Only examine direct values (mirrors V8: accessor/computed props
-            // would require invoking user code).
-            if (!slot.isValue()) {
-                continue;
-            }
-            JSValue value = slot.getValue(globalObject, propertyName);
-            if (topExceptionScope.exception()) [[unlikely]] {
-                (void)topExceptionScope.tryClearException();
-                continue;
-            }
-            if (!value.isCell() || value.asCell() != functionCell) {
-                continue;
-            }
-
-            if (foundName.isNull()) {
-                foundName = propertyName;
-            } else if (foundName != propertyName) {
-                foundMultiple = true;
-                break;
-            }
-        }
-
-        if (foundMultiple) {
-            break;
-        }
-
-        if (current->structure()->typeInfo().overridesGetPrototype()) [[unlikely]] {
-            break;
-        }
-        JSValue protoValue = current->getPrototypeDirect();
-        if (!protoValue.isObject()) {
-            break;
-        }
-        current = asObject(protoValue);
-    }
-
-    if (foundName.isNull() || foundMultiple) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    return JSC::JSValue::encode(JSC::jsString(vm, foundName.string()));
+    return JSC::JSValue::encode(JSC::jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

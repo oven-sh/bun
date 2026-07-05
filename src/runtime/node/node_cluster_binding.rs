@@ -123,7 +123,9 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         Ok(good) => good,
         Err(err) => {
             // Nothing was enqueued, so no ack will ever settle the callback registered above.
-            singleton.callbacks.swap_remove(&seq);
+            // Re-borrow rather than holding `singleton` across `serialize_and_send`, which runs
+            // `toJSON` and can re-enter this fn (see `child_singleton`'s aliasing contract).
+            child_singleton().callbacks.swap_remove(&seq);
             if let Some(exception) = err.as_js_error() {
                 return Err(exception);
             }

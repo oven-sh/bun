@@ -1619,22 +1619,45 @@ export default class {
       );
     });
 
-    // `export var default = ...` / `export var class = ...` are syntax errors, so a
-    // `replace` entry keyed on a reserved word has no binding to emit.
-    it.each(["default", "class", "let", "eval"])("leaves `export { q as %s }` alone when replacing", keyword => {
-      expect(transform(`var q = 1; export { q as ${keyword} };`, { replace: { [keyword]: 9 } })).toBe(
-        `var q = 1;\nexport { q as ${keyword} };`,
+    // The injected `export var QA` merges with a `var`, but a lexical binding of
+    // the same name cannot, and the source never declared QA twice.
+    it.each([
+      [`const QA = 5;`, `const QA = 5;`],
+      [`let QA = 5;`, `let QA = 5;`],
+      [`class QA {}`, `class QA {\n}`],
+    ])("leaves a renamed export colliding with `%s` alone", (decl, printed) => {
+      expect(transform(`${decl} var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `${printed}\nvar q = 1;\nexport { q as QA };`,
       );
     });
 
-    it("leaves a renamed re-export of a reserved word alone when replacing", () => {
-      expect(transform(`export { rr as default } from "./d";`, { replace: { default: 9 } })).toBe(
-        `export { rr as default } from "./d";`,
+    // `export var default = ...` / `export var await = ...` are syntax errors, so a
+    // `replace` entry keyed on a reserved word has no binding to emit.
+    it.each(["default", "class", "let", "eval", "await"])(
+      "leaves `export { q as %s }` alone when replacing",
+      keyword => {
+        expect(transform(`var q = 1; export { q as ${keyword} };`, { replace: { [keyword]: 9 } })).toBe(
+          `var q = 1;\nexport { q as ${keyword} };`,
+        );
+      },
+    );
+
+    it.each(["default", "await"])("leaves a renamed re-export of `%s` alone when replacing", keyword => {
+      expect(transform(`export { rr as ${keyword} } from "./d";`, { replace: { [keyword]: 9 } })).toBe(
+        `export { rr as ${keyword} } from "./d";`,
+      );
+    });
+
+    // The exported name is the reserved word even without `as`.
+    it("leaves an unrenamed re-export of a reserved word alone when replacing", () => {
+      expect(transform(`export { default } from "./d";`, { replace: { default: 9 } })).toBe(
+        `export { default } from "./d";`,
       );
     });
 
     it("still eliminates exports named with a reserved word", () => {
       expect(transform(`const q = 1; export { q as class };`, { eliminate: ["class"] })).toBe(`const q = 1;`);
+      expect(transform(`export { default } from "./d";`, { eliminate: ["default"] })).toBe(`export {  } from "./d";`);
     });
 
     it("rejects a non-identifier exports.replace key", () => {

@@ -26,8 +26,8 @@ use crate::{
     JSXImport, JSXTransformType, Jest, LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState,
     ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap,
     RuntimeImports, ScopeOrder, ScopeOrderList, SideEffects, StrictModeFeature, StringBoolMap,
-    Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments,
-    options, statement_cares_about_scope,
+    Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, can_be_binding_identifier, fs,
+    is_eval_or_arguments, options, statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -6246,11 +6246,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.features.replace_exports.contains(symbol_name)
     }
 
+    /// Whether `declare_symbol` would accept a `var` named `name` here, rather
+    /// than reporting a redeclaration. Asking `can_merge_symbol_kinds` directly
+    /// keeps this in step with what `declare_symbol` goes on to decide.
+    fn can_declare_hoisted(&self, name: &[u8]) -> bool {
+        let hash = js_ast::Scope::get_member_hash(name);
+        let Some(member) = self.current_scope.get_member_with_hash(name, hash) else {
+            return true;
+        };
+        let existing = self.symbols[member.ref_.inner_index() as usize].kind;
+        !matches!(
+            js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
+                self.current_scope.kind,
+                existing,
+                js_ast::symbol::Kind::Hoisted,
+            ),
+            js_ast::scope::SymbolMergeResult::Forbidden
+        )
+    }
+
     /// The ref `inject_replacement_export` should bind for a clause item whose
-    /// exported name is `alias`. `Replace` prints `export var <alias> = value`,
-    /// so a renamed export declares a hoisted binding (one a local of the same
-    /// name merges into). `None` means the alias cannot spell a binding, so the
-    /// caller keeps the clause item.
+    /// exported name is `alias`. `None` means the replacement has no legal
+    /// spelling here, so the caller keeps the clause item untouched.
     pub fn replacement_export_ref(
         &mut self,
         replacement: &crate::parser::Runtime::ReplaceableExport,
@@ -6259,10 +6276,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         alias_loc: bun_ast::Loc,
         local_ref: Ref,
     ) -> Result<Option<Ref>, bun_core::Error> {
-        if !replacement.is_replace() || alias == local_name {
+        // `Delete` drops the item and `Inject` names its own binding, so neither
+        // cares what the alias spells.
+        if !replacement.is_replace() {
             return Ok(Some(local_ref));
         }
-        if !can_bind_exported_name(alias) {
+        // `Replace` prints `export var <alias> = value`.
+        if !can_be_binding_identifier(alias) {
+            return Ok(None);
+        }
+        if alias == local_name {
+            return Ok(Some(local_ref));
+        }
+        // A renamed export binds the alias itself. That merges with a `var` of
+        // the same name, but a lexical one would make `declare_symbol` report a
+        // redeclaration the source never wrote.
+        if !self.can_declare_hoisted(alias) {
             return Ok(None);
         }
         Ok(Some(self.declare_symbol(
@@ -9674,14 +9703,4 @@ pub fn null_value_expr() -> js_ast::ExprData {
 #[inline]
 pub fn false_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::EBoolean(E::Boolean { value: false })
-}
-
-/// Can `name` spell the binding of an `export var <name> = ...` in a module?
-/// `exports.replace` keys only pass `is_identifier`, which accepts every
-/// keyword, so `default` and friends reach here and have no binding form.
-fn can_bind_exported_name(name: &[u8]) -> bool {
-    bun_ast::lexer_tables::keyword(name).is_none()
-        && !js_lexer::is_strict_mode_reserved_word(name)
-        && name != b"eval"
-        && name != b"arguments"
 }

@@ -9,12 +9,15 @@ const stream = new Response(await renderToReadableStream(<HelloWorld />));
 console.log(await stream.text());
 
 if (!process.env.NO_BUILD) {
+  const childDev = process.env.CHILD_NODE_ENV === "development";
   const self = await Bun.build({
     entrypoints: [import.meta.path],
     define: {
       "process.env.NODE_ENV": JSON.stringify(process.env.CHILD_NODE_ENV),
       "process.env.NO_BUILD": "1",
     },
+    jsx: "automatic",
+    jsxDev: childDev,
   });
   const code = await self.outputs[0].text();
   let shouldHaveJSXDev = process.env.CHILD_NODE_ENV === "development";

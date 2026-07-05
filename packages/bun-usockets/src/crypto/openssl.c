@@ -1113,9 +1113,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       }
       ERR_clear_error();
     }
-    /* Without a TLS<=1.2 cipher there is nothing a TLS 1.2 handshake could
-     * negotiate, so raise the floor to TLS 1.3 instead of serving a context
-     * that can only fail. Same as Node's configSecureContext(). */
+    /* Without a TLS<=1.2 cipher a TLS 1.2 handshake has nothing to negotiate, so
+     * raise the floor rather than serve a context that can only fail, the way
+     * Node's configSecureContext() does. SSL_CTX_new() seeds both bounds from
+     * TLS_method(), so neither getter reports the "unset" 0 that ssl_max_version
+     * above uses: they read back TLS1_2_VERSION and TLS1_3_VERSION. */
     if (tls13_only && SSL_CTX_get_min_proto_version(ssl_context) < TLS1_3_VERSION &&
         SSL_CTX_get_max_proto_version(ssl_context) > TLS1_2_VERSION) {
       SSL_CTX_set_min_proto_version(ssl_context, TLS1_3_VERSION);

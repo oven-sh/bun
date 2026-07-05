@@ -19,31 +19,35 @@ describe("ws client upgrade event", () => {
     const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
 
     const ws = new WebSocket("ws://localhost:" + wss.address().port);
-    ws.on("upgrade", res => {
-      order.push("upgrade");
-      resolve(res);
-    });
-    ws.on("open", () => {
-      order.push("open");
+    try {
+      ws.on("upgrade", res => {
+        order.push("upgrade");
+        resolve(res);
+      });
+      ws.on("open", () => {
+        order.push("open");
+        ws.close();
+      });
+      ws.on("error", reject);
+
+      const res = await promise;
+
+      // `upgrade` must fire, and it must fire before `open` (as in node's ws).
+      expect(order[0]).toBe("upgrade");
+      // The argument is the handshake response (an http.IncomingMessage).
+      expect(res.statusCode).toBe(101);
+      expect(res.statusMessage).toBe("Switching Protocols");
+      expect(res.httpVersion).toBe("1.1");
+      expect(res.headers.upgrade?.toLowerCase()).toBe("websocket");
+      expect(res.headers.connection?.toLowerCase()).toBe("upgrade");
+      expect(typeof res.headers["sec-websocket-accept"]).toBe("string");
+      expect(Array.isArray(res.rawHeaders)).toBe(true);
+
+      await once(ws, "close");
+    } finally {
       ws.close();
-    });
-    ws.on("error", reject);
-
-    const res = await promise;
-
-    // `upgrade` must fire, and it must fire before `open` (as in node's ws).
-    expect(order[0]).toBe("upgrade");
-    // The argument is the handshake response (an http.IncomingMessage).
-    expect(res.statusCode).toBe(101);
-    expect(res.statusMessage).toBe("Switching Protocols");
-    expect(res.httpVersion).toBe("1.1");
-    expect(res.headers.upgrade?.toLowerCase()).toBe("websocket");
-    expect(res.headers.connection?.toLowerCase()).toBe("upgrade");
-    expect(typeof res.headers["sec-websocket-accept"]).toBe("string");
-    expect(Array.isArray(res.rawHeaders)).toBe(true);
-
-    await once(ws, "close");
-    wss.close();
+      wss.close();
+    }
   });
 
   it("exposes custom handshake response headers", async () => {
@@ -85,14 +89,17 @@ describe("ws client upgrade event", () => {
 
     const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
     const ws = new WebSocket("ws://localhost:" + wss.address().port);
-    ws.once("upgrade", resolve);
-    ws.on("open", () => ws.close());
-    ws.on("error", reject);
-    const res = await promise;
-    expect(res.statusCode).toBe(101);
-    await once(ws, "close");
-
-    wss.close();
+    try {
+      ws.once("upgrade", resolve);
+      ws.on("open", () => ws.close());
+      ws.on("error", reject);
+      const res = await promise;
+      expect(res.statusCode).toBe(101);
+      await once(ws, "close");
+    } finally {
+      ws.close();
+      wss.close();
+    }
   });
 
   // ws / EventEmitter consumers also subscribe via addListener /
@@ -105,14 +112,17 @@ describe("ws client upgrade event", () => {
 
       const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
       const ws = new WebSocket("ws://localhost:" + wss.address().port);
-      ws[method]("upgrade", resolve);
-      ws.on("open", () => ws.close());
-      ws.on("error", reject);
-      const res = await promise;
-      expect(res.statusCode).toBe(101);
-      await once(ws, "close");
-
-      wss.close();
+      try {
+        ws[method]("upgrade", resolve);
+        ws.on("open", () => ws.close());
+        ws.on("error", reject);
+        const res = await promise;
+        expect(res.statusCode).toBe(101);
+        await once(ws, "close");
+      } finally {
+        ws.close();
+        wss.close();
+      }
     });
   }
 
@@ -125,31 +135,35 @@ describe("ws client upgrade event", () => {
 
     const { promise, resolve, reject } = Promise.withResolvers<{ microtask: number; nextTick: number }>();
     const ws = new WebSocket("ws://localhost:" + wss.address().port);
-    const states: { microtask?: number; nextTick?: number } = {};
-    ws.on("upgrade", () => {
-      // These are scheduled while still CONNECTING but must observe OPEN,
-      // because `open` fires before the microtask/nextTick checkpoint.
-      queueMicrotask(() => {
-        states.microtask = ws.readyState;
+    try {
+      const states: { microtask?: number; nextTick?: number } = {};
+      ws.on("upgrade", () => {
+        // These are scheduled while still CONNECTING but must observe OPEN,
+        // because `open` fires before the microtask/nextTick checkpoint.
+        queueMicrotask(() => {
+          states.microtask = ws.readyState;
+        });
+        process.nextTick(() => {
+          states.nextTick = ws.readyState;
+        });
       });
-      process.nextTick(() => {
-        states.nextTick = ws.readyState;
+      ws.on("open", async () => {
+        // After a macrotask turn both the microtask and the nextTick have run.
+        await Bun.sleep(0);
+        resolve(states as { microtask: number; nextTick: number });
       });
-    });
-    ws.on("open", async () => {
-      // After a macrotask turn both the microtask and the nextTick have run.
-      await Bun.sleep(0);
-      resolve(states as { microtask: number; nextTick: number });
-    });
-    ws.on("error", reject);
+      ws.on("error", reject);
 
-    const seen = await promise;
-    expect(seen.microtask).toBe(WebSocket.OPEN);
-    expect(seen.nextTick).toBe(WebSocket.OPEN);
+      const seen = await promise;
+      expect(seen.microtask).toBe(WebSocket.OPEN);
+      expect(seen.nextTick).toBe(WebSocket.OPEN);
 
-    ws.close();
-    await once(ws, "close");
-    wss.close();
+      ws.close();
+      await once(ws, "close");
+    } finally {
+      ws.close();
+      wss.close();
+    }
   });
 
   // Consequence of the ordering above: a `process.nextTick(() => ws.send(...))`
@@ -164,16 +178,20 @@ describe("ws client upgrade event", () => {
     });
 
     const ws = new WebSocket("ws://localhost:" + wss.address().port);
-    ws.on("upgrade", () => {
-      process.nextTick(() => ws.send("from-upgrade"));
-    });
-    ws.on("error", reject);
+    try {
+      ws.on("upgrade", () => {
+        process.nextTick(() => ws.send("from-upgrade"));
+      });
+      ws.on("error", reject);
 
-    const received = await promise;
-    expect(received).toBe("from-upgrade");
+      const received = await promise;
+      expect(received).toBe("from-upgrade");
 
-    ws.close();
-    await once(ws, "close");
-    wss.close();
+      ws.close();
+      await once(ws, "close");
+    } finally {
+      ws.close();
+      wss.close();
+    }
   });
 });

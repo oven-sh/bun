@@ -250,6 +250,9 @@ Worker.prototype.disconnect = function () {
 };
 
 Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+  // The primary may ask to disconnect more than once. Tearing the channel down
+  // twice would throw ERR_IPC_DISCONNECTED out of process.disconnect().
+  if (this.exitedAfterDisconnect) return;
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 

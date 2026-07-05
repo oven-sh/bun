@@ -346,3 +346,61 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// A shutdown path and an error path both asking a worker to go away is the normal
+// race in a cluster manager, so Node makes the second disconnect() a no-op.
+test.concurrent("calling worker.disconnect() twice does not throw", async () => {
+  using dir = tempDir("cluster-double-disconnect", {
+    "main.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("online", () => {
+          worker.disconnect();
+          worker.disconnect();
+        });
+        worker.on("exit", (code, signal) => console.log("worker-exit", code, signal));
+        cluster.on("disconnect", () => console.log("cluster-disconnect"));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("ERR_IPC_DISCONNECTED");
+  // The primary and the worker share stdout, so their interleaving is not fixed.
+  const lines = stdout.split("\n").filter(Boolean).sort();
+  expect(lines).toEqual(["cluster-disconnect", "worker-exit 0 null"]);
+  expect(exitCode).toBe(0);
+});
+
+// The primary keeps its end of the channel open, so a "disconnect" sent before the
+// worker booted does not swallow the "online" message coming the other way.
+test.concurrent("disconnecting a worker before it comes online still emits 'online'", async () => {
+  using dir = tempDir("cluster-disconnect-before-online", {
+    "main.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.disconnect();
+        worker.on("online", () => console.log("online"));
+        worker.on("exit", code => console.log("worker-exit", code));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.split("\n").filter(Boolean).sort()).toEqual(["online", "worker-exit 0"]);
+  expect(exitCode).toBe(0);
+});

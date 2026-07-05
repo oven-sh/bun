@@ -2370,6 +2370,9 @@ impl UpgradeCommand {
                         zip_url: zip_url.into(),
                         size: 0,
                         buf: MutableString::init_empty(),
+                        // CI artifacts are verified against the checksum
+                        // Buildkite records for them, not a release digest.
+                        digest: Integrity::default(),
                     },
                     title,
                     zip_checksum,

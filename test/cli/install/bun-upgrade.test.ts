@@ -367,7 +367,6 @@ it("verifies the downloaded release archive against the digest reported by the r
   expect(matched.exitCode).toBe(1);
 });
 
-
 // ── Delta upgrades ─────────────────────────────────────────────────────────
 
 /** Every release asset name, so the mock matches whichever target runs the test. */
@@ -507,6 +506,10 @@ it.skipIf(isWindows)("delta upgrade applies binary patches instead of downloadin
             url: "foo",
             content_type: "application/zip",
             name: `${name}.zip`,
+            // Real releases report a digest for the archive. It describes the
+            // archive the delta path never downloads, so it must not be
+            // checked against the reconstructed binary.
+            digest: `sha256:${Buffer.alloc(32, 0xab).toString("hex")}`,
             browser_download_url: `https://${server.hostname}:${server.port}/releases/${tagName}/${name}.zip`,
           })),
         }),

@@ -859,16 +859,19 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
+            // `|=`, not `=`: a task that threw owes the batch tail a checkpoint,
+            // and a later task that returns early (cleared, unref'd, stale
+            // generation) must not erase that.
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `runImmediateTask` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
         let this: *mut Self = core::hint::black_box(this);
 
-        // make sure microtasks are drained if the last task had an exception
+        // make sure microtasks are drained if any task had an exception
         if exception_thrown {
             // SAFETY: as above.
             unsafe { (*this).maybe_drain_microtasks() };

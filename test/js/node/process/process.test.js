@@ -1075,8 +1075,8 @@ describe.concurrent(() => {
       ["uncaughtException", "second immediate", "unhandledRejection"],
     ],
     [
-      // `tick_immediate_tasks` routes on the *last* task's outcome, so pin the
-      // case where an earlier immediate succeeded and the throw ends the batch.
+      // `tick_immediate_tasks` tracks whether *any* task threw, so pin both the
+      // throw-ends-the-batch case and a later task that returns without running.
       "reports the rejection when the throw ends a batch that started clean",
       `setImmediate(() => console.log("first immediate"));
        setImmediate(() => {
@@ -1085,6 +1085,18 @@ describe.concurrent(() => {
          throw new Error("boom");
        });`,
       ["first immediate", "uncaughtException", "unhandledRejection", "later timer"],
+    ],
+    [
+      "reports the rejection when it clears the immediate queued behind it",
+      `var cleared;
+       setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => console.log("later timer"), 0);
+         clearImmediate(cleared);
+         throw new Error("boom");
+       });
+       cleared = setImmediate(() => console.log("never runs"));`,
+      ["uncaughtException", "unhandledRejection", "later timer"],
     ],
   ])("a throwing setImmediate %s", async (_name, body, expected) => {
     await using proc = Bun.spawn({

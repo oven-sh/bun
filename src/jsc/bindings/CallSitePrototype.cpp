@@ -101,8 +101,8 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObjec
 }
 
 // Matches V8's GetTypeName: the receiver's constructor name, else null for
-// null/undefined/global/strict receivers. Never the string "undefined" (the
-// previous typeof-based behavior that broke source-map-support formatting).
+// null/undefined/global/strict receivers. Never returns the literal string
+// "undefined".
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();

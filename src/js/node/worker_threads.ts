@@ -72,7 +72,7 @@ const isMainThread = Bun.isMainThread;
 const {
   0: _workerData,
   1: _threadId,
-  2: _receiveMessageOnPort,
+  2: receiveMessageOnPort,
   3: environmentData,
   4: _threadName,
   5: _isMessagePortActive,
@@ -84,7 +84,7 @@ const {
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
-  (port: unknown) => unknown,
+  (port: MessagePort) => { message: unknown } | undefined,
   Map<unknown, unknown>,
   string,
   (port: unknown) => boolean,
@@ -734,13 +734,6 @@ if (
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
-}
-function receiveMessageOnPort(port: MessagePort) {
-  let res = _receiveMessageOnPort(port);
-  if (!res) return undefined;
-  return {
-    message: res,
-  };
 }
 
 // TODO: parent port emulation is not complete

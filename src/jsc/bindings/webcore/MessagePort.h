@@ -106,7 +106,9 @@ public:
     void dispatchEvent(Event&) final;
 
     // node:worker_threads receiveMessageOnPort — synchronous single pop.
-    JSValue tryTakeMessage(JSGlobalObject*);
+    // std::nullopt means nothing was dequeued; a dequeued message may itself
+    // be undefined, so the two cannot be conflated.
+    std::optional<JSValue> tryTakeMessage(JSGlobalObject*);
 
     bool hasPendingActivity() const;
 

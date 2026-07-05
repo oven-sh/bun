@@ -252,6 +252,48 @@ test("receiveMessageOnPort works as FIFO", () => {
   }
 }, 9999999);
 
+test("receiveMessageOnPort does not drop falsy messages", () => {
+  const { port1, port2 } = new MessageChannel();
+
+  port1.postMessage(0);
+  port1.postMessage(1);
+  port1.postMessage(2);
+
+  expect([receiveMessageOnPort(port2), receiveMessageOnPort(port2), receiveMessageOnPort(port2)]).toStrictEqual([
+    { message: 0 },
+    { message: 1 },
+    { message: 2 },
+  ]);
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+
+  port1.close();
+  port2.close();
+});
+
+// A popped message is gone from the queue, so reporting a falsy one as "queue
+// empty" loses it. The envelope is what distinguishes the two cases.
+test.each([
+  ["0", 0],
+  ["-0", -0],
+  ["an empty string", ""],
+  ["false", false],
+  ["null", null],
+  ["undefined", undefined],
+  ["NaN", NaN],
+  ["0n", 0n],
+])("receiveMessageOnPort returns an envelope for %s", (_label, value) => {
+  const { port1, port2 } = new MessageChannel();
+  port1.postMessage(value);
+
+  const received = receiveMessageOnPort(port2);
+  expect(received).toStrictEqual({ message: value });
+  expect(Object.hasOwn(received!, "message")).toBe(true);
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+
+  port1.close();
+  port2.close();
+});
+
 test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url));
   const message = await new Promise(resolve => {

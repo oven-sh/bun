@@ -41,6 +41,7 @@
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "MessageEvent.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
@@ -761,7 +762,17 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
+        auto message = messagePort->wrapped().tryTakeMessage(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!message)
+            return JSC::JSValue::encode(jsUndefined());
+
+        // The payload is wrapped in `{ message }` so that a falsy (or
+        // undefined) message is distinguishable from an empty queue.
+        JSObject* envelope = constructEmptyObject(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        envelope->putDirect(vm, vm.propertyNames->message, *message);
+        return JSC::JSValue::encode(envelope);
     } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());

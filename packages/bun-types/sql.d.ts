@@ -428,11 +428,12 @@ declare module "bun" {
       cancelled: boolean;
 
       /**
-       * Cancels the query and rejects its promise. A query the server is already
-       * running is stopped with a `CancelRequest` sent on a second connection,
-       * and rejects with whatever the server reports (PostgreSQL: SQLSTATE
-       * 57014). A query that never reached the server rejects with
-       * `ERR_POSTGRES_QUERY_CANCELLED`.
+       * Cancels the query and rejects its promise with the adapter's
+       * query-cancelled error (for example `ERR_POSTGRES_QUERY_CANCELLED`).
+       *
+       * For PostgreSQL, a query the backend has already started is stopped with a
+       * `CancelRequest` sent on a second connection, and rejects with whatever the
+       * server reports instead (SQLSTATE 57014).
        */
       cancel(): Query<T>;
 

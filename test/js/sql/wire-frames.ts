@@ -150,6 +150,40 @@ export function pgCommandComplete(tag: string): Buffer {
   return pgRaw("C", Buffer.concat([Buffer.from(tag), Buffer.from([0])]));
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
+export function pgParameterDescription(typeOids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * typeOids.length);
+  body.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) body.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("t", body);
+}
+
+/**
+ * Drain complete frontend messages from `buffered`, calling onMessage(type, body)
+ * for each; returns the leftover bytes. Every frontend message after the startup
+ * packet is framed exactly like a backend one: Byte1(type) Int32(len including
+ * itself) body.
+ */
+export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: string, body: Buffer) => void): Buffer {
+  while (buffered.length >= 5) {
+    const len = buffered.readInt32BE(1);
+    if (len < 4 || buffered.length < 1 + len) break;
+    onMessage(String.fromCharCode(buffered[0]), buffered.subarray(5, 1 + len));
+    buffered = buffered.subarray(1 + len);
+  }
+  return buffered;
+}
+
 export type PgRowDescriptionColumn = {
   name: string;
   tableOid?: number;

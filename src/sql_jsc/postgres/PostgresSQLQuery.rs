@@ -239,7 +239,36 @@ impl PostgresSQLQuery {
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
         };
+        self.run_reject_callback(global_object, this_value, target_value, err);
+    }
 
+    /// Reject the promise of a request whose Bind/Execute is already on the wire.
+    ///
+    /// Unlike [`on_js_error`](Self::on_js_error) this leaves `status`, `target`
+    /// and the strong `this_value` alone: the backend is going to answer this
+    /// request no matter what, and the connection has to keep the FIFO entry to
+    /// consume those answers in order. `Status::Fail` would make `advance()`
+    /// discard the entry and the next BindComplete would land on the wrong
+    /// request. The request then finishes down the normal path, where
+    /// `Query.resolve()` on an already rejected promise is a no-op.
+    pub fn reject_in_place(&self, err: JSValue, global_object: &JSGlobalObject) {
+        let _deref = self.ref_guard();
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = self.get_target(global_object, false) else {
+            return;
+        };
+        self.run_reject_callback(global_object, this_value, target_value, err);
+    }
+
+    fn run_reject_callback(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        target_value: JSValue,
+        err: JSValue,
+    ) {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm
@@ -870,39 +899,49 @@ impl PostgresSQLQuery {
             return Ok(JSValue::UNDEFINED);
         };
 
-        match this.status.get() {
-            // Queued behind another request: none of this query's Bind/Execute
-            // has been written, so a CancelRequest would stop whatever the
-            // backend is actually running. Fail it here instead. The entry stays
-            // in the connection's FIFO until advance() discards it, exactly like
-            // a request whose statement failed to prepare.
-            Status::Pending => {
-                let err = postgres_error_to_js(
-                    global_object,
-                    Some(b"Query cancelled"),
-                    AnyPostgresError::QueryCancelled,
-                );
-                this.on_js_error(err, global_object);
-                Ok(JSValue::UNDEFINED)
-            }
-            Status::Binding | Status::Running | Status::PartialResponse => {
-                // Copy the key out before allocating into the JS heap, so no
-                // `JsCell` borrow is live across a call that can re-enter.
-                let (process_id, packet) = {
-                    let key = connection.backend_key_data.get();
-                    (key.process_id, key.cancel_request())
-                };
-                // The server never sent BackendKeyData, so it cannot be asked to
-                // cancel anything. The query keeps running.
-                if process_id == 0 {
-                    return Ok(JSValue::UNDEFINED);
-                }
-                Ok(crate::jsc::JSUint8Array::from_bytes_copy(
-                    global_object,
-                    &packet,
-                ))
-            }
-            Status::Success | Status::Fail => Ok(JSValue::UNDEFINED),
+        let status = this.status.get();
+        if matches!(status, Status::Success | Status::Fail) {
+            return Ok(JSValue::UNDEFINED);
         }
+
+        // A CancelRequest names the backend *process*, not a statement, so it
+        // stops whatever that backend is running: the request at the head of the
+        // connection's FIFO. Sending one for any other request would kill an
+        // unrelated query, so everything else is settled locally.
+        if status == Status::Pending || !connection.is_current_request(core::ptr::from_ref(this)) {
+            let err = postgres_error_to_js(
+                global_object,
+                Some(b"Query cancelled"),
+                AnyPostgresError::QueryCancelled,
+            );
+            if status == Status::Pending {
+                // Nothing of this request is on the wire. Failing it keeps the
+                // backend from ever running it: advance() discards a Fail entry
+                // instead of writing its Bind/Execute.
+                this.on_js_error(err, global_object);
+            } else {
+                // Pipelined onto the wire behind the head request, so the backend
+                // will run it regardless. Reject the promise but leave the entry
+                // in the FIFO to consume the answers that are already coming.
+                this.reject_in_place(err, global_object);
+            }
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Copy the key out before allocating into the JS heap, so no `JsCell`
+        // borrow is live across a call that can re-enter.
+        let (process_id, packet) = {
+            let key = connection.backend_key_data.get();
+            (key.process_id, key.cancel_request())
+        };
+        // The server never sent BackendKeyData, so it cannot be asked to cancel
+        // anything. The query keeps running.
+        if process_id == 0 {
+            return Ok(JSValue::UNDEFINED);
+        }
+        Ok(crate::jsc::JSUint8Array::from_bytes_copy(
+            global_object,
+            &packet,
+        ))
     }
 }

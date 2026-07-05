@@ -1309,17 +1309,23 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Same goal as keep-text-section-prefix, without needing a PGO profile:
-    // scripts/orderfile/linker.order lists the functions bun actually executes
-    // while starting up, and lld sorts their input sections to the front of
-    // `.text`. Starting up only touches ~8.5 MB of pages, but they are scattered
-    // over a ~50 MB `.text` and the kernel faults in 64 KB around each one, so
-    // the binary ends up with ~27 MB resident for `bun -e 'console.log(1)'`.
-    // Packing them together cuts that by a third (33.1 MB -> 20.7 MB RSS on
-    // linux-x64) for a byte-identical binary. Symbols lld cannot find are
-    // skipped, so a stale file only costs some of the win — regenerate it with
-    // `bun run orderfile`.
-    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/scripts/orderfile/linker.order`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => c.linux && c.release,
+    // <buildDir>/linker.order lists the functions bun actually executes while
+    // starting up, and lld sorts their input sections to the front of `.text`.
+    // Starting up only touches ~8.5 MB of pages, but they are scattered over a
+    // ~50 MB `.text` and the kernel faults in 64 KB around each one, so the
+    // binary ends up with ~27 MB resident for `bun -e 'console.log(1)'`.
+    // Packing them together cuts that by a third for a same-size binary.
+    //
+    // The file is a build artifact, never committed: configure seeds an empty one
+    // (a no-op for lld) so this flag is unconditional and both link passes share
+    // one build.ninja — a release build regenerates it from its own pass-1 binary
+    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
+    // are skipped, so a stale file only costs part of the win.
+    //
+    // A local `bun run build:release` therefore links unordered until you run
+    // `bun run orderfile` and build again.
+    flag: c => [`-Wl,--symbol-ordering-file=${orderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
+    when: c => usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
@@ -1410,6 +1416,21 @@ export const linkerFlags: Flag[] = [
 ];
 
 /**
+ * Whether this target links with an lld symbol ordering file. ELF only, and
+ * only where the startup win is worth a relink: release linux builds.
+ * Not under a sanitizer — the tracer mprotects `.text` out from under it, and
+ * nobody measures startup RSS on an ASAN build anyway.
+ */
+export function usesOrderFile(cfg: Pick<Config, "linux" | "release" | "asan" | "valgrind">): boolean {
+  return cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind;
+}
+
+/** The order file lives in the build directory — it is generated, never committed. */
+export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "linker.order");
+}
+
+/**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
@@ -1418,9 +1439,10 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script, plus the release symbol ordering file
+  // linux: ELF dynamic-list + version script, plus the release symbol ordering
+  // file — listing it here is what makes regenerating it relink, and only relink.
   const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (cfg.release) linux.push(join(cfg.cwd, "scripts/orderfile/linker.order"));
+  if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
   return linux;
 }
 

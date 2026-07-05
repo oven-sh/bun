@@ -22,9 +22,6 @@
 # Patch files are line-ending-sensitive — `git apply` rejects CRLF as corrupt.
 *.patch text eol=lf
 
-# The lld symbol-ordering file is a linker input; keep it LF everywhere.
-scripts/orderfile/linker.order text eol=lf linguist-generated
-
 *.lockb binary diff=lockb
 
 .vscode/launch.json linguist-generated

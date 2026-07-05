@@ -2708,27 +2708,28 @@ var PromisesInterface = class Interface extends _Interface {
     super(input, output, completer, terminal);
   }
   question(query, options = kEmptyObject) {
-    var signal = options?.signal;
-    if (signal) {
-      validateAbortSignal(signal, "options.signal");
-      if (signal.aborted) {
-        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
-      }
-    }
     const { promise, resolve, reject } = $newPromiseCapability(Promise);
-    var cb = resolve;
-    if (options?.signal) {
-      var onAbort = () => {
-        this[kQuestionCancel]();
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
-    }
+    // node runs this whole body inside a `new Promise(...)` executor, so every
+    // synchronous throw in here has to surface as a rejection instead.
     try {
+      var cb = resolve;
+      var signal = options?.signal;
+      if (signal) {
+        validateAbortSignal(signal, "options.signal");
+        if (signal.aborted) {
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+          return promise;
+        }
+        var onAbort = () => {
+          this[kQuestionCancel]();
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
       this[kQuestion](query, cb);
     } catch (err) {
       reject(err);

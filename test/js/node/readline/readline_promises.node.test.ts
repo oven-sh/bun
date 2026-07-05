@@ -20,6 +20,17 @@ class FakeInput extends EventEmitter {
   }
 }
 
+// Awaits a promise that must reject, and hands back the rejection reason.
+async function rejectionOf(promise: Promise<unknown>): Promise<any> {
+  let resolved = false;
+  const err = await promise.then(
+    () => void (resolved = true),
+    (e: any) => e,
+  );
+  assert.strictEqual(resolved, false);
+  return err;
+}
+
 // ----------------------------------------------------------------------------
 // Tests
 // ----------------------------------------------------------------------------
@@ -108,15 +119,7 @@ describe("readline/promises.createInterface()", () => {
       const promise = rl.question("how are you?");
       assert.strictEqual(promise instanceof Promise, true);
 
-      let err: any;
-      let resolved = false;
-      try {
-        await promise;
-        resolved = true;
-      } catch (e) {
-        err = e;
-      }
-      assert.strictEqual(resolved, false);
+      const err = await rejectionOf(promise);
       assert.strictEqual(err.name, useAfterClose.name);
       assert.strictEqual(err.code, useAfterClose.code);
       assert.strictEqual(err.message, useAfterClose.message);
@@ -129,5 +132,20 @@ describe("readline/promises.createInterface()", () => {
       assert.throws(() => rl.pause(), useAfterClose);
       assert.throws(() => rl.resume(), useAfterClose);
     });
+  });
+
+  it("question() rejects rather than throwing when options.signal is not an AbortSignal", async () => {
+    const fi = new FakeInput();
+    const rl = readlinePromises.createInterface({ input: fi, output: fi });
+    try {
+      const promise = rl.question("how are you?", { signal: {} } as any);
+      assert.strictEqual(promise instanceof Promise, true);
+
+      const err = await rejectionOf(promise);
+      assert.strictEqual(err.code, "ERR_INVALID_ARG_TYPE");
+      assert.strictEqual(fi.output, "");
+    } finally {
+      rl.close();
+    }
   });
 });

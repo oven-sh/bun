@@ -647,6 +647,49 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
+  it("process.memoryUsage() keeps heapUsed <= heapTotal after the heap shrinks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Big backing stores: freeing these shrinks capacity through sweepPreciseAllocations().
+        let live = [];
+        for (let i = 0; i < 60; i++) live.push(new Array(60_000).fill(i));
+        Bun.gc(true);
+        const grown = process.memoryUsage();
+
+        // Read it here, not before: an array only written to is dead by the measurement above.
+        const liveCount = live.length;
+        live = null;
+        Bun.gc(true);
+        const shrunk = process.memoryUsage();
+
+        console.log(JSON.stringify({ liveCount, grown, shrunk }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`exited with ${exitCode}\n${stderr}`);
+    const result = JSON.parse(stdout);
+
+    // Dropping the live set hands blocks back, so capacity falls. heapUsed is a snapshot of
+    // the live set, so it has to fall with it rather than outlive the capacity it is paired
+    // with: a stale snapshot reported against a shrunk capacity is how heapUsed > heapTotal.
+    expect(result.liveCount).toBe(60);
+    expect(result.grown.heapTotal).toBeGreaterThan(8 * 1024 * 1024);
+    expect(result.shrunk.heapTotal).toBeLessThan(result.grown.heapTotal);
+    expect(result.shrunk.heapUsed).toBeLessThan(result.grown.heapUsed);
+
+    expect(result.grown.heapUsed).toBeLessThanOrEqual(result.grown.heapTotal);
+    expect(result.shrunk.heapUsed).toBeLessThanOrEqual(result.shrunk.heapTotal);
+    expect(exitCode).toBe(0);
+  });
+
   describe("process.cpuUsage", () => {
     it("works", () => {
       expect(process.cpuUsage()).toEqual({

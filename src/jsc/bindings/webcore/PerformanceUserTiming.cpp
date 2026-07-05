@@ -129,14 +129,12 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
         return mark.releaseException();
 
     addPerformanceEntry(m_marksMap, markName, mark.returnValue().get());
-    m_markCounter += 1;
     return mark.releaseReturnValue();
 }
 
 void PerformanceUserTiming::clearMarks(const String& markName)
 {
     clearPerformanceEntries(m_marksMap, markName);
-    m_markCounter = 0;
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
@@ -207,7 +205,6 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(const String
         return measure.releaseException();
 
     addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
-    m_measureCounter += 1;
     return measure.releaseReturnValue();
 }
 
@@ -262,7 +259,6 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
             return measure.releaseException();
 
         addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
-        m_measureCounter += 1;
         return measure.releaseReturnValue();
     } else {
         auto measure = PerformanceMeasure::create(measureName, startTime, endTime, nullptr);
@@ -270,7 +266,6 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
             return measure.releaseException();
 
         addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
-        m_measureCounter += 1;
         return measure.releaseReturnValue();
     }
 }
@@ -309,26 +304,26 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
 void PerformanceUserTiming::clearMeasures(const String& measureName)
 {
     clearPerformanceEntries(m_measuresMap, measureName);
-    m_measureCounter = 0;
 }
 
-static Vector<RefPtr<PerformanceEntry>> convertToEntrySequence(const PerformanceEntryMap& map, int64_t initialCapacity)
+static Vector<RefPtr<PerformanceEntry>> convertToEntrySequence(const PerformanceEntryMap& map)
 {
+    size_t totalEntries = 0;
+    for (auto& entryList : map.values())
+        totalEntries += entryList.size();
+
     Vector<RefPtr<PerformanceEntry>> entries;
-    size_t safeInitialCapacity = initialCapacity > 0 && initialCapacity <= std::numeric_limits<int32_t>::max() ? static_cast<size_t>(initialCapacity) : 0;
-    if (safeInitialCapacity)
-        entries.reserveInitialCapacity(safeInitialCapacity);
+    entries.reserveInitialCapacity(totalEntries);
 
     for (auto& entry : map.values())
         entries.appendVector(entry);
 
-    ASSERT(entries.size() <= safeInitialCapacity);
     return entries;
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMarks() const
 {
-    return convertToEntrySequence(m_marksMap, m_markCounter);
+    return convertToEntrySequence(m_marksMap);
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMarks(const String& name) const
@@ -338,7 +333,7 @@ Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMarks(const String& n
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMeasures() const
 {
-    return convertToEntrySequence(m_measuresMap, m_measureCounter);
+    return convertToEntrySequence(m_measuresMap);
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceUserTiming::getMeasures(const String& name) const

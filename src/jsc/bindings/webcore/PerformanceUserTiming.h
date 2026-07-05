@@ -74,9 +74,7 @@ private:
 
     Performance& m_performance;
     PerformanceEntryMap m_marksMap;
-    int64_t m_markCounter { 0 };
     PerformanceEntryMap m_measuresMap;
-    int64_t m_measureCounter { 0 };
 };
 
 }

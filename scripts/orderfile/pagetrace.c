@@ -77,28 +77,31 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *old)
 
 __attribute__((constructor(101))) static void pagetrace_init(void)
 {
-    const char *binary = getenv("BUN_PAGETRACE_BIN");
-    const char *out = getenv("BUN_PAGETRACE_OUT");
-    if (!binary || !out) return;
+    const char *binary_env = getenv("BUN_PAGETRACE_BIN");
+    const char *out_env = getenv("BUN_PAGETRACE_OUT");
+    if (!binary_env || !out_env) return;
+
+    // unsetenv below may invalidate what getenv just returned.
+    char binary[512], out[512];
+    snprintf(binary, sizeof binary, "%s", binary_env);
+    snprintf(out, sizeof out, "%s", out_env);
+
+    // A traced workload execs other programs — `bun install` runs lifecycle
+    // scripts, the cli workload shells out — and LD_PRELOAD is inherited. Take
+    // ourselves out of the environment so no child runs this constructor: one
+    // that maps the same binary (another bun) would arm itself and clobber the
+    // trace this process is still writing. ptyrun hands the preload down to the
+    // one child that should have it, so nothing here depends on inheritance.
+    unsetenv("LD_PRELOAD");
+    unsetenv("BUN_PAGETRACE_BIN");
+    unsetenv("BUN_PAGETRACE_OUT");
 
     long reported = sysconf(_SC_PAGESIZE);
     if (reported > 0) page_size = (uintptr_t)reported;
 
-    size_t bytes = (size_t)(HEADER_WORDS + MAX_HITS) * 8;
-    int fd = open(out, O_CREAT | O_TRUNC | O_RDWR, 0644);
-    if (fd < 0) return;
-    if (ftruncate(fd, (off_t)bytes) != 0) {
-        close(fd);
-        return;
-    }
-    record = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    close(fd);
-    if (record == MAP_FAILED) {
-        record = NULL;
-        return;
-    }
-    record[0] = page_size;
-
+    // Find the regions before creating the output file. A process that is not
+    // the binary under trace has nothing to record, and the file it would
+    // create-and-truncate is the one a live trace is recording into.
     FILE *maps = fopen("/proc/self/maps", "r");
     if (!maps) return;
     char line[1024];
@@ -118,6 +121,21 @@ __attribute__((constructor(101))) static void pagetrace_init(void)
     }
     fclose(maps);
     if (!region_count) return;
+
+    size_t bytes = (size_t)(HEADER_WORDS + MAX_HITS) * 8;
+    int fd = open(out, O_CREAT | O_TRUNC | O_RDWR, 0644);
+    if (fd < 0) return;
+    if (ftruncate(fd, (off_t)bytes) != 0) {
+        close(fd);
+        return;
+    }
+    record = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (record == MAP_FAILED) {
+        record = NULL;
+        return;
+    }
+    record[0] = page_size;
 
     static char altstack[256 * 1024];
     stack_t ss = { .ss_sp = altstack, .ss_size = sizeof altstack, .ss_flags = 0 };

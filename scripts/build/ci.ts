@@ -12,8 +12,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import * as utils from "../utils.mjs";
 import { generateOrderFile } from "../orderfile/generate.ts";
+import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";

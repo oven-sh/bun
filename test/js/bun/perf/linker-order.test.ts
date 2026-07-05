@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { generateOrderFile } from "../../../../scripts/orderfile/generate.ts";
-import { linkDepends, linkerFlags, orderFilePath, usesOrderFile } from "../../../../scripts/build/flags.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
+import { linkDepends, linkerFlags, orderFilePath, usesOrderFile } from "../../../../scripts/build/flags.ts";
+import { generateOrderFile } from "../../../../scripts/orderfile/generate.ts";
 
 /**
  * `<buildDir>/linker.order` is the lld `--symbol-ordering-file` for the linux

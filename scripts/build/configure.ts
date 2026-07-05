@@ -11,7 +11,6 @@ import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
 import {
   type Config,
   type OS,
@@ -22,6 +21,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";

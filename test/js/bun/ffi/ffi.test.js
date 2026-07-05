@@ -1142,7 +1142,10 @@ describe("integer boxing at the int32 boundary", () => {
         compile.stderr.text(),
         compile.exited,
       ]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      // Only the exit code decides: a toolchain is free to warn on stderr.
+      if (exitCode !== 0) {
+        throw new Error(`${compiler} exited with ${exitCode} building echo.c\n${stdout}${stderr}`);
+      }
 
       lib = _dlopen(library, {
         echo_u32: { args: ["u32"], returns: "u32" },

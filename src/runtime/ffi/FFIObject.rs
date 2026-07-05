@@ -537,8 +537,8 @@ fn get_ptr_slice(
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
             }
-        } else if !byte_off.is_empty_or_undefined_or_null() {
-            // do nothing
+        } else if byte_off.is_empty_or_undefined_or_null() {
+            // an omitted byteOffset leaves `addr` alone
         } else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("Expected number for byteOffset"))

@@ -5354,8 +5354,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let out = `HTTP/1.1 ${statusCode} ${statusMessage}\r\n`;
     let hasContentLength = false;
     let hasTransferEncoding = false;
-    let hasDate = false;
-    let hasConnection = false;
     const headers = head?.headers;
     if (headers) {
       for (let i = 0, end = headers.length - 1; i < end; i += 2) {
@@ -5376,12 +5374,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
             hasTransferEncoding = true;
             if (String(value).toLowerCase().includes("chunked")) chunked = true;
             break;
-          case "date":
-            hasDate = true;
-            break;
-          case "connection":
-            hasConnection = true;
-            break;
         }
         out += `${name}: ${value}\r\n`;
       }
@@ -5394,13 +5386,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         out += `Content-Length: ${contentLength}\r\n`;
       }
     }
-    if (!hasDate) {
+    // renderNativeHeaders() is the source of truth for the Date and Connection
+    // response headers (it honors res.sendDate and res.removeHeader("connection")),
+    // so only synthesize them when no rendered header array was provided.
+    if (!headers) {
       out += `Date: ${new Date().toUTCString()}\r\n`;
-    }
-    // A close-delimited response with no Connection pair means the user removed
-    // it (Node's _removedConnection): write none rather than inventing
-    // keep-alive on a connection that ends with the body.
-    if (!hasConnection && !closeDelimited) {
       if (shouldKeepAlive) {
         out += `Connection: keep-alive\r\nKeep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
       } else {
@@ -5562,6 +5552,9 @@ function connectionListenerHTTP1(server, socket, options) {
     };
 
     const res = new ServerResponseClass(req);
+    // Mirror the native node:http path (_http_server.ts) so renderNativeHeaders()
+    // emits the Keep-Alive: timeout header on persistent connections.
+    res._keepAliveTimeout = keepAliveTimeout;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);

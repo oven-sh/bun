@@ -7,9 +7,9 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -1422,6 +1422,65 @@ it("Bun.file().stream() read text from large file", async () => {
   } finally {
     unlinkSync(tmpfile);
   }
+});
+
+// On POSIX a file is read synchronously inside the stream's pull, so a failing
+// read(2) arrives with no pending read to reject. It used to be dropped, and
+// the pull promise then never settled. Windows reads files through libuv, so
+// the error always had a pending read waiting for it.
+describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
+  // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
+  const eioPath = "/proc/self/mem";
+  const itEIO = isLinux ? it : it.skip;
+
+  async function expectReadError(promise, code) {
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe(code);
+    return err;
+  }
+
+  itEIO("for await rejects with the read error", async () => {
+    const chunks = [];
+    await expectReadError(
+      (async () => {
+        for await (const chunk of Bun.file(eioPath).stream()) chunks.push(chunk);
+      })(),
+      "EIO",
+    );
+    expect(chunks).toHaveLength(0);
+  });
+
+  itEIO("getReader().read() rejects with the read error", async () => {
+    await expectReadError(Bun.file(eioPath).stream().getReader().read(), "EIO");
+  });
+
+  itEIO("pipeTo() rejects with the read error", async () => {
+    await expectReadError(
+      Bun.file(eioPath)
+        .stream()
+        .pipeTo(new WritableStream({ write() {} })),
+      "EIO",
+    );
+  });
+
+  itEIO("Bun.file().text() reports the same read error", async () => {
+    const err = await expectReadError(Bun.file(eioPath).text(), "EIO");
+    expect(err.syscall).toBe("read");
+  });
+
+  it("a stream over a write-only fd rejects with EBADF", async () => {
+    using dir = tempDir("file-stream-read-error", { "x.bin": "hello" });
+    const fd = openSync(join(String(dir), "x.bin"), "w");
+    try {
+      await expectReadError(Bun.file(fd).stream().getReader().read(), "EBADF");
+    } finally {
+      closeSync(fd);
+    }
+  });
 });
 
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {

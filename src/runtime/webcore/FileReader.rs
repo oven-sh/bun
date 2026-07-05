@@ -59,6 +59,10 @@ pub struct FileReader {
     pub event_loop: Cell<EventLoopHandle>,
     pub lazy: JsCell<Lazy>,
     pub buffered: JsCell<Vec<u8>>,
+    /// A reader error that arrived with no armed `pending` read to settle it —
+    /// every error from the synchronous `read()` inside `on_pull` lands here.
+    /// The next `on_pull` takes it and errors the stream instead of reading on.
+    pub read_error: JsCell<Option<sys::Error>>,
     pub read_inside_on_pull: JsCell<ReadDuringJSOnPullResult>,
     /// Read-only after construction.
     pub highwater_mark: usize,
@@ -83,6 +87,7 @@ impl Default for FileReader {
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
+            read_error: JsCell::new(None),
             read_inside_on_pull: JsCell::new(ReadDuringJSOnPullResult::None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
@@ -865,6 +870,10 @@ impl FileReader {
             }
         }
 
+        if let Some(err) = self.read_error.replace(None) {
+            return streams::Result::Err(streams::StreamError::Error(err));
+        }
+
         if self.reader().is_done() {
             return streams::Result::Done;
         }
@@ -910,6 +919,10 @@ impl FileReader {
                             value: array,
                             len: amount_read as u64, // @truncate
                         });
+                    }
+
+                    if let Some(err) = self.read_error.replace(None) {
+                        return streams::Result::Err(streams::StreamError::Error(err));
                     }
 
                     if self.reader().is_done() {
@@ -1047,16 +1060,24 @@ impl FileReader {
             self.buffered.set(Vec::new());
         }
 
-        self.pending.with_mut(|p| {
-            p.result = streams::Result::Err(streams::StreamError::Error(err));
-        });
         // Pin across `p.run()`: it runs user JS, and anything there that
         // reaches on_reader_done would drop the across-read ref and let a GC
         // free this box before the `waiting_for_on_reader_done` read below.
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };
-        self.pending.with_mut(|p| p.run());
+
+        if self.pending.get().state == streams::PendingState::Pending {
+            self.pending.with_mut(|p| {
+                p.result = streams::Result::Err(streams::StreamError::Error(err));
+            });
+            self.pending.with_mut(|p| p.run());
+        } else {
+            // Nothing to settle: the failing read ran synchronously inside
+            // `on_pull`, or landed between pulls. `p.run()` would no-op and the
+            // pull promise would never settle, so hand it to the next `on_pull`.
+            self.read_error.set(Some(err));
+        }
 
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);

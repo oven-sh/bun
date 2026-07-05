@@ -277,6 +277,7 @@ impl PostgresSQLQuery {
         js::binding_set_cached(this_value, global_object, JSValue::ZERO);
         js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
+        js::connection_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
     pub fn on_result(
@@ -471,7 +472,8 @@ impl PostgresSQLQuery {
         // duration of this call, satisfying the `ParentRef` outlives-holder
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
+        let connection_value = arguments[0];
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
             return Err(
                 global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
             );
@@ -566,6 +568,7 @@ impl PostgresSQLQuery {
 
             this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
+            js::connection_set_cached(this_value, global_object, connection_value);
             if this.status.get() == Status::Running {
                 connection.flush_data_and_reset_timeout();
             } else {
@@ -837,6 +840,7 @@ impl PostgresSQLQuery {
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);
+        js::connection_set_cached(this_value, global_object, connection_value);
         if did_write {
             connection.flush_data_and_reset_timeout();
         } else {
@@ -848,15 +852,57 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Returns the CancelRequest packet the caller must deliver on a second
+    /// connection, or `undefined` when there is nothing for the server to stop.
     pub fn do_cancel(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = callframe;
-        let _ = global_object;
-        let _ = this;
+        let this_value = callframe.this();
+        // No connection cached means `run()` never bound this query to one, so
+        // the pool still owes it a connection (or it already finished). Either
+        // way there is nothing on the wire to cancel.
+        let Some(connection_value) = js::connection_get_cached(this_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(connection_value) else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
-        Ok(JSValue::UNDEFINED)
+        match this.status.get() {
+            // Queued behind another request: none of this query's Bind/Execute
+            // has been written, so a CancelRequest would stop whatever the
+            // backend is actually running. Fail it here instead. The entry stays
+            // in the connection's FIFO until advance() discards it, exactly like
+            // a request whose statement failed to prepare.
+            Status::Pending => {
+                let err = postgres_error_to_js(
+                    global_object,
+                    Some(b"Query cancelled"),
+                    AnyPostgresError::QueryCancelled,
+                );
+                this.on_js_error(err, global_object);
+                Ok(JSValue::UNDEFINED)
+            }
+            Status::Binding | Status::Running | Status::PartialResponse => {
+                // Copy the key out before allocating into the JS heap, so no
+                // `JsCell` borrow is live across a call that can re-enter.
+                let (process_id, packet) = {
+                    let key = connection.backend_key_data.get();
+                    (key.process_id, key.cancel_request())
+                };
+                // The server never sent BackendKeyData, so it cannot be asked to
+                // cancel anything. The query keeps running.
+                if process_id == 0 {
+                    return Ok(JSValue::UNDEFINED);
+                }
+                Ok(crate::jsc::JSUint8Array::from_bytes_copy(
+                    global_object,
+                    &packet,
+                ))
+            }
+            Status::Success | Status::Fail => Ok(JSValue::UNDEFINED),
+        }
     }
 }

@@ -92,7 +92,13 @@ for (const type of types) {
           length: 1,
         },
       },
-      values: ["pendingValue", "target", "columns", "binding"],
+      // Postgres cancels a running query by sending a CancelRequest on a
+      // second connection, so its query handle has to remember which
+      // connection it was dispatched to.
+      values:
+        type === "PostgresSQL"
+          ? ["pendingValue", "target", "columns", "binding", "connection"]
+          : ["pendingValue", "target", "columns", "binding"],
       estimatedSize: true,
     }),
   );

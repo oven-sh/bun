@@ -440,13 +440,20 @@ const result = await sql.unsafe("SELECT " + dangerous + " FROM users WHERE id = 
 ### Execute and Cancelling Queries
 
 Queries are lazy: they only start executing when awaited or run with `.execute()`.
-To cancel a running query, call `cancel()` on the query object.
+To cancel a running query, call `cancel()` on the query object. A cancelled query
+rejects instead of resolving.
 
 ```ts
-const query = sql`SELECT * FROM users`.execute();
+const query = sql`SELECT pg_sleep(30)`.execute();
 setTimeout(() => query.cancel(), 100);
+
+// PostgresError: canceling statement due to user request (SQLSTATE 57014)
 await query;
 ```
+
+PostgreSQL can only stop a running query from a separate connection, so `cancel()`
+opens one and sends a `CancelRequest` on it. A query that has not reached the
+server yet never runs at all, and rejects with `ERR_POSTGRES_QUERY_CANCELLED`.
 
 ---
 

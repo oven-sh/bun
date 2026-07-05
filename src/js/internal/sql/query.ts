@@ -15,7 +15,12 @@ const PublicPromise = Promise;
 
 export interface BaseQueryHandle<Connection> {
   done?(): void;
-  cancel?(): void;
+  /**
+   * Abort a query the handle already dispatched. Returns the request bytes the
+   * adapter has to deliver out-of-band (Postgres sends a CancelRequest on a
+   * second connection), or undefined when nothing has to reach the server.
+   */
+  cancel?(): Uint8Array | undefined;
   setMode(mode: SQLQueryResultMode): void;
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
@@ -218,11 +223,18 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this[_queryStatus] |= SQLQueryStatus.cancelled;
 
-    if (status & SQLQueryStatus.executed) {
-      const handle = this.#getQueryHandle();
+    if (!(status & SQLQueryStatus.executed)) {
+      // Never dispatched, so no connection will ever settle this promise.
+      this.reject(this[_adapter].queryCancelledError());
+      return this;
+    }
 
-      if (handle) {
-        handle.cancel?.();
+    const handle = this.#getQueryHandle();
+
+    if (handle) {
+      const cancelRequest = handle.cancel?.();
+      if (cancelRequest) {
+        this[_adapter].sendCancelRequest?.(cancelRequest);
       }
     }
 

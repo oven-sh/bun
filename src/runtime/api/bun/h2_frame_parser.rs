@@ -1510,6 +1510,10 @@ pub struct Stream {
     stream_dependency: u32,
     exclusive: bool,
     weight: u16,
+    /// `:method` of the request the local endpoint sent on this stream. Queried by the engine via
+    /// `Sink::local_request_method` to apply RFC 9113 §8.1.1 response-body semantics (HEAD /
+    /// CONNECT) to streams whose outbound HEADERS it never saw (they flow through this encoder).
+    local_method: crate::api::h2::connection::LocalRequestMethod,
     // current window size for the stream
     window_size: u64,
     // used window size for the stream
@@ -2074,6 +2078,7 @@ impl Stream {
             stream_dependency: 0,
             exclusive: false,
             weight: 36,
+            local_method: crate::api::h2::connection::LocalRequestMethod::Other,
             window_size: initial_window_size as u64,
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
@@ -5695,6 +5700,18 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
+    fn local_request_method(
+        &self,
+        stream_id: u32,
+    ) -> crate::api::h2::connection::LocalRequestMethod {
+        match self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the
+            // map entry exists
+            Some(stream) => unsafe { (*stream).local_method },
+            None => crate::api::h2::connection::LocalRequestMethod::Other,
+        }
+    }
+
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
@@ -8174,6 +8191,9 @@ impl H2FrameParser {
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
+        // Recorded from the `:method` actually encoded; the inbound engine queries it via
+        // Sink::local_request_method to apply the HEAD/CONNECT response-body exemptions.
+        let mut local_method = crate::api::h2::connection::LocalRequestMethod::Other;
         let stream_id: u32 =
             if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
                 stream_id_arg.to_u32()
@@ -8296,6 +8316,10 @@ impl H2FrameParser {
                                 ),
                             )
                             .throw());
+                    }
+                    if validated_name == b":method" {
+                        local_method =
+                            crate::api::h2::connection::LocalRequestMethod::from_method(value);
                     }
                     bun_output::scoped_log!(
                         H2FrameParser,
@@ -8484,6 +8508,10 @@ impl H2FrameParser {
                                 )
                                 .throw());
                         }
+                        if validated_name == b":method" {
+                            local_method =
+                                crate::api::h2::connection::LocalRequestMethod::from_method(value);
+                        }
                         bun_output::scoped_log!(
                             H2FrameParser,
                             "encode header {} {}",
@@ -8574,6 +8602,10 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
+                    if validated_name == b":method" {
+                        local_method =
+                            crate::api::h2::connection::LocalRequestMethod::from_method(value);
+                    }
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",
@@ -8620,6 +8652,7 @@ impl H2FrameParser {
         };
         // The `options` getters below can run user JS while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
+        stream.local_method = local_method;
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }

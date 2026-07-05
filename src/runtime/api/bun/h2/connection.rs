@@ -25,6 +25,10 @@ pub struct Stream {
     pub content_length: Option<u64>,
     /// DATA payload bytes (padding excluded) received so far.
     pub recv_body_bytes: u64,
+    /// `:method` of the request this stream's response answers, recorded from a PUSH_PROMISE
+    /// header block the engine decoded itself (nghttp2's `nghttp2_http_record_request_method`).
+    /// `Other` for a request the embedder encoded locally; the `Sink` shim reports those.
+    pub local_method: LocalRequestMethod,
 }
 
 impl Stream {
@@ -36,8 +40,49 @@ impl Stream {
             recv_final_headers: false,
             content_length: None,
             recv_body_bytes: 0,
+            local_method: LocalRequestMethod::Other,
         }
     }
+}
+
+/// `:method` of the request a response answers. Only HEAD and CONNECT change whether that
+/// response may carry a `content-length`-governed body (RFC 9113 §8.1.1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LocalRequestMethod {
+    #[default]
+    Other,
+    /// HEAD: the response never carries a body, whatever `content-length` it declares.
+    Head,
+    /// CONNECT: DATA on the response is a tunnel, not a `content-length`-governed body. nghttp2
+    /// exempts every CONNECT response, not only the 2xx that opens the tunnel; node matches.
+    Connect,
+}
+
+impl LocalRequestMethod {
+    /// Classify an outbound `:method` the way nghttp2_http_record_request_method does.
+    /// Methods are case-sensitive.
+    pub fn from_method(value: &[u8]) -> Self {
+        match value {
+            b"HEAD" => LocalRequestMethod::Head,
+            b"CONNECT" => LocalRequestMethod::Connect,
+            _ => LocalRequestMethod::Other,
+        }
+    }
+}
+
+/// RFC 9113 §8.3.2: `:status` is exactly three ASCII digits, >= 100, and never 101 (Switching
+/// Protocols has no HTTP/2 meaning). Returns `None` for an invalid value.
+fn parse_status(value: &[u8]) -> Option<u16> {
+    if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let code = (u16::from(value[0] - b'0')) * 100
+        + (u16::from(value[1] - b'0')) * 10
+        + u16::from(value[2] - b'0');
+    if code < 100 || code == 101 {
+        return None;
+    }
+    Some(code)
 }
 
 /// RFC 9110 §8.6: `content-length` is 1*DIGIT. Anything else, or a value that does not fit
@@ -142,6 +187,13 @@ pub trait Sink {
     /// inbound frames for it are not treated as frames on an idle stream.
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
+    }
+    /// Transition shim (same reason as `is_local_stream`): the `:method` the embedder sent on
+    /// `stream_id`. Consulted only for a client's final response header block, because HEAD and
+    /// CONNECT change the content-length semantics of the response (RFC 9113 §8.1.1) and the
+    /// engine never saw the outbound request HEADERS.
+    fn local_request_method(&self, _stream_id: u32) -> LocalRequestMethod {
+        LocalRequestMethod::Other
     }
 }
 
@@ -875,10 +927,23 @@ impl Connection {
                 .streams
                 .get(&target)
                 .is_some_and(|s| s.recv_final_headers);
+        // §8.3: the pseudo-header fields a block of this category may carry, as a bitmask over the
+        // `bit` values assigned below. A request block is a server's inbound block or a client's
+        // PUSH_PROMISE block (the promised request); everything else inbound is a response. §8.1:
+        // a trailer section carries none.
+        let allowed_pseudo: u8 = if is_trailer {
+            0
+        } else if self.is_server || push_parent != 0 {
+            1 | 2 | 4 | 8 | 32 // :method :scheme :authority :path :protocol
+        } else {
+            16 // :status
+        };
         let mut rejected = false;
         let mut malformed = is_trailer && !self.header_end_stream;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
+        let mut status: Option<u16> = None;
+        let mut block_method = LocalRequestMethod::Other;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
         let mut connect = false;
@@ -921,26 +986,28 @@ impl Connection {
                                 b"protocol" => 32,
                                 _ => 64,
                             };
-                            // 8.3.1: requests never carry :status - a server seeing it inbound is
-                            // a malformed block. (The client direction also constrains pseudo
-                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
-                            // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            // §8.3: a pseudo-header following a regular field, an unknown or
+                            // repeated pseudo-header, or one outside the set its block's category
+                            // defines (`:status` in a request, a request pseudo-header in a
+                            // response, any pseudo-header in a trailer section) is malformed.
                             if seen_regular
                                 || bit == 64
                                 || (seen_pseudo & bit) != 0
-                                || wrong_direction
-                                || is_trailer
+                                || (bit & allowed_pseudo) == 0
                             {
                                 malformed = true;
-                            }
-                            if rest == b"status" && value_b.len() == 3 && value_b[0] == b'1' {
-                                informational = true;
+                            } else if bit == 16 {
+                                // §8.3.2: three digits, >= 100, never 101.
+                                status = parse_status(value_b);
+                                match status {
+                                    None => malformed = true,
+                                    Some(code) => informational = code / 100 == 1,
+                                }
+                            } else if bit == 1 {
+                                block_method = LocalRequestMethod::from_method(value_b);
+                                connect = value_b == b"CONNECT";
                             }
                             seen_pseudo |= bit;
-                            if rest == b"method" && value_b == b"CONNECT" {
-                                connect = true;
-                            }
                         } else {
                             seen_regular = true;
                             match name_b {
@@ -996,11 +1063,64 @@ impl Connection {
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
         }
-        if push_parent == 0 && self.is_server && !malformed && !rejected {
-            if let Some(s) = self.streams.get_mut(&target) {
-                if !connect && s.content_length.is_none() {
-                    s.content_length = content_length;
+        // RFC 9113 §8.1.1/§8.3 message-body rules, the equivalent of nghttp2's
+        // nghttp2_http_on_{request,response,trailer}_headers. `declared` is what this block says
+        // the message body's length is; a block that does not bind it (an interim response, a
+        // tunnel, a trailer section) only has to meet what the header section already declared.
+        if push_parent != 0 {
+            // A PUSH_PROMISE block is the promised stream's request: only its `:method` binds,
+            // deciding whether the pushed response may carry a body (the stream's own first
+            // inbound HEADERS is that response). nghttp2_http_record_request_method.
+            if !malformed
+                && !rejected
+                && let Some(s) = self.streams.get_mut(&target)
+            {
+                s.local_method = block_method;
+            }
+        } else if !malformed && !rejected {
+            let mut binds = true;
+            let declared: Option<u64> = if is_trailer {
+                binds = false;
+                None
+            } else if self.is_server {
+                // §8.5: a (non-extended) CONNECT request's DATA is a tunnel, not a body.
+                if connect { None } else { content_length }
+            } else if (seen_pseudo & 16) == 0 {
+                // §8.3.2: a response header section carries exactly one `:status` (its validity
+                // was checked as it was decoded).
+                malformed = true;
+                binds = false;
+                None
+            } else if informational {
+                // An interim response: the final header section follows on this stream, so this
+                // block cannot also end it, and its fields don't bind the message.
+                if self.header_end_stream {
+                    malformed = true;
                 }
+                binds = false;
+                None
+            } else {
+                // §8.1.1: a HEAD response and a 204/304 carry no body; a CONNECT response is a
+                // tunnel (nghttp2's expect_response_body()). The request's `:method` comes from
+                // the promised request's block for a pushed stream, and from the Sink shim (the
+                // embedder's legacy encoder sent it) for a locally-initiated one.
+                let method = match self.streams.get(&target).map(|s| s.local_method) {
+                    Some(m) if m != LocalRequestMethod::Other => m,
+                    _ => sink.local_request_method(target),
+                };
+                match status {
+                    Some(204) | Some(304) => Some(0),
+                    _ if method == LocalRequestMethod::Head => Some(0),
+                    _ if method == LocalRequestMethod::Connect => None,
+                    _ => content_length,
+                }
+            };
+            if !malformed && let Some(s) = self.streams.get_mut(&target) {
+                if binds && s.content_length.is_none() {
+                    s.content_length = declared;
+                }
+                // The declared length must be met by the DATA actually received once this block
+                // ends the stream; `enforce_content_length` covers an END_STREAM on DATA.
                 if self.header_end_stream
                     && s.content_length
                         .is_some_and(|declared| declared != s.recv_body_bytes)
@@ -1120,6 +1240,19 @@ impl Connection {
                         discard = true;
                     } else {
                         st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
+                        // §8.1.1: DATA beyond the declared content-length is a stream
+                        // PROTOCOL_ERROR, and the excess never reaches the application.
+                        if st
+                            .content_length
+                            .is_some_and(|declared| st.recv_body_bytes > declared)
+                        {
+                            self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
+                            if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
+                                st2.state = State::Closed;
+                            }
+                            sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
+                            discard = true;
+                        }
                     }
                 }
             }
@@ -1236,7 +1369,15 @@ impl Connection {
                         DataDecision::Rst(ErrorCode::FlowControlError)
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
-                        DataDecision::Deliver(0)
+                        // §8.1.1: DATA beyond the declared content-length is a stream
+                        // PROTOCOL_ERROR; the excess never reaches the application.
+                        if s.content_length
+                            .is_some_and(|declared| s.recv_body_bytes > declared)
+                        {
+                            DataDecision::Rst(ErrorCode::ProtocolError)
+                        } else {
+                            DataDecision::Deliver(0)
+                        }
                     }
                 }
             }
@@ -1284,13 +1425,11 @@ impl Connection {
         false
     }
 
-    /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts
+    /// RFC 9113 §8.1.1: once END_STREAM arrives, a message whose received DATA total contradicts
     /// its declared `content-length` is malformed. Resets the stream with PROTOCOL_ERROR instead
-    /// of signalling end-of-stream and returns true if it did so.
+    /// of signalling end-of-stream and returns true if it did so. Applies in both directions: a
+    /// truncated response is the only signal a client gets that it did not receive the whole body.
     fn enforce_content_length(&mut self, sink: &impl Sink, stream_id: u32) -> bool {
-        if !self.is_server {
-            return false;
-        }
         let mismatch = self.streams.get(&stream_id).is_some_and(|s| {
             s.content_length
                 .is_some_and(|declared| declared != s.recv_body_bytes)

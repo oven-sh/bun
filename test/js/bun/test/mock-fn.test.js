@@ -796,6 +796,173 @@ describe("mock()", () => {
   });
 });
 
+describe("new mock()", () => {
+  test("without an implementation, returns an instance of the mock", () => {
+    const fn = jest.fn();
+    const instance = new fn(1, 2);
+
+    expect(instance).toBeInstanceOf(fn);
+    expect(fn.mock.instances).toEqual([instance]);
+    expect(fn.mock.contexts).toEqual([instance]);
+    expect(fn.mock.calls).toEqual([[1, 2]]);
+    expect(fn.mock.results).toEqual([{ type: "return", value: undefined }]);
+  });
+
+  test("function implementations receive the new instance as `this`", () => {
+    const fn = jest.fn(function (n) {
+      this.n = n;
+    });
+    const instance = new fn(7);
+
+    expect(instance.n).toBe(7);
+    expect(instance).toBeInstanceOf(fn);
+    // the implementation's writes must land on the instance, not on the mock
+    expect(fn.n).toBeUndefined();
+    expect(fn.mock.instances[0]).toBe(instance);
+    expect(fn.mock.contexts[0]).toBe(instance);
+  });
+
+  test("records one instance per construction", () => {
+    const fn = jest.fn(function (n) {
+      this.n = n;
+    });
+    const first = new fn(1);
+    const second = new fn(2);
+
+    expect(first).toEqual({ n: 1 });
+    expect(second).toEqual({ n: 2 });
+    expect(fn.mock.instances[0]).toBe(first);
+    expect(fn.mock.instances[1]).toBe(second);
+    expect(fn.mock.calls).toEqual([[1], [2]]);
+  });
+
+  test("an implementation that returns an object returns that object", () => {
+    const fn = jest.fn(() => ({ bar: 1 }));
+    const instance = new fn();
+
+    expect(instance).toEqual({ bar: 1 });
+    expect(instance).not.toBeInstanceOf(fn);
+    expect(fn.mock.instances[0]).toBeInstanceOf(fn);
+  });
+
+  test("mockReturnValue with a primitive still returns an instance", () => {
+    const fn = jest.fn().mockReturnValue(42);
+    const instance = new fn();
+
+    expect(instance).toBeInstanceOf(fn);
+    expect(fn.mock.results).toEqual([{ type: "return", value: 42 }]);
+  });
+
+  test("mockReturnValue with an object returns that object", () => {
+    const returned = { x: 1 };
+    const fn = jest.fn().mockReturnValue(returned);
+
+    expect(new fn()).toBe(returned);
+    expect(fn.mock.instances[0]).toBeInstanceOf(fn);
+  });
+
+  test("a throwing implementation records a throw result", () => {
+    const error = new Error("nope");
+    const fn = jest.fn(function () {
+      throw error;
+    });
+
+    expect(() => new fn(1)).toThrow("nope");
+    expect(fn.mock.calls).toEqual([[1]]);
+    expect(fn.mock.results).toEqual([{ type: "throw", value: error }]);
+  });
+
+  test("mockImplementationOnce applies to the next construction", () => {
+    const fn = jest.fn(function () {
+      this.which = "fallback";
+    });
+    fn.mockImplementationOnce(function () {
+      this.which = "once";
+    });
+
+    expect(new fn().which).toBe("once");
+    expect(new fn().which).toBe("fallback");
+  });
+
+  if (isBun) {
+    test("class implementations are constructed", () => {
+      class Counter {
+        constructor(start) {
+          this.value = start;
+        }
+        increment() {
+          return ++this.value;
+        }
+      }
+      const fn = jest.fn(Counter);
+      const instance = new fn(41);
+
+      expect(instance).toBeInstanceOf(Counter);
+      expect(instance.value).toBe(41);
+      expect(instance.increment()).toBe(42);
+      expect(fn.mock.instances[0]).toBe(instance);
+      expect(fn.mock.calls).toEqual([[41]]);
+    });
+
+    test("spyOn keeps `new` working on a class", () => {
+      class Klass {
+        constructor(n) {
+          this.n = n;
+        }
+        greet() {
+          return `hi ${this.n}`;
+        }
+      }
+      const obj = { Klass };
+      const spy = spyOn(obj, "Klass");
+      const instance = new obj.Klass(3);
+
+      expect(instance).toBeInstanceOf(Klass);
+      expect(instance.greet()).toBe("hi 3");
+      expect(spy.mock.instances[0]).toBe(instance);
+
+      spy.mockRestore();
+      expect(obj.Klass).toBe(Klass);
+    });
+  }
+});
+
+describe("resetAllMocks", () => {
+  test("removes implementations, not just calls", () => {
+    const fn = jest.fn(() => 42);
+    expect(fn()).toBe(42);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    jest.resetAllMocks();
+
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(fn.mock.results).toEqual([]);
+    expect(fn.getMockImplementation()).toBeUndefined();
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes mockReturnValue", () => {
+    const fn = jest.fn();
+    fn.mockReturnValue("stubbed");
+    expect(fn()).toBe("stubbed");
+
+    jest.resetAllMocks();
+
+    expect(fn()).toBeUndefined();
+  });
+
+  if (isBun) {
+    test("vi.resetAllMocks removes implementations too", () => {
+      const fn = vi.fn(() => 42);
+      expect(fn()).toBe(42);
+
+      vi.resetAllMocks();
+
+      expect(fn()).toBeUndefined();
+    });
+  }
+});
+
 describe("spyOn", () => {
   test("works on functions", () => {
     var obj = {

@@ -23,6 +23,13 @@ declare module "bun:test" {
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
+     * Creates a mock of a class. `new` on the mock constructs an instance of `Class`.
+     */
+    <T extends abstract new (...args: any[]) => any>(
+      Class: T,
+    ): Mock<(...args: ConstructorParameters<T>) => InstanceType<T>>;
+
+    /**
      * Replace the module `id` with the return value of `factory`.
      *
      * If the module is already loaded, exports are overwritten with the return
@@ -92,6 +99,9 @@ declare module "bun:test" {
     function clearAllMocks(): void;
     function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    function fn<T extends abstract new (...args: any[]) => any>(
+      Class: T,
+    ): Mock<(...args: ConstructorParameters<T>) => InstanceType<T>>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(options?: { now?: number | Date }): typeof vi;
@@ -2018,6 +2028,7 @@ declare module "bun:test" {
     };
 
     export interface Mock<T extends (...args: any[]) => any> extends MockInstance<T> {
+      new (...args: Parameters<T>): ReturnType<T>;
       (...args: Parameters<T>): ReturnType<T>;
     }
 

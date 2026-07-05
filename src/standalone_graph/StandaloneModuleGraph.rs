@@ -1277,16 +1277,9 @@ pub(crate) fn inject(
     target: &CompileTarget,
 ) -> Fd {
     let _ = inject_options;
-    let mut buf = PathBuffer::uninit();
-    // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
-    // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
-    // buffer instead, so hoist that owner here so it outlives the loop.
-    let mut zname_owned: Option<Box<[u8]>> = None;
 
     // Prepend tmpdir path so the temp file lands in a writable location
     // (e.g. /data/local/tmp on OHOS, not the CWD which may be read-only).
-    // The existing fallback in the retry loop below already does this, but
-    // only on the 2nd attempt; this ensures the 1st attempt also uses tmpdir.
     let mut tmpbuf = PathBuffer::uninit();
     let tmpname = match bun_fs::FileSystem::tmpname(
         b"bun-build",
@@ -1302,6 +1295,7 @@ pub(crate) fn inject(
             return Fd::INVALID;
         }
     };
+    let mut zname_owned: Option<Box<[u8]>>;
     let zname_z = bun_core::strings::concat(&[
         bun_bundler::bun_fs::RealFS::tmpdir_path(),
         SEP_STR.as_bytes(),

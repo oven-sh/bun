@@ -6,6 +6,17 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { SafeWeakMap } = require("internal/primordials");
+const { validateNumber } = require("internal/validators");
+
+const { kMaxEventTargetListeners, kMaxEventTargetListenersWarned } = EventEmitter;
+
+// Introspection of an EventTarget's listener map, used to back node's
+// EventEmitter methods on MessagePort. Each accepts the target as the first
+// argument, and returns undefined/false when it is not an EventTarget.
+const eventTargetListenerCount = $newCppFunction("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount", 2);
+const eventTargetEventNames = $newCppFunction("JSEventTarget.cpp", "jsEventTargetGetEventNames", 1);
+const eventTargetRemoveAllListeners = $newCppFunction("JSEventTarget.cpp", "jsEventTargetRemoveAllEventListeners", 2);
 
 const {
   MessageChannel,
@@ -38,6 +49,10 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
+// node's MessagePort is an EventEmitter/EventTarget hybrid: its prototype chain
+// runs through NodeEventTarget, which layers the emitter methods on top of the
+// EventTarget listener map. Bun's MessagePort is a plain EventTarget, so mix the
+// same methods in here, backed by that same listener map.
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
     return event.data;
@@ -47,65 +62,98 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
-  const wrappedListener = Symbol("wrappedListener");
+  // An emitter listener receives the event's payload, not the event, so it has
+  // to be registered through a wrapper. Keep one wrapper per (listener, event)
+  // pair so addEventListener still dedupes, and off() finds the right wrapper.
+  const wrappers = new SafeWeakMap();
 
-  function wrapped(run, listener) {
-    const callback = function (event) {
-      return listener(run(event));
-    };
-    listener[wrappedListener] = callback;
-    return callback;
-  }
+  function wrapperFor(event, listener) {
+    if (!$isCallable(listener)) return listener;
 
-  function functionForEventType(event, listener) {
-    switch (event) {
-      case "error":
-      case "messageerror": {
-        return wrapped(errorEventHandler, listener);
-      }
-
-      default: {
-        return wrapped(messageEventHandler, listener);
-      }
+    let byEvent = wrappers.get(listener);
+    if (byEvent === undefined) {
+      byEvent = new Map();
+      wrappers.set(listener, byEvent);
     }
+
+    let wrapper = byEvent.$get(event);
+    if (wrapper === undefined) {
+      const unwrap = event === "error" || event === "messageerror" ? errorEventHandler : messageEventHandler;
+      wrapper = function (e) {
+        return listener(unwrap(e));
+      };
+      byEvent.$set(event, wrapper);
+    }
+    return wrapper;
   }
 
-  Class.prototype.on = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener));
+  function existingWrapperFor(event, listener) {
+    if (!$isCallable(listener)) return listener;
+    return wrappers.get(listener)?.$get(event) ?? listener;
+  }
 
+  Class.prototype.on = function on(event, listener) {
+    this.addEventListener(event, wrapperFor(event, listener));
     return this;
   };
 
-  Class.prototype.off = function (event, listener) {
-    if (listener) {
-      this.removeEventListener(event, listener[wrappedListener] || listener);
-    } else {
-      this.removeEventListener(event);
-    }
-
+  Class.prototype.addListener = function addListener(event, listener) {
+    this.addEventListener(event, wrapperFor(event, listener));
     return this;
   };
 
-  Class.prototype.once = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener), {
+  Class.prototype.off = function off(event, listener) {
+    this.removeEventListener(event, existingWrapperFor(event, listener));
+    return this;
+  };
+
+  Class.prototype.removeListener = function removeListener(event, listener) {
+    this.removeEventListener(event, existingWrapperFor(event, listener));
+    return this;
+  };
+
+  Class.prototype.once = function once(event, listener) {
+    this.addEventListener(event, wrapperFor(event, listener), {
       once: true,
     });
 
     return this;
   };
 
-  function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
-
-    return MessageEvent;
-  }
-
-  Class.prototype.emit = function (event, ...args) {
-    this.dispatchEvent(new (EventClass(event))(event, ...args));
-
+  Class.prototype.removeAllListeners = function removeAllListeners(event) {
+    eventTargetRemoveAllListeners(this, event);
     return this;
+  };
+
+  Class.prototype.listenerCount = function listenerCount(event) {
+    return eventTargetListenerCount(this, event) ?? 0;
+  };
+
+  Class.prototype.eventNames = function eventNames() {
+    return eventTargetEventNames(this) ?? [];
+  };
+
+  // Same storage node's EventTarget uses, so events.setMaxListeners(n, port) and
+  // port.setMaxListeners(n) stay in sync. Like node, neither returns the port.
+  Class.prototype.setMaxListeners = function setMaxListeners(n) {
+    validateNumber(n, "setMaxListeners", 0);
+    this[kMaxEventTargetListeners] = n;
+    this[kMaxEventTargetListenersWarned] = false;
+  };
+
+  Class.prototype.getMaxListeners = function getMaxListeners() {
+    this[kMaxEventTargetListeners] ??= EventEmitter.defaultMaxListeners;
+    return this[kMaxEventTargetListeners];
+  };
+
+  Class.prototype.emit = function emit(event, arg) {
+    const hadListeners = this.listenerCount(event) > 0;
+    const e =
+      event === "error" || event === "messageerror"
+        ? new ErrorEvent(event, { error: arg })
+        : new MessageEvent(event, { data: arg });
+    this.dispatchEvent(e);
+    return hadListeners;
   };
 
   Class.prototype.prependListener = Class.prototype.on;
@@ -425,13 +473,31 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
+  Object.defineProperty(fake, "dispatchEvent", {
+    value: self.dispatchEvent.bind(self),
+  });
+
+  // The worker's global scope is this port's other half, so it owns the listener
+  // map that the inherited emitter methods read from and write to.
+  Object.defineProperty(fake, "listenerCount", {
+    value(event) {
+      return eventTargetListenerCount(self, event) ?? 0;
+    },
     enumerable: false,
   });
 
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
+  Object.defineProperty(fake, "eventNames", {
+    value() {
+      return eventTargetEventNames(self) ?? [];
+    },
+    enumerable: false,
+  });
+
+  Object.defineProperty(fake, "removeAllListeners", {
+    value(event) {
+      eventTargetRemoveAllListeners(self, event);
+      return this;
+    },
     enumerable: false,
   });
 

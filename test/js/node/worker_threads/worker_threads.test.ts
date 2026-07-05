@@ -1,5 +1,5 @@
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { once } from "node:events";
+import events, { once, setMaxListeners } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -627,4 +627,243 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   // and Set entries deserialized to the same single instance
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
+});
+
+describe("MessagePort EventEmitter interface", () => {
+  // In node, MessagePort's prototype chain runs through NodeEventTarget, so a port
+  // is an EventEmitter/EventTarget hybrid. Worker pools (piscina, tinypool,
+  // jest-worker) lean on the EventEmitter half when tearing a worker down.
+  const nodeEventTargetMethods = [
+    "addListener",
+    "emit",
+    "eventNames",
+    "getMaxListeners",
+    "listenerCount",
+    "off",
+    "on",
+    "once",
+    "removeAllListeners",
+    "removeListener",
+    "setMaxListeners",
+  ];
+
+  function openChannel() {
+    const channel = new MessageChannel();
+    return {
+      port1: channel.port1,
+      port2: channel.port2,
+      [Symbol.dispose]() {
+        channel.port1.close();
+        channel.port2.close();
+      },
+    };
+  }
+
+  test("a port exposes every NodeEventTarget method", () => {
+    using ports = openChannel();
+    const missing = nodeEventTargetMethods.filter(name => typeof ports.port1[name] !== "function");
+    expect(missing).toEqual([]);
+  });
+
+  test("listenerCount and eventNames see every kind of listener", () => {
+    using ports = openChannel();
+    const { port1 } = ports;
+
+    expect(port1.listenerCount("message")).toBe(0);
+    expect(port1.eventNames()).toEqual([]);
+
+    port1.on("message", () => {});
+    port1.addEventListener("message", () => {});
+    port1.onmessage = () => {};
+    port1.on("messageerror", () => {});
+
+    expect(port1.listenerCount("message")).toBe(3);
+    expect(port1.listenerCount("messageerror")).toBe(1);
+    expect(port1.listenerCount("nope")).toBe(0);
+    expect(port1.eventNames().sort()).toEqual(["message", "messageerror"]);
+  });
+
+  test("removeAllListeners(type) drops every listener for that type", async () => {
+    using ports = openChannel();
+    const { port1, port2 } = ports;
+
+    const calls: string[] = [];
+    port1.on("message", () => calls.push("on"));
+    port1.addEventListener("message", () => calls.push("addEventListener"));
+    port1.onmessage = () => calls.push("onmessage");
+    port1.on("messageerror", () => calls.push("messageerror"));
+
+    expect(port1.removeAllListeners("message")).toBe(port1);
+    expect(port1.listenerCount("message")).toBe(0);
+    expect(port1.eventNames()).toEqual(["messageerror"]);
+
+    const received = new Promise(resolve => port1.once("message", resolve));
+    port2.postMessage("after");
+    expect(await received).toBe("after");
+    expect(calls).toEqual([]);
+  });
+
+  test("removeAllListeners() with no type clears every event", () => {
+    using ports = openChannel();
+    const { port1 } = ports;
+
+    port1.on("message", () => {});
+    port1.on("messageerror", () => {});
+    port1.onmessage = () => {};
+
+    expect(port1.removeAllListeners()).toBe(port1);
+    expect(port1.eventNames()).toEqual([]);
+    expect(port1.listenerCount("message")).toBe(0);
+    expect(port1.listenerCount("messageerror")).toBe(0);
+  });
+
+  test("off()/removeListener() only remove the listener for the event they were given", () => {
+    using ports = openChannel();
+    const { port1 } = ports;
+    const handler = () => {};
+
+    port1.on("message", handler);
+    port1.on("messageerror", handler);
+
+    expect(port1.off("message", handler)).toBe(port1);
+    expect(port1.listenerCount("message")).toBe(0);
+    expect(port1.listenerCount("messageerror")).toBe(1);
+
+    expect(port1.removeListener("messageerror", handler)).toBe(port1);
+    expect(port1.listenerCount("messageerror")).toBe(0);
+  });
+
+  test("addListener() delivers the payload and registering twice is a no-op", async () => {
+    using ports = openChannel();
+    const { port1, port2 } = ports;
+
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const seen: unknown[] = [];
+    const handler = (value: unknown) => {
+      seen.push(value);
+      resolve();
+    };
+    port1.addListener("message", handler);
+    port1.addListener("message", handler);
+    expect(port1.listenerCount("message")).toBe(1);
+
+    port2.postMessage({ hello: "world" });
+    await promise;
+    expect(seen).toEqual([{ hello: "world" }]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/20169
+  test("registering the same listener repeatedly adds it once, and one off() removes it", async () => {
+    using ports = openChannel();
+    const { port1, port2 } = ports;
+
+    const received: unknown[] = [];
+    const { promise: firstDelivery, resolve: delivered } = Promise.withResolvers<void>();
+    const onMessage = (message: unknown) => {
+      received.push(message);
+      delivered();
+    };
+    port1.on("message", onMessage);
+    port1.on("message", onMessage);
+    port1.on("message", onMessage);
+    expect(port1.listenerCount("message")).toBe(1);
+
+    port2.postMessage("Hi");
+    await firstDelivery;
+    expect(received).toEqual(["Hi"]);
+
+    // One off() is enough, because the duplicate registrations never happened.
+    port1.off("message", onMessage);
+    expect(port1.listenerCount("message")).toBe(0);
+
+    const drained = new Promise(resolve => port1.once("message", resolve));
+    port2.postMessage("Hi Again...");
+    expect(await drained).toBe("Hi Again...");
+    expect(received).toEqual(["Hi"]);
+  });
+
+  test("off() with no listener is a no-op", () => {
+    using ports = openChannel();
+    const { port1 } = ports;
+    port1.on("message", () => {});
+    expect(port1.off("message")).toBe(port1);
+    expect(port1.listenerCount("message")).toBe(1);
+  });
+
+  test("emit() delivers the payload and reports whether there were listeners", () => {
+    using ports = openChannel();
+    const { port1 } = ports;
+
+    expect(port1.emit("message", 1)).toBe(false);
+
+    const seen: unknown[] = [];
+    port1.on("message", value => seen.push(value));
+    expect(port1.emit("message", 42)).toBe(true);
+    expect(seen).toEqual([42]);
+  });
+
+  test("get/setMaxListeners round-trip and share storage with events.setMaxListeners", () => {
+    using ports = openChannel();
+    const { port1 } = ports;
+
+    expect(port1.getMaxListeners()).toBe(events.defaultMaxListeners);
+    expect(port1.setMaxListeners(42)).toBeUndefined();
+    expect(port1.getMaxListeners()).toBe(42);
+
+    setMaxListeners(7, port1);
+    expect(port1.getMaxListeners()).toBe(7);
+
+    expect(() => port1.setMaxListeners(-1)).toThrow(
+      'The value of "setMaxListeners" is out of range. It must be >= 0. Received -1',
+    );
+    expect(() => port1.setMaxListeners("nope" as any)).toThrow(
+      "The \"setMaxListeners\" argument must be of type number. Received type string ('nope')",
+    );
+    expect(port1.getMaxListeners()).toBe(7);
+  });
+
+  test("parentPort exposes the same methods inside a worker", async () => {
+    const worker = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       const missing = ${JSON.stringify(nodeEventTargetMethods)}.filter(m => typeof parentPort[m] !== "function");
+       parentPort.on("message", () => {});
+       const before = parentPort.listenerCount("message");
+       const names = parentPort.eventNames();
+       parentPort.removeAllListeners("message");
+       parentPort.postMessage({ missing, before, names, after: parentPort.listenerCount("message") });`,
+      { eval: true },
+    );
+    const [message] = await once(worker, "message");
+    await worker.terminate();
+    expect(message).toEqual({ missing: [], before: 1, names: ["message"], after: 0 });
+  });
+
+  test("removeAllListeners releases the event-loop ref a transferred port holds", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const worker = new Worker(
+      `const { workerData: port } = require("node:worker_threads");
+       port.on("message", () => {
+         port.postMessage("ack");
+         // Without this the message listener keeps the worker's event loop
+         // referenced forever, which is how pools leak a worker on teardown.
+         try {
+           port.removeAllListeners();
+         } catch {
+           process.exit(7);
+         }
+       });`,
+      { eval: true, workerData: port2, transferList: [port2] },
+    );
+
+    try {
+      const acked = new Promise(resolve => port1.once("message", resolve));
+      port1.postMessage("go");
+      expect(await acked).toBe("ack");
+
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    } finally {
+      port1.close();
+    }
+  });
 });

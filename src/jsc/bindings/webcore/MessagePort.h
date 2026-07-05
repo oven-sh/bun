@@ -114,6 +114,7 @@ private:
 
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
+    void removeAllEventListeners() final;
 
     void contextDestroyed() final;
 

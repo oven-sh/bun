@@ -137,7 +137,6 @@ TransferredMessagePort MessagePort::disentangle()
     // this port is still attached to its context; after observeContext(null)
     // there would be nothing to unref.
     removeAllEventListeners();
-    m_hasMessageEventListener = false;
 
     // Release the self-reference taken by jsRef() on the sending side. After
     // transfer this object is inert (the receiving side gets a fresh
@@ -322,6 +321,12 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
     if (!hasEventListeners(eventNames().messageEvent))
         m_hasMessageEventListener = false;
     return result;
+}
+
+void MessagePort::removeAllEventListeners()
+{
+    EventTarget::removeAllEventListeners();
+    m_hasMessageEventListener = false;
 }
 
 WebCoreOpaqueRoot root(MessagePort* port)

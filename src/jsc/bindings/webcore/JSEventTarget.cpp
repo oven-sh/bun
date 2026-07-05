@@ -43,12 +43,17 @@
 #include "JSEvent.h"
 #include "JSEventListener.h"
 #include "JSEventListenerOptions.h"
+#include "RegisteredEventListener.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <variant>
@@ -370,12 +375,60 @@ JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventListenersCount, (JSC::JSGlobalObje
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* thisValue = dynamicDowncast<WebCore::JSEventTarget>(callFrame->argument(0));
-    if (!thisValue) return JSC::JSValue::encode(JSC::jsUndefined());
+    auto thisValue = WebCore::jsEventTargetCast(vm, callFrame->argument(0));
+    if (thisValue.isNull()) return JSC::JSValue::encode(JSC::jsUndefined());
     JSC::JSString* eventName = callFrame->argument(1).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     String str = eventName->value(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto size = thisValue->wrapped().eventListeners(makeAtomString(str)).size();
+    auto size = thisValue.wrapped().eventListeners(makeAtomString(str)).size();
     return JSC::JSValue::encode(JSC::jsNumber(size));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventNames, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto thisValue = WebCore::jsEventTargetCast(vm, callFrame->argument(0));
+    if (thisValue.isNull()) return JSC::JSValue::encode(JSC::jsUndefined());
+
+    auto eventTypes = thisValue.wrapped().eventTypes();
+    JSC::MarkedArgumentBuffer names;
+    names.ensureCapacity(eventTypes.size());
+    for (auto& eventType : eventTypes)
+        names.append(JSC::jsString(vm, eventType.string()));
+    if (names.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return {};
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventTargetRemoveAllEventListeners, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto thisValue = WebCore::jsEventTargetCast(vm, callFrame->argument(0));
+    if (thisValue.isNull()) return JSC::JSValue::encode(JSC::jsBoolean(false));
+
+    auto& impl = thisValue.wrapped();
+    JSC::JSValue eventName = callFrame->argument(1);
+    if (eventName.isUndefined()) {
+        impl.removeAllEventListeners();
+        return JSC::JSValue::encode(JSC::jsBoolean(true));
+    }
+
+    String str = eventName.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto eventType = makeAtomString(str);
+
+    // removeEventListener() mutates the target's listener vector, so walk a copy of it.
+    WebCore::EventListenerVector listeners = impl.eventListeners(eventType);
+    for (auto& registeredListener : listeners) {
+        if (registeredListener->wasRemoved())
+            continue;
+        impl.removeEventListener(eventType, registeredListener->callback(), WebCore::EventListenerOptions { registeredListener->useCapture() });
+    }
+    return JSC::JSValue::encode(JSC::jsBoolean(true));
 }

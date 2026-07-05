@@ -1656,9 +1656,9 @@ pub struct RuntimeHooks {
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    /// Separate slot because the body skips `runImminentGCTimer` and falls
+    /// through to `tickWithoutIdle` when idle — folding it into `auto_tick`
+    /// would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.

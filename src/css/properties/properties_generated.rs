@@ -3728,7 +3728,13 @@ impl Property {
     /// `(name, prefix)` pair for serialization.
     pub(crate) fn __to_css_helper(&self) -> (&[u8], VendorPrefix) {
         match self {
-            Property::Custom(c) => (c.name.as_str(), VendorPrefix::NONE),
+            Property::Custom(c) => {
+                debug_assert!(
+                    false,
+                    "Property::Custom must be serialized via CustomPropertyName::to_css"
+                );
+                (c.name.as_str(), VendorPrefix::NONE)
+            }
             Property::Unparsed(u) => (u.property_id.name(), u.property_id.prefix().or_none()),
             _ => {
                 let id = self.property_id();

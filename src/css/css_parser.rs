@@ -439,7 +439,10 @@ fn parse_at_rule<P: AtRuleParser>(
         Token::OpenCurly => parse_nested_block(input, |input2: &mut Parser| {
             P::parse_block(parser, prelude, start, input2)
         }),
-        t => Err(input.new_unexpected_token_error(t)),
+        t => {
+            debug_assert!(false, "parse_until_before(SEMICOLON|CURLY) contract");
+            Err(input.new_unexpected_token_error(t))
+        }
     }
 }
 

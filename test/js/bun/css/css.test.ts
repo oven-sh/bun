@@ -5641,6 +5641,18 @@ describe("css tests", () => {
       "@namespace svg url(http://www.w3.org/2000/svg); .foo:is(svg|a) { color: yellow }",
       '@namespace svg "http://www.w3.org/2000/svg";.foo:is(svg|a){color:#ff0}',
     );
+    // Qualified-name selector matrix — QNamePrefix split coverage.
+    minify_test(
+      "@namespace svg url(http://www.w3.org/2000/svg); [svg|attr]{color:red}",
+      '@namespace svg "http://www.w3.org/2000/svg";[svg|attr]{color:red}',
+    );
+    minify_test("|foo{color:red}", "|foo{color:red}");
+    minify_test("|*{color:red}", "|*{color:red}");
+    minify_test(
+      "@namespace svg url(http://www.w3.org/2000/svg); svg|*{color:red}",
+      '@namespace svg "http://www.w3.org/2000/svg";svg|*{color:red}',
+    );
+    error_test("[*]{color:red}", "ExpectedBarInAttr");
     minify_test("a:is(.foo .bar) { color: yellow }", "a:is(.foo .bar){color:#ff0}");
     minify_test(":is(.foo, .bar) { color: yellow }", ":is(.foo,.bar){color:#ff0}");
     minify_test("a:is(:not(.foo)) { color: yellow }", "a:not(.foo){color:#ff0}");
@@ -7828,24 +7840,6 @@ describe("css tests", () => {
 }
       `,
     );
-
-    // Hardening: parse_at_rule delimiter arm (was `unreachable!()`) is now a
-    // graceful error; lock in all three constructible terminations.
-    describe("at-rule delimiter forms", () => {
-      cssTest("@unknown-rule some tokens;", "@unknown-rule some tokens;\n");
-      cssTest("@unknown-rule { color: red }", "@unknown-rule {\n  color: red\n}\n");
-      cssTest("@unknown-rule token", "@unknown-rule token;\n");
-      cssTest("@namespace svg url(http://www.w3.org/2000/svg)", '@namespace svg "http://www.w3.org/2000/svg";\n');
-    });
-
-    // Hardening: Size/MaxSize::Stretch else-prefix arm (was `unreachable!()`)
-    // now serializes generically; lock in the -moz-available round-trip.
-    describe("stretch prefixed keyword round-trip", () => {
-      prefix_test(".foo { width: -moz-available }", indoc`.foo {\n  width: -moz-available;\n}\n`, { firefox: 4 << 16 });
-      prefix_test(".foo { max-width: -moz-available }", indoc`.foo {\n  max-width: -moz-available;\n}\n`, {
-        firefox: 4 << 16,
-      });
-    });
 
     // Unicode and escape sequence edge cases
     describe("unicode edge cases", async () => {

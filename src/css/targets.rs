@@ -137,8 +137,15 @@ impl Targets {
     pub fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
         // PERF: runtime dispatch (a const-generic param
         // would need #[derive(ConstParamTy)] on compat::Feature).
-        let target_feature: Features = Features::from_compat(compat_feature);
-        self.should_compile(compat_feature, target_feature)
+        let Some(flag) = Features::from_compat(compat_feature) else {
+            debug_assert!(
+                false,
+                "compat::Feature::{:?} has no Features flag",
+                compat_feature
+            );
+            return !self.is_compatible(compat_feature);
+        };
+        self.should_compile(compat_feature, flag)
     }
 
     pub fn should_compile_selectors(&self) -> bool {
@@ -467,27 +474,29 @@ impl Features {
     /// The variant is taken at runtime, so the table is
     /// hand-written: every `compat::Feature` whose snake_case tag matches a
     /// `Features` field gets an arm; any other variant is a programmer error.
-    pub fn from_compat(compat_feature: css::compat::Feature) -> Features {
+    pub fn from_compat(compat_feature: css::compat::Feature) -> Option<Features> {
         use css::compat::Feature;
         match compat_feature {
-            Feature::Nesting => Features::NESTING,
-            Feature::NotSelectorList => Features::NOT_SELECTOR_LIST,
-            Feature::DirSelector => Features::DIR_SELECTOR,
-            Feature::LangSelectorList => Features::LANG_SELECTOR_LIST,
-            Feature::IsSelector => Features::IS_SELECTOR,
-            Feature::TextDecorationThicknessPercent => Features::TEXT_DECORATION_THICKNESS_PERCENT,
-            Feature::MediaIntervalSyntax => Features::MEDIA_INTERVAL_SYNTAX,
-            Feature::MediaRangeSyntax => Features::MEDIA_RANGE_SYNTAX,
-            Feature::CustomMediaQueries => Features::CUSTOM_MEDIA_QUERIES,
-            Feature::ClampFunction => Features::CLAMP_FUNCTION,
-            Feature::ColorFunction => Features::COLOR_FUNCTION,
-            Feature::OklabColors => Features::OKLAB_COLORS,
-            Feature::LabColors => Features::LAB_COLORS,
-            Feature::P3Colors => Features::P3_COLORS,
-            Feature::HexAlphaColors => Features::HEX_ALPHA_COLORS,
-            Feature::SpaceSeparatedColorNotation => Features::SPACE_SEPARATED_COLOR_NOTATION,
-            Feature::FontFamilySystemUi => Features::FONT_FAMILY_SYSTEM_UI,
-            Feature::DoublePositionGradients => Features::DOUBLE_POSITION_GRADIENTS,
+            Feature::Nesting => Some(Features::NESTING),
+            Feature::NotSelectorList => Some(Features::NOT_SELECTOR_LIST),
+            Feature::DirSelector => Some(Features::DIR_SELECTOR),
+            Feature::LangSelectorList => Some(Features::LANG_SELECTOR_LIST),
+            Feature::IsSelector => Some(Features::IS_SELECTOR),
+            Feature::TextDecorationThicknessPercent => {
+                Some(Features::TEXT_DECORATION_THICKNESS_PERCENT)
+            }
+            Feature::MediaIntervalSyntax => Some(Features::MEDIA_INTERVAL_SYNTAX),
+            Feature::MediaRangeSyntax => Some(Features::MEDIA_RANGE_SYNTAX),
+            Feature::CustomMediaQueries => Some(Features::CUSTOM_MEDIA_QUERIES),
+            Feature::ClampFunction => Some(Features::CLAMP_FUNCTION),
+            Feature::ColorFunction => Some(Features::COLOR_FUNCTION),
+            Feature::OklabColors => Some(Features::OKLAB_COLORS),
+            Feature::LabColors => Some(Features::LAB_COLORS),
+            Feature::P3Colors => Some(Features::P3_COLORS),
+            Feature::HexAlphaColors => Some(Features::HEX_ALPHA_COLORS),
+            Feature::SpaceSeparatedColorNotation => Some(Features::SPACE_SEPARATED_COLOR_NOTATION),
+            Feature::FontFamilySystemUi => Some(Features::FONT_FAMILY_SYSTEM_UI),
+            Feature::DoublePositionGradients => Some(Features::DOUBLE_POSITION_GRADIENTS),
             // Every remaining `compat::Feature` has no same-named `Features`
             // flag; the exhaustive arm makes new variants a compile error.
             Feature::AbsFunction
@@ -691,7 +700,7 @@ impl Features {
                     false,
                     "compat::Feature::{compat_feature:?} has no Features mapping"
                 );
-                Features::empty()
+                None
             }
         }
     }

@@ -469,11 +469,7 @@ test("CallFrame.p.isConstructor", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
-// Regression for https://github.com/oven-sh/bun/issues/30938
-// getTypeName/getFunctionName/getMethodName must match V8 (return null,
-// not the string "undefined" or the empty string). tap + source-map-support
-// concatenates `typeName + "."` into the formatted frame, so the old
-// behaviour rendered as `undefined.<anonymous>` in TAP error output.
+// https://github.com/oven-sh/bun/issues/30938
 test("CallSite.p.getTypeName returns null (not 'undefined') when receiver is not an object", () => {
   // The assertion runs inside the prepareStackTrace hook, so require it to fire.
   expect.hasAssertions();
@@ -517,8 +513,7 @@ test("CallSite.p.getMethodName returns null for non-method frames", () => {
     e.stack;
   }
   Error.prepareStackTrace = (_, s) => {
-    // topLevelFn is a plain function call — it's not stored at a property of
-    // `this`, so V8 returns null. Previously Bun delegated to getFunctionName.
+    // topLevelFn is a plain function call, not a method, so V8 returns null.
     expect(s[0].getMethodName()).toBe(null);
   };
   try {

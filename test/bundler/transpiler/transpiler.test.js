@@ -1551,6 +1551,78 @@ export default class {
     });
   });
 
+  describe("exports.eliminate and exports.replace match the exported name", () => {
+    const transform = (code, exports) =>
+      new Bun.Transpiler({ loader: "ts", exports })
+        .transformSync(code)
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join("\n");
+
+    it("eliminates a renamed export clause by its exported name", () => {
+      expect(transform(`const q = 1; export { q as QA };`, { eliminate: ["QA"] })).toBe(`const q = 1;`);
+    });
+
+    it("does not eliminate a renamed export clause by its local name", () => {
+      expect(transform(`const q = 1; export { q as QA };`, { eliminate: ["q"] })).toBe(
+        `const q = 1;\nexport { q as QA };`,
+      );
+    });
+
+    it("eliminates a renamed re-export clause by its exported name", () => {
+      expect(transform(`export { rr as RR } from "./dep";`, { eliminate: ["RR"] })).toBe(`export {  } from "./dep";`);
+      expect(transform(`export { rr as RR } from "./dep";`, { eliminate: ["rr"] })).toBe(
+        `export { rr as RR } from "./dep";`,
+      );
+    });
+
+    it("eliminates an unrenamed export clause", () => {
+      expect(transform(`const foo = 1; export { foo };`, { eliminate: ["foo"] })).toBe(`const foo = 1;`);
+    });
+
+    it("eliminates `export { q as default }` by the exported name", () => {
+      expect(transform(`const q = 1; export { q as default };`, { eliminate: ["default"] })).toBe(`const q = 1;`);
+    });
+
+    it("eliminates a string-named export clause", () => {
+      expect(transform(`const q = 1; export { q as "a-b" };`, { eliminate: ["a-b"] })).toBe(`const q = 1;`);
+    });
+
+    it("replaces a renamed export clause under its exported name", () => {
+      expect(transform(`var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `var q = 1;\nexport var QA = 9;`,
+      );
+      expect(transform(`var q = 1; export { q as QA };`, { replace: { QA: ["INJ", true] } })).toBe(
+        `var q = 1;\nexport var INJ = true;`,
+      );
+    });
+
+    it("replaces a renamed re-export clause under its exported name", () => {
+      expect(transform(`export { rr as RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
+        `export var RR = 9;\nexport {  } from "./dep";`,
+      );
+    });
+
+    it("replaces an unrenamed export clause", () => {
+      expect(transform(`var foo = 1; export { foo };`, { replace: { foo: 9 } })).toBe(
+        `var foo = 1;\nexport var foo = 9;`,
+      );
+    });
+
+    it("replaces a renamed export whose exported name is also a local var", () => {
+      expect(transform(`var QA = 5; var q = 1; export { q as QA };`, { replace: { QA: 9 } })).toBe(
+        `var QA = 5;\nvar q = 1;\nexport var QA = 9;`,
+      );
+    });
+
+    it("rejects a non-identifier exports.replace key", () => {
+      expect(() => new Bun.Transpiler({ loader: "ts", exports: { replace: { "a-b": 9 } } })).toThrow(
+        `"a-b" is not a valid ECMAScript identifier`,
+      );
+    });
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

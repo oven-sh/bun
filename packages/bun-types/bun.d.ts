@@ -2431,7 +2431,17 @@ declare module "bun" {
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
     exports?: {
+      /**
+       * Names of exports to remove, matched against the *exported* name.
+       *
+       * For `export { q as QA }`, that is `"QA"` and not the local `"q"`.
+       */
       eliminate?: string[];
+      /**
+       * Exports to replace, keyed on the *exported* name.
+       *
+       * For `export { q as QA }`, that is `"QA"` and not the local `"q"`.
+       */
       replace?: Record<string, string>;
     };
     treeShaking?: boolean;

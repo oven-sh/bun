@@ -183,13 +183,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
+                // `replace_exports` is keyed on the exported name, so
+                // `export { q as QA }` matches "QA" and never the local "q".
+                let alias: &'a [u8] = items[i].alias.slice();
                 // reshaped for borrowck — get_ptr borrows options; clone the
                 // small enum payload so `inject_replacement_export(&mut self, ...)` can run.
-                if let Some(entry) = p.options.features.replace_exports.get_ptr(name).cloned() {
+                if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
                     if !entry.is_replace() {
-                        p.ignore_usage(symbol.r#ref);
+                        p.ignore_usage(ref_);
                     }
-                    let _ = p.inject_replacement_export(stmts, symbol.r#ref, stmt.loc, &entry);
+                    // `Replace` emits `export var <name> = value`, and the name
+                    // it has to export is the alias. `Hoisted` matches that `var`:
+                    // a local of the same name merges instead of colliding.
+                    let export_ref = if entry.is_replace() && alias != name {
+                        p.declare_symbol(js_ast::symbol::Kind::Hoisted, items[i].alias_loc, alias)?
+                    } else {
+                        ref_
+                    };
+                    let _ = p.inject_replacement_export(stmts, export_ref, stmt.loc, &entry);
                     any_replaced = true;
                     continue;
                 }
@@ -286,10 +297,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let old_ref = items[i].name.ref_;
 
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
-                let alias = items[i].alias.slice();
+                let alias: &'a [u8] = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
+                    // `Replace` emits `export var <name> = value`, and the name
+                    // it has to export is the alias, not the re-exported name.
+                    let export_ref = if entry.is_replace()
+                        && alias != items[i].original_name.slice()
+                    {
+                        p.declare_symbol(js_ast::symbol::Kind::Hoisted, items[i].alias_loc, alias)?
+                    } else {
+                        old_ref
+                    };
                     let _ =
-                        p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
+                        p.inject_replacement_export(stmts, export_ref, bun_ast::Loc::EMPTY, &entry);
                     continue;
                 }
 

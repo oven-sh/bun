@@ -1602,6 +1602,9 @@ export default class {
       expect(transform(`export { rr as RR } from "./dep";`, { replace: { RR: 9 } })).toBe(
         `export var RR = 9;\nexport {  } from "./dep";`,
       );
+      expect(transform(`export { rr as RR } from "./dep";`, { replace: { RR: ["INJ", true] } })).toBe(
+        `export var INJ = true;\nexport {  } from "./dep";`,
+      );
     });
 
     it("replaces an unrenamed export clause", () => {

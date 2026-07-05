@@ -6246,6 +6246,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.features.replace_exports.contains(symbol_name)
     }
 
+    /// The ref `inject_replacement_export` should bind for a clause item whose
+    /// exported name is `alias`. `Replace` prints `export var <alias> = value`,
+    /// so a renamed export declares a hoisted binding (one a local of the same
+    /// name merges into). `None` means the alias cannot spell a binding, so the
+    /// caller keeps the clause item.
+    pub fn replacement_export_ref(
+        &mut self,
+        replacement: &crate::parser::Runtime::ReplaceableExport,
+        alias: &'a [u8],
+        local_name: &'a [u8],
+        alias_loc: bun_ast::Loc,
+        local_ref: Ref,
+    ) -> Result<Option<Ref>, bun_core::Error> {
+        if !replacement.is_replace() || alias == local_name {
+            return Ok(Some(local_ref));
+        }
+        if !can_bind_exported_name(alias) {
+            return Ok(None);
+        }
+        Ok(Some(self.declare_symbol(
+            js_ast::symbol::Kind::Hoisted,
+            alias_loc,
+            alias,
+        )?))
+    }
+
     pub fn inject_replacement_export(
         &mut self,
         stmts: &mut crate::parser::StmtList<'a>,
@@ -9648,4 +9674,14 @@ pub fn null_value_expr() -> js_ast::ExprData {
 #[inline]
 pub fn false_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::EBoolean(E::Boolean { value: false })
+}
+
+/// Can `name` spell the binding of an `export var <name> = ...` in a module?
+/// `exports.replace` keys only pass `is_identifier`, which accepts every
+/// keyword, so `default` and friends reach here and have no binding form.
+fn can_bind_exported_name(name: &[u8]) -> bool {
+    bun_ast::lexer_tables::keyword(name).is_none()
+        && !js_lexer::is_strict_mode_reserved_word(name)
+        && name != b"eval"
+        && name != b"arguments"
 }

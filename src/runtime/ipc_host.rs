@@ -10,9 +10,10 @@
 
 use bun_core::String as BunString;
 use bun_jsc::ipc::{
-    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
+    self as IPC, DecodedIPCMessage, Handle, IPCSerializationError, IsInternal, SendQueue,
+    SerializeAndSendResult,
 };
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -70,6 +71,26 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
+/// Node's `target._send` guard: `typeof message` must be one of
+/// `string | object | number | boolean`. `JSValue::is_object()` is JSC's notion of
+/// "is a JSObject", which is also true for functions, so callables are excluded here to
+/// keep `typeof`-equivalence.
+fn is_sendable_message(message: JSValue) -> bool {
+    message.is_string()
+        || message.is_number()
+        || message.is_boolean()
+        || message.is_null()
+        || (message.is_object() && !message.is_callable())
+}
+
+fn throw_unsendable_message(global_object: &JSGlobalObject, message: JSValue) -> JsError {
+    global_object.throw_invalid_argument_type_value_one_of(
+        b"message",
+        b"string, object, number, or boolean",
+        message,
+    )
+}
+
 pub(crate) fn do_send(
     ipc: Option<&mut SendQueue>,
     global_object: &JSGlobalObject,
@@ -110,18 +131,11 @@ pub(crate) fn do_send(
     if message.is_undefined() {
         return Err(global_object.throw_missing_arguments_value(&["message"]));
     }
-    if !message.is_string()
-        && !message.is_object()
-        && !message.is_number()
-        && !message.is_boolean()
-        && !message.is_null()
-    {
-        return Err(global_object.throw_invalid_argument_type_value_one_of(
-            b"message",
-            b"string, object, number, or boolean",
-            message,
-        ));
+    if !is_sendable_message(message) {
+        return Err(throw_unsendable_message(global_object, message));
     }
+    // The handle branch below replaces `message` with a `NODE_HANDLE` wrapper.
+    let original_message = message;
 
     if !handle.is_undefined_or_null() {
         let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
@@ -158,23 +172,33 @@ pub(crate) fn do_send(
         }
     }
 
-    let status = ipc_data.serialize_and_send(
+    let status = match ipc_data.serialize_and_send(
         global_object,
         message,
         IsInternal::External,
         callback,
         zig_handle,
-    );
-
-    if status == SerializeAndSendResult::Failure {
-        let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
-        ex.put(
-            global_object,
-            b"syscall",
-            bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
-        );
-        return do_send_err(global_object, callback, ex, from);
-    }
+    ) {
+        Ok(status) => status,
+        Err(err) => {
+            // Serialization never enqueues, so the channel is still usable. Report the
+            // failure to the caller instead of treating it as a transport failure.
+            if let Some(exception) = err.pending_exception() {
+                return Err(exception);
+            }
+            if matches!(err, IPCSerializationError::SerializationFailed) {
+                return Err(throw_unsendable_message(global_object, original_message));
+            }
+            let ex =
+                global_object.create_type_error_instance(format_args!("process.send() failed"));
+            ex.put(
+                global_object,
+                b"syscall",
+                bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
+            );
+            return do_send_err(global_object, callback, ex, from);
+        }
+    };
 
     // in the success or backoff case, serializeAndSend will handle calling the callback
     Ok(if status == SerializeAndSendResult::Success {

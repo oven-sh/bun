@@ -195,7 +195,6 @@ pub enum IsInternal {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum SerializeAndSendResult {
     Success,
-    Failure,
     Backoff,
 }
 
@@ -282,6 +281,29 @@ pub enum IPCSerializationError {
     JSTerminated,
     #[error("OutOfMemory")]
     OutOfMemory,
+}
+
+impl IPCSerializationError {
+    /// `Some(..)` when serialization left an exception pending on `globalThis`
+    /// (cyclic structure, throwing `toJSON`, structured-clone `DataCloneError`).
+    /// Callers must propagate it instead of replacing it with an error of their own.
+    pub fn pending_exception(&self) -> Option<JsError> {
+        match self {
+            Self::JSError => Some(JsError::Thrown),
+            Self::JSTerminated => Some(JsError::Terminated),
+            Self::SerializationFailed | Self::OutOfMemory => None,
+        }
+    }
+}
+
+impl From<JsError> for IPCSerializationError {
+    fn from(e: JsError) -> Self {
+        match e {
+            JsError::Thrown => IPCSerializationError::JSError,
+            JsError::Terminated => IPCSerializationError::JSTerminated,
+            JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+        }
+    }
 }
 
 mod advanced {
@@ -403,20 +425,14 @@ mod advanced {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
-        let serialized = value
-            .serialize(
-                global,
-                SerializedFlags {
-                    // IPC sends across process.
-                    for_cross_process_transfer: true,
-                    for_storage: false,
-                },
-            )
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
+        let serialized = value.serialize(
+            global,
+            SerializedFlags {
+                // IPC sends across process.
+                for_cross_process_transfer: true,
+                for_storage: false,
+            },
+        )?;
         // `serialized` Drops at scope exit (defer serialized.deinit()).
 
         let size: u32 = u32::try_from(serialized.data().len()).expect("int cast");
@@ -569,20 +585,18 @@ mod json {
         let mut out: BunString = BunString::default();
         // Use jsonStringifyFast which passes undefined for the space parameter,
         // triggering JSC's SIMD-optimized FastStringifier code path.
-        value
-            .json_stringify_fast(global, &mut out)
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
+        value.json_stringify_fast(global, &mut out)?;
         // `bun_core::String` is `Copy` (no `Drop`),
         // so the +1 ref written by `json_stringify_fast` is wrapped in
         // `OwnedString` immediately so every exit path (Dead, OOM in
         // `ensure_unused_capacity`, success) releases it.
         let out = bun_core::OwnedString::new(out);
 
-        if out.tag() == bun_core::Tag::Dead {
+        // `JSON.stringify` returns `undefined` (a null `WTF::String`, which reaches us as
+        // the `Empty` tag) for values it cannot represent. It never returns `""` for a
+        // value it can, so an empty result means the message is not serializable: writing
+        // it anyway produces a zero-length frame that the peer rejects, closing the channel.
+        if out.is_empty() {
             return Err(IPCSerializationError::SerializationFailed);
         }
 
@@ -1361,28 +1375,24 @@ impl SendQueue {
         is_internal: IsInternal,
         callback: JSValue,
         handle: Option<Handle>,
-    ) -> SerializeAndSendResult {
+    ) -> Result<SerializeAndSendResult, IPCSerializationError> {
         log!("SendQueue#serializeAndSend");
         let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
         let mode = self.mode;
+        // Serialize before touching the queue: a value that cannot be serialized must not
+        // reach the channel, and must leave the queue (and the callback) untouched.
         let mut payload = StreamBuffer::default();
-        let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
-            Ok(n) => n,
-            Err(_) => return SerializeAndSendResult::Failure,
-        };
+        let payload_length = serialize(mode, &mut payload, global, value, is_internal)?;
         debug_assert!(payload.list.len() == payload_length);
-        let msg = match self.start_message(global, callback, handle) {
-            Ok(m) => m,
-            Err(_) => return SerializeAndSendResult::Failure,
-        };
+        let msg = self.start_message(global, callback, handle)?;
         handle_oom(msg.data.write(&payload.list));
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
 
         if indicate_backoff {
-            return SerializeAndSendResult::Backoff;
+            return Ok(SerializeAndSendResult::Backoff);
         }
-        SerializeAndSendResult::Success
+        Ok(SerializeAndSendResult::Success)
     }
 
     fn debug_log_message_queue(&self) {

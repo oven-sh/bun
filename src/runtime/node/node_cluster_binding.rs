@@ -118,18 +118,24 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         None,
     );
 
-    if good == SerializeAndSendResult::Failure {
-        let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
-        ex.put(
-            global,
-            b"syscall",
-            BunString::static_str("write").to_js(global)?,
-        );
-        let fnvalue =
-            bun_jsc::JSFunction::create(global, "", __jsc_host_impl_, 1, Default::default());
-        JSValue::call_next_tick_1(fnvalue, global, ex)?;
-        return Ok(JSValue::FALSE);
-    }
+    let good = match good {
+        Ok(good) => good,
+        Err(err) => {
+            if let Some(exception) = err.pending_exception() {
+                return Err(exception);
+            }
+            let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
+            ex.put(
+                global,
+                b"syscall",
+                BunString::static_str("write").to_js(global)?,
+            );
+            let fnvalue =
+                bun_jsc::JSFunction::create(global, "", __jsc_host_impl_, 1, Default::default());
+            JSValue::call_next_tick_1(fnvalue, global, ex)?;
+            return Ok(JSValue::FALSE);
+        }
+    };
 
     Ok(if good == SerializeAndSendResult::Success {
         JSValue::TRUE
@@ -218,6 +224,15 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     let _ = handle;
     let success =
         ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+    let success = match success {
+        Ok(success) => success,
+        Err(err) => {
+            if let Some(exception) = err.pending_exception() {
+                return Err(exception);
+            }
+            return Ok(JSValue::FALSE);
+        }
+    };
     Ok(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {

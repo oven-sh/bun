@@ -668,9 +668,10 @@ function emitFsAsyncEnd(names: string[]) {
 function wrapFsAsyncMethod(original, names: string[], hasCallback: boolean) {
   return function (...args) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
-    if (hasCallback && args.length > 0) {
-      const callback = args[args.length - 1];
-      args[args.length - 1] = function (...callbackArgs) {
+    const argc = args.length;
+    if (hasCallback && argc > 0) {
+      const callback = args[argc - 1];
+      args[argc - 1] = function (...callbackArgs) {
         emitFsAsyncEnd(names);
         return callback.$apply(this, callbackArgs);
       };

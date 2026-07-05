@@ -915,8 +915,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
-        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        unsafe { (*(*vm).global).handle_rejected_promises() };
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).drain_rejected_promises() };
         return;
     }
 
@@ -991,15 +991,14 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    unsafe { (*(*vm).global).handle_rejected_promises() };
+    // SAFETY: `el` is the live per-thread event loop.
+    unsafe { (*el).drain_rejected_promises() };
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as
-/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
-/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
-/// `on_before_exit` drain loops where blocking when the loop is idle would
-/// hang shutdown.
+/// [`auto_tick`] but: no `runImminentGCTimer` and no debug sleep-timer logging.
+/// Used by `bun_main` / `on_before_exit` drain loops where blocking when the
+/// loop is idle would hang shutdown.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -1048,6 +1047,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe { (*loop_).tick_without_idle() };
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).drain_rejected_promises() };
         return;
     }
 
@@ -1100,6 +1101,11 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
+    // A timer or I/O callback above may have rejected a promise. Notify it here
+    // (node notifies inside the same phase) so the handler runs, and whatever it
+    // schedules is visible before the caller re-checks `is_event_loop_alive()`.
+    // SAFETY: `el` is the live per-thread event loop.
+    unsafe { (*el).drain_rejected_promises() };
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via

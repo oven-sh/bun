@@ -183,6 +183,7 @@ CPP_DECL void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__getCachedObject(JSC::JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0);
+CPP_DECL bool JSC__JSGlobalObject__hasPendingRejectedPromises(JSC::JSGlobalObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__putCachedObject(JSC::JSGlobalObject* arg0, const ZigString* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject);
 CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3);

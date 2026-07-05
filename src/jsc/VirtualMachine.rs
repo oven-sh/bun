@@ -1445,13 +1445,20 @@ impl VirtualMachine {
                 dispatch = true;
             }
 
+            // A `beforeExit` listener is user JS and can reject a promise. Run
+            // the `unhandledRejection` handler (and whatever it schedules)
+            // before concluding the loop has nothing left to do.
+            self.event_loop_mut().drain_rejected_promises();
+            if self.is_event_loop_alive() {
+                continue;
+            }
+
             if dispatch {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
-
-                if self.is_event_loop_alive() {
-                    continue;
-                }
+                // The listener we just ran may have scheduled work or rejected;
+                // both are picked up by the next pass.
+                continue;
             }
 
             break;

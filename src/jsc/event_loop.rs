@@ -631,9 +631,34 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
-        self.global_ref().handle_rejected_promises();
+        self.drain_rejected_promises();
 
         self.entered_event_loop_count -= 1;
+    }
+
+    /// Deliver pending `unhandledRejection` notifications, then re-enter the
+    /// `nextTick` + microtask checkpoint the handlers may have filled.
+    ///
+    /// Node's `processTicksAndRejections` loops back into that checkpoint after
+    /// `processPromiseRejections()`. Returning without it drops anything a
+    /// handler scheduled behind an `await`, and the loop sees no pending work.
+    pub fn drain_rejected_promises(&mut self) {
+        // Note: reshaped for borrowck — `vm_ref()` is `&'static`, so these
+        // borrows detach from `&self` and survive the `&mut self` calls below.
+        let global = self.vm_ref().global();
+        let global_vm = self.vm_ref().jsc_vm();
+
+        while global.has_pending_rejected_promises() {
+            global.handle_rejected_promises();
+            // `Err` is a TerminationException: the queue can't make progress,
+            // and looping on a still-pending notification would spin.
+            if self
+                .drain_microtasks_with_global(global, global_vm)
+                .is_err()
+            {
+                break;
+            }
+        }
     }
 
     /// Tick the task queue without draining microtasks afterward.

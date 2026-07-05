@@ -895,7 +895,7 @@ console.log("completed", done, "cycles without crashing");
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("completed 64 cycles without crashing");
+    expect(stdout.trim()).toBe("completed 64 cycles without crashing");
     expect(exitCode).toBe(0);
   }, 30_000); // subprocess + debug/ASAN startup is slow
 });

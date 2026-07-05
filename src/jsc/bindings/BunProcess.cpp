@@ -3662,9 +3662,15 @@ size_t Process::heapUsedBytes(JSC::VM& vm)
 {
     auto& objectSpace = vm.heap.objectSpace();
 
-    // MarkedSpace::size() sums the mark bits of every block, so it only changes when a
-    // collection does, but costs a walk of the whole heap. Recompute it once per
-    // collection: newlyAllocatedVersion() advances in MarkedSpace::endMarking().
+    // A full collection's beginMarking() stales every block's mark bits, and the mutator runs
+    // through the concurrent part of marking, so a walk there sums a nearly empty heap. Eden
+    // leaves the marks alone, so only full marking has to fall back on the last snapshot.
+    if (objectSpace.isMarking() && vm.heap.collectionScope() == JSC::CollectionScope::Full)
+        return m_heapUsedBytes;
+
+    // MarkedSpace::size() costs a walk of the whole heap but, outside of full marking, only
+    // changes when a collection does. Recompute it once per collection, keyed on the
+    // version endMarking() publishes.
     JSC::HeapVersion version = objectSpace.newlyAllocatedVersion();
     if (m_heapUsedVersion != version) {
         m_heapUsedVersion = version;

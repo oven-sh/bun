@@ -589,11 +589,13 @@ describe.concurrent(() => {
         const buffers = [];
         let violations = 0;
         let worstRatio = 0;
+        let minHeapUsed = Infinity;
         for (let i = 0; i < COUNT; i++) {
           buffers.push(new ArrayBuffer(CHUNK));
           const sample = process.memoryUsage();
           if (sample.heapUsed > sample.heapTotal) violations++;
           worstRatio = Math.max(worstRatio, sample.heapUsed / sample.heapTotal);
+          minHeapUsed = Math.min(minHeapUsed, sample.heapUsed);
         }
         const withBuffers = process.memoryUsage();
 
@@ -607,6 +609,7 @@ describe.concurrent(() => {
         console.log(JSON.stringify({
           violations,
           worstRatio,
+          minHeapUsed,
           allocated: CHUNK * COUNT,
           withBuffers,
           heapGrowth: withObjects.heapUsed - heapUsedBefore,
@@ -636,7 +639,10 @@ describe.concurrent(() => {
     expect(result.withBuffers.arrayBuffers).toBeGreaterThanOrEqual(result.allocated);
     expect(result.withBuffers.external).toBeGreaterThanOrEqual(result.withBuffers.arrayBuffers);
 
-    // ...but heapUsed still tracks JS object allocation.
+    // ...but heapUsed still tracks JS object allocation, and never reads as an empty heap.
+    // A collection is typically already marking by the first sample, which is exactly where
+    // a too-eager "skip the walk while marking" guard reports zero.
+    expect(result.minHeapUsed).toBeGreaterThan(0);
     expect(result.heapGrowth).toBeGreaterThan(2 * 1024 * 1024);
     expect(exitCode).toBe(0);
   });

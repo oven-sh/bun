@@ -2738,8 +2738,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const entry = api.readFile("out.js").split("// entry.mjs")[1];
       expect(entry.indexOf("require_a()")).toBeLessThan(entry.indexOf("__promiseAll("));
-      expect(entry).toContain("init_x()");
-      expect(entry).toContain("init_y()");
+      expect(entry).toMatch(/__promiseAll\(\s*\[\s*init_x\(\),\s*init_y\(\)\s*\]\)/);
     },
   });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {

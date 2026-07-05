@@ -3658,6 +3658,22 @@ err:
 #endif
 }
 
+size_t Process::heapUsedBytes(JSC::VM& vm)
+{
+    auto& objectSpace = vm.heap.objectSpace();
+
+    // MarkedSpace::size() sums the mark bits of every block, so it only changes when a
+    // collection does, but costs a walk of the whole heap. Recompute it once per
+    // collection: newlyAllocatedVersion() advances in MarkedSpace::endMarking().
+    JSC::HeapVersion version = objectSpace.newlyAllocatedVersion();
+    if (m_heapUsedVersion != version) {
+        m_heapUsedVersion = version;
+        m_heapUsedBytes = objectSpace.size();
+    }
+
+    return m_heapUsedBytes;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3684,12 +3700,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     //    arrayBuffers: 9386
     // }
 
+    // heapTotal/heapUsed describe the JS object heap only, so both come from the marked
+    // space. That keeps heapUsed <= heapTotal, and leaves the off-heap bytes owned by JS
+    // cells to external/arrayBuffers below.
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
-
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.objectSpace().capacity()));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(process->heapUsedBytes(vm)));
 
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 

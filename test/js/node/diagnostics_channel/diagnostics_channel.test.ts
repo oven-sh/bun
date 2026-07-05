@@ -322,20 +322,27 @@ describe("Channel", () => {
   });
 
   // test-diagnostics-channel-memory-leak.js
-  test("references are not leaked", () => {
+  test("references are not leaked", async () => {
     function noop() {}
 
-    const heapUsedBefore = process.memoryUsage().heapUsed;
+    const refs: WeakRef<Channel>[] = [];
     for (let i = 0; i < 1000; i++) {
       const name = `channel7-${i}`;
       subscribe(name, noop);
       unsubscribe(name, noop);
+      refs.push(new WeakRef(channel(name)));
     }
 
-    gc(true);
-    const heapUsedAfter = process.memoryUsage().heapUsed;
+    // Once its last subscriber is gone, the registry holds a channel weakly. Constructing
+    // a WeakRef keeps its target alive for the rest of the job, so yield before collecting.
+    let alive = refs.length;
+    for (let i = 0; i < 10 && alive > 0; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      gc(true);
+      alive = refs.filter(ref => ref.deref() !== undefined).length;
+    }
 
-    expect(heapUsedBefore).toBeGreaterThanOrEqual(heapUsedAfter);
+    expect(alive).toBe(0);
   });
 });
 

@@ -33,6 +33,11 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
 
+    // Cache for heapUsedBytes(). JSC::MarkedSpace::nullVersion (0) is never a live
+    // version, so it doubles as the "not computed yet" sentinel.
+    JSC::HeapVersion m_heapUsedVersion { 0 };
+    size_t m_heapUsedBytes { 0 };
+
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
@@ -81,6 +86,9 @@ public:
 
     JSValue getExecArgv(JSGlobalObject* globalObject);
     void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
+
+    // Live bytes in the JS object heap, as of the last collection.
+    size_t heapUsedBytes(JSC::VM&);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

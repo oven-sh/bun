@@ -8,6 +8,7 @@
 #include "helpers.h"
 #include "IDLTypes.h"
 #include "DOMURL.h"
+#include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSBase.h>
 #include <JavaScriptCore/BuiltinNames.h>
@@ -840,12 +841,75 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsonValue));
 }
 
+// ECMA-262 `Decode` with an empty preserve set, which is what decodeURIComponent does.
+// WTF::URL::fileSystemPath() is not usable here: it passes malformed escapes through
+// verbatim and returns a null string for escapes that decode to invalid UTF-8.
+static bool decodeFileURLPath(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, StringView input, String& result)
+{
+    if (!input.contains('%')) {
+        result = input.toString();
+        return true;
+    }
+
+    // The URL parser percent-encodes everything outside of ASCII, so escapes are the
+    // only source of non-ASCII bytes.
+    ASSERT(input.containsOnlyASCII());
+
+    const unsigned length = input.length();
+    Vector<Latin1Character, 256> decoded;
+    decoded.reserveInitialCapacity(length);
+    for (unsigned i = 0; i < length;) {
+        char16_t character = input[i];
+        if (character != '%') {
+            decoded.append(static_cast<Latin1Character>(character));
+            ++i;
+            continue;
+        }
+
+        if (i + 2 >= length || !isASCIIHexDigit(input[i + 1]) || !isASCIIHexDigit(input[i + 2])) {
+            throwException(globalObject, scope, createURIError(globalObject, "URI malformed"_s));
+            return false;
+        }
+
+        decoded.append(toASCIIHexValue(input[i + 1], input[i + 2]));
+        i += 3;
+    }
+
+    result = String::fromUTF8(decoded.span());
+    if (result.isNull()) {
+        throwException(globalObject, scope, createURIError(globalObject, "URI malformed"_s));
+        return false;
+    }
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arg0 = callFrame->argument(0);
     WTF::URL url;
+
+#if OS(WINDOWS)
+    constexpr bool windowsByDefault = true;
+    constexpr ASCIILiteral platformName = "win32"_s;
+#elif OS(DARWIN)
+    constexpr bool windowsByDefault = false;
+    constexpr ASCIILiteral platformName = "darwin"_s;
+#else
+    constexpr bool windowsByDefault = false;
+    constexpr ASCIILiteral platformName = "linux"_s;
+#endif
+
+    // `options?.windows`, falling back to the host platform when absent.
+    bool windows = windowsByDefault;
+    JSValue options = callFrame->argument(1);
+    if (!options.isUndefinedOrNull()) {
+        JSValue windowsOption = options.get(globalObject, Identifier::fromString(vm, "windows"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!windowsOption.isUndefinedOrNull())
+            windows = windowsOption.toBoolean(globalObject);
+    }
 
     auto path = JSC::JSValue::encode(arg0);
     auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(path);
@@ -867,50 +931,51 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         return {};
     }
 
-// NOTE: On Windows, WTF::URL::fileSystemPath will handle UNC paths
-// (`file:\\server\share\etc` -> `\\server\share\etc`), so hostname check only
-// needs to happen on posix systems
-#if !OS(WINDOWS)
-    // file://host/path is illegal if `host` is not `localhost`.
-    // Should be `file:///` instead
-    if (url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
+    const StringView encodedPath = url.path();
+    const StringView host = url.host();
 
-#if OS(DARWIN)
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
-        return {};
-#else
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
-        return {};
-#endif
-    }
-#endif
-
-    // ban url-encoded slashes. '/' on posix, '/' and '\' on windows.
-    const StringView p = url.path();
-    if (p.contains('%')) {
-#if OS(WINDOWS)
-        if (p.contains("%2f"_s) || p.contains("%5c"_s) || p.contains("%2F"_s) || p.contains("%5C"_s)) {
-            Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
+    if (!windows) {
+        // file://host/path is illegal if `host` is not `localhost`.
+        // Should be `file:///` instead
+        if (host.length() > 0 && host != "localhost"_s) [[unlikely]] {
+            Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, platformName);
             return {};
         }
-#else
-        if (p.contains("%2f"_s) || p.contains("%2F"_s)) {
+
+        // ban url-encoded slashes.
+        if (encodedPath.contains('%') && (encodedPath.contains("%2f"_s) || encodedPath.contains("%2F"_s))) [[unlikely]] {
             Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
             return {};
         }
-#endif
+
+        String decodedPath;
+        if (!decodeFileURLPath(globalObject, scope, encodedPath, decodedPath))
+            return {};
+        return JSC::JSValue::encode(JSC::jsString(vm, decodedPath));
     }
 
-    auto fileSystemPath = url.fileSystemPath();
-
-#if OS(WINDOWS)
-    if (!isAbsolutePath(fileSystemPath)) {
-        Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must be an absolute path"_s);
+    // ban url-encoded slashes, '/' and '\' on windows.
+    if (encodedPath.contains('%') && (encodedPath.contains("%2f"_s) || encodedPath.contains("%2F"_s) || encodedPath.contains("%5c"_s) || encodedPath.contains("%5C"_s))) [[unlikely]] {
+        Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
         return {};
     }
-#endif
 
-    return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
+    const String separatedPath = makeStringByReplacingAll(encodedPath, '/', '\\');
+    String decodedPath;
+    if (!decodeFileURLPath(globalObject, scope, separatedPath, decodedPath))
+        return {};
+
+    // UNC paths look like '\\server\share\etc', but in a URL they look like 'file://server/share/etc'.
+    if (!host.isEmpty())
+        return JSC::JSValue::encode(JSC::jsString(vm, makeString("\\\\"_s, host, decodedPath)));
+
+    // Otherwise it is a local path, which requires a drive letter: '\C:\etc' -> 'C:\etc'.
+    if (decodedPath.length() < 3 || !isASCIIAlpha(decodedPath[1]) || decodedPath[2] != ':') [[unlikely]] {
+        Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must be absolute"_s);
+        return {};
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, decodedPath.substring(1)));
 }
 
 /* Source for BunObject.lut.h

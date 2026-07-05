@@ -51,9 +51,6 @@ describe.concurrent("run-shell", () => {
 
   // https://github.com/oven-sh/bun/issues/29669
   test("CRLF line endings are normalized (no command-not-found, no \\r in args)", async () => {
-    // Each line ends in CRLF. Before the fix, `export\r` wasn't a known
-    // builtin so bun emitted "command not found: export", and `echo $X\r`
-    // passed a trailing \r through to stdout.
     using dir = tempDir("bun-shell-crlf", {
       "crlf.sh": 'export VITE_PARAM=value\r\necho "[$VITE_PARAM]"\r\necho done\r\n',
     });
@@ -70,11 +67,7 @@ describe.concurrent("run-shell", () => {
     expect(exitCode).toBe(0);
   });
 
-  // https://github.com/oven-sh/bun/issues/29669 — backslash line-continuation
-  // in a CRLF-encoded script (`cmd arg1 \<CR><LF>arg2`). Without the escaped-CR
-  // handler, the `\<CR>` was swallowed but `\r` got glued onto the previous
-  // word and the `<LF>` emitted a real Newline — so `arg2` ran as a separate
-  // command instead of continuing the line.
+  // https://github.com/oven-sh/bun/issues/29669
   test("CRLF with backslash line continuation", async () => {
     using dir = tempDir("bun-shell-crlf-cont", {
       "cont.sh": "echo first \\\r\n  second \\\r\n  third\r\n",
@@ -92,11 +85,7 @@ describe.concurrent("run-shell", () => {
     expect(exitCode).toBe(0);
   });
 
-  // https://github.com/oven-sh/bun/issues/29669 — backslash line-continuation
-  // inside a double-quoted string. CRLF and LF must behave the same: the
-  // `\<newline>` pair is consumed. Before adding `\r` to the Double-state
-  // escape list, CRLF left a literal backslash + CR + LF embedded in the
-  // string value while LF produced a single joined string.
+  // https://github.com/oven-sh/bun/issues/29669
   test("CRLF with backslash line continuation inside double quotes", async () => {
     using dir = tempDir("bun-shell-crlf-dq", {
       "dq.sh": 'MSG="hello \\\r\nworld"\r\necho "$MSG"\r\n',
@@ -114,11 +103,9 @@ describe.concurrent("run-shell", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Bare CR (not followed by LF) preceded by a backslash inside double
-  // quotes. POSIX/bash treat `\<CR>` as literal `\` + CR because CR isn't
-  // in the small set of chars a backslash escapes inside double quotes.
-  // Making `\r` escapable (to reach the line-continuation handler) must
-  // not silently drop the backslash when the CR is standalone.
+  // https://github.com/oven-sh/bun/issues/29669
+  // Guard: making `\r` escapable must not drop the backslash for a bare
+  // `\<CR>` in double quotes; POSIX/bash keep it as literal `\` + CR.
   test("bare CR inside double quotes keeps literal backslash", async () => {
     using dir = tempDir("bun-shell-bare-cr", {
       "bare.sh": 'echo "a\\\rb"\n',

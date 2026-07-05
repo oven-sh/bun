@@ -2804,11 +2804,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Newline);
                             fell_through = true;
                         }
-                        // Handle CRLF line endings from Windows-edited scripts.
-                        // A `\r` immediately before `\n` in Normal state is
-                        // discarded so the `\n` fires its usual word-break +
-                        // Newline token. Inside quotes, `\r` stays literal
-                        // (matches bash/dash).
+                        // CRLF: drop a `\r` right before `\n` in Normal state so
+                        // the `\n` arm handles the newline. Inside quotes `\r`
+                        // stays literal (matches bash/dash).
                         c if c == u32::from(b'\r') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\r' as usize));
                             if self.chars.state == CharState::Single
@@ -3154,17 +3152,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
                 continue;
             }
-            // Escaped CR from `\<CR><LF>` line-continuation in a
-            // CRLF-encoded script: `read_char()` swallowed the backslash
-            // and returned the `\r` as escaped, leaving the `\n` for the
-            // next read. Consume that `\n` so the whole `\<CR><LF>` acts
-            // as a single line continuation (matches the escaped-`\n`
-            // case above). Escaped CR *not* followed by `\n` preserves
-            // both bytes verbatim: in Normal state the swallowed
-            // backslash was already the escape prefix (so only `\r`
-            // remains), but in Double state bash/POSIX treats `\<CR>`
-            // as literal `\` + CR, so re-emit the backslash that
-            // read_char() consumed.
+            // `\<CR><LF>` line-continuation (CRLF parity with escaped-`\n`).
+            // Bare escaped CR in Double state re-emits the swallowed
+            // backslash so `\<CR>` stays literal `\` + CR (bash/POSIX).
             else if char == u32::from(b'\r') {
                 debug_assert!(input.escaped);
                 if let Some(next) = self.peek() {
@@ -4067,10 +4057,8 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                     Src::Unicode(u) => u.index_next().map(|v| v.char),
                 }?;
                 match peeked {
-                    // Backslash only applies to these characters.
-                    // `\r` is included so `\<CR><LF>` in a CRLF script
-                    // reaches the escaped-`\r` line-continuation handler
-                    // in the main lexer (parity with `\<LF>`).
+                    // Backslash only applies to these characters. `\r` lets
+                    // `\<CR><LF>` reach the escaped-`\r` handler (parity with `\<LF>`).
                     c if c == u32::from(b'$')
                         || c == u32::from(b'`')
                         || c == u32::from(b'"')

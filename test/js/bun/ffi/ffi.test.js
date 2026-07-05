@@ -1089,13 +1089,13 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
 
 // FFI.h boxes a native integer as a JS int32 whenever it fits in one, so 2 ** 31
 // and Number.MAX_SAFE_INTEGER are the values that pick the wrong branch.
-describe("integer boxing at the int32 boundary", () => {
+describe.skipIf(isFFIUnavailable)("integer boxing at the int32 boundary", () => {
   const u32Values = [0, 1, 2147483647, 2147483648, 2147483649, 4294967294, 4294967295];
   const i64Values = [-9007199254740991, -2147483649, -2147483648, -1, 0, 2147483647, 2147483648, 9007199254740991];
   const u64Values = [0, 2147483647, 2147483648, 2147483649, 9007199254740990, 9007199254740991];
 
   // A callback's arguments are boxed by the same macros as a function's return
-  // value, and this needs no C compiler, so it runs wherever bun:ffi does.
+  // value, and this needs no external C compiler, so it covers Windows too.
   it.each([
     ["u32", u32Values],
     ["i64_fast", i64Values],
@@ -1113,7 +1113,9 @@ describe("integer boxing at the int32 boundary", () => {
     expect(received).toEqual(values);
   });
 
-  const compiler = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
+  // `cc -shared -fPIC` is a POSIX invocation; the callback cases above are what
+  // cover Windows.
+  const compiler = isWindows ? undefined : (Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang"));
 
   describe.skipIf(!compiler)("returns", () => {
     let dir;

@@ -2541,6 +2541,15 @@ fn transpile_source_code_inner(
                     return Err(bun_core::err!("ParseError"));
                 }
 
+                // `has_loaded` gates every later module request (concurrent transpile
+                // dispatch, `require.extensions`, unknown-extension loaders), so set it on
+                // every path producing the entry's source, not only the printed one.
+                // Print-only fetches are excluded; they never load a module.
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                if is_main && !disable_transpilying {
+                    unsafe { (*jsc_vm).has_loaded = true };
+                }
+
                 let source = &parse_result.source;
 
                 // Raw JSON: hand the source bytes straight to JSC.
@@ -2953,11 +2962,6 @@ fn transpile_source_code_inner(
                         }
                     }
                     print_result?;
-                }
-
-                if is_main {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    unsafe { (*jsc_vm).has_loaded = true };
                 }
 
                 // `module_info.asDeserialized()`: finalize the

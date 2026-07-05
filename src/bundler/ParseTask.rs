@@ -2448,11 +2448,11 @@ pub mod parse_worker {
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
-        // emitDecoratorMetadata implies legacy/experimental decorators, as it only
-        // makes sense with TypeScript's legacy decorator system (reflect-metadata).
-        // TC39 standard decorators have their own metadata mechanism.
-        opts.features.standard_decorators = !loader.is_typescript()
-            || !(task.experimental_decorators || task.emit_decorator_metadata);
+        opts.features.standard_decorators = js_parser::RuntimeFeatures::standard_decorators_for(
+            loader,
+            task.experimental_decorators,
+            task.emit_decorator_metadata,
+        );
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —

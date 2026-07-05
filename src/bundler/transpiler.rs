@@ -1595,11 +1595,12 @@ impl<'a> Transpiler<'a> {
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
-                // emitDecoratorMetadata implies legacy/experimental decorators, as it only
-                // makes sense with TypeScript's legacy decorator system (reflect-metadata).
-                // TC39 standard decorators have their own metadata mechanism.
-                opts.features.standard_decorators = !loader.is_typescript()
-                    || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
+                opts.features.standard_decorators =
+                    js_ast::RuntimeFeatures::standard_decorators_for(
+                        loader,
+                        this_parse.experimental_decorators,
+                        this_parse.emit_decorator_metadata,
+                    );
                 opts.features.allow_runtime = self.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
                     this_parse.set_breakpoint_on_first_line;

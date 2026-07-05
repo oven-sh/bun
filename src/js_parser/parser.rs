@@ -363,6 +363,17 @@ pub mod Runtime {
             self.runtime_transpiler_cache.map(|p| unsafe { &mut *p })
         }
 
+        /// Whether to parse TC39 standard decorators (and the `accessor` keyword).
+        /// Only TypeScript files that opted into legacy decorators use the old grammar;
+        /// `emitDecoratorMetadata` implies them, as it only makes sense with that system.
+        pub fn standard_decorators_for(
+            loader: bun_ast::Loader,
+            experimental_decorators: bool,
+            emit_decorator_metadata: bool,
+        ) -> bool {
+            !loader.is_typescript() || !(experimental_decorators || emit_decorator_metadata)
+        }
+
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).

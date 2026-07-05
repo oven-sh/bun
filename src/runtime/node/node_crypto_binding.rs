@@ -727,8 +727,6 @@ mod _impl {
     use crate::node::util::validators;
     use bun_jsc::{ErrorCode, JSFunction, JSType};
 
-    // `Crypto.EVP.PBKDF2` — resolves through `crate::crypto::EVP` (module re-export
-    // of `evp`) once `pbkdf2` is un-gated in `src/runtime/crypto/mod.rs`.
     use crate::crypto::create_crypto_error;
     use crate::crypto::pbkdf2::{self, PBKDF2};
 

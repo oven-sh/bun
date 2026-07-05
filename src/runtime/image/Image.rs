@@ -1754,8 +1754,13 @@ impl<'a> PipelineTask<'a> {
                                 out_slice.len(),
                             )
                         };
-                        let v = ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                            .to_js_with_context(global, core::ptr::null_mut(), Some(out.free));
+                        // SAFETY: `out.bytes` is the codec-owned allocation
+                        // whose ownership transfers to JSC; `out.free` frees
+                        // it exactly once at GC and ignores the null ctx.
+                        let v = unsafe {
+                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
+                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
+                        };
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),

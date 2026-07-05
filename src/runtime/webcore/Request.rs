@@ -195,7 +195,7 @@ impl BodyMixin for Request {
     }
 }
 
-// ─── un-gated header accessors & simple getters ─────────────────────────────
+// ─── header accessors & simple getters ──────────────────────────────────────
 impl Request {
     /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
     #[inline]
@@ -288,7 +288,7 @@ impl Request {
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        content_type_,
+                        &BunString::ascii(content_type_),
                         global_this,
                     )?;
                 }
@@ -411,8 +411,12 @@ impl Request {
         self.set_timeout(seconds.to_u32() as c_uint);
     }
 
+    /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
+    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
+    /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+        self.throw_if_body_unusable(global_this).ok()?;
         self.clone(global_this).ok()
     }
 }
@@ -850,7 +854,10 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req.header(b"host") {
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
+                {
                     // With `port: None`, HostFormatter always emits exactly `host`, so the
                     // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
                     // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
@@ -898,6 +905,37 @@ impl Request {
         }
     }
 
+    /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
+    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the
+    /// configured host instead of pasting the client bytes into the URL.
+    fn is_valid_host_header(host: &[u8]) -> bool {
+        !host.is_empty()
+            && host.iter().all(|&c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(
+                        c,
+                        b'-' | b'.'
+                            | b'_'
+                            | b'~'
+                            | b'%'
+                            | b'!'
+                            | b'$'
+                            | b'&'
+                            | b'\''
+                            | b'('
+                            | b')'
+                            | b'*'
+                            | b'+'
+                            | b','
+                            | b';'
+                            | b'='
+                            | b':'
+                            | b'['
+                            | b']'
+                    )
+            })
+    }
+
     pub fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -908,7 +946,10 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req.header(b"host") {
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
+                {
                     // With `port: None`, HostFormatter always emits exactly `host`. Compute the
                     // length and assemble the URL with straight slice copies instead of going
                     // through `core::fmt::write` (which is not monomorphized and shows up in
@@ -1256,6 +1297,19 @@ impl Request {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
+                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
+                        // body throws before body extraction (Node's message is "keepalive").
+                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
+                            match value.get(global_this, "keepalive") {
+                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
+                                    bail!(Err(
+                                        global_this.throw_type_error(format_args!("keepalive"))
+                                    ));
+                                }
+                                Ok(_) => {}
+                                Err(e) => bail!(Err(e)),
+                            }
+                        }
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
@@ -1481,7 +1535,7 @@ impl Request {
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        unsafe { &*ct_ptr },
+                        &BunString::ascii(unsafe { &*ct_ptr }),
                         global_this,
                     ) {
                         Ok(()) => {}
@@ -1516,6 +1570,7 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = self.clone(global_this)?;
 

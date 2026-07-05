@@ -327,7 +327,11 @@ describe("@types/bun integration test", () => {
       tsconfig.include = ["*.ts", "*.tsx"];
       await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      const tsgo = join(fixtureDir, "node_modules", "@typescript", "native-preview", "bin", "tsgo.js");
+      // Resolve the entrypoint from the package's own bin field; the nightly
+      // has renamed it before (bin/tsgo.js -> bin/tsgo).
+      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
+      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
+      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), tsgo, "-p", "."],

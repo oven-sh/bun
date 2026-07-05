@@ -79,7 +79,9 @@ if (globalThis.Bun) {
 }
 
 // Before the fix, 100 * 2_000 leaked TimeoutObjects (~100 bytes each) ≈ 20 MB.
-// After the fix the delta is ~0 MB (noise).
-if (deltaMB > (isASAN ? 128 : 10)) {
+// After the fix the delta is ~0 MB (noise). The ASAN threshold accounts for
+// quarantine + debug-assertions overhead (release-asan compiles with
+// debug-assertions on, which adds live code paths ASAN instruments).
+if (deltaMB > (isASAN ? 192 : 10)) {
   throw new Error("Memory leak detected: RSS grew by " + deltaMB.toFixed(1) + " MB");
 }

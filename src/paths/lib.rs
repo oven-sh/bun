@@ -29,7 +29,7 @@ pub mod w_path_buffer_pool {
 // `bun_paths::strings::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod string_paths;
-/// `bun.strings.*` superset: `bun_core`'s scalar/SIMD string utils plus the
+/// `bun.strings.*` superset: the full `bun_core::strings` namespace plus the
 /// path-shape transcoders that live here. Downstream crates that previously
 /// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
 /// import `bun_paths::strings` instead.
@@ -432,7 +432,7 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
 // `bun_sys::windows` so tier-1 callers
-// (`bun_core::immutable::paths`, this crate's `Path.rs`) can resolve them
+// (this crate's `string_paths.rs` and `Path.rs`) can resolve them
 // without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
@@ -752,6 +752,7 @@ pub mod fs {
 
                 // Ignore trailing slashes
                 path = &path[0..i];
+                base = path;
             }
 
             // Strip off the extension

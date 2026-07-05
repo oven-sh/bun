@@ -1749,6 +1749,57 @@ it("binds sparse array holes as NULL instead of reading past the backing store",
   expect(exitCode).toBe(0);
 });
 
+it("run() reports a closed database when a bound parameter's getter closes it", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t (a TEXT, b TEXT)");
+
+    let message = "did not throw";
+    try {
+      db.run("INSERT INTO t (a, b) VALUES ($a, $b)", {
+        get $a() {
+          db.close();
+          return "x";
+        },
+        get $b() {
+          return "y";
+        },
+      });
+    } catch (e) {
+      message = e.message;
+    }
+    out.closeDuringBind = message;
+
+    const db2 = new Database(":memory:");
+    db2.run("CREATE TABLE t (a TEXT, b TEXT)");
+    db2.run("INSERT INTO t (a, b) VALUES ($a, $b)", { $a: "x", $b: "y" });
+    out.plain = db2.query("SELECT a, b FROM t").get();
+    db2.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+    stdout: JSON.stringify({
+      closeDuringBind: "Database has closed",
+      plain: { a: "x", b: "y" },
+    }),
+    exitCode: 0,
+  });
+});
+
 // Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
 // a full pointer or int64 through the result argument, so the result buffer
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through

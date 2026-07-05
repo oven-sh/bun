@@ -366,6 +366,42 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("handles 'target' that throws while being coerced to a string", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        [Symbol.toPrimitive]: () => ({}),
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("Symbol.toPrimitive returned an object");
+    expect(called).toBe(false);
+  });
+
+  it("handles a 'target' whose toString throws", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        toString() {
+          throw new Error("target toString error");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("target toString error");
+    expect(called).toBe(false);
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];
@@ -547,6 +583,34 @@ it("recursion throws stack overflow", () => {
     }
     expect(e.message).toMatchInlineSnapshot(`"Maximum call stack size exceeded."`);
   }
+});
+
+it("onResolve callbacks registered while a path is resolving only apply to later resolutions", () => {
+  Bun.plugin({
+    name: "registers another onResolve while resolving",
+    setup(builder) {
+      builder.onResolve({ filter: /.*/, namespace: "regduring" }, () => {
+        Bun.plugin({
+          name: "registered during resolution",
+          setup(inner) {
+            inner.onResolve({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+              path,
+              namespace: "regduring",
+            }));
+          },
+        });
+        return undefined;
+      });
+
+      builder.onLoad({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+        contents: `export default ${JSON.stringify(path)};`,
+        loader: "js",
+      }));
+    },
+  });
+
+  expect(() => require("regduring:first")).toThrow();
+  expect(require("regduring:second").default).toBe("second");
 });
 
 it("recursion throws stack overflow at entry point", () => {

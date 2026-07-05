@@ -8,7 +8,8 @@ use bun_http_types::Method::Method;
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::uws_ws;
 use crate::{
-    ListenSocket as UwsListenSocket, Opcode, Request, WebSocketBehavior, us_socket_t, uws_res,
+    ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, WebSocketBehavior, us_socket_t,
+    uws_res,
 };
 
 // This file provides Rust bindings for the uWebSockets App class.
@@ -145,7 +146,7 @@ impl<const SSL: bool> App<SSL> {
         message: &[u8],
         opcode: Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> SendStatus {
         // SAFETY: self is a valid *mut uws_app_t; slices are valid for the call.
         unsafe {
             c::uws_publish(
@@ -325,7 +326,7 @@ impl<const SSL: bool> App<SSL> {
         message: &[u8],
         opcode: Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> SendStatus {
         // SAFETY: self is a valid app; slices valid for the call.
         unsafe {
             c::uws_publish(
@@ -634,7 +635,7 @@ pub mod c {
             message_length: usize,
             opcode: Opcode,
             compress: bool,
-        ) -> bool;
+        ) -> SendStatus;
         // safe: `uws_app_s` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
         // `&mut uws_app_s` is ABI-identical to the C `uws_app_t*` (non-null,
         // no `noalias`/`readonly`). The C++ body only reads `app->getNativeHandle()`

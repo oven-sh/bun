@@ -406,27 +406,45 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     }
     unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_writable(s) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_writable(s)
+        }
     }
     unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_close(s, code, reason) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_close(s, code, reason)
+        }
     }
     unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_timeout(s) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_timeout(s)
+        }
     }
     unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_timeout(s) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_timeout(s)
+        }
     }
     unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_end(s) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_end(s)
+        }
     }
     unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_connect_error(s, code) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_connect_error(s, code)
+        }
     }
     unsafe fn on_handshake(
         this: *mut Self,
@@ -435,7 +453,10 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         err: bun_uws::us_bun_verify_error_t,
     ) {
         // SAFETY: see `on_data`.
-        unsafe { (*this).handle_handshake(s, ok, err) }
+        unsafe {
+            let _guard = bun_ptr::ScopedRef::new(this);
+            (*this).handle_handshake(s, ok, err)
+        }
     }
 }
 

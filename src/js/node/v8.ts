@@ -170,7 +170,9 @@ const promiseHooks = {
     addDeserializeCallback: () => notimpl("addDeserializeCallback"),
     addSerializeCallback: () => notimpl("addSerializeCallback"),
     setDeserializeMainFunction: () => notimpl("setDeserializeMainFunction"),
-    isBuildingSnapshot: () => notimpl("isBuildingSnapshot"),
+    // Bun never builds a V8 startup snapshot, so this is always false, matching
+    // Node's behavior during normal execution.
+    isBuildingSnapshot: () => false,
   };
 
 export default {

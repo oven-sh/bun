@@ -588,6 +588,52 @@ describe("writeFile with a non-truncating flag", () => {
     writeFileSync(path, "ZZ", { flag });
     expect(readFileSync(path, "utf8")).toBe("ZZ");
   });
+
+  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
+  // open rather than afterwards.
+  it("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
+    const path = join(tmpdirSync(), "append-truncating.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", {
+      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
+    });
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+});
+
+// A write that dies partway through must not leave the old tail sitting behind
+// the bytes that did land. RLIMIT_FSIZE makes write() fail with EFBIG after 512
+// bytes, which `ulimit -f 1` sets for the child.
+describe.skipIf(isWindows)("writeFileSync when the write fails partway", () => {
+  const fixture = join(import.meta.dir, "fs-writeFile-write-error-fixture.js");
+
+  async function runUnderFileSizeLimit(path: string, flag: string) {
+    writeFileSync(path, Buffer.alloc(2000, "B"));
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -f 1; exec "$0" "$1" "$2" "$3"`, bunExe(), fixture, path, flag],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderrHasError: stderr.includes("error:"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it.each(["default", "w", "w+"])("with flag %p the file holds only what was written", async flag => {
+    const path = join(tmpdirSync(), "write-error.bin");
+    const { code, size, written, stale } = await runUnderFileSizeLimit(path, flag);
+    expect({ code, stale, sizeIsOnlyWrittenBytes: size === written }).toEqual({
+      code: "EFBIG",
+      stale: 0,
+      sizeIsOnlyWrittenBytes: true,
+    });
+  });
+
+  it("with flag 'r+' the rest of the file survives", async () => {
+    const path = join(tmpdirSync(), "write-error-in-place.bin");
+    const { code, size, stale } = await runUnderFileSizeLimit(path, "r+");
+    expect({ code, size, stale }).toEqual({ code: "EFBIG", size: 2000, stale: 1488 });
+  });
 });
 
 // Writes at or above the preallocate threshold take the fallocate() path, which

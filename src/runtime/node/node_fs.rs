@@ -7430,10 +7430,13 @@ impl NodeFS {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
-                // O_TRUNC is dropped on purpose: leaving the existing blocks
-                // allocated makes repeatedly rewriting a large file cheaper. The
-                // `ftruncate` after the write sets the final size instead.
-                let flags = args.flag.as_int() & !sys::O::TRUNC;
+                // O_TRUNC is dropped on purpose: keeping the existing blocks
+                // allocated makes rewriting a large file cheaper, and the resize
+                // below sets the final size. O_APPEND writes at EOF, so it keeps it.
+                let mut flags = args.flag.as_int();
+                if (flags & sys::O::APPEND) == 0 {
+                    flags &= !sys::O::TRUNC;
+                }
                 match sys::openat(args.dirfd, path, flags, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => fd,
@@ -7494,9 +7497,16 @@ impl NodeFS {
             }
         }
 
+        // A write error is held back rather than returned, so the resize below
+        // still runs: a partial write must not leave the old tail sitting behind
+        // the bytes that did land.
+        let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
             match sys::write(fd, buf) {
-                Err(err) => return Err(err),
+                Err(err) => {
+                    write_err = Some(err);
+                    break;
+                }
                 Ok(amt) => {
                     buf = &buf[amt..];
                     #[cfg(not(windows))]
@@ -7528,6 +7538,10 @@ impl NodeFS {
             {
                 let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
             }
+        }
+
+        if let Some(err) = write_err {
+            return Err(err);
         }
 
         if args.flush {

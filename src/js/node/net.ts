@@ -39,12 +39,14 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString, isUint8Array } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
+const TypedArrayPrototypeSet = Uint8Array.prototype.set;
+const TypedArrayPrototypeSubarray = Uint8Array.prototype.subarray;
 const MathMax = Math.max;
 
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
@@ -154,6 +156,15 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
+// The `onread` option's state: the buffer reads are delivered into, the
+// callback they are handed to, and the optional factory that replaces the
+// buffer after every delivery.
+const kBuffer = Symbol("kBuffer");
+const kBufferCb = Symbol("kBufferCb");
+const kBufferGen = Symbol("kBufferGen");
+// Bytes of an already-read chunk the onread callback has not accepted. Set
+// means reads are stopped, the way Node leaves them unread in the kernel.
+const kBufferPending = Symbol("kBufferPending");
 
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -1221,6 +1232,110 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
 };
 
+// Node's factory form hands over a fresh buffer before the first read and
+// after every delivery; a result that is not a Uint8Array leaves the current
+// buffer in place.
+function onreadNextBuffer(self) {
+  const generate = self[kBufferGen];
+  if (generate === null) return self[kBuffer];
+  const buffer = generate();
+  if (isUint8Array(buffer)) self[kBuffer] = buffer;
+  return self[kBuffer];
+}
+
+// Node reads straight into the user's buffer, so the callback always gets that
+// buffer back holding at most buffer.length bytes. Bun is handed its own chunk,
+// so copy it over in buffer-sized slices instead.
+function onreadDeliver(self, chunk) {
+  const total = chunk.length;
+  let offset = 0;
+  let stopped = false;
+  let failure;
+  let failed = false;
+  try {
+    while (offset < total) {
+      let buffer = self[kBuffer];
+      if (buffer === null) {
+        buffer = onreadNextBuffer(self);
+        // A factory that returned something else leaves nothing to read into.
+        if (buffer === null) {
+          stopped = true;
+          break;
+        }
+      }
+      const remaining = total - offset;
+      const length = buffer.length < remaining ? buffer.length : remaining;
+      // A zero-length buffer can never take a byte: hold the chunk rather than
+      // spin, which is what Node's stopped reads amount to.
+      if (length === 0) {
+        stopped = true;
+        break;
+      }
+      TypedArrayPrototypeSet.$call(
+        buffer,
+        length === total ? chunk : TypedArrayPrototypeSubarray.$call(chunk, offset, offset + length),
+      );
+      offset += length;
+      self.bytesRead += length;
+      const result = self[kBufferCb].$call(self, length, buffer);
+      onreadNextBuffer(self);
+      if (result === false) {
+        stopped = true;
+        break;
+      }
+    }
+  } catch (e) {
+    failure = e;
+    failed = true;
+    stopped = true;
+  }
+  self[kBufferPending] = stopped ? TypedArrayPrototypeSubarray.$call(chunk, offset) : null;
+  if (failed) self.emit("error", failure);
+  return !stopped;
+}
+
+// Node's onStreamRead stops the kernel reads (readStop) without touching the
+// Duplex's flowing state; the unref mirrors pause(), since a stopped socket
+// must not hold the event loop open.
+function onreadStop(self) {
+  if (self.destroyed) return;
+  const handle = self._handle;
+  if (!handle) return;
+  handle.pause?.();
+  handle.unref?.();
+  if (!self[kupgraded] || self[kupgraded] instanceof Socket) {
+    self[kPausedUnref] = true;
+  }
+}
+
+function onreadIsPaused(self) {
+  return !!self[kBufferPending];
+}
+
+// Reads restart only once the callback has taken the bytes it left behind.
+// Returns false when it paused again, so the handle stays stopped.
+function onreadFlushPending(self) {
+  const pending = self[kBufferPending];
+  if (!pending) return true;
+  self[kBufferPending] = null;
+  if (pending.length === 0 || self.destroyed) return true;
+  return onreadDeliver(self, pending);
+}
+
+// An onread socket never pushes into its readable side: every chunk is handed
+// to the callback instead, so no 'data' event is ever emitted.
+const SocketHandlersOnRead: typeof SocketHandlers2 = {
+  ...SocketHandlers2,
+  data(socket, chunk) {
+    $debug("Bun.Socket data (onread)");
+    const { self } = socket.data;
+    if (!self) return;
+    self._unrefTimer();
+    if (self.destroyed) return;
+    if (!onreadDeliver(self, chunk)) onreadStop(self);
+  },
+};
+
 // The same table minus the per-connection callback members: a listener whose
 // config has neither handler never registers the native SNI/ALPN dispatches,
 // so a server without an SNICallback or ALPNCallback does not pay a JS
@@ -1371,6 +1486,10 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kBuffer] = null;
+  this[kBufferCb] = null;
+  this[kBufferGen] = null;
+  this[kBufferPending] = null;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -1448,27 +1567,20 @@ function Socket(options?) {
   if (socket instanceof Socket) {
     this[ksocket] = socket;
   }
-  if (onread) {
-    if (typeof onread !== "object") {
-      throw new TypeError("onread must be an object");
+  // Node ignores an onread option that does not match the documented shape,
+  // leaving the socket to emit 'data' as usual.
+  if (onread !== null && typeof onread === "object") {
+    const { buffer: onreadBuffer, callback: onreadCallback } = onread;
+    if ((isUint8Array(onreadBuffer) || typeof onreadBuffer === "function") && typeof onreadCallback === "function") {
+      if (typeof onreadBuffer === "function") {
+        this[kBufferGen] = onreadBuffer;
+      } else {
+        this[kBuffer] = onreadBuffer;
+      }
+      this[kBufferCb] = onreadCallback;
+      // when the onread option is specified we use a different handlers object
+      this[khandlers] = SocketHandlersOnRead;
     }
-    if (typeof onread.callback !== "function") {
-      throw new TypeError("onread.callback must be a function");
-    }
-    // when the onread option is specified we use a different handlers object
-    this[khandlers] = {
-      ...SocketHandlers2,
-      data(socket, buffer) {
-        const { self } = socket.data;
-        if (!self) return;
-        self._unrefTimer();
-        try {
-          onread.callback(buffer.length, buffer);
-        } catch (e) {
-          self.emit("error", e);
-        }
-      },
-    };
   }
   if (signal) {
     if (signal.aborted) {
@@ -1982,16 +2094,20 @@ Object.defineProperty(Socket.prototype, "pending", {
 });
 
 Socket.prototype.resume = function resume() {
-  if (!this.connecting) {
-    this._handle?.resume?.();
-  }
-  // Restore the hold pause() removed - even while still connecting, so the
-  // pause-then-resume sequence is symmetric. Gated on the pause flag so a
-  // socket that was never paused (e.g. a wrapped duplex with no fd) is not
-  // newly pinned to the loop.
-  if (this[kPausedUnref] && !this[kUserUnrefed]) {
-    this._handle?.ref?.();
-    this[kPausedUnref] = false;
+  // An onread callback that returned false gets the bytes it left behind before
+  // reads restart; if it pauses again, the handle stays stopped.
+  if (onreadFlushPending(this)) {
+    if (!this.connecting) {
+      this._handle?.resume?.();
+    }
+    // Restore the hold pause() removed - even while still connecting, so the
+    // pause-then-resume sequence is symmetric. Gated on the pause flag so a
+    // socket that was never paused (e.g. a wrapped duplex with no fd) is not
+    // newly pinned to the loop.
+    if (this[kPausedUnref] && !this[kUserUnrefed]) {
+      this._handle?.ref?.();
+      this[kPausedUnref] = false;
+    }
   }
   return Duplex.prototype.resume.$call(this);
 };
@@ -2063,7 +2179,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 };
 
 Socket.prototype.read = function read(size) {
-  if (!this.connecting) {
+  // The Readable machinery drives this from resume(); it must not undo the stop
+  // an onread callback asked for.
+  if (!this.connecting && !onreadIsPaused(this)) {
     this._handle?.resume?.();
     // Restarting kernel reads makes the handle hold the loop open again;
     // mirror resume()'s re-ref or a paused-then-read() socket waits for
@@ -2080,7 +2198,7 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
-  } else {
+  } else if (!onreadIsPaused(this)) {
     socket?.resume?.();
     // See read() above - the Readable machinery's pull path must also
     // restore the handle's hold on the loop.

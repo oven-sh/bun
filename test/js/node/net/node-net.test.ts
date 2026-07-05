@@ -1062,3 +1062,212 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+describe("net.Socket onread", () => {
+  function pattern(length: number) {
+    const buf = Buffer.alloc(length);
+    for (let i = 0; i < length; i++) buf[i] = i & 0xff;
+    return buf;
+  }
+
+  async function withServer(onConnection: (c: Socket) => void, run: (port: number) => Promise<void>) {
+    const server = createServer(onConnection);
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      await run((server.address() as import("node:net").AddressInfo).port);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("hands the callback the user's own buffer, never more than its length", async () => {
+    const payload = pattern(64 * 1024);
+    await withServer(
+      c => {
+        c.on("error", () => {});
+        c.end(payload);
+      },
+      async port => {
+        const buffer = Buffer.alloc(100);
+        const received: Buffer[] = [];
+        const nreads: number[] = [];
+        let dataEvents = 0;
+        let sameBuffer = true;
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const socket = connect({
+          port,
+          onread: {
+            buffer,
+            callback(nread, buf) {
+              if (buf !== buffer) sameBuffer = false;
+              nreads.push(nread);
+              received.push(Buffer.from(buf.subarray(0, nread)));
+            },
+          },
+        });
+        try {
+          socket.on("data", () => dataEvents++);
+          socket.on("error", reject);
+          socket.on("end", resolve);
+          await promise;
+          expect({
+            sameBuffer,
+            maxNread: Math.max(...nreads),
+            minNread: Math.min(...nreads),
+            dataEvents,
+            payload: Buffer.concat(received),
+          }).toEqual({
+            sameBuffer: true,
+            maxNread: buffer.length,
+            minNread: payload.length % buffer.length,
+            dataEvents: 0,
+            payload,
+          });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  it("stops reading when the callback returns false, and resumes on resume()", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(4096, 0x5a);
+    const secondWritten = Promise.withResolvers<void>();
+    await withServer(
+      c => {
+        c.on("error", () => {});
+        c.write(first);
+        c.on("data", () => c.write(second, () => secondWritten.resolve()));
+      },
+      async port => {
+        const buffer = Buffer.alloc(512);
+        const received: Buffer[] = [];
+        const nreads: number[] = [];
+        let calls = 0;
+        let total = 0;
+        const firstCall = Promise.withResolvers<void>();
+        const everything = Promise.withResolvers<void>();
+        const socket = connect({
+          port,
+          onread: {
+            buffer,
+            callback(nread, buf) {
+              calls++;
+              total += nread;
+              nreads.push(nread);
+              received.push(Buffer.from(buf.subarray(0, nread)));
+              if (calls === 1) {
+                firstCall.resolve();
+                return false;
+              }
+              if (total === first.length + second.length) everything.resolve();
+            },
+          },
+        });
+        try {
+          socket.on("error", err => {
+            firstCall.reject(err);
+            everything.reject(err);
+          });
+          await firstCall.promise;
+          // Ask for the second payload, then give the event loop every chance to
+          // deliver it: reads are stopped, so it cannot reach the callback.
+          socket.write("go");
+          await secondWritten.promise;
+          for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+          expect(calls).toBe(1);
+
+          socket.resume();
+          await everything.promise;
+          expect({
+            maxNread: Math.max(...nreads),
+            payload: Buffer.concat(received),
+          }).toEqual({
+            maxNread: buffer.length,
+            payload: Buffer.concat([first, second]),
+          });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  it("calls the buffer factory before the first read and after every delivery", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      c => {
+        c.on("error", () => {});
+        c.end(payload);
+      },
+      async port => {
+        const generated: Buffer[] = [];
+        const delivered: Buffer[] = [];
+        const received: Buffer[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const socket = connect({
+          port,
+          onread: {
+            buffer() {
+              const buf = Buffer.alloc(512);
+              generated.push(buf);
+              return buf;
+            },
+            callback(nread, buf) {
+              delivered.push(buf);
+              received.push(Buffer.from(buf.subarray(0, nread)));
+            },
+          },
+        });
+        try {
+          socket.on("error", reject);
+          socket.on("end", resolve);
+          await promise;
+          expect({
+            // One call before the first read, one after each delivery.
+            generated: generated.length,
+            freshBufferEachTime: delivered.every((buf, i) => buf === generated[i]),
+            payload: Buffer.concat(received),
+          }).toEqual({
+            generated: delivered.length + 1,
+            freshBufferEachTime: true,
+            payload,
+          });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  it("ignores an onread option that does not match Node's shape", async () => {
+    // Node only installs onread when buffer is a Uint8Array or a function and
+    // callback is a function; anything else leaves the socket emitting 'data'.
+    expect(() => new Socket({ onread: "not an object" as any })).not.toThrow();
+    expect(() => new Socket({ onread: { buffer: Buffer.alloc(8) } as any })).not.toThrow();
+
+    const payload = pattern(1024);
+    await withServer(
+      c => {
+        c.on("error", () => {});
+        c.end(payload);
+      },
+      async port => {
+        const chunks: Buffer[] = [];
+        let onreadCalls = 0;
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const socket = connect({ port, onread: { callback: () => onreadCalls++ } } as any);
+        try {
+          socket.on("data", chunk => chunks.push(chunk));
+          socket.on("error", reject);
+          socket.on("end", resolve);
+          await promise;
+          expect({ onreadCalls, payload: Buffer.concat(chunks) }).toEqual({ onreadCalls: 0, payload });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+});

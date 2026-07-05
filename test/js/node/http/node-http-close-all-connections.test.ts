@@ -30,10 +30,14 @@ test("closeAllConnections() destroys the connections but keeps the server listen
     // Read the response so the connection is idle but still kept alive.
     await once(client, "data");
 
+    // Node destroys the socket object itself, so anything tracking sockets via
+    // 'connection' + socket.on('close') sees them leave.
+    const serverSocketClosed = once(serverSocket, "close");
     const clientClosed = once(client, "close");
     server.closeAllConnections();
 
     expect(serverSocket.destroyed).toBe(true);
+    await serverSocketClosed;
     await clientClosed;
 
     expect(server.listening).toBe(true);

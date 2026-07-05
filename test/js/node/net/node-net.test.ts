@@ -1302,8 +1302,17 @@ describe("net.Socket onread", () => {
     const first = pattern(4096);
     const second = Buffer.alloc(4096, 0x5a);
     const secondWritten = Promise.withResolvers<void>();
+    const firstCall = Promise.withResolvers<void>();
+    const everything = Promise.withResolvers<void>();
+    // Nothing tears the connection down mid-stream here, so a server-side error
+    // is a real failure: surface it instead of hanging on a promise it broke.
+    const fail = (err: Error) => {
+      secondWritten.reject(err);
+      firstCall.reject(err);
+      everything.reject(err);
+    };
     const server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, c => {
-      c.on("error", () => secondWritten.reject(new Error("server socket errored")));
+      c.on("error", fail);
       c.write(first);
       c.on("data", () => c.write(second, () => secondWritten.resolve()));
     });
@@ -1319,8 +1328,6 @@ describe("net.Socket onread", () => {
       const nreads: number[] = [];
       let calls = 0;
       let total = 0;
-      const firstCall = Promise.withResolvers<void>();
-      const everything = Promise.withResolvers<void>();
       socket = tls.connect({
         socket: proxy,
         servername: "localhost",
@@ -1371,8 +1378,16 @@ describe("net.Socket onread", () => {
   // readable side there would strand the bytes queued in front of it.
   it("delays the end of the readable side until the callback takes the held bytes", async () => {
     const payload = pattern(4096);
+    const firstCall = Promise.withResolvers<void>();
+    const endEvent = Promise.withResolvers<void>();
+    // The client only tears down once the body is finished, so a server-side
+    // error is a real failure rather than the expected mid-stream reset.
+    const fail = (err: Error) => {
+      firstCall.reject(err);
+      endEvent.reject(err);
+    };
     const server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, c => {
-      c.on("error", () => {});
+      c.on("error", fail);
       c.end(payload); // payload and FIN in one go
     });
     let raw: Socket | undefined;
@@ -1386,8 +1401,6 @@ describe("net.Socket onread", () => {
       const received: Buffer[] = [];
       let calls = 0;
       let ended = false;
-      const firstCall = Promise.withResolvers<void>();
-      const endEvent = Promise.withResolvers<void>();
       socket = tls.connect({
         socket: proxy,
         servername: "localhost",
@@ -1404,10 +1417,7 @@ describe("net.Socket onread", () => {
           },
         },
       });
-      socket.on("error", err => {
-        firstCall.reject(err);
-        endEvent.reject(err);
-      });
+      socket.on("error", fail);
       socket.on("end", () => {
         ended = true;
         endEvent.resolve();
@@ -1467,13 +1477,16 @@ describe("net.Socket onread", () => {
   it("does not replay bytes held back from a previous connection", async () => {
     const first = pattern(4096);
     const second = Buffer.alloc(256, 0xbb);
+    const firstCall = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
     const serverA = createServer(c => {
       // The client destroys mid-stream, so an unflushed write reports ECONNRESET.
       c.on("error", () => {});
       c.write(first);
     });
     const serverB = createServer(c => {
-      c.on("error", () => {});
+      // Nothing tears this one down early, so an error here is a real failure.
+      c.on("error", err => ended.reject(err));
       c.end(second);
     });
     try {
@@ -1482,8 +1495,6 @@ describe("net.Socket onread", () => {
       const afterReconnect: Buffer[] = [];
       let reconnected = false;
       let calls = 0;
-      const firstCall = Promise.withResolvers<void>();
-      const ended = Promise.withResolvers<void>();
       const socket = new Socket({
         onread: {
           buffer,

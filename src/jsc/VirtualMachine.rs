@@ -1639,16 +1639,24 @@ impl VirtualMachine {
                 dispatch = true;
             }
 
+            // A `beforeExit` listener is user JS and can reject a promise. Notify it
+            // (and run what the handler schedules) before concluding the loop is idle.
+            if self.event_loop_mut().drain_rejected_promises().is_err() {
+                return;
+            }
+            if self.is_event_loop_alive() {
+                continue;
+            }
+
             // Same guards as on entry: a fatal throw or a stop requested during
             // the inner drain must not re-dispatch. The main-thread case already
             // hard-exits via `exit_on_uncaught_exception`; this covers workers.
             if dispatch && self.unhandled_error_counter == 0 && self.script_allowed() {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
-
-                if self.is_event_loop_alive() {
-                    continue;
-                }
+                // The listener just ran may have scheduled work or rejected; the
+                // next pass picks up both.
+                continue;
             }
 
             break;

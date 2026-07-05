@@ -34,34 +34,36 @@ test("http2.createSecureServer with allowHTTP1 handles HTTP/1.1 requests", async
 
   const port = await listening;
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
-    let data = "";
-    res.on("data", (chunk: any) => (data += chunk));
-    res.on("end", () => {
-      onDone({
-        status: res.statusCode!,
-        body: data,
-        httpVersion: res.httpVersion,
-        // The response headers set via writeHead must survive the HTTP/1.1
-        // fallback intact (the fallback previously mangled the flat header
-        // array, emitting "c: o" instead of "content-type: text/plain").
-        contentType: res.headers["content-type"],
-        custom: res.headers["x-custom-header"],
+  try {
+    const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
+      let data = "";
+      res.on("data", (chunk: any) => (data += chunk));
+      res.on("end", () => {
+        onDone({
+          status: res.statusCode!,
+          body: data,
+          httpVersion: res.httpVersion,
+          // The response headers set via writeHead must survive the HTTP/1.1
+          // fallback intact (the fallback previously mangled the flat header
+          // array, emitting "c: o" instead of "content-type: text/plain").
+          contentType: res.headers["content-type"],
+          custom: res.headers["x-custom-header"],
+        });
       });
     });
-  });
-  req.on("error", onError);
+    req.on("error", onError);
 
-  const result = await done;
-  expect(result).toEqual({
-    status: 200,
-    body: "ok",
-    httpVersion: "1.1",
-    contentType: "text/plain",
-    custom: "custom-value",
-  });
-
-  server.close();
+    const result = await done;
+    expect(result).toEqual({
+      status: 200,
+      body: "ok",
+      httpVersion: "1.1",
+      contentType: "text/plain",
+      custom: "custom-value",
+    });
+  } finally {
+    server.close();
+  }
 });
 
 test("http2.createSecureServer with allowHTTP1 honors res.sendDate = false", async () => {
@@ -96,27 +98,29 @@ test("http2.createSecureServer with allowHTTP1 honors res.sendDate = false", asy
 
   const port = await listening;
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
-    let data = "";
-    res.on("data", (chunk: any) => (data += chunk));
-    res.on("end", () => {
-      onDone({
-        date: res.headers["date"],
-        contentType: res.headers["content-type"],
-        body: data,
+  try {
+    const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
+      let data = "";
+      res.on("data", (chunk: any) => (data += chunk));
+      res.on("end", () => {
+        onDone({
+          date: res.headers["date"],
+          contentType: res.headers["content-type"],
+          body: data,
+        });
       });
     });
-  });
-  req.on("error", onError);
+    req.on("error", onError);
 
-  const result = await done;
-  expect(result).toEqual({
-    date: undefined,
-    contentType: "text/plain",
-    body: "ok",
-  });
-
-  server.close();
+    const result = await done;
+    expect(result).toEqual({
+      date: undefined,
+      contentType: "text/plain",
+      body: "ok",
+    });
+  } finally {
+    server.close();
+  }
 });
 
 test("http2.createSecureServer with allowHTTP1 sends Keep-Alive on persistent connections", async () => {
@@ -151,30 +155,32 @@ test("http2.createSecureServer with allowHTTP1 sends Keep-Alive on persistent co
   // keepAlive advertises a persistent connection, which is what makes the
   // server emit Connection: keep-alive together with Keep-Alive: timeout=N.
   const agent = new https.Agent({ keepAlive: true });
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false, agent }, res => {
-    let data = "";
-    res.on("data", (chunk: any) => (data += chunk));
-    res.on("end", () => {
-      onDone({
-        connection: res.headers["connection"],
-        // renderNativeHeaders() only emits Keep-Alive when res._keepAliveTimeout
-        // is set, so connectionListenerHTTP1 must set it like the node:http path.
-        keepAlive: res.headers["keep-alive"],
-        body: data,
+  try {
+    const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false, agent }, res => {
+      let data = "";
+      res.on("data", (chunk: any) => (data += chunk));
+      res.on("end", () => {
+        onDone({
+          connection: res.headers["connection"],
+          // renderNativeHeaders() only emits Keep-Alive when res._keepAliveTimeout
+          // is set, so connectionListenerHTTP1 must set it like the node:http path.
+          keepAlive: res.headers["keep-alive"],
+          body: data,
+        });
       });
     });
-  });
-  req.on("error", onError);
+    req.on("error", onError);
 
-  const result = await done;
-  expect(result).toEqual({
-    connection: "keep-alive",
-    keepAlive: "timeout=5",
-    body: "ok",
-  });
-
-  agent.destroy();
-  server.close();
+    const result = await done;
+    expect(result).toEqual({
+      connection: "keep-alive",
+      keepAlive: "timeout=5",
+      body: "ok",
+    });
+  } finally {
+    agent.destroy();
+    server.close();
+  }
 });
 
 test("http2.createSecureServer with allowHTTP1 still handles HTTP/2 requests", async () => {
@@ -207,28 +213,30 @@ test("http2.createSecureServer with allowHTTP1 still handles HTTP/2 requests", a
   }>();
 
   const client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
-  client.on("error", onError);
+  try {
+    client.on("error", onError);
 
-  const h2req = client.request({ ":path": "/" });
-  let data = "";
-  let status = 0;
-  h2req.on("response", headers => {
-    status = headers[":status"] as number;
-  });
-  h2req.on("data", (chunk: any) => (data += chunk));
-  h2req.on("end", () => {
-    onDone({ status, body: data });
-  });
-  h2req.end();
+    const h2req = client.request({ ":path": "/" });
+    let data = "";
+    let status = 0;
+    h2req.on("response", headers => {
+      status = headers[":status"] as number;
+    });
+    h2req.on("data", (chunk: any) => (data += chunk));
+    h2req.on("end", () => {
+      onDone({ status, body: data });
+    });
+    h2req.end();
 
-  const result = await done;
-  expect(result).toEqual({
-    status: 200,
-    body: "ok-h2",
-  });
-
-  client.close();
-  server.close();
+    const result = await done;
+    expect(result).toEqual({
+      status: 200,
+      body: "ok-h2",
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
 });
 
 test("http2.createSecureServer without allowHTTP1 rejects HTTP/1.1", async () => {
@@ -256,23 +264,25 @@ test("http2.createSecureServer without allowHTTP1 rejects HTTP/1.1", async () =>
     error?: string;
   }>();
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
-    let data = "";
-    res.on("data", (chunk: any) => (data += chunk));
-    res.on("end", () => onDone({ status: res.statusCode!, body: data }));
-  });
-  req.on("error", (e: any) => onDone({ error: e.code }));
+  try {
+    const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
+      let data = "";
+      res.on("data", (chunk: any) => (data += chunk));
+      res.on("end", () => onDone({ status: res.statusCode!, body: data }));
+    });
+    req.on("error", (e: any) => onDone({ error: e.code }));
 
-  const result = await done;
-  // The HTTP/1.1 request must be rejected: the request handler is never reached.
-  // Node sends a 403 "Missing ALPN Protocol" response (or the connection errors out);
-  // either way the application's "should not reach" body is never delivered.
-  expect(result.body ?? "").not.toContain("should not reach");
-  if (result.error === undefined) {
-    expect(result.status).toBe(403);
+    const result = await done;
+    // The HTTP/1.1 request must be rejected: the request handler is never reached.
+    // Node sends a 403 "Missing ALPN Protocol" response (or the connection errors out);
+    // either way the application's "should not reach" body is never delivered.
+    expect(result.body ?? "").not.toContain("should not reach");
+    if (result.error === undefined) {
+      expect(result.status).toBe(403);
+    }
+  } finally {
+    server.close();
   }
-
-  server.close();
 });
 
 test("http2.createSecureServer allowHTTP1 handles request with body", async () => {
@@ -308,31 +318,33 @@ test("http2.createSecureServer allowHTTP1 handles request with body", async () =
     body: string;
   }>();
 
-  const options = {
-    hostname: "localhost",
-    port,
-    path: "/test",
-    method: "POST",
-    rejectUnauthorized: false,
-    headers: { "Content-Type": "text/plain" },
-  };
+  try {
+    const options = {
+      hostname: "localhost",
+      port,
+      path: "/test",
+      method: "POST",
+      rejectUnauthorized: false,
+      headers: { "Content-Type": "text/plain" },
+    };
 
-  const req = https.request(options, res => {
-    let data = "";
-    res.on("data", (chunk: any) => (data += chunk));
-    res.on("end", () => {
-      onDone({ status: res.statusCode!, body: data });
+    const req = https.request(options, res => {
+      let data = "";
+      res.on("data", (chunk: any) => (data += chunk));
+      res.on("end", () => {
+        onDone({ status: res.statusCode!, body: data });
+      });
     });
-  });
-  req.on("error", onError);
-  req.write("hello world");
-  req.end();
+    req.on("error", onError);
+    req.write("hello world");
+    req.end();
 
-  const result = await done;
-  expect(result.status).toBe(200);
-  expect(JSON.parse(result.body)).toEqual({ received: "hello world" });
-
-  server.close();
+    const result = await done;
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.body)).toEqual({ received: "hello world" });
+  } finally {
+    server.close();
+  }
 });
 
 test("http2.createSecureServer allowHTTP1 streaming write() then end()", async () => {
@@ -366,20 +378,22 @@ test("http2.createSecureServer allowHTTP1 streaming write() then end()", async (
     body: string;
   }>();
 
-  const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
-    let data = "";
-    res.on("data", (chunk: any) => (data += chunk));
-    res.on("end", () => {
-      onDone({ status: res.statusCode!, body: data });
+  try {
+    const req = https.get(`https://localhost:${port}`, { rejectUnauthorized: false }, res => {
+      let data = "";
+      res.on("data", (chunk: any) => (data += chunk));
+      res.on("end", () => {
+        onDone({ status: res.statusCode!, body: data });
+      });
     });
-  });
-  req.on("error", onError);
+    req.on("error", onError);
 
-  const result = await done;
-  expect(result).toEqual({
-    status: 200,
-    body: "part1-part2-part3",
-  });
-
-  server.close();
+    const result = await done;
+    expect(result).toEqual({
+      status: 200,
+      body: "part1-part2-part3",
+    });
+  } finally {
+    server.close();
+  }
 });

@@ -57,6 +57,12 @@ const PER_PROCESS_SHORT: &[u8] = b"hv";
 /// allows them in a worker's `execArgv` and rejecting them would be stricter
 /// than Node. Bun ignores them, exactly as it does on the command line.
 ///
+/// Spelled with the name Node registers the option under, which for a
+/// default-true option is the positive one (`warnings`, not `no-warnings`);
+/// [`lookup_canonical_long`] derives the other spelling. `addons` and
+/// `deprecation` are here rather than in `AUTO_PARAMS` because Bun's CLI only
+/// has their `--no-` form.
+///
 /// Taken from Node v26.3.0's `PerIsolateOptionsParser` (which folds in
 /// `EnvironmentOptionsParser`); its V8 and per-process options are left out
 /// because Node rejects those too.
@@ -64,6 +70,7 @@ const PER_PROCESS_SHORT: &[u8] = b"hv";
 ///
 /// Sorted — looked up with `binary_search`.
 const NODE_ONLY_BOOLEAN: &[&[u8]] = &[
+    b"addons",
     b"allow-addons",
     b"allow-child-process",
     b"allow-ffi",
@@ -71,45 +78,43 @@ const NODE_ONLY_BOOLEAN: &[&[u8]] = &[
     b"allow-net",
     b"allow-wasi",
     b"allow-worker",
+    b"async-context-frame",
     b"build-snapshot",
     b"check",
+    b"deprecation",
     b"disable-sigusr1",
     b"enable-network-family-autoselection",
     b"enable-source-maps",
     b"entry-url",
     b"experimental-addon-modules",
+    b"experimental-detect-module",
     b"experimental-eventsource",
     b"experimental-ffi",
+    b"experimental-global-navigator",
     b"experimental-import-meta-resolve",
     b"experimental-inspector-network-resource",
     b"experimental-network-inspection",
     b"experimental-print-required-tla",
+    b"experimental-repl-await",
+    b"experimental-require-module",
+    b"experimental-sqlite",
     b"experimental-storage-inspection",
     b"experimental-strip-types",
     b"experimental-test-coverage",
     b"experimental-test-module-mocks",
     b"experimental-vm-modules",
+    b"experimental-websocket",
+    b"experimental-webstorage",
     b"experimental-worker-inspection",
+    b"extra-info-on-fatal-exception",
+    b"force-async-hooks-checks",
     b"force-context-aware",
     b"force-node-api-uncaught-exceptions-policy",
     b"frozen-intrinsics",
+    b"global-search-paths",
     b"insecure-http-parser",
     b"interactive",
-    b"no-async-context-frame",
-    b"no-experimental-detect-module",
-    b"no-experimental-global-navigator",
-    b"no-experimental-repl-await",
-    b"no-experimental-require-module",
-    b"no-experimental-sqlite",
-    b"no-experimental-websocket",
-    b"no-experimental-webstorage",
-    b"no-extra-info-on-fatal-exception",
-    b"no-force-async-hooks-checks",
-    b"no-global-search-paths",
-    b"no-network-family-autoselection",
-    b"no-require-module",
-    b"no-strip-types",
-    b"no-warnings",
+    b"network-family-autoselection",
     b"pending-deprecation",
     b"permission",
     b"permission-audit",
@@ -119,6 +124,7 @@ const NODE_ONLY_BOOLEAN: &[&[u8]] = &[
     b"report-on-signal",
     b"report-uncaught-exception",
     b"require-module",
+    b"strip-types",
     b"test",
     b"test-force-exit",
     b"test-only",
@@ -138,6 +144,7 @@ const NODE_ONLY_BOOLEAN: &[&[u8]] = &[
     b"trace-warnings",
     b"track-heap-objects",
     b"use-env-proxy",
+    b"warnings",
     b"watch-preserve-output",
     b"webstorage",
 ];
@@ -237,6 +244,9 @@ fn lookup_canonical_long(name: &[u8]) -> Flag {
     // Node registers one canonical name per boolean option and derives the
     // other spelling from it, so `--x` and `--no-x` both name a boolean `x`.
     // It strips `no-` exactly once, which leaves `--no-no-x` naming nothing.
+    //
+    // This only derives the negative spelling, never the positive one: a Bun
+    // flag whose only name is negative (`--no-macros`) has no `--macros`.
     if let Some(base) = name.strip_prefix(b"no-".as_slice()) {
         if base.starts_with(b"no-") {
             return Flag::Unknown;
@@ -246,15 +256,6 @@ fn lookup_canonical_long(name: &[u8]) -> Flag {
             Some(Flag::Supported(_)) => Flag::InvalidNegation,
             _ => Flag::Unknown,
         };
-    }
-    // The tables carry the documented spelling of each boolean, which for a
-    // default-true option is the negative one (`--no-warnings`). Derive the
-    // positive spelling Node also accepts.
-    let mut negated = Vec::with_capacity("no-".len() + name.len());
-    negated.extend_from_slice(b"no-");
-    negated.extend_from_slice(name);
-    if matches!(lookup_exact(&negated), Some(Flag::Supported(Values::None))) {
-        return Flag::Supported(Values::None);
     }
     Flag::Unknown
 }
@@ -449,8 +450,17 @@ mod tests {
         assert_eq!(lookup_long(b"no-conditions"), Flag::InvalidNegation);
         // Both spellings of a boolean, even when only one is documented.
         assert_eq!(lookup_long(b"warnings"), Flag::Supported(Values::None));
+        assert_eq!(lookup_long(b"no-warnings"), Flag::Supported(Values::None));
         assert_eq!(lookup_long(b"addons"), Flag::Supported(Values::None));
+        assert_eq!(lookup_long(b"deprecation"), Flag::Supported(Values::None));
         assert_eq!(lookup_long(b"strip-types"), Flag::Supported(Values::None));
+        // But a Bun flag whose only name is negative has no positive spelling,
+        // in Bun or in Node.
+        assert_eq!(lookup_long(b"no-macros"), Flag::Supported(Values::None));
+        assert_eq!(lookup_long(b"macros"), Flag::Unknown);
+        assert_eq!(lookup_long(b"clear-screen"), Flag::Unknown);
+        assert_eq!(lookup_long(b"orphans"), Flag::Unknown);
+        assert_eq!(lookup_long(b"exit-on-error"), Flag::Unknown);
         // `no-` is stripped exactly once.
         assert_eq!(lookup_long(b"no-no-addons"), Flag::Unknown);
         // `_` is canonicalised to `-`.

@@ -392,6 +392,10 @@ describe("execArgv option", async () => {
       // `_` is canonicalised to `-` for the lookup, but the entry is reported
       // as the user spelled it.
       [["--definitely_not_a_flag"], "--definitely_not_a_flag"],
+      // A Bun flag whose only name is negative (`--no-macros`) has no positive
+      // spelling, in Bun or in Node.
+      [["--macros"], "--macros"],
+      [["--clear-screen"], "--clear-screen"],
     ])("%p", async (execArgv, message) => {
       await expectRejected(execArgv, {
         code: "ERR_WORKER_INVALID_EXEC_ARGV",
@@ -413,9 +417,10 @@ describe("execArgv option", async () => {
 
   describe("accepts", () => {
     it.each([
-      // Bun's own runtime flags.
+      // Bun's own runtime flags, including ones it only spells negatively.
       [["--smol"]],
       [["--no-addons"]],
+      [["--no-macros", "--no-clear-screen"]],
       [["--conditions", "react-server"]],
       // Node flags Bun does not implement: Node accepts them in execArgv, so
       // rejecting them here would be stricter than Node.

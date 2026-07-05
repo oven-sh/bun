@@ -124,7 +124,9 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 
 #endif
 
-/* The loop has 2 fallthrough polls */
+/* Creates the loop's fallthrough polls (the ones that don't keep it alive):
+ * wakeup_async, plus sweep_timer under libuv. epoll/kqueue has no timer poll —
+ * the sweep is a deadline folded into the poll timeout. */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.

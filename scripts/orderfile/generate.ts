@@ -17,6 +17,10 @@
  * order. Symbols lld cannot find are ignored, so the file degrades gracefully
  * as code moves.
  *
+ * One workload runs under `ptyrun.c`, on a pseudo-terminal: bun's stdio, tty
+ * and readline code is a different path on a terminal than on a pipe, and the
+ * functions it reaches are ~2k that no other workload touches.
+ *
  * The file is never committed. Release builds generate it from their own pass-1
  * binary and relink against it; canary builds inherit the last successful
  * build's file and re-publish it (scripts/build/ci.ts — inheritOrderFile /
@@ -39,7 +43,7 @@
  * the tracer depends on /proc/self/maps.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +59,27 @@ const here = dirname(fileURLToPath(import.meta.url));
  * functions, so anything this low means the tracer or the symbol table broke.
  */
 const MIN_FUNCTIONS = 4000;
+
+/**
+ * A workload that blows through this is hung — an interactive one waiting on an
+ * end-of-input that never comes, say — and a release build must not hang with it.
+ */
+const WORKLOAD_TIMEOUT_MS = 120_000;
+
+/** Typed into cli-fixture.js. `quit` is what makes it exit. */
+const CLI_INPUT = "world\none\ntwo\nquit\n";
+
+interface Workload {
+  name: string;
+  args: string[];
+  /** Working directory for the traced process. */
+  cwd?: string;
+  /** Typed into stdin; on a terminal it arrives as keystrokes. */
+  input?: string;
+  /** Run on a pseudo-terminal rather than pipes (see ptyrun.c). */
+  tty?: boolean;
+  env?: Record<string, string>;
+}
 
 export interface GenerateOptions {
   /** Build directory holding the unstripped binary. */
@@ -85,23 +110,39 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
     throw new Error(`${bunProfile} not found — build it first (bun run build:release)`);
   }
 
-  function run(cmd: string[], env?: Record<string, string | undefined>) {
+  interface RunOptions {
+    env?: Record<string, string | undefined>;
+    cwd?: string;
+    input?: string;
+    timeout?: number;
+    /** How the command is named in errors. Defaults to the executable. */
+    label?: string;
+  }
+
+  function run(cmd: string[], options: RunOptions = {}) {
     const r = spawnSync(cmd[0]!, cmd.slice(1), {
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...options.env },
+      cwd: options.cwd,
+      input: options.input,
+      timeout: options.timeout,
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 1 << 29, // nm prints ~10 MB of symbols
     });
-    if (r.error) throw r.error;
+    // A timeout arrives here too: spawnSync reports it as an ETIMEDOUT error.
+    if (r.error) throw new Error(`${options.label ?? cmd[0]}: ${r.error.message}`);
     return r;
   }
 
   const scratch = mkdtempSync(join(tmpdir(), "bun-orderfile-"));
   try {
-    // ── Build the tracer ──────────────────────────────────────────────────────
+    // ── Build the tracer and the pty runner ───────────────────────────────────
     const tracer = join(scratch, "pagetrace.so");
+    const ptyrun = join(scratch, "ptyrun");
     const cc = process.env.CC || "cc";
     const build = run([cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "pagetrace.c"), "-ldl"]);
     if (build.status !== 0) throw new Error(`failed to build the tracer with ${cc}\n${build.stderr}`);
+    const pty = run([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), "-lutil"]);
+    if (pty.status !== 0) throw new Error(`failed to build the pty runner with ${cc}\n${pty.stderr}`);
 
     // ── Representative workloads ──────────────────────────────────────────────
     // Order matters: earlier workloads get the densest placement, so the plain
@@ -122,22 +163,66 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
       join(fixtures, "tests", "example.test.ts"),
       `import { expect, test } from "bun:test";\ntest("passes", () => { expect(1).toBe(1); });\n`,
     );
+    // Reads stdin, writes stdout, drives readline — run once on a pipe and once
+    // on a terminal.
+    copyFileSync(join(here, "cli-fixture.js"), join(fixtures, "cli.js"));
 
-    const workloads: { name: string; args: string[] }[] = [
+    // `bun install`, offline: the one dependency is a tarball packed by the binary
+    // we are about to trace, so a slow registry cannot cost a release its order
+    // file. The rest is the real path — lockfile, extraction, node_modules.
+    const dependency = join(fixtures, "dep");
+    const app = join(fixtures, "app");
+    mkdirSync(dependency);
+    mkdirSync(app);
+    writeFileSync(
+      join(dependency, "package.json"),
+      `{ "name": "orderfile-dep", "version": "1.0.0", "main": "index.js" }\n`,
+    );
+    writeFileSync(join(dependency, "index.js"), `module.exports = 1;\n`);
+    const pack = run([bunProfile, "pm", "pack", "--filename", "dep.tgz"], { cwd: dependency, label: "bun pm pack" });
+    if (pack.status !== 0) throw new Error(`could not pack the install fixture\n${pack.stderr}`);
+    writeFileSync(
+      join(app, "package.json"),
+      `{ "name": "orderfile-app", "version": "0.0.0", ` +
+        `"dependencies": { "orderfile-dep": "file:../dep/dep.tgz" } }\n`,
+    );
+    const installEnv = { BUN_INSTALL_CACHE_DIR: join(scratch, "install-cache") };
+
+    const workloads: Workload[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
       { name: "bun hello.ts", args: [join(fixtures, "hello.ts")] },
       { name: "bun server.js", args: [join(fixtures, "server.js")] },
       { name: "bun test", args: ["test", join(fixtures, "tests", "example.test.ts")] },
+      { name: "bun install", args: ["install"], cwd: app, env: installEnv },
+      { name: "bun install (cached)", args: ["install"], cwd: app, env: installEnv },
+      { name: "bun cli.js (pipe)", args: [join(fixtures, "cli.js")], input: CLI_INPUT },
+      {
+        name: "bun cli.js (tty)",
+        args: [join(fixtures, "cli.js")],
+        input: CLI_INPUT,
+        tty: true,
+        env: { TERM: "xterm-256color" },
+      },
     ];
 
     const traces: { name: string; pageSize: number; pages: BigUint64Array }[] = [];
     for (const [i, workload] of workloads.entries()) {
       const out = join(scratch, `trace-${i}.bin`);
-      const r = run([bunProfile, ...workload.args], {
-        LD_PRELOAD: tracer,
-        BUN_PAGETRACE_BIN: bunProfile,
-        BUN_PAGETRACE_OUT: out,
-        BUN_DEBUG_QUIET_LOGS: "1",
+      // The tracer loads into the traced process and nowhere else. On a terminal
+      // ptyrun is the parent, so it is the one that hands the preload down.
+      const preload = workload.tty ? { PTYRUN_PRELOAD: tracer } : { LD_PRELOAD: tracer };
+      const r = run(workload.tty ? [ptyrun, bunProfile, ...workload.args] : [bunProfile, ...workload.args], {
+        env: {
+          ...preload,
+          BUN_PAGETRACE_BIN: bunProfile,
+          BUN_PAGETRACE_OUT: out,
+          BUN_DEBUG_QUIET_LOGS: "1",
+          ...workload.env,
+        },
+        cwd: workload.cwd,
+        input: workload.input,
+        timeout: WORKLOAD_TIMEOUT_MS,
+        label: `workload "${workload.name}"`,
       });
       if (r.status !== 0) throw new Error(`workload "${workload.name}" exited ${r.status}\n${r.stderr}`);
 
@@ -210,7 +295,7 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
           order.push(name);
         }
       }
-      log(`  ${trace.name.padEnd(16)} ${visited.size} pages touched, +${order.length - before} functions`);
+      log(`  ${trace.name.padEnd(21)} ${visited.size} pages touched, +${order.length - before} functions`);
     }
 
     if (order.length < minFunctions) {

@@ -796,6 +796,28 @@ describe("server stream reset (RFC 9113 §6.4)", () => {
     }
   });
 
+  // `end(body)` with the body larger than the 65535-byte flow-control window leaves DATA queued,
+  // so the writable side is ending but `_final` has not run. Resetting from there must still not
+  // let a clean end-of-stream escape once the queue drains.
+  test.each([
+    ["close", ErrorCode.INTERNAL_ERROR, (stream: any) => stream.close(ErrorCode.INTERNAL_ERROR)],
+    ["destroy", ErrorCode.NO_ERROR, (stream: any) => stream.destroy()],
+  ])("%s after end(body) resets the stream with data still queued", async (_name, expected, reset) => {
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end(Buffer.alloc(200_000, 0x61));
+      reset(stream);
+    });
+    try {
+      // The client never sends WINDOW_UPDATE, so the tail of the body stays queued.
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(expected);
+      expect(c.frames.find(endStreamOnStream1)).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
   test("every response entry point refuses a closed stream", async () => {
     using dir = tempDir("h2-closed-stream", { "body.txt": "hello" });
     const body = path.join(String(dir), "body.txt");
@@ -861,7 +883,8 @@ describe("server stream reset (RFC 9113 §6.4)", () => {
       // The peer resets the stream with NO_ERROR before any response: a clean close, so the
       // readable side still ends. Destroying on the reset would swallow 'end' and hang readers.
       raw.sendFrame(FrameType.RST_STREAM, 0, 1, Buffer.alloc(4));
-      await new Promise<void>(resolve => req.on("close", resolve));
+      // once() rejects on 'error', which is the point: no error may fire for a NO_ERROR reset.
+      await once(req, "close");
       expect({ events, code: error?.code, rstCode: req.rstCode }).toEqual({
         events: ["end", "close"],
         code: undefined,

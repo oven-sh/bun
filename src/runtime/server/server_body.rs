@@ -407,10 +407,8 @@ pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
-// `generate()` builds the JSON AST by hand instead of reflecting over a
-// struct's fields (cf.
-// `bun_parsers::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
-// with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
+// `generate()` builds the JSON AST by hand: an `E.Object` with
+// `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
@@ -2762,9 +2760,10 @@ where
     ) {
         jsc::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
-            && !resp
-                .get_remote_socket_info()
-                .is_some_and(|address| address.is_loopback())
+            && (!bake::is_allowed_host_header(req, Some(&self.config.address))
+                || !resp
+                    .get_remote_socket_info()
+                    .is_some_and(|address| address.is_loopback()))
         {
             req.set_yield(true);
             return;

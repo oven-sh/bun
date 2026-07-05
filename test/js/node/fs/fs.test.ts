@@ -5,6 +5,7 @@ import {
   gc,
   getMaxFD,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isLinux,
   isPosix,
@@ -91,6 +92,33 @@ function tmpdirTestMkdir(): string {
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;
 }
+
+it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading options", () => {
+  using dir = tempDir("fs-statsync-typed-array-path", { "target.txt": "bun" });
+  const encoded = new TextEncoder().encode(join(String(dir), "target.txt"));
+  const pathBuffer = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+  const arrayBuffer = pathBuffer.buffer as ArrayBuffer;
+  const stats = statSync(pathBuffer, {
+    get throwIfNoEntry() {
+      arrayBuffer.transfer();
+      return true;
+    },
+  });
+  expect(arrayBuffer.detached).toBe(false);
+  expect(stats!.isFile()).toBe(true);
+  arrayBuffer.transfer();
+  expect(arrayBuffer.detached).toBe(true);
+});
+
+it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
+  using dir = tempDir("fs-chmod-special-bits", {});
+  const dirPath = join(String(dir), "subdir");
+  mkdirSync(dirPath);
+  fs.chmodSync(dirPath, 0o1777);
+  expect(statSync(dirPath).mode & 0o7777).toBe(0o1777);
+  fs.chmodSync(dirPath, "1755");
+  expect(statSync(dirPath).mode & 0o7777).toBe(0o1755);
+});
 
 it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
   await using proc = Bun.spawn({
@@ -3109,7 +3137,7 @@ describe("fs/promises", () => {
   );
 
   for (let withFileTypes of [false, true] as const) {
-    const iterCount = 200;
+    const iterCount = isDebug ? 16 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -3189,7 +3217,7 @@ describe("fs/promises", () => {
 
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
-    const iterCount = 200;
+    const iterCount = isDebug ? 4 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {

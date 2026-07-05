@@ -407,6 +407,9 @@ pub mod fault_inject {
     pub const SOCKET: c_int = 7;
     pub const CLOSE: c_int = 8;
     pub const SHUTDOWN: c_int = 9;
+    /// Not a syscall: the per-loop TLS plaintext buffer allocation in
+    /// `us_internal_init_loop_ssl_data`.
+    pub const SSL_LOOP_BUFFER: c_int = 10;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

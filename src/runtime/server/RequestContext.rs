@@ -867,6 +867,24 @@ where
             debug_assert!(self.flags.has_finalized());
         }
 
+        // A response body stream suspended inside its `pull()` never settles the promise
+        // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
+        // so a client abort in that state reaches deinit with the sink still owned here.
+        // This is the owner's last exit: release it exactly like the settle paths do.
+        if let Some(wrapper_ptr) = self.sink.take() {
+            // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
+            // the context is the sink's sole owner (see the `sink` field's doc comment).
+            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+            wrapper.sink.finalize();
+            if let Some(sink_global) = wrapper.sink.global_this {
+                ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                    &mut wrapper.sink.signal,
+                    &sink_global,
+                );
+            }
+            Self::destroy_sink(wrapper_ptr);
+        }
+
         self.request_body_buf = Vec::new();
         self.response_buf_owned = Vec::new();
         self.response_weakref.deref();

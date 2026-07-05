@@ -18,6 +18,7 @@
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <string.h>
 #include <limits.h>
@@ -632,6 +633,18 @@ static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   }
 }
 
+void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t *old_s,
+                                      struct us_socket_t *new_s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (!loop_ssl_data) return;
+  if (loop_ssl_data->ssl_spill_owner == old_s) {
+    loop_ssl_data->ssl_spill_owner = new_s;
+  }
+  if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
+    loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
+  }
+}
+
 static int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
@@ -662,15 +675,29 @@ static struct loop_ssl_data *ssl_set_loop_data(struct us_socket_t *s) {
   return loop_ssl_data;
 }
 
+/* The loop's shared TLS plaintext buffer. Split out so the fault injector can
+ * fail this one allocation: a 512 KiB malloc only returns NULL where the OS
+ * does not overcommit, which is the only place the crash was ever seen. */
+static char *ssl_alloc_read_output(void) {
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+  ssize_t injected = 0;
+  int unused = 0;
+  if (US_FAULT_CHECK(US_FAULT_SSL_LOOP_BUFFER, -1, injected, unused)) return NULL;
+#endif
+  return us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+}
+
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
     struct loop_ssl_data *loop_ssl_data = us_calloc(1, sizeof(struct loop_ssl_data));
-    loop_ssl_data->ssl_read_output =
-        us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    if (!loop_ssl_data) Bun__outOfMemory();
+    loop_ssl_data->ssl_read_output = ssl_alloc_read_output();
+    if (!loop_ssl_data->ssl_read_output) Bun__outOfMemory();
 
     OPENSSL_init_ssl(0, NULL);
 
     loop_ssl_data->shared_biom = BIO_meth_new(BIO_TYPE_MEM, "µS BIO");
+    if (!loop_ssl_data->shared_biom) Bun__outOfMemory();
     BIO_meth_set_create(loop_ssl_data->shared_biom, BIO_s_custom_create);
     BIO_meth_set_write(loop_ssl_data->shared_biom, BIO_s_custom_write);
     BIO_meth_set_read(loop_ssl_data->shared_biom, BIO_s_custom_read);
@@ -678,6 +705,7 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
 
     loop_ssl_data->shared_rbio = BIO_new(loop_ssl_data->shared_biom);
     loop_ssl_data->shared_wbio = BIO_new(loop_ssl_data->shared_biom);
+    if (!loop_ssl_data->shared_rbio || !loop_ssl_data->shared_wbio) Bun__outOfMemory();
     BIO_set_data(loop_ssl_data->shared_rbio, loop_ssl_data);
     BIO_set_data(loop_ssl_data->shared_wbio, loop_ssl_data);
 
@@ -695,6 +723,9 @@ void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
     BIO_free(loop_ssl_data->shared_wbio);
     BIO_meth_free(loop_ssl_data->shared_biom);
     us_free(loop_ssl_data);
+    /* us_internal_init_loop_ssl_data's guard reads this: leaving it dangling
+     * would hand a freed loop_ssl_data back to the next TLS socket. */
+    loop->data.ssl_data = NULL;
   }
 }
 

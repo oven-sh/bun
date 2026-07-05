@@ -49,6 +49,7 @@ class ReadableFromWeb extends Readable {
   #closed;
   #pendingChunks;
   #stream;
+  #reading;
 
   constructor(options, stream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
@@ -62,6 +63,7 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#reading = false;
   }
 
   #drainPending() {
@@ -93,19 +95,30 @@ class ReadableFromWeb extends Readable {
     return;
   }
 
-  async _read() {
+  _read() {
     $debug("ReadableFromWeb _read()", this.__id);
-    var stream = this.#stream,
-      reader = this.#reader;
-    if (stream) {
-      reader = this.#reader = stream.getReader();
-      this.#stream = undefined;
-    } else if (this.#drainPending()) {
-      return;
-    }
+    // Readable calls _read() again as soon as push() is called, but #pump()
+    // pushes many chunks per call. Two pumps hold two read requests on the same
+    // reader, and readMany() drains the queue into whichever settles first.
+    if (this.#reading) return;
+    this.#reading = true;
+    return this.#pump();
+  }
 
-    var deferredError: Error | undefined;
+  async #pump() {
+    // #reading must be cleared as the body exits, not one microtask later: a
+    // paused-mode read() loop calls _read() again without yielding, and
+    // Readable leaves kReading set when _read() neither pushes nor pumps.
     try {
+      var stream = this.#stream,
+        reader = this.#reader;
+      if (stream) {
+        reader = this.#reader = stream.getReader();
+        this.#stream = undefined;
+      } else if (this.#drainPending()) {
+        return;
+      }
+
       do {
         var done = false,
           value;
@@ -139,11 +152,9 @@ class ReadableFromWeb extends Readable {
           }
         }
       } while (!this.#closed);
-    } catch (e) {
-      deferredError = e as Error;
+    } finally {
+      this.#reading = false;
     }
-
-    if (deferredError) throw deferredError;
   }
 
   _destroy(error, callback) {

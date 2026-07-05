@@ -8,6 +8,7 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -584,6 +585,486 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
     } finally {
       client.destroy();
       raw.close();
+    }
+  });
+});
+
+function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc(0)): Buffer {
+  return Buffer.concat([
+    Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01]),
+    hpackLiteral("localhost"),
+    extra,
+  ]);
+}
+
+const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
+
+describe("request header and body framing (RFC 9113 §8.1)", () => {
+  let deferredServer: http2.Http2Server;
+  let deferredPort: number;
+
+  beforeAll(async () => {
+    deferredServer = http2.createServer();
+    deferredServer.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.resume();
+    });
+    deferredServer.listen(0);
+    await once(deferredServer, "listening");
+    deferredPort = (deferredServer.address() as net.AddressInfo).port;
+  });
+
+  afterAll(() => {
+    deferredServer?.close();
+  });
+
+  async function expectStreamRejected(send: (c: RawH2) => void) {
+    const c = await RawH2.connect(deferredPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      send(c);
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(c.frames.find(f => f.type === FrameType.HEADERS && f.streamId === 1)).toBeUndefined();
+    } finally {
+      c.destroy();
+    }
+  }
+
+  test("a trailing header block carrying a pseudo-header is a stream PROTOCOL_ERROR", async () => {
+    await expectStreamRejected(c => {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([Buffer.from([0x01]), hpackLiteral("other.example")]));
+    });
+  });
+
+  test("a trailing header block without END_STREAM is a stream PROTOCOL_ERROR", async () => {
+    await expectStreamRejected(c => {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      c.sendFrame(
+        FrameType.HEADERS,
+        0x4,
+        1,
+        Buffer.concat([Buffer.from([0x00]), hpackLiteral("x-after"), hpackLiteral("1")]),
+      );
+    });
+  });
+
+  test("a request declaring a content-length with an empty body is a stream PROTOCOL_ERROR", async () => {
+    await expectStreamRejected(c => {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5));
+    });
+  });
+
+  test("a request body shorter than its declared content-length is a stream PROTOCOL_ERROR", async () => {
+    await expectStreamRejected(c => {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5));
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("ab"));
+    });
+  });
+
+  test("a request body longer than its declared content-length is a stream PROTOCOL_ERROR", async () => {
+    await expectStreamRejected(c => {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5));
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("abcdefg"));
+    });
+  });
+
+  test("a duplicate content-length field is a stream PROTOCOL_ERROR", async () => {
+    await expectStreamRejected(c => {
+      c.sendFrame(
+        FrameType.HEADERS,
+        0x5,
+        1,
+        requestHeaderBlock("POST", Buffer.concat([CONTENT_LENGTH_5, CONTENT_LENGTH_5])),
+      );
+    });
+  });
+
+  test("a request body matching its declared content-length is delivered while a longer one is reset", async () => {
+    const c = await RawH2.connect(deferredPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5));
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("abcde"));
+      c.sendFrame(FrameType.HEADERS, 0x4, 3, requestHeaderBlock("POST", CONTENT_LENGTH_5));
+      c.sendFrame(FrameType.DATA, 0x1, 3, Buffer.from("abcdefg"));
+      const headers = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      expect(headers.streamId).toBe(1);
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(c.frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toBeUndefined();
+      expect(c.frames.find(f => f.type === FrameType.HEADERS && f.streamId === 3)).toBeUndefined();
+    } finally {
+      c.destroy();
+    }
+  });
+});
+
+describe("inbound stream lifecycle", () => {
+  test("releases server stream objects once the peer resets their streams", async () => {
+    const total = 32;
+    const refs: WeakRef<object>[] = [];
+    let closedCount = 0;
+    const allOpen = Promise.withResolvers<void>();
+    const allClosed = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      refs.push(new WeakRef(stream));
+      stream.on("error", () => {});
+      stream.on("close", () => {
+        if (++closedCount === total) allClosed.resolve();
+      });
+      stream.resume();
+      if (refs.length === total) allOpen.resolve();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      for (let i = 0; i < total; i++) {
+        c.sendFrame(FrameType.HEADERS, 0x4, 1 + 2 * i, requestHeaderBlock("POST"));
+      }
+      await allOpen.promise;
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      for (let i = 0; i < total; i++) {
+        c.sendFrame(FrameType.RST_STREAM, 0, 1 + 2 * i, cancel);
+      }
+      await allClosed.promise;
+      for (let i = 0; i < 20 && refs.some(ref => ref.deref() !== undefined); i++) {
+        await gcTick(true);
+      }
+      expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
+  // feeding the stream's own RST_STREAM (then another read) back into the parser from that
+  // callback must not free the Stream out from under the caller (use-after-free under ASAN).
+  test("re-entrant read() from a trailer-value toString does not free the in-use stream", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+      function encodeFrame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header.writeUInt8(type, 3);
+        header.writeUInt8(flags, 4);
+        header.writeUInt32BE(streamId & 0x7fffffff, 5);
+        return Buffer.concat([header, payload]);
+      }
+      // JS-fed duplex: bytes push()ed here reach the parser's read() synchronously.
+      class FakeSocket extends Duplex {
+        _read() {}
+        _write(chunk, _enc, cb) {
+          cb();
+        }
+      }
+      const socket = new FakeSocket();
+      const client = http2.connect("http://localhost:80", { createConnection: () => socket });
+      client.on("error", e => console.log("session error", e.code));
+      // peer SETTINGS + ACK of ours
+      socket.push(encodeFrame(0x4, 0, 0));
+      socket.push(encodeFrame(0x4, 0x1, 0));
+      client.on("connect", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+        req.on("error", e => console.log("req error", e.code));
+        req.on("close", () => console.log("req close"));
+        req.on("wantTrailers", () => {
+          console.log("wantTrailers id=" + req.id);
+          req.sendTrailers({
+            "x-a": {
+              toString() {
+                console.log("toString:start");
+                // RST_STREAM(NO_ERROR) for the stream sendTrailers is operating on: its
+                // legacy slot is queued for release inside this nested read().
+                socket.push(encodeFrame(0x3, 0, req.id, Buffer.from([0, 0, 0, 0])));
+                // A second read() (PING) runs the deferred-release drain while
+                // sendTrailers still holds the stream.
+                socket.push(encodeFrame(0x6, 0, 0, Buffer.alloc(8)));
+                console.log("toString:end");
+                return "v";
+              },
+            },
+          });
+          console.log("sendTrailers:returned");
+          client.destroy();
+        });
+        req.end();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "wantTrailers id=1
+      toString:start
+      toString:end
+      sendTrailers:returned
+      req error ERR_HTTP2_STREAM_CANCEL
+      req close"
+    `);
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // emitErrorToAllStreams must reject a non-numeric error code up front (the native
+  // conversion requires a number) instead of reading it once per live stream. goaway()
+  // is stubbed because its own number check sits in front of this path in destroy().
+  test("session teardown rejects a non-numeric error code instead of reading it per stream", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+      function encodeFrame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header.writeUInt8(type, 3);
+        header.writeUInt8(flags, 4);
+        header.writeUInt32BE(streamId & 0x7fffffff, 5);
+        return Buffer.concat([header, payload]);
+      }
+      class FakeSocket extends Duplex {
+        _read() {}
+        _write(chunk, _enc, cb) {
+          cb();
+        }
+      }
+      const socket = new FakeSocket();
+      const client = http2.connect("http://localhost:80", { createConnection: () => socket });
+      client.on("error", e => console.log("session error", e.message));
+      // peer SETTINGS + ACK of ours
+      socket.push(encodeFrame(0x4, 0, 0));
+      socket.push(encodeFrame(0x4, 0x1, 0));
+      client.on("connect", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", e => console.log("req error", e.message));
+        req.on("close", () => console.log("req close rst=" + req.rstCode));
+        client.goaway = () => {};
+        let calls = 0;
+        try {
+          client.destroy(new Error("boom"), {
+            valueOf() {
+              console.log("valueOf:" + ++calls);
+              return 8;
+            },
+          });
+          console.log("destroy:returned calls=" + calls);
+        } catch (e) {
+          console.log("destroy threw: " + e.message);
+        }
+        // A numeric code must still tear every open stream down.
+        client.destroy(undefined, 8);
+        console.log("destroy:done");
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "destroy threw: Expected errorCode to be a number
+      destroy:done
+      req error boom
+      req close rst=8"
+    `);
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // node only marks trailers as sent after header validation succeeds, so a corrected
+  // retry after a validation error must reach the wire.
+  test("a sendTrailers validation error does not mark the trailers as sent", async () => {
+    const trailerError = Promise.withResolvers<any>();
+    const trailers = Promise.withResolvers<any>();
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("error", (e: any) => trailers.reject(e));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        try {
+          stream.sendTrailers({ ":status": "200" });
+        } catch (e: any) {
+          trailerError.resolve(e);
+          stream.sendTrailers({ "x-ok": "1" });
+        }
+      });
+      stream.end("body");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://localhost:${(server.address() as net.AddressInfo).port}`);
+    client.on("error", e => trailers.reject(e));
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", e => trailers.reject(e));
+      req.on("trailers", headers => trailers.resolve(headers));
+      req.resume();
+      req.end();
+      expect((await trailerError.promise).code).toBe("ERR_HTTP2_INVALID_PSEUDOHEADER");
+      expect((await trailers.promise)["x-ok"]).toBe("1");
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  test("refuses a new request stream once queued response data exhausts maxSessionMemory", async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.write(Buffer.alloc(1 << 22, "a"));
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      expect(c.frames.find(f => f.type === FrameType.HEADERS && f.streamId === 3)).toBeUndefined();
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  /** A maxSessionMemory:1 server whose first stream queues enough response data that the
+   *  next inbound HEADERS is refused. Streams that do reach JS are recorded in `seen`. */
+  async function exhaustedSession() {
+    const seen: { path: string; sync?: string }[] = [];
+    let first = true;
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", (stream: any, headers: any) => {
+      seen.push({ path: headers[":path"], sync: headers["x-bun-sync"] });
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      if (first) {
+        first = false;
+        stream.end(Buffer.alloc(1 << 22, "a"));
+      } else {
+        stream.end("ok");
+      }
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+    await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+    return { server, c, seen };
+  }
+
+  /** Open the connection and stream-1 windows so the queued response drains, bringing the
+   *  session back under its memory limit; resolves once stream 1's END_STREAM arrives. */
+  async function drainFirstStream(c: RawH2) {
+    const increment = Buffer.alloc(4);
+    increment.writeUInt32BE(1 << 24, 0);
+    c.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, increment);
+    c.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, increment);
+    // A GOAWAY here means a frame on the refused stream was escalated to a connection
+    // error - surface that immediately instead of timing out.
+    const frame = await c.waitFor(
+      f => f.type === FrameType.GOAWAY || (f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) === 1),
+      10_000,
+    );
+    expect(frame.type).toBe(FrameType.DATA);
+  }
+
+  // §5.1: a refused stream id has still existed, so frames a client pipelined behind the
+  // refused HEADERS (RST_STREAM especially) target a closed stream, never an idle one —
+  // none of them may escalate to a connection error.
+  test("tolerates DATA/WINDOW_UPDATE/PRIORITY/RST_STREAM pipelined behind a refused HEADERS", async () => {
+    const { server, c, seen } = await exhaustedSession();
+    try {
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      const priority = Buffer.alloc(5);
+      priority.writeUInt8(16, 4);
+      const windowUpdate = Buffer.alloc(4);
+      windowUpdate.writeUInt32BE(1000, 0);
+      // One write: the HEADERS that will be refused plus everything a client that has not
+      // yet seen the refusal would legitimately keep sending on that stream.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 3, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.DATA, 0, 3, Buffer.from("hello")),
+          encodeFrame(FrameType.WINDOW_UPDATE, 0, 3, windowUpdate),
+          encodeFrame(FrameType.PRIORITY, 0, 3, priority),
+          encodeFrame(FrameType.RST_STREAM, 0, 3, cancel),
+        ]),
+      );
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+
+      await drainFirstStream(c);
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 5) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(seen).toEqual([{ path: "/" }, { path: "/" }]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // §4.3: a refused stream's header block must still be decoded — including the part carried
+  // by CONTINUATION — or the connection-scoped HPACK dynamic table desyncs.
+  test("keeps HPACK state in sync when a refused header block spans HEADERS and CONTINUATION", async () => {
+    const { server, c, seen } = await exhaustedSession();
+    try {
+      // The refused request's block inserts `x-bun-sync: 1` into the dynamic table
+      // (literal with incremental indexing) from its CONTINUATION half.
+      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 3, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 3, insert),
+        ]),
+      );
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+
+      await drainFirstStream(c);
+      // 0xbe: indexed field 62 = the entry the refused block inserted. If that block had
+      // not been decoded this is a COMPRESSION_ERROR and stream 5 never reaches JS.
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, Buffer.concat([requestHeaderBlock("GET"), Buffer.from([0xbe])]));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 5) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(seen).toEqual([{ path: "/" }, { path: "/", sync: "1" }]);
+    } finally {
+      c.destroy();
+      server.close();
     }
   });
 });

@@ -475,3 +475,188 @@ test.skipIf(isDebug)("fuzz ansi256", () => {
     }
   });
 });
+
+// These assert the documented contract rather than snapshotting whatever the
+// implementation currently emits. https://bun.com/docs/runtime/color
+describe("ansi output is a well-formed SGR sequence", () => {
+  const sgr = /^\u001b\[[\d;]+m$/;
+
+  test.each(["ansi-16", "ansi-256", "ansi-16m"])("%s", format => {
+    for (const input of ["black", "red", "lime", "blue", "white", "magenta", "cyan", "yellow", "#336699"]) {
+      const escape = color(input, format as any);
+      expect(typeof escape).toBe("string");
+      expect(escape).toMatch(sgr);
+    }
+  });
+
+  // 30..=37 for the first eight colors, 90..=97 for their bright variants.
+  // https://github.com/oven-sh/bun/issues/22161
+  test("ansi-16 uses the 16-color SGR parameters", () => {
+    expect(color("black", "ansi-16")).toBe("\u001b[30m");
+    expect(color("green", "ansi-16")).toBe("\u001b[32m");
+    expect(color("gray", "ansi-16")).toBe("\u001b[37m");
+    expect(color("red", "ansi-16")).toBe("\u001b[91m");
+    expect(color("lime", "ansi-16")).toBe("\u001b[92m");
+    expect(color("blue", "ansi-16")).toBe("\u001b[94m");
+    expect(color("magenta", "ansi-16")).toBe("\u001b[95m");
+    expect(color("white", "ansi-16")).toBe("\u001b[97m");
+  });
+
+  test("ansi-16 never emits a 256-color escape", () => {
+    for (let r = 0; r < 256; r += r < 8 ? 1 : 51) {
+      for (let g = 0; g < 256; g += g < 8 ? 1 : 51) {
+        for (let b = 0; b < 256; b += b < 8 ? 1 : 51) {
+          expect(color({ r, g, b }, "ansi-16")).toMatch(/^\u001b\[(3[0-7]|9[0-7])m$/);
+        }
+      }
+    }
+  });
+
+  test("ansi-256 and ansi-16m keep their documented shapes", () => {
+    expect(color("red", "ansi-256")).toBe("\u001b[38;5;196m");
+    expect(color("red", "ansi-16m")).toBe("\u001b[38;2;255;0;0m");
+  });
+
+  // The palette only has 256 entries, so a valid-looking `38;5;429496961m` is
+  // still a broken escape. The grey ramp is where the index arithmetic underflows.
+  test("ansi-256 never emits an index outside the palette", () => {
+    withoutAggressiveGC(() => {
+      for (let value = 0; value < 256; value++) {
+        for (const rgb of [
+          { r: value, g: value, b: value },
+          { r: 0, g: 0, b: value },
+          { r: value, g: 0, b: 0 },
+        ]) {
+          const index = Number(color(rgb, "ansi-256")!.match(/38;5;(\d+)m/)![1]);
+          if (index > 255) throw new Error(`color(${JSON.stringify(rgb)}, "ansi-256") = index ${index}`);
+        }
+      }
+    });
+  });
+
+  // https://github.com/tmux/tmux/blob/master/colour.c
+  test("near-black colors land on black, not on a wrapped grey index", () => {
+    expect(color("#020202", "ansi-256")).toBe("\u001b[38;5;16m");
+    expect(color("#020202", "ansi-16")).toBe("\u001b[30m");
+    expect(color("#000004", "ansi-256")).toBe("\u001b[38;5;16m");
+  });
+
+  // A terminal skips the whole escape, so the printed width is just the text.
+  test.each(["ansi-16", "ansi-256", "ansi-16m"])("%s occupies no columns", format => {
+    expect(Bun.stringWidth(color("red", format as any) + "hello")).toBe(5);
+  });
+
+  test("every 24-bit color produces a well-formed ansi-16 sequence", () => {
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += r < 8 ? 1 : 17) {
+        for (let g = 0; g < 256; g += g < 8 ? 1 : 17) {
+          for (let b = 0; b < 256; b += b < 8 ? 1 : 17) {
+            const escape = color({ r, g, b }, "ansi-16");
+            if (!sgr.test(escape!)) throw new Error(`color(${r},${g},${b}, "ansi-16") = ${JSON.stringify(escape)}`);
+          }
+        }
+      }
+    });
+  });
+});
+
+describe("css string output parses back to the same color", () => {
+  const inputs = ["red", "#336699", "rgb(1, 2, 3)", "#000000", "#ffffff"];
+
+  test.each(["css", "hex", "HEX", "rgb", "rgba"])("%s round-trips", format => {
+    for (const input of inputs) {
+      expect(color(color(input, format as any) as string, "hex")).toBe(color(input, "hex"));
+    }
+  });
+
+  test("hsl round-trips", () => {
+    for (const input of [...inputs, "#808080", "lime", "rebeccapurple"]) {
+      expect(color(color(input, "hsl") as string, "hex")).toBe(color(input, "hex"));
+    }
+  });
+
+  test("hsl round-trips across the color cube", () => {
+    withoutAggressiveGC(() => {
+      for (let r = 0; r < 256; r += 37) {
+        for (let g = 0; g < 256; g += 53) {
+          for (let b = 0; b < 256; b += 61) {
+            const back = color(color({ r, g, b }, "hsl") as string, "hex");
+            if (back !== color({ r, g, b }, "hex")) {
+              throw new Error(`hsl(${r},${g},${b}) round-tripped to ${back}`);
+            }
+          }
+        }
+      }
+    });
+  });
+
+  // An achromatic color has no hue, and `hsl(NaN, ...)` is not parseable.
+  test("hsl of a grey has a zero hue", () => {
+    expect(color("#808080", "hsl")).toMatch(/^hsl\(0, 0%, 50\.19\d*%\)$/);
+    expect(color("#000000", "hsl")).toBe("hsl(0, 0%, 0%)");
+  });
+
+  test("lab output is CSS that Bun can parse back", () => {
+    for (const input of [...inputs, "#808080", "lime", "rebeccapurple"]) {
+      expect(color(color(input, "lab") as string, "hex")).not.toBeNull();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/33331
+  test.failing("lab round-trips", () => {
+    expect(color(color("#0000ff", "lab") as string, "hex")).toBe("#0000ff");
+  });
+
+  // The forward direction is exact, so the inverse is the broken one. It goes
+  // through cbrt, so the last f32 digit varies by platform; compare numerically.
+  test.each([
+    ["#ff0000", [54.29, 80.8, 69.89]],
+    ["#00ff00", [87.82, -79.27, 80.99]],
+    ["#0000ff", [29.57, 68.29, -112.03]],
+  ])("lab of %s matches the CIELAB D50 reference", (input, reference) => {
+    const components = (color(input as string, "lab") as string).match(/-?[\d.]+/g)!.map(Number);
+    expect(components).toHaveLength(3);
+    for (let i = 0; i < 3; i++) {
+      expect(components[i]).toBeCloseTo((reference as number[])[i], 1);
+    }
+  });
+
+  // A `none` component is a zero value outside of interpolation, and `NaN` is not
+  // a token any CSS parser accepts.
+  test("a none component does not leak NaN into the output", () => {
+    expect(color("hsl(120 none 50%)", "hsl")).toBe("hsl(120, 0%, 50%)");
+    expect(color("lab(none 40 30)", "lab")).toBe("lab(0% 40 30)");
+    expect(color("lab(50% none 30)", "lab")).toBe("lab(50% 0 30)");
+    expect(color(color("hsl(120 none 50%)", "hsl") as string, "hex")).not.toBeNull();
+  });
+});
+
+describe("input forms", () => {
+  test.each([
+    ["a named color", "red"],
+    ["3-digit hex", "#f00"],
+    ["6-digit hex", "#ff0000"],
+    ["8-digit hex", "#ff0000ff"],
+    ["rgb()", "rgb(255, 0, 0)"],
+    ["rgba()", "rgba(255, 0, 0, 1)"],
+    ["hsl() with percentages", "hsl(0, 100%, 50%)"],
+    ["a number", 0xff0000],
+    ["an object", { r: 255, g: 0, b: 0 }],
+    ["an array", [255, 0, 0]],
+  ])("%s resolves to red", (_name, input) => {
+    expect(color(input as any, "hex")).toBe("#ff0000");
+  });
+
+  test("an unparseable color is null", () => {
+    expect(color("notacolor", "hex")).toBeNull();
+    expect(color("", "hex")).toBeNull();
+    expect(color("#gg0000", "hex")).toBeNull();
+  });
+
+  test("alpha survives the object and array forms", () => {
+    expect(color("#f00", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+    expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);
+    expect(color("#f00", "{rgb}")).toEqual({ r: 255, g: 0, b: 0 });
+    expect(color("#f00", "[rgb]")).toEqual([255, 0, 0]);
+  });
+});

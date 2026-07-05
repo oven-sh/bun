@@ -324,10 +324,10 @@ impl MimeType {
 
             match category_.len() {
                 len if len == b"application".len() => {
-                    if strings::eql_comptime_ignore_len(category_, b"application") {
-                        if str == b"json" || str == b"geo+json" {
-                            return JSON;
-                        }
+                    let is_application =
+                        strings::eql_comptime_ignore_len(category_, b"application");
+                    if is_application && (str == b"json" || str == b"geo+json") {
+                        return JSON;
                     }
 
                     if str == b"octet-stream" {
@@ -343,9 +343,16 @@ impl MimeType {
                             *a = true;
                         }
                     }
+                    // `Category::init` already calls `application/javascript`
+                    // JavaScript; keep the two classifiers in agreement. The
+                    // `value` is preserved so `Content-Type` round-trips.
                     return MimeType {
                         value: Self::maybe_dupe(str_, dupe),
-                        category: Category::Application,
+                        category: if is_application && str == b"javascript" {
+                            Category::Javascript
+                        } else {
+                            Category::Application
+                        },
                     };
                 }
                 len if len == b"font".len() => {

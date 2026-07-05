@@ -5575,12 +5575,11 @@ pub mod bv2_impl {
                 let decoded: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(self.free_list.last().unwrap()) };
                 parse.contents_or_fd = parse_task::ContentsOrFd::Contents(decoded);
-                parse.loader = Some(match data_url.decode_mime_type().category {
-                    bun_http_types::MimeType::Category::Javascript => Loader::Js,
-                    bun_http_types::MimeType::Category::Css => Loader::Css,
-                    bun_http_types::MimeType::Category::Json => Loader::Json,
-                    _ => parse.loader.unwrap_or(Loader::File),
-                });
+                parse.loader = Some(
+                    data_url
+                        .loader()
+                        .unwrap_or_else(|| parse.loader.unwrap_or(Loader::File)),
+                );
             }
 
             false

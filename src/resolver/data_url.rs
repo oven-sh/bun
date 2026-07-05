@@ -185,6 +185,19 @@ impl<'a> DataURL<'a> {
         bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
+    /// The loader implied by the MIME type, which is the only authority on a
+    /// `data:` URL's type. The payload is arbitrary user text, so sniffing a
+    /// file extension out of it would pick up whatever follows its last `.`.
+    pub fn loader(&self) -> Option<bun_ast::Loader> {
+        use bun_http_types::MimeType::Category;
+        match self.decode_mime_type().category {
+            Category::Javascript => Some(bun_ast::Loader::Js),
+            Category::Css => Some(bun_ast::Loader::Css),
+            Category::Json => Some(bun_ast::Loader::Json),
+            _ => None,
+        }
+    }
+
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;

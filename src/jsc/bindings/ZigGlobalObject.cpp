@@ -660,7 +660,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (moduleKey->endsWith(".node"_s)) {
+    // A `data:` URL's payload is source text, not a path, so it never names an addon.
+    if (moduleKey->endsWith(".node"_s) && !moduleKey->startsWith("data:"_s)) {
         throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
         return {};
     }
@@ -3589,7 +3590,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
-    if (moduleKey->endsWith(".node"_s)) {
+    // A `data:` URL's payload is source text, not a path, so it never names an addon.
+    if (moduleKey->endsWith(".node"_s) && !moduleKey->startsWith("data:"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 

@@ -1113,6 +1113,26 @@ impl BunTest {
         }
     }
 
+    /// Spec `Promise.resolve(value)` coercion, for callbacks that return a userland
+    /// thenable (`PromiseLike`) instead of a native promise: the runner must await it,
+    /// and only a real `JSPromise` can carry its completion reactions.
+    fn coerce_thenable(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        if !value.is_object() || value.as_promise().is_some() {
+            return Ok(value);
+        }
+        let Some(then) = value.get_if_property_exists(global_this, "then")? else {
+            return Ok(value);
+        };
+        if !then.is_callable() {
+            return Ok(value);
+        }
+        // `resolve()` runs the spec's ResolvePromise: it queues the job that calls
+        // `then`, and rejects the promise if that job throws.
+        let promise = bun_jsc::JSPromise::create(global_this);
+        promise.resolve(global_this, value)?;
+        Ok(promise.to_js())
+    }
+
     /// if sync, the result is returned. if async, None is returned.
     pub fn run_test_callback(
         this_strong: &BunTestPtr,
@@ -1163,6 +1183,18 @@ impl BunTest {
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
                 unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
+                JSValue::ZERO
+            }
+        };
+
+        // A returned thenable is an async callback too, so await it like a promise.
+        let result: JSValue = match Self::coerce_thenable(global_this, result) {
+            Ok(v) => v,
+            Err(_) => {
+                global_this.clear_termination_exception();
+                // SAFETY: re-derive after the `then` getter ran JS; no outer `&mut` was held across it.
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                bun_core::scoped_log!(bun_test_group, "callTestCallback -> thenable coercion threw");
                 JSValue::ZERO
             }
         };

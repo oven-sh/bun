@@ -1237,6 +1237,10 @@ impl WebWorker {
                 // worker thread is still installed (torn down in `destroy()`).
                 unsafe { (hooks.cancel_all_timers)(vm_ptr) };
             }
+            // Same window, same reason: the GC timers are heap nodes too, and
+            // `WebWorker__teardownJSCVM` below frees the `WTFTimer` nodes they
+            // share the heap with.
+            vm.gc_controller.deinit();
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
             // after teardownJSCVM and only deinit()s (asserts empty in debug).
@@ -1281,12 +1285,6 @@ impl WebWorker {
         if let Some(loop_) = loop_ {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
-        }
-        if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; sole owner.
-            // Must precede Loop.shutdown so uv_close isn't called twice on the
-            // GC timer.
-            unsafe { (*vm_ptr).gc_controller.deinit() };
         }
         #[cfg(windows)]
         {

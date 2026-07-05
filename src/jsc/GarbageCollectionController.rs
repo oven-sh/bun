@@ -144,10 +144,14 @@ impl GarbageCollectionController {
     }
 
     /// Explicit teardown. Idempotent — `Drop` forwards here.
-    /// Kept as an inherent method because callers (web_worker, VM exit path)
-    /// must unlink the timers from the per-VM heap before that heap is dropped
-    /// in `deinit_runtime_state`.
+    ///
+    /// Must run while the per-VM timer heap is still intact, i.e. BEFORE JSC
+    /// teardown: `~RunLoop::Timer` unlinks and frees the `WTFTimer` nodes
+    /// sharing that heap, so an unlink afterwards walks freed siblings. Both
+    /// callers (`global_exit`, `web_worker`) do it next to `cancel_all_timers`.
     pub fn deinit(&mut self) {
+        // Terminal: nothing may re-arm the nodes after they leave the heap.
+        self.disabled = true;
         // A `Drop` that runs after the VM left its thread-local slot has no heap
         // left to unlink from — and the nodes die with the VM anyway.
         let Some(vm) = VirtualMachine::get_or_null() else {

@@ -4,7 +4,7 @@
 // runtime is spun up. It used to hold four: the JS thread's socket-timeout
 // sweep plus its two GC timers, and one more sweep on the HTTP client thread.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 const COUNT_TIMERFDS = /* js */ `
   function countTimerFds() {
@@ -94,3 +94,23 @@ test.concurrent(
   },
   30_000,
 );
+
+// The GC controller's timers live on the same heap as the `WTFTimer` nodes that
+// `~RunLoop::Timer` frees during JSC teardown, so they have to be unlinked
+// before it runs. Under `BUN_DESTRUCT_VM_ON_EXIT` that teardown actually
+// happens, and getting the order wrong is a use-after-free in the pairing heap.
+test.concurrent.skipIf(!isASAN)("destructing the VM on exit does not corrupt the timer heap", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `setTimeout(() => {}, 1); await Bun.sleep(5); console.log("ok");`],
+    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.trim(),
+    asan: stderr.includes("AddressSanitizer") ? stderr.slice(0, 400) : null,
+    signalCode: proc.signalCode ?? null,
+    exitCode,
+  }).toEqual({ stdout: "ok", asan: null, signalCode: null, exitCode: 0 });
+});

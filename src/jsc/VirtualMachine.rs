@@ -1537,6 +1537,10 @@ impl VirtualMachine {
                 // `destroy()`, well after `global_exit`).
                 unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
             }
+            // Same window, same reason: the GC timers are heap nodes too, and
+            // `~RunLoop::Timer` below frees the `WTFTimer` nodes they share the
+            // heap with.
+            self.gc_controller.deinit();
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
@@ -1596,7 +1600,6 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            self.gc_controller.deinit();
             self.destroy();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))

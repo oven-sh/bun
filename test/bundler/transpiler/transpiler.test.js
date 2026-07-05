@@ -1551,6 +1551,134 @@ export default class {
     });
   });
 
+  describe("exports.eliminate/replace do not depend on deadCodeElimination", () => {
+    // Each form: [label, source, eliminate: ["f"], replace: { f: 42 }, replace: { f: ["__N_SSG", true] }]
+    const forms = [
+      [
+        "function declaration",
+        "export function f() {}\nexport const keep = 1;",
+        "export const keep = 1;\n",
+        "export var f = 42;\nexport const keep = 1;\n",
+        "export var __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+      [
+        "class declaration",
+        "export class f {}\nexport const keep = 1;",
+        "export const keep = 1;\n",
+        "export var f = 42;\nexport const keep = 1;\n",
+        "export var __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+      [
+        "const declaration",
+        "export const f = () => {};\nexport const keep = 1;",
+        "export const keep = 1;\n",
+        "export const f = 42;\nexport const keep = 1;\n",
+        "export const __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+      [
+        "export clause",
+        "function f() {}\nexport { f };\nexport const keep = 1;",
+        "function f() {}\nexport const keep = 1;\n",
+        "function f() {}\nexport var f = 42;\nexport const keep = 1;\n",
+        "function f() {}\nexport var __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+    ];
+
+    // `export default <value>` — every value form goes down a different branch.
+    const defaultValues = [
+      ["class", "class X {}"],
+      ["function", "function X() {}"],
+      ["expression", "123"],
+    ];
+
+    for (const deadCodeElimination of [true, false]) {
+      describe(`deadCodeElimination: ${deadCodeElimination}`, () => {
+        it.each(forms)("eliminates an exported %s", (_label, code, eliminated) => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { eliminate: ["f"] } });
+          expect(transpiler.transformSync(code)).toBe(eliminated);
+          expect(transpiler.scan(code).exports).toEqual(["keep"]);
+        });
+
+        it.each(forms)("replaces an exported %s", (_label, code, _elim, replaced) => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { replace: { f: 42 } } });
+          expect(transpiler.transformSync(code)).toBe(replaced);
+          expect(transpiler.scan(code).exports).toEqual(["f", "keep"]);
+        });
+
+        it("eliminating a class export keeps the other statements in order", () => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { eliminate: ["f"] } });
+          expect(transpiler.transformSync("export class f {}")).toBe("");
+          expect(transpiler.transformSync('console.log("a");\nconsole.log("b");\nexport class f {}')).toBe(
+            'console.log("a");\nconsole.log("b");\n',
+          );
+        });
+
+        it.each(forms)("injects a renamed export for an exported %s", (_label, code, _elim, _repl, injected) => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { replace: { f: ["__N_SSG", true] } },
+          });
+          expect(transpiler.transformSync(code)).toBe(injected);
+          expect(transpiler.scan(code).exports).toEqual(["__N_SSG", "keep"]);
+        });
+
+        it.each(defaultValues)("eliminates a default-exported %s", (_label, value) => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { eliminate: ["default"] },
+          });
+          expect(transpiler.transformSync(`export default ${value};`)).toBe("");
+          // The eliminated part must not steal an unrelated one: statements stay in order.
+          expect(transpiler.transformSync(`console.log("a");\nconsole.log("b");\nexport default ${value};`)).toBe(
+            'console.log("a");\nconsole.log("b");\n',
+          );
+        });
+
+        it.each(defaultValues)("replaces a default-exported %s", (_label, value) => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { replace: { default: 42 } },
+          });
+          expect(transpiler.transformSync(`export default ${value};\nexport const keep = 1;`)).toBe(
+            "export default 42;\nexport const keep = 1;\n",
+          );
+        });
+
+        it.each(defaultValues)("injects a renamed export for a default-exported %s", (_label, value) => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { replace: { default: ["__N_SSG", true] } },
+          });
+          expect(transpiler.transformSync(`export default ${value};\nexport const keep = 1;`)).toBe(
+            "export var __N_SSG = true;\nexport const keep = 1;\n",
+          );
+        });
+      });
+    }
+
+    it("does not touch a namespace member that happens to share the name", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ["f"] } });
+
+      expect(
+        transpiler.transformSync('import g from "g";\nexport namespace N {\n  export function f() {\n    g();\n  }\n}'),
+      ).toBe(
+        'import g from "g";\nexport var N;\n((N) => {\n  function f() {\n    g();\n  }\n  N.f = f;\n})(N ||= {});\n',
+      );
+
+      expect(
+        transpiler.transformSync(
+          'import g from "g";\nexport namespace N {\n  export class f {\n    m() {\n      g();\n    }\n  }\n}',
+        ),
+      ).toBe(
+        'import g from "g";\nexport var N;\n((N) => {\n\n  class f {\n    m() {\n      g();\n    }\n  }\n  N.f = f;\n})(N ||= {});\n',
+      );
+    });
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

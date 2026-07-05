@@ -397,6 +397,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        // `is_control_flow_dead` is only set above for a non-replace entry. The original
+        // value is gone either way, but `inject` still has to emit its renamed export.
+        macro_rules! inject_default_replacement {
+            () => {
+                if mark_for_replace {
+                    let entry = p
+                        .options
+                        .features
+                        .replace_exports
+                        .get_ptr(b"default")
+                        .cloned()
+                        .expect("infallible: mark_for_replace implies an entry");
+                    let _ =
+                        p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, &entry);
+                }
+            };
+        }
+
         match &mut data.value {
             js_ast::StmtOrExpr::Expr(expr) => {
                 let was_anonymous_named_expr = expr.is_anonymous_named();
@@ -425,6 +443,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
+                    inject_default_replacement!();
                     restore_dead!();
                     record_on_exit!();
                     return Ok(());
@@ -607,6 +626,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
+                            inject_default_replacement!();
                             p.react_refresh.hook_ctx_storage = prev;
                             restore_dead!();
                             record_on_exit!();
@@ -777,6 +797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_);
 
                         if p.is_control_flow_dead {
+                            inject_default_replacement!();
                             restore_dead!();
                             record_on_exit!();
                             return Ok(());
@@ -794,7 +815,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replace_expr,
                             ) = entry
                             {
+                                // The class is discarded, so skip lowering it. Lowering
+                                // reassigns `data.value` and would undo the replacement.
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                stmts.push(*stmt);
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -802,10 +826,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     bun_ast::Loc::EMPTY,
                                     &entry,
                                 );
-                                restore_dead!();
-                                record_on_exit!();
-                                return Ok(());
                             }
+
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
                         }
 
                         if !data.default_name.ref_.is_symbol() {
@@ -884,12 +909,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Function,
     ) -> Result<(), Error> {
-        // We mark it as dead, but the value may not actually be dead
-        // We just want to be sure to not increment the usage counts for anything in the function
-        let mark_as_dead = p.options.features.dead_code_elimination
-            && data.func.flags.contains(flags::Function::IsExport)
+        // `replace_exports` targets module-level exports. A function exported from a
+        // namespace becomes a property of the namespace object, not a module export.
+        let should_replace_export = data.func.flags.contains(flags::Function::IsExport)
+            && p.enclosing_namespace_arg_ref.is_none()
             && p.options.features.replace_exports.count() > 0
             && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_);
+
+        // We mark it as dead, but the value may not actually be dead
+        // We just want to be sure to not increment the usage counts for anything in the function
+        let mark_as_dead = should_replace_export && p.options.features.dead_code_elimination;
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -940,13 +969,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
                 Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
-        } else if !mark_as_dead {
+        } else if !should_replace_export {
             if remove_overwritten {
                 // restore on early return.
                 p.react_refresh.hook_ctx_storage = prev_hook_storage;
-                if mark_as_dead {
-                    p.is_control_flow_dead = original_is_dead;
-                }
                 return Ok(());
             }
 
@@ -980,21 +1006,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 stmts.push(*stmt);
             }
-        } else if mark_as_dead {
-            if let Some(replacement) = p
-                .options
-                .features
-                .replace_exports
-                .get_ptr(original_name)
-                .cloned()
-            {
-                let _ = p.inject_replacement_export(
-                    stmts,
-                    name_ref,
-                    data.func.name.expect("infallible: name checked").loc,
-                    &replacement,
-                );
-            }
+        } else if let Some(replacement) = p
+            .options
+            .features
+            .replace_exports
+            .get_ptr(original_name)
+            .cloned()
+        {
+            let _ = p.inject_replacement_export(
+                stmts,
+                name_ref,
+                data.func.name.expect("infallible: name checked").loc,
+                &replacement,
+            );
         }
 
         let mut rr: Result<(), Error> = Ok(());
@@ -1041,8 +1065,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Class,
     ) -> Result<(), Error> {
-        let mark_as_dead = p.options.features.dead_code_elimination
-            && data.is_export
+        // `replace_exports` targets module-level exports. A class exported from a
+        // namespace becomes a property of the namespace object, not a module export.
+        let should_replace_export = data.is_export
+            && p.enclosing_namespace_arg_ref.is_none()
             && p.options.features.replace_exports.count() > 0
             && p.is_export_to_eliminate(
                 data.class
@@ -1050,6 +1076,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("infallible: name checked")
                     .ref_,
             );
+
+        // We mark it as dead, but the value may not actually be dead
+        // We just want to be sure to not increment the usage counts for anything in the class
+        let mark_as_dead = should_replace_export && p.options.features.dead_code_elimination;
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -1067,7 +1097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Lower class field syntax for browsers that don't support it
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
-        if !mark_as_dead || was_export_inside_namespace {
+        if !should_replace_export {
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
         } else {

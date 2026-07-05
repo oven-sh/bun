@@ -8,6 +8,8 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1175,5 +1177,151 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("node:vm SourceTextModule graph evaluation order", () => {
+  // A module graph is evaluated in depth-first post-order, dependencies first
+  // (https://tc39.es/ecma262/#sec-innermoduleevaluation). Evaluating each
+  // dependency before its importer used to make the innermost dependency the
+  // root of the DFS, which rotates the evaluation order of any cycle it sits
+  // on and puts legal cyclic bindings in the TDZ when their importer runs.
+  async function linkGraph(modules: Record<string, SourceTextModule | SyntheticModule>, rootIdentifier = "A") {
+    const root = modules[rootIdentifier] as SourceTextModule;
+    await root.link(specifier => modules[specifier]);
+    return root;
+  }
+
+  test("a two-module cycle runs the dependency's body before the importer's", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import { v } from "B"; order.push("A"); export const a = v + 1;`, {
+        identifier: "A",
+        context,
+      }),
+      B: new SourceTextModule(`import "A"; order.push("B"); export const v = 1;`, { identifier: "B", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["B", "A"]);
+    expect(modules.A.namespace.a).toBe(2);
+    expect([modules.A.status, modules.B.status]).toEqual(["evaluated", "evaluated"]);
+  });
+
+  test("a three-module cycle runs bodies in depth-first post-order", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import "B"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "C"; order.push("B");`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "A"; order.push("C");`, { identifier: "C", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["C", "B", "A"]);
+  });
+
+  test("an acyclic diamond runs each body once, dependencies first", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "C"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "D"; order.push("B");`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "D"; order.push("C");`, { identifier: "C", context }),
+      D: new SourceTextModule(`order.push("D");`, { identifier: "D", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["D", "B", "C", "A"]);
+  });
+
+  test("a synthetic dependency of a cyclic graph runs its evaluation steps first", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S: SyntheticModule = new SyntheticModule(
+      ["x"],
+      () => {
+        context.order.push("S");
+        S.setExport("x", 7);
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; import { x } from "S"; order.push("A" + x);`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "A"; order.push("B");`, { identifier: "B", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["S", "B", "A7"]);
+  });
+
+  test("import.meta is initialized for every module in a cycle before any body runs", async () => {
+    const context = createContext({ order: [] as string[] });
+    const initialized: string[] = [];
+    const sourceText = (identifier: string, source: string) =>
+      new SourceTextModule(source, {
+        identifier,
+        context,
+        initializeImportMeta(meta, module) {
+          initialized.push(module.identifier);
+          (meta as any).id = identifier;
+        },
+      });
+    const modules = {
+      A: sourceText("A", `import "B"; order.push(import.meta.id);`),
+      B: sourceText("B", `import "A"; order.push(import.meta.id);`),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["B", "A"]);
+    expect(initialized).toEqual(["B", "A"]);
+  });
+
+  test("a module shared by two roots is evaluated once and its import.meta initialized once", async () => {
+    const context = createContext({ order: [] as string[] });
+    const initialized: string[] = [];
+    const shared = new SourceTextModule(`order.push(import.meta.id);`, {
+      identifier: "shared",
+      context,
+      initializeImportMeta(meta, module) {
+        initialized.push(module.identifier);
+        (meta as any).id = "shared";
+      },
+    });
+    const roots = ["root1", "root2"].map(
+      identifier => new SourceTextModule(`import "shared"; order.push("${identifier}");`, { identifier, context }),
+    );
+
+    for (const root of roots) {
+      await root.link(() => shared);
+      await root.evaluate();
+    }
+
+    expect(context.order).toEqual(["shared", "root1", "root2"]);
+    expect(initialized).toEqual(["shared"]);
+    expect(shared.status).toBe("evaluated");
+  });
+
+  test("a cycle that throws errors every module on the cycle with the same error", async () => {
+    const context = createContext({});
+    const modules = {
+      A: new SourceTextModule(`import "B"; export const a = 1;`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "A"; throw new Error("boom");`, { identifier: "B", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("boom");
+
+    expect([modules.A.status, modules.B.status]).toEqual(["errored", "errored"]);
+    expect(modules.A.error).toBe(modules.B.error);
+    expect(modules.A.error.message).toBe("boom");
   });
 });

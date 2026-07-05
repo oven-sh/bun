@@ -1304,6 +1304,57 @@ describe("net.Socket onread", () => {
     );
   });
 
+  // Node delivers asynchronously, so the stream is already flowing again before
+  // a callback can pause it. Bun flushes the held bytes inside resume(), so the
+  // pause it takes there has to survive resume()'s own tail call.
+  it("keeps a pause() the callback takes during resume()'s flush", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.write(payload);
+      },
+      async target => {
+        const buffer = Buffer.alloc(64);
+        let calls = 0;
+        const firstCall = Promise.withResolvers<void>();
+        const secondCall = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback() {
+              calls++;
+              if (calls === 1) {
+                firstCall.resolve();
+                return false; // hold the rest of the chunk back
+              }
+              this.pause(); // ... and pause from inside the flush it gets handed to
+              secondCall.resolve();
+            },
+          },
+        });
+        try {
+          socket.on("error", err => {
+            firstCall.reject(err);
+            secondCall.reject(err);
+          });
+          await firstCall.promise;
+
+          socket.resume();
+          await secondCall.promise;
+          expect({ calls, isPaused: socket.isPaused() }).toEqual({ calls: 2, isPaused: true });
+
+          // And the pause is real, not just a flag: nothing more is delivered.
+          for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+          expect(calls).toBe(2);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
   // A pause() the user never lifted belongs to the socket, not to one handle:
   // Node's afterConnect only starts reads when the stream isn't paused, and
   // that flag survives both the first connect() and a later reconnect.

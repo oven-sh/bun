@@ -2140,6 +2140,10 @@ Object.defineProperty(Socket.prototype, "pending", {
 });
 
 Socket.prototype.resume = function resume() {
+  // Node's delivery is asynchronous, so the stream is already flowing by the
+  // time an onread callback can pause it again. Bun's flush below is
+  // synchronous, so claim the flowing side first or it overwrites that pause.
+  const resumed = Duplex.prototype.resume.$call(this);
   // An onread callback that returned false gets the bytes it left behind before
   // reads restart; if it pauses again, the handle stays stopped.
   if (onreadFlushPending(this)) {
@@ -2155,7 +2159,7 @@ Socket.prototype.resume = function resume() {
       this[kPausedUnref] = false;
     }
   }
-  return Duplex.prototype.resume.$call(this);
+  return resumed;
 };
 
 Socket.prototype.pause = function pause() {

@@ -650,15 +650,72 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
         }
         return Some((usize::try_from(rc).expect("int cast")).min(out.len()));
     }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
     {
         return list_child_pids_linux(parent, out);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(target_env = "ohos")]
+    {
+        // OHOS kernel lacks CONFIG_PROC_CHILDREN, so /proc/*/task/*/children
+        // doesn't exist. Fall back to scanning /proc/*/status for PPid matches.
+        return list_child_pids_fallback(parent, out);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos")))]
     {
         let _ = (parent, out);
         None
     }
+}
+
+/// OHOS fallback: scan `/proc/<pid>/status` for `PPid: <parent>`.
+/// Standard Linux procfs — works on any kernel that implements /proc,
+/// no CONFIG_PROC_CHILDREN needed. ~30 syscalls per 4096 entries.
+#[cfg(target_env = "ohos")]
+fn list_child_pids_fallback(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
+    use std::io::Write;
+    let mut dir_buf = [0u8; 4096];
+    let mut entry_buf = [0u8; 512];
+    let mut written = 0usize;
+    // Open /proc as a directory fd for iteration
+    let proc_fd = bun_sys::open_dir_absolute(b"/proc").ok()?;
+    let _guard = scopeguard::guard(proc_fd, |fd| { let _ = bun_sys::close(fd); });
+    let mut it = bun_sys::dir_iterator::iterate(proc_fd);
+    while let Ok(Some(entry)) = it.next() {
+        if written >= out.len() {
+            break;
+        }
+        let name = entry.name.slice();
+        // Only numeric directories (PID entries)
+        let Some(pid) = bun_core::fmt::parse_decimal::<libc::pid_t>(name) else {
+            continue;
+        };
+        if pid <= 1 {
+            continue;
+        }
+        // Read /proc/<pid>/status
+        let Ok(status_path) = bun_core::fmt::buf_print_z(
+            &mut entry_buf,
+            format_args!("/proc/{}/status", pid),
+        ) else {
+            continue;
+        };
+        let Some(data) = read_file_once(status_path, &mut dir_buf) else {
+            continue;
+        };
+        // Look for "PPid:\t<parent>" line
+        for line in data.split(|&b| b == b'\n') {
+            if let Some(ppid_val) = line.strip_prefix(b"PPid:\t") {
+                if let Some(ppid) = bun_core::fmt::parse_decimal::<libc::pid_t>(ppid_val) {
+                    if ppid == parent {
+                        out[written] = pid;
+                        written += 1;
+                    }
+                }
+                break;
+            }
+        }
+    }
+    Some(written)
 }
 
 /// Linux: read `/proc/<parent>/task/<tid>/children` for every thread of

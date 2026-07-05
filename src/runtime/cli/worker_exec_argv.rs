@@ -9,6 +9,7 @@
 //!
 //! <https://github.com/nodejs/node/blob/v26.3.0/src/node_worker.cc#L181-L213>
 
+use bstr::BStr;
 use bun_clap::Values;
 use bun_core::{WTFStringImpl, WTFStringImplExt as _};
 use bun_jsc::{ErrorCode, JSGlobalObject};
@@ -242,11 +243,11 @@ fn lookup_short(name: u8) -> Flag {
 
 /// The entries Node would name in `ERR_WORKER_INVALID_EXEC_ARGV`, in order.
 /// Empty when `exec_argv` is acceptable.
-fn invalid_entries(exec_argv: &[&[u8]]) -> Vec<String> {
+fn invalid_entries(exec_argv: &[&[u8]]) -> Vec<Vec<u8>> {
     // Node reports parse errors (a flag missing its value) in preference to
     // unrecognised flags, and reports all of whichever list it picks.
-    let mut errors: Vec<String> = Vec::new();
-    let mut invalid: Vec<String> = Vec::new();
+    let mut errors: Vec<Vec<u8>> = Vec::new();
+    let mut invalid: Vec<Vec<u8>> = Vec::new();
 
     let mut index = 0;
     while index < exec_argv.len() {
@@ -275,13 +276,13 @@ fn invalid_entries(exec_argv: &[&[u8]]) -> Vec<String> {
             Flag::Unknown | Flag::PerProcess => {
                 // Node does not know what an unusable flag's value looks like,
                 // so it never consumes the following entry for one.
-                invalid.push(String::from_utf8_lossy(entry).into_owned());
+                invalid.push(entry.to_vec());
                 continue;
             }
             Flag::InvalidNegation => {
-                errors.push(format!(
-                    "{} is an invalid negation because it is not a boolean option",
-                    String::from_utf8_lossy(entry)
+                errors.push(message(
+                    entry,
+                    b" is an invalid negation because it is not a boolean option",
                 ));
                 continue;
             }
@@ -295,14 +296,14 @@ fn invalid_entries(exec_argv: &[&[u8]]) -> Vec<String> {
             // `--flag=` names no value at all.
             Some(value) => {
                 if is_long && value.is_empty() {
-                    errors.push(missing_argument(entry));
+                    errors.push(message(entry, b" requires an argument"));
                 }
             }
             // The value is the next entry, but only when that entry is not
             // itself a flag.
             None => match exec_argv.get(index) {
                 Some(next) if !next.starts_with(b"-") => index += 1,
-                _ => errors.push(missing_argument(entry)),
+                _ => errors.push(message(entry, b" requires an argument")),
             },
         }
     }
@@ -310,8 +311,11 @@ fn invalid_entries(exec_argv: &[&[u8]]) -> Vec<String> {
     if errors.is_empty() { invalid } else { errors }
 }
 
-fn missing_argument(entry: &[u8]) -> String {
-    format!("{} requires an argument", String::from_utf8_lossy(entry))
+fn message(entry: &[u8], suffix: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(entry.len() + suffix.len());
+    message.extend_from_slice(entry);
+    message.extend_from_slice(suffix);
+    message
 }
 
 /// Throw `ERR_WORKER_INVALID_EXEC_ARGV` when `exec_argv` names a flag Bun
@@ -355,11 +359,14 @@ pub unsafe extern "C" fn Bun__Worker__validateExecArgv(
         return;
     }
 
-    let flags = invalid.join(", ");
+    let flags = invalid.join(&b", "[..]);
     let _ = global
         .err(
             ErrorCode::WORKER_INVALID_EXEC_ARGV,
-            format_args!("Initiated Worker with invalid execArgv flags: {flags}"),
+            format_args!(
+                "Initiated Worker with invalid execArgv flags: {}",
+                BStr::new(&flags)
+            ),
         )
         .throw();
 }
@@ -367,6 +374,14 @@ pub unsafe extern "C" fn Bun__Worker__validateExecArgv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `invalid_entries` yields bytes; spell the expectations as text.
+    fn bytes(expected: &[&str]) -> Vec<Vec<u8>> {
+        expected
+            .iter()
+            .map(|entry| entry.as_bytes().to_vec())
+            .collect()
+    }
 
     #[test]
     fn flag_tables_are_sorted() {
@@ -420,17 +435,17 @@ mod tests {
     fn rejects_unknown_and_per_process_flags() {
         assert_eq!(
             invalid_entries(&[b"--definitely-not-a-flag"]),
-            ["--definitely-not-a-flag"]
+            bytes(&["--definitely-not-a-flag"])
         );
-        assert_eq!(invalid_entries(&[b"--title=x"]), ["--title=x"]);
+        assert_eq!(invalid_entries(&[b"--title=x"]), bytes(&["--title=x"]));
         assert_eq!(
             invalid_entries(&[b"--max-old-space-size=64"]),
-            ["--max-old-space-size=64"]
+            bytes(&["--max-old-space-size=64"])
         );
-        assert_eq!(invalid_entries(&[b"-x"]), ["-x"]);
+        assert_eq!(invalid_entries(&[b"-x"]), bytes(&["-x"]));
         assert_eq!(
             invalid_entries(&[b"--definitely-not-a-flag", b"--also-not-a-flag"]),
-            ["--definitely-not-a-flag", "--also-not-a-flag"]
+            bytes(&["--definitely-not-a-flag", "--also-not-a-flag"])
         );
     }
 
@@ -443,7 +458,7 @@ mod tests {
         // An unusable flag's operand is a positional, as in Node.
         assert_eq!(
             invalid_entries(&[b"--title", b"x", b"--definitely-not-a-flag"]),
-            ["--title"]
+            bytes(&["--title"])
         );
     }
 
@@ -452,7 +467,7 @@ mod tests {
         assert!(invalid_entries(&[b"--conditions", b"not-a-flag"]).is_empty());
         assert_eq!(
             invalid_entries(&[b"--conditions", b"foo", b"--definitely-not-a-flag"]),
-            ["--definitely-not-a-flag"]
+            bytes(&["--definitely-not-a-flag"])
         );
     }
 
@@ -460,21 +475,21 @@ mod tests {
     fn reports_a_missing_value() {
         assert_eq!(
             invalid_entries(&[b"--conditions"]),
-            ["--conditions requires an argument"]
+            bytes(&["--conditions requires an argument"])
         );
         assert_eq!(
             invalid_entries(&[b"--conditions="]),
-            ["--conditions= requires an argument"]
+            bytes(&["--conditions= requires an argument"])
         );
         // A value may not itself look like a flag.
         assert_eq!(
             invalid_entries(&[b"--conditions", b"--no-addons"]),
-            ["--conditions requires an argument"]
+            bytes(&["--conditions requires an argument"])
         );
         // Parse errors win over unrecognised flags, as in Node.
         assert_eq!(
             invalid_entries(&[b"--definitely-not-a-flag", b"--conditions"]),
-            ["--conditions requires an argument"]
+            bytes(&["--conditions requires an argument"])
         );
     }
 
@@ -482,7 +497,7 @@ mod tests {
     fn reports_an_invalid_negation() {
         assert_eq!(
             invalid_entries(&[b"--no-conditions"]),
-            ["--no-conditions is an invalid negation because it is not a boolean option"]
+            bytes(&["--no-conditions is an invalid negation because it is not a boolean option"])
         );
     }
 }

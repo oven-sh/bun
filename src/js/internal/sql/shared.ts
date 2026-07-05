@@ -1401,6 +1401,17 @@ const sqliteProtocols = [
   { prefix: "file:", stripLength: 5 },
 ];
 
+// A file URL's third slash precedes the path but is not part of it when the path is windows-rooted,
+// either a UNC share ("file:///\\\\server\\share\\db") or a drive letter ("file:///C:/db"). A posix
+// path ("file:///tmp/db") keeps the slash it starts with. Mirrors what fileURLToPath itself strips.
+function stripWindowsFileURLSlash(filename: string): string {
+  if (!filename.startsWith("/")) return filename;
+  if (filename.startsWith("/\\")) return filename.slice(1);
+  const letter = filename.charCodeAt(1) | 0x20;
+  if (letter >= 97 && letter <= 122 && filename.charCodeAt(2) === 58) return filename.slice(1);
+  return filename;
+}
+
 function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   if (value === null) return null;
   const str = value instanceof URL ? value.toString() : value;
@@ -1417,11 +1428,8 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
         return Bun.fileURLToPath(str);
       } catch {
         // Not a well-formed file URL, so fall back to the text after the scheme and authority.
-        // "file:///\\\\server\\share\\db" is a UNC path written after the URL's third slash, which
-        // is not part of it. A posix path like "file:///tmp/db" keeps the slash it starts with.
         const filename = str.slice(prefix.length);
-        if (process.platform === "win32" && filename.startsWith("/\\")) return filename.slice(1);
-        return filename;
+        return process.platform === "win32" ? stripWindowsFileURLSlash(filename) : filename;
       }
     }
 

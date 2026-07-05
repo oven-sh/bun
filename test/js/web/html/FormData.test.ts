@@ -37,8 +37,10 @@ describe("FormData", () => {
     const blob = new Blob(["bar"]);
     const formData = new FormData();
     formData.append("foo", blob);
+    // File.name is a USVString; a Blob appended without an explicit
+    // filename is wrapped in a File and currently reports the empty string.
     // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    expect(formData.get("foo").name).toBe("");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
@@ -52,11 +54,11 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();

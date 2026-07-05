@@ -1101,13 +1101,18 @@ impl BlobExt for Blob {
             }
         }
 
-        let show_name = (self.is_jsdom_file.get() && self.get_name_string().is_some())
-            || (!self.name.get().is_empty()
-                && self.store.get().is_some()
-                && matches!(
-                    self.store().expect("infallible: store present").data,
-                    store::Data::Bytes(_)
-                ));
+        // `FileRef ("path")` / S3 headers already render the path, so only
+        // emit a `name:` line for byte-backed or empty blobs whose name is
+        // not in the header.
+        let show_name = !self.is_bun_file()
+            && !self.is_s3()
+            && ((self.is_jsdom_file.get() && self.get_name_string().is_some())
+                || (!self.name.get().is_empty()
+                    && self.store.get().is_some()
+                    && matches!(
+                        self.store().expect("infallible: store present").data,
+                        store::Data::Bytes(_)
+                    )));
         if !self.is_s3()
             && (!self.content_type_slice().is_empty()
                 || self.offset.get() > 0
@@ -2012,6 +2017,10 @@ impl BlobExt for Blob {
         // This copies over the charset field
         // which is okay because this will only be a <= slice
         let blob = self.dupe();
+        // https://w3c.github.io/FileAPI/#slice-method-algo returns a new Blob,
+        // not a File, so drop the File marker carried over by dupe().
+        blob.is_jsdom_file.set(false);
+        blob.last_modified.set(0.0);
         blob.offset.set(offset);
         blob.size.set(len);
 
@@ -2144,10 +2153,16 @@ impl BlobExt for Blob {
         None
     }
 
-    // TODO: Move this to a separate `File` object or BunFile
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match self.get_name_string() {
             Some(name) => name.to_js(global_this)?,
+            // https://w3c.github.io/FileAPI/#dfn-name — File.name is a
+            // USVString and always a string. For File-typed values with no
+            // backing path (Bun.file(fd), new File([], "")), report the
+            // empty string so `structuredClone` round-trips and matches
+            // Node / browsers. The only remaining caller that sees this arm
+            // for a plain Blob is `Bun.s3()` before a bucket is resolved.
+            None if self.is_jsdom_file.get() => JSValue::js_empty_string(global_this),
             None => JSValue::UNDEFINED,
         })
     }
@@ -2192,7 +2207,6 @@ impl BlobExt for Blob {
         }
     }
 
-    // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
@@ -2428,6 +2442,11 @@ impl BlobExt for Blob {
             }
             _ => {
                 blob = Blob::get::<false, true>(global_this, args[0])?;
+                // new Blob(parts) always produces a Blob, never a File; drop
+                // any File marker / lastModified carried over from a
+                // single-Blob-part fast-path dupe().
+                blob.is_jsdom_file.set(false);
+                blob.last_modified.set(0.0);
 
                 if args.len() > 1 {
                     let options = args[1];
@@ -3698,6 +3717,16 @@ impl BlobExt for Blob {
             return crate::webcore::s3_file::to_js_unchecked(global_object, this);
         }
 
+        // `is_jsdom_file` is the sole File/Blob prototype discriminator. Callers
+        // that construct a value meant to be a `File` (new File(), Bun.file(),
+        // Bun.stdin/out/err, embedded assets, archive entries) set this flag;
+        // callers that want a plain `Blob` clear it (slice(), Body.blob(),
+        // new Blob()). This keeps every `to_js()` call site from having to
+        // know which structure to pick.
+        if self.is_jsdom_file.get() {
+            return dom_file_to_js_unchecked(global_object, this);
+        }
+
         js::to_js_unchecked(global_object, this)
     }
 
@@ -4341,9 +4370,17 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     }
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
-    // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
-    // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-    Ok(unsafe { BlobExt::to_js(&*blob_ptr, global_this) })
+    // SAFETY: blob_ptr is valid; toJS is infallible.
+    let blob_ref = unsafe { &*blob_ptr };
+    // `to_js` picks Blob/File/S3File prototype from the Rust-side flags
+    // (`is_jsdom_file`, `is_s3`). For a `SerializeTag::File` payload that was
+    // created by `Bun.file()`, the serialized `is_jsdom_file` byte read above
+    // is 1 and the clone gets File.prototype; for a payload older than the
+    // flag (version 1), fall back on the store type.
+    if !blob_ref.is_jsdom_file.get() && blob_ref.is_bun_file() {
+        blob_ref.is_jsdom_file.set(true);
+    }
+    Ok(BlobExt::to_js(blob_ref, global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5605,6 +5642,42 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 // JSDOMFile constructor
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_jsc::jsc_abi_extern! {
+    // Defined in JSDOMFile.cpp. Wraps `blob` in a JSBlob whose structure uses
+    // File.prototype (so `name` / `lastModified` are reachable). Ownership of
+    // `blob` transfers to the wrapper; same contract as `Blob__create`.
+    safe fn BUN__createJSDOMFileUnsafely(
+        global: &JSGlobalObject,
+        blob: *mut core::ffi::c_void,
+    ) -> JSValue;
+}
+
+pub fn dom_file_to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
+    BUN__createJSDOMFileUnsafely(global, this.cast::<core::ffi::c_void>())
+}
+
+// C++ side declares these in JSDOMFile.cpp (File.prototype.name / .lastModified).
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn JSDOMFile__getName(this: &Blob, this_value: JSValue, global: &JSGlobalObject) -> JSValue {
+        bun_jsc::host_fn::host_fn_getter_this_shared(this, this_value, global, Blob::get_name)
+    }
+}
+
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn JSDOMFile__setName(this: &Blob, this_value: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
+        bun_jsc::host_fn::host_fn_setter_this_shared(this, this_value, global, value, Blob::set_name)
+    }
+}
+
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn JSDOMFile__getLastModified(this: &Blob, global: &JSGlobalObject) -> JSValue {
+        bun_jsc::host_fn::host_fn_getter_shared(this, global, Blob::get_last_modified)
+    }
+}
+
 // C++ side declares `extern "C" SYSV_ABI void* JSDOMFile__construct(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
@@ -5794,10 +5867,13 @@ pub fn construct_bun_file(
         }
     }
 
+    // Bun.file() results inherit from File.prototype so the documented
+    // `.name` / `.lastModified` accessors are reachable. `to_js()` keys on
+    // this flag to pick the File structure.
+    blob.is_jsdom_file.set(true);
     let ptr = Blob::new(blob);
-    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Explicit
-    // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+    // SAFETY: `Blob::new` returned a fresh heap allocation.
+    Ok(unsafe { &*ptr }.to_js(global_object))
 }
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file
@@ -7052,24 +7128,6 @@ impl Default for Inline {
             len: 0,
             was_string: false,
         }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// JSDOMFile__hasInstance / FileOpener / FileCloser
-// ──────────────────────────────────────────────────────────────────────────
-
-// C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn JSDOMFile__hasInstance(
-        _a: JSValue,
-        _b: &JSGlobalObject,
-        value: JSValue,
-    ) -> bool {
-        jsc::mark_binding();
-        let Some(blob) = value.as_class_ref::<Blob>() else { return false };
-        blob.is_jsdom_file.get()
     }
 }
 

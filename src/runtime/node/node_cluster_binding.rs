@@ -230,7 +230,11 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         Ok(success) => success,
         Err(err) => {
             // Nothing was enqueued, so no ack will ever settle the callback registered above.
-            ipc_data.internal_msg_queue.callbacks.swap_remove(&seq);
+            // Re-borrow rather than holding `ipc_data` across `serialize_and_send`, which runs
+            // `toJSON` and can re-enter (see `Subprocess::ipc`'s aliasing contract).
+            if let Some(ipc_data) = subprocess.ipc() {
+                ipc_data.internal_msg_queue.callbacks.swap_remove(&seq);
+            }
             if let Some(exception) = err.as_js_error() {
                 return Err(exception);
             }

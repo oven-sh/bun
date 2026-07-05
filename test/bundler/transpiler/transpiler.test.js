@@ -1625,7 +1625,20 @@ export default class {
       );
     });
 
+    // The collision rules apply whether or not the clause renames the export.
+    it.each([
+      [`const foo = 1;`, `const foo = 1;`],
+      [`let foo = 1;`, `let foo = 1;`],
+      [`class foo {}`, `class foo {\n}`],
+      [`import { foo } from "./d";`, `import { foo } from "./d";`],
+    ])("leaves an unrenamed export colliding with `%s` alone", (decl, printed) => {
+      expect(transform(`${decl} export { foo };`, { replace: { foo: 9 } })).toBe(`${printed}\nexport { foo };`);
+    });
+
     it("replaces an unrenamed export clause", () => {
+      expect(transform(`function foo() {} export { foo };`, { replace: { foo: 9 } })).toBe(
+        `function foo() {}\nexport var foo = 9;`,
+      );
       expect(transform(`var foo = 1; export { foo };`, { replace: { foo: 9 } })).toBe(
         `var foo = 1;\nexport var foo = 9;`,
       );

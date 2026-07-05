@@ -6287,20 +6287,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !replacement.is_replace() {
             return Ok(Some(local_ref));
         }
-        // `Replace` prints `export var <alias> = value`.
-        if !can_be_binding_identifier(alias) {
+        // `Replace` prints `export var <alias> = value`, so the alias has to spell
+        // a binding, and that binding has to be able to share the scope with
+        // whatever already holds the name, renamed or not.
+        if !can_be_binding_identifier(alias) || !self.can_declare_hoisted(alias) {
             return Ok(None);
         }
         // Reusing the local binding only works when there is one. A re-export
         // has no local symbol, just the parse-time name ref.
         if alias == local_name && local_ref.is_symbol() {
             return Ok(Some(local_ref));
-        }
-        // Otherwise bind the alias itself. That merges with a `var` of the same
-        // name, but a lexical one would make `declare_symbol` report a
-        // redeclaration the source never wrote.
-        if !self.can_declare_hoisted(alias) {
-            return Ok(None);
         }
         Ok(Some(self.declare_symbol(
             js_ast::symbol::Kind::Hoisted,

@@ -335,6 +335,104 @@ describe("Ed25519", () => {
   });
 });
 
+// RFC 8037 section 2: an OKP JWK must carry `x`, and for a private key it must be the
+// public key derived from `d`. Expectations below match Node.js v26 for these fixed JWKs.
+describe("OKP (Ed25519 / X25519) JWK import validation", () => {
+  const b64url = (hex: string) => Buffer.from(hex, "hex").toString("base64url");
+  const probe = (jwk: JsonWebKey, algName: string, usages: KeyUsage[], extractable = true) =>
+    crypto.subtle.importKey("jwk", jwk, { name: algName }, extractable, usages).then(
+      () => "accepted",
+      e => e.name,
+    );
+
+  // RFC 8032 section 7.1, test vector 1 (edWrongX is test vector 2's public key).
+  const edDHex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+  const edXHex = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const edD = b64url(edDHex);
+  const edX = b64url(edXHex);
+  const edWrongX = b64url("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
+  const edPub: JsonWebKey = { kty: "OKP", crv: "Ed25519", x: edX };
+  const edPriv: JsonWebKey = { ...edPub, d: edD };
+
+  // RFC 7748 section 6.1 (Alice's key pair; xWrongX is Bob's public key).
+  const xD = b64url("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+  const xX = b64url("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
+  const xWrongX = b64url("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
+  const xPub: JsonWebKey = { kty: "OKP", crv: "X25519", x: xX };
+  const xPriv: JsonWebKey = { ...xPub, d: xD };
+
+  it("Ed25519 rejects a private JWK whose x is missing, truncated, or not derived from d", async () => {
+    expect({
+      "valid public": await probe(edPub, "Ed25519", ["verify"]),
+      "valid private": await probe(edPriv, "Ed25519", ["sign"]),
+      "d without x": await probe({ kty: "OKP", crv: "Ed25519", d: edD }, "Ed25519", ["sign"]),
+      "x does not match d": await probe({ ...edPriv, x: edWrongX }, "Ed25519", ["sign"]),
+      "x is not base64url": await probe({ ...edPriv, x: "!!!" }, "Ed25519", ["sign"]),
+      "x is truncated": await probe({ ...edPriv, x: edX.slice(0, 10) }, "Ed25519", ["sign"]),
+      "public x is truncated": await probe({ ...edPub, x: edX.slice(0, 10) }, "Ed25519", ["verify"]),
+      "d is 64 bytes": await probe({ ...edPub, d: b64url(edDHex + edXHex) }, "Ed25519", ["sign"]),
+      "d is truncated": await probe({ ...edPub, d: edD.slice(0, 10) }, "Ed25519", ["sign"]),
+    }).toEqual({
+      "valid public": "accepted",
+      "valid private": "accepted",
+      "d without x": "DataError",
+      "x does not match d": "DataError",
+      "x is not base64url": "DataError",
+      "x is truncated": "DataError",
+      "public x is truncated": "DataError",
+      "d is 64 bytes": "DataError",
+      "d is truncated": "DataError",
+    });
+  });
+
+  it("X25519 rejects a private JWK whose x is missing, truncated, or not derived from d", async () => {
+    expect({
+      "valid public": await probe(xPub, "X25519", []),
+      "valid private": await probe(xPriv, "X25519", ["deriveBits"]),
+      "d without x": await probe({ kty: "OKP", crv: "X25519", d: xD }, "X25519", ["deriveBits"]),
+      "x does not match d": await probe({ ...xPriv, x: xWrongX }, "X25519", ["deriveBits"]),
+      "x is truncated": await probe({ ...xPriv, x: xX.slice(0, 10) }, "X25519", ["deriveBits"]),
+      "public x is truncated": await probe({ ...xPub, x: xX.slice(0, 10) }, "X25519", []),
+    }).toEqual({
+      "valid public": "accepted",
+      "valid private": "accepted",
+      "d without x": "DataError",
+      "x does not match d": "DataError",
+      "x is truncated": "DataError",
+      "public x is truncated": "DataError",
+    });
+  });
+
+  it("Ed25519 rejects a JWK with a wrong kty or alg", async () => {
+    expect({
+      "kty EC": await probe({ ...edPriv, kty: "EC" }, "Ed25519", ["sign"]),
+      "alg ES256": await probe({ ...edPriv, alg: "ES256" }, "Ed25519", ["sign"]),
+      // `alg: ""` is present but invalid; only an absent `alg` may be skipped.
+      "alg empty string": await probe({ ...edPriv, alg: "" }, "Ed25519", ["sign"]),
+      "alg Ed25519": await probe({ ...edPriv, alg: "Ed25519" }, "Ed25519", ["sign"]),
+      "alg EdDSA": await probe({ ...edPriv, alg: "EdDSA" }, "Ed25519", ["sign"]),
+    }).toEqual({
+      "kty EC": "DataError",
+      "alg ES256": "DataError",
+      "alg empty string": "DataError",
+      "alg Ed25519": "accepted",
+      "alg EdDSA": "accepted",
+    });
+  });
+
+  // The alg check above is Ed25519-only: Node does not validate alg for X25519, and the
+  // kty/key_ops/ext rules for X25519 are covered by the "X25519 JWK import" block below.
+  it("X25519 does not validate alg", async () => {
+    expect({
+      "alg ES256": await probe({ ...xPriv, alg: "ES256" }, "X25519", ["deriveBits"]),
+      "kty EC": await probe({ ...xPriv, kty: "EC" }, "X25519", ["deriveBits"]),
+    }).toEqual({
+      "alg ES256": "accepted",
+      "kty EC": "DataError",
+    });
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32613
 describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
   // The serialized JWK is rarely a multiple of 8 bytes, which AES-KW (RFC 3394)
@@ -546,10 +644,12 @@ describe("SubtleCrypto.deriveBits length", () => {
 });
 
 describe("X25519 JWK import", () => {
+  // Alice's key pair from RFC 7748 section 6.1. `x` must be the public key derived from `d`,
+  // so the two stay in sync; an inconsistent pair is a DataError.
   const x25519Public: JsonWebKey = {
     kty: "OKP",
     crv: "X25519",
-    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
   };
   const x25519Private: JsonWebKey = {
     ...x25519Public,

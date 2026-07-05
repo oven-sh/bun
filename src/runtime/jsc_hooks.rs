@@ -1112,6 +1112,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 /// drain, an already-overdue timer would leave `get_timeout` returning a zero
 /// deadline and spin the caller's `loop { … tick_possibly_forever() }`.
 ///
+/// On libuv the heap has no say in how long `uv_run` blocks (`All.uv_timer`
+/// does) and it drains from `on_uv_timer`, so there this is just the `tick()`
+/// the caller used to do inline.
+///
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn poll_and_drain_timers(vm: *mut VirtualMachine) {
@@ -1120,44 +1124,51 @@ unsafe fn poll_and_drain_timers(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    let state = runtime_state();
-    if state.is_null() {
+    #[cfg(windows)]
+    {
+        let _ = vm;
         // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
-        return;
+        unsafe { (*loop_).tick() };
     }
 
-    // SAFETY: `el` is the live per-thread event loop.
-    let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
-    // SAFETY: `loop_` is the live per-thread uws loop.
-    let quic_next_tick_us = unsafe {
-        let ild = &(*loop_).internal_loop_data;
-        if ild.quic_head.is_null() {
-            None
-        } else {
-            Some(ild.quic_next_tick_us)
+    #[cfg(not(windows))]
+    {
+        let state = runtime_state();
+        if state.is_null() {
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe { (*loop_).tick_without_idle() };
+            return;
         }
-    };
-    let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-    // SAFETY: `state` is the live per-thread `RuntimeState`; see the Note on
-    // `auto_tick` re: aliased-&mut across `fire()`.
-    let have_timeout = unsafe {
-        timer::All::get_timeout(
-            &mut (*state).timer,
-            &mut timespec,
-            has_pending_immediate,
-            quic_next_tick_us,
-            vm.cast(),
-        )
-    };
-    // SAFETY: `loop_` is the live per-thread uws loop.
-    unsafe { (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None }) };
 
-    #[cfg(unix)]
-    // SAFETY: see above.
-    unsafe {
-        timer::All::drain_timers(&mut (*state).timer, vm.cast())
-    };
+        // SAFETY: `el` is the live per-thread event loop.
+        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        let quic_next_tick_us = unsafe {
+            let ild = &(*loop_).internal_loop_data;
+            if ild.quic_head.is_null() {
+                None
+            } else {
+                Some(ild.quic_next_tick_us)
+            }
+        };
+        let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+        // SAFETY: `state` is the live per-thread `RuntimeState`; see the Note on
+        // `auto_tick` re: aliased-&mut across `fire()`.
+        let have_timeout = unsafe {
+            timer::All::get_timeout(
+                &mut (*state).timer,
+                &mut timespec,
+                has_pending_immediate,
+                quic_next_tick_us,
+                vm.cast(),
+            )
+        };
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        unsafe { (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None }) };
+
+        // SAFETY: see above.
+        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+    }
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via

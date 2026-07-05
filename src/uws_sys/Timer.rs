@@ -37,6 +37,23 @@ impl Timer {
         })
     }
 
+    pub fn create_fallthrough<T>(loop_: &mut Loop, _ptr: T) -> NonNull<Timer> {
+        // SAFETY: `loop_` is a valid loop pointer.
+        let t = unsafe {
+            us_create_timer(
+                loop_,
+                1,
+                c_uint::try_from(size_of::<T>()).expect("int cast"),
+            )
+        };
+        NonNull::new(t).unwrap_or_else(|| {
+            panic!(
+                "us_create_timer: returned null: {}",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            )
+        })
+    }
+
     pub fn set<T>(
         &mut self,
         ptr: T,
@@ -50,6 +67,20 @@ impl Timer {
             us_timer_set(self, cb, ms, repeat_ms);
             let value_ptr = us_timer_ext(self);
             (value_ptr.cast::<T>()).write(ptr);
+        }
+    }
+
+    // Named `as_` because `as` is a Rust keyword.
+    pub fn as_<T>(&mut self) -> T {
+        unsafe {
+            // SAFETY: the ext slot was allocated with `size_of::<T>()` and
+            // written via [`set`] as a bare `T`, so read it as `T` directly.
+            // Wrapping in `Option<T>` here would over-read and misinterpret
+            // the bytes (`Option<*mut T>` has no niche, so it is two words
+            // while the slot is one). Callers pass pointer-ish `T` and
+            // tolerate a (debug-asserted) null read.
+            let slot: *mut T = us_timer_ext(self).cast();
+            slot.read()
         }
     }
 

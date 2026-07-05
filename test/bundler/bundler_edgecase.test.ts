@@ -2496,6 +2496,116 @@ describe("bundler", () => {
       stdout: "",
     },
   });
+  // A dynamic import forces the ESM modules it shares with the entry into lazy
+  // `__esm` wrappers. Calling those wrappers must not jump ahead of a CommonJS
+  // module the entry imported first.
+  itBundled("edgecase/WrappedESMDependencyKeepsImportOrder", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./a.cjs";
+        import "./b.mjs";
+        await import("./c.mjs");
+      `,
+      "/a.cjs": /* js */ `
+        console.log("a cjs");
+        module.exports = {};
+      `,
+      "/b.mjs": /* js */ `
+        console.log("b esm");
+      `,
+      "/c.mjs": /* js */ `
+        import "./b.mjs";
+        console.log("c esm");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: `
+        a cjs
+        b esm
+        c esm
+      `,
+    },
+    onAfterBundle(api) {
+      const entry = api.readFile("out.js").split("// entry.mjs")[1];
+      expect(entry.indexOf("require_a()")).toBeLessThan(entry.indexOf("init_b()"));
+    },
+  });
+  itBundled("edgecase/WrappedESMDependencyKeepsImportOrderReversed", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./b.mjs";
+        import "./a.cjs";
+        await import("./c.mjs");
+      `,
+      "/a.cjs": /* js */ `
+        console.log("a cjs");
+        module.exports = {};
+      `,
+      "/b.mjs": /* js */ `
+        console.log("b esm");
+      `,
+      "/c.mjs": /* js */ `
+        import "./b.mjs";
+        console.log("c esm");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: `
+        b esm
+        a cjs
+        c esm
+      `,
+    },
+  });
+  // Adjacent async dependencies still batch into one `__promiseAll`, but the
+  // CommonJS module imported before them keeps its slot.
+  itBundled("edgecase/WrappedESMAsyncDependenciesKeepImportOrder", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./a.cjs";
+        import "./x.mjs";
+        import "./y.mjs";
+        await import("./c.mjs");
+      `,
+      "/a.cjs": /* js */ `
+        console.log("a cjs");
+        module.exports = {};
+      `,
+      "/x.mjs": /* js */ `
+        await 0;
+        console.log("x esm");
+      `,
+      "/y.mjs": /* js */ `
+        await 0;
+        console.log("y esm");
+      `,
+      "/c.mjs": /* js */ `
+        import "./x.mjs";
+        import "./y.mjs";
+        console.log("c esm");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: `
+        a cjs
+        x esm
+        y esm
+        c esm
+      `,
+    },
+    onAfterBundle(api) {
+      const entry = api.readFile("out.js").split("// entry.mjs")[1];
+      expect(entry.indexOf("require_a()")).toBeLessThan(entry.indexOf("__promiseAll("));
+      expect(entry).toContain("init_x()");
+      expect(entry).toContain("init_y()");
+    },
+  });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
       "/entry.ts": /* js */ `

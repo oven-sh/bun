@@ -338,6 +338,72 @@ describe("execArgv option", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
+
+  // https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-worker-execargv-invalid.js
+  it("throws ERR_INVALID_ARG_TYPE when execArgv is not an array", () => {
+    for (const execArgv of ["hello", 6]) {
+      expect(() => new Worker("", { eval: true, execArgv: execArgv as any })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
+      );
+    }
+  });
+
+  describe("throws ERR_WORKER_INVALID_EXEC_ARGV for", () => {
+    it.each([
+      // Unknown to both Bun and Node.
+      [["--definitely-not-a-flag"], "--definitely-not-a-flag"],
+      [["-x"], "-x"],
+      // Reported together, in order.
+      [["--definitely-not-a-flag", "--also-not-a-flag"], "--definitely-not-a-flag, --also-not-a-flag"],
+      // Flags that configure the process, not a thread.
+      [["--title=blah"], "--title=blah"],
+      [["--zero-fill-buffers"], "--zero-fill-buffers"],
+      [["--use-openssl-ca"], "--use-openssl-ca"],
+      // Engine flags: these have to be set before the JS engine starts.
+      [["--expose-gc"], "--expose-gc"],
+      [["--stack-trace-limit=7"], "--stack-trace-limit=7"],
+      [["--max-old-space-size=64"], "--max-old-space-size=64"],
+      // A flag whose value is missing.
+      [["--redirect-warnings"], "--redirect-warnings requires an argument"],
+      [["--conditions"], "--conditions requires an argument"],
+      // The value of a flag is consumed, so validation resumes after it.
+      [["--conditions", "react-server", "--definitely-not-a-flag"], "--definitely-not-a-flag"],
+    ])("%p", (execArgv, message) => {
+      expect(() => new Worker("", { eval: true, execArgv })).toThrow(
+        expect.objectContaining({
+          code: "ERR_WORKER_INVALID_EXEC_ARGV",
+          name: "Error",
+          message: `Initiated Worker with invalid execArgv flags: ${message}`,
+        }),
+      );
+    });
+  });
+
+  describe("accepts", () => {
+    it.each([
+      // Bun's own runtime flags.
+      [["--smol"]],
+      [["--no-addons"]],
+      [["--conditions", "react-server"]],
+      // Node flags Bun does not implement: Node accepts them in execArgv, so
+      // rejecting them here would be stricter than Node.
+      [["--experimental-vm-modules"]],
+      [["--no-warnings", "--no-deprecation", "--tls-min-v1.2"]],
+      // Everything from the first positional on is a positional, never a flag.
+      [["--", "--definitely-not-a-flag"]],
+      [["entrypoint.js", "--definitely-not-a-flag"]],
+    ])("%p", async execArgv => {
+      const worker = new Worker("require('worker_threads').parentPort.postMessage(process.execArgv)", {
+        eval: true,
+        execArgv,
+      });
+      try {
+        expect(await once(worker, "message")).toEqual([execArgv]);
+      } finally {
+        await worker.terminate();
+      }
+    });
+  });
 });
 
 test("eval does not leak source code", async () => {

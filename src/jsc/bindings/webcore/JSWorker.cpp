@@ -74,6 +74,10 @@
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
+// Throws ERR_WORKER_INVALID_EXEC_ARGV when an execArgv entry names a flag that
+// cannot apply to a worker thread. See src/runtime/cli/worker_exec_argv.rs.
+extern "C" void Bun__Worker__validateExecArgv(JSC::JSGlobalObject*, WTF::StringImpl** execArgv, size_t execArgvLen);
+
 namespace WebCore {
 using namespace JSC;
 
@@ -329,6 +333,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 RETURN_IF_EXCEPTION(scope, );
                 execArgv.append(str);
             });
+            RETURN_IF_EXCEPTION(throwScope, {});
+            // Same reinterpret_cast as Worker::create(): a WTF::String is just
+            // its StringImpl*.
+            static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
+            Bun__Worker__validateExecArgv(lexicalGlobalObject, reinterpret_cast<WTF::StringImpl**>(execArgv.begin()), execArgv.size());
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }

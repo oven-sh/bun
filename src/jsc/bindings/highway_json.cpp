@@ -3,8 +3,8 @@
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_json.cpp"
-// OHOS: restrict to NEON-only (SVE/SVE2 lack BitsFromMask).
-#if defined(__OHOS__)
+// SVE/SVE2 lack BitsFromMask in this Highway version.
+#if defined(__aarch64__)
 #define HWY_TARGETS (HWY_NEON)
 #endif
 #include <hwy/foreach_target.h>

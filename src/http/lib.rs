@@ -821,10 +821,12 @@ const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*")
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
 #[cfg_attr(target_env = "ohos", allow(dead_code))]
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
+#[cfg_attr(not(target_env = "ohos"), allow(dead_code))]
 const ACCEPT_ENCODING_COMPRESSION_NO_BROTLI: &[u8] = b"gzip, deflate, zstd";
 #[cfg_attr(target_env = "ohos", allow(dead_code))]
 const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
+#[cfg_attr(not(target_env = "ohos"), allow(dead_code))]
 const ACCEPT_ENCODING_HEADER_COMPRESSION_NO_BROTLI: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION_NO_BROTLI);
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =

@@ -252,6 +252,21 @@ test("receiveMessageOnPort works as FIFO", () => {
   }
 }, 9999999);
 
+// https://github.com/oven-sh/bun/issues/26501
+test("receiveMessageOnPort preserves a queue of interleaved falsy and truthy messages", () => {
+  const { port1, port2 } = new MessageChannel();
+
+  const values = [undefined, null, 0, 1, false, true, "", "hello world"];
+  for (const value of values) port1.postMessage(value);
+
+  const received = values.map(() => receiveMessageOnPort(port2));
+  expect(received).toStrictEqual(values.map(message => ({ message })));
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+
+  port1.close();
+  port2.close();
+});
+
 test("receiveMessageOnPort does not drop falsy messages", () => {
   const { port1, port2 } = new MessageChannel();
 

@@ -503,6 +503,102 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
   }
 });
 
+describe("writeFile with a non-truncating flag", () => {
+  const flags = ["r+", "rs+", constants.O_RDWR];
+
+  it.each(flags)("writeFileSync with flag %p overwrites in place", flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(flags)("promises.writeFile with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(flags)("fs.writeFile with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.writeFile(path, "ZZ", { flag }, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it("writeFileSync on a file descriptor does not truncate", () => {
+    const path = join(tmpdirSync(), "in-place-fd.txt");
+    writeFileSync(path, "0123456789");
+    const fd = openSync(path, "r+");
+    try {
+      writeFileSync(fd, "ZZ");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["w", "w+"])("writeFileSync with flag %p still truncates", flag => {
+    const path = join(tmpdirSync(), "truncating.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+});
+
+// Writes at or above the preallocate threshold take the fallocate() path, which
+// grows the file before the data lands. O_APPEND then writes past the grown end,
+// leaving a hole of zeroes where the data belongs.
+describe("writeFile with a preallocate-sized buffer", () => {
+  const big = Buffer.alloc(3 * 1024 * 1024, "A");
+
+  it("appends with flag 'a'", () => {
+    const path = join(tmpdirSync(), "append-big.bin");
+    writeFileSync(path, "HEADER");
+    writeFileSync(path, big, { flag: "a" });
+    const out = readFileSync(path);
+    expect(out.subarray(0, 6).toString()).toBe("HEADER");
+    expect(out.indexOf(0)).toBe(-1);
+    expect(out.length).toBe(6 + big.length);
+  });
+
+  it("appends through a file descriptor opened with 'a'", () => {
+    const path = join(tmpdirSync(), "append-big-fd.bin");
+    writeFileSync(path, "HEADER");
+    const fd = openSync(path, "a");
+    try {
+      writeFileSync(fd, big);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(path);
+    expect(out.subarray(0, 6).toString()).toBe("HEADER");
+    expect(out.indexOf(0)).toBe(-1);
+    expect(out.length).toBe(6 + big.length);
+  });
+
+  it("keeps the tail of a larger file with flag 'r+'", () => {
+    const path = join(tmpdirSync(), "in-place-big.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    writeFileSync(path, big, { flag: "r+" });
+    const out = readFileSync(path);
+    expect(out.subarray(0, big.length).equals(big)).toBe(true);
+    expect(out.indexOf("B")).toBe(big.length);
+    expect(out.length).toBe(4 * 1024 * 1024);
+  });
+
+  it("truncates a larger file with the default flag", () => {
+    const path = join(tmpdirSync(), "truncating-big.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    writeFileSync(path, big);
+    const out = readFileSync(path);
+    expect(out.equals(big)).toBe(true);
+  });
+});
+
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = tmpdirTestMkdir();

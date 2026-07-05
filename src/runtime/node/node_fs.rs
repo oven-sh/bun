@@ -7458,11 +7458,25 @@ impl NodeFS {
         // Worthwhile after 6 MB at least on ext4 linux
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
-                let offset: usize = if matches!(args.file, PathOrFileDescriptor::Path(_)) {
-                    // on mac, it's relatively positioned
+                let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
+                // Preallocating grows the file, so skip it when the kernel picks
+                // the write offset at write() time: an O_APPEND write would land
+                // after the grown end, leaving a hole where the data belongs.
+                let appends = if is_path {
+                    (args.flag.as_int() & sys::O::APPEND) != 0
+                } else {
+                    // `flag` is the option, not how the caller opened this fd.
+                    match sys::get_fcntl_flags(fd) {
+                        Ok(open_flags) => (open_flags as c_int & sys::O::APPEND) != 0,
+                        Err(_) => break 'preallocate,
+                    }
+                };
+                if appends {
+                    break 'preallocate;
+                }
+                let offset: usize = if is_path {
                     0
                 } else {
-                    // on linux, it's absolutely positioned
                     match Syscall::lseek(fd, 0, libc::SEEK_CUR) {
                         Err(_) => break 'preallocate,
                         Ok(pos) => usize::try_from(pos).expect("int cast"),
@@ -7494,9 +7508,11 @@ impl NodeFS {
 
         // https://github.com/oven-sh/bun/issues/2931
         // https://github.com/oven-sh/bun/issues/10222
-        // Only truncate if we're not appending and writing to a path
-        if (args.flag.as_int() & sys::O::APPEND) == 0
-            && !matches!(args.file, PathOrFileDescriptor::Fd(_))
+        // Only resize when the flags asked to truncate: `r+` & co. overwrite in
+        // place, and Node never resizes a descriptor it was handed. This also
+        // undoes any over-allocation from the preallocate above.
+        if (args.flag.as_int() & sys::O::TRUNC) != 0
+            && matches!(args.file, PathOrFileDescriptor::Path(_))
         {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).

@@ -413,6 +413,9 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+// The fixture spawns six workers that each parse 100 MiB of source, which the
+// default 5s budget cannot cover on a debug/ASAN build (~27s there, ~2s in
+// release). The sizes are load-bearing: they keep RSS growth above the noise.
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
@@ -425,9 +428,6 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-  // The fixture spawns six workers that each parse 100 MiB of source, which the
-  // default 5s budget cannot cover on a debug/ASAN build (~27s there, ~2s in
-  // release). The sizes are load-bearing: they keep RSS growth above the noise.
 }, 120_000);
 
 describe("captured stdio backpressure", () => {

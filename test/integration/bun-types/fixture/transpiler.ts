@@ -37,6 +37,10 @@ new Bun.Transpiler({
   },
 });
 
+// `eliminate` takes any exported name; `replace` keys are identifier-validated
+// at runtime, so a string-named export can only be eliminated.
+new Bun.Transpiler({ loader: "ts", exports: { eliminate: ["a-b"] } });
+
 const transpiler = new Bun.Transpiler({ loader: "ts" });
 expectType(transpiler.transformSync("const q = 1; export { q as QA };")).is<string>();
 expectType(transpiler.scan("export { q as QA };").exports).is<string[]>();

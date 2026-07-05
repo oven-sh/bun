@@ -5283,11 +5283,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Returns whether a part was appended. Statements that are entirely
+    /// eliminated while visiting (dead code, `exports.eliminate`) leave `parts`
+    /// untouched.
     pub fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<bool, crate::Error> {
         // Reuse the memory if possible
         // This is reusable if the last part turned out to be dead
         self.symbol_uses.clear_retaining_capacity();
@@ -5348,7 +5351,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.relocated_top_level_vars.clear();
         }
 
-        if !part_stmts.is_empty() {
+        let appended = !part_stmts.is_empty();
+        if appended {
             // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation. We compute
             // `can_be_removed_if_unused` while the `&mut` is live (reborrowed as
@@ -5405,7 +5409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declared_symbols.clear_retaining_capacity();
             self.import_records_for_current_part.clear();
         }
-        Ok(())
+        Ok(appended)
     }
 
     fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {

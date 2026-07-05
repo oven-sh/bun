@@ -1551,6 +1551,51 @@ export default class {
     });
   });
 
+  describe("exports.eliminate", () => {
+    // Side-effect-free `export class` / `export default` statements are hoisted to
+    // the top of the file, but eliminating one leaves no part behind to hoist.
+    const hoistable = [
+      ["class declaration", ["A"], `export class A {}\nexport const keep = 1;\n`],
+      ["default class", ["default"], `export default class A {}\nexport const keep = 1;\n`],
+      ["default anonymous class", ["default"], `export default class {}\nexport const keep = 1;\n`],
+      ["default function", ["default"], `export default function A() {}\nexport const keep = 1;\n`],
+      ["default arrow", ["default"], `export default () => {};\nexport const keep = 1;\n`],
+      ["default literal", ["default"], `export default 42;\nexport const keep = 1;\n`],
+    ];
+
+    it.each(hoistable)("eliminates a hoistable %s without crashing", async (_label, names, source) => {
+      const script = `
+        const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ${JSON.stringify(names)} } })
+          .transformSync(${JSON.stringify(source)});
+        console.write(JSON.stringify(out));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Surfaces the panic message instead of a JSON.parse error below.
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toBe("export const keep = 1;\n");
+      expect(exitCode).toBe(0);
+    });
+
+    const reordered = [
+      ["class declaration", ["A"], `console.log("one");\nconsole.log("two");\nexport class A {}\n`],
+      ["default class", ["default"], `console.log("one");\nconsole.log("two");\nexport default class A {}\n`],
+    ];
+
+    it.each(reordered)("keeps statement order when a hoistable %s is eliminated", (_label, names, source) => {
+      const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: names } }).transformSync(source);
+      expect(out).toBe(`console.log("one");\nconsole.log("two");\n`);
+    });
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

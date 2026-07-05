@@ -446,8 +446,13 @@ describe("execArgv option", async () => {
         eval: true,
         execArgv,
       });
+      // A worker that fails to start never posts a message, so report its
+      // error rather than waiting out the timeout.
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      worker.on("message", resolve);
+      worker.on("error", reject);
       try {
-        expect(await once(worker, "message")).toEqual([execArgv]);
+        expect(await promise).toEqual(execArgv);
       } finally {
         await worker.terminate();
       }

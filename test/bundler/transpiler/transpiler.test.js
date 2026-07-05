@@ -1563,7 +1563,7 @@ export default class {
       ["default literal", ["default"], `export default 42;\nexport const keep = 1;\n`],
     ];
 
-    it.each(hoistable)("eliminates a hoistable %s without crashing", async (_label, names, source) => {
+    it.concurrent.each(hoistable)("eliminates a hoistable %s without crashing", async (_label, names, source) => {
       const script = `
         const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ${JSON.stringify(names)} } })
           .transformSync(${JSON.stringify(source)});

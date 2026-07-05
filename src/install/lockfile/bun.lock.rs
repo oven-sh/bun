@@ -2271,7 +2271,8 @@ pub fn parse_into_binary_lockfile(
             let Some(maybe_info_obj) = pkg_info[2].as_object() else {
                 continue;
             };
-            let Some(&bun_ast::e::JsonValue::Boolean(bundled)) = maybe_info_obj.get(b"bundled") else {
+            let Some(&bun_ast::e::JsonValue::Boolean(bundled)) = maybe_info_obj.get(b"bundled")
+            else {
                 continue;
             };
             if !bundled {

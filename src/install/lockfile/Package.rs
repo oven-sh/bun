@@ -2312,8 +2312,7 @@ impl Package<u64> {
 
                             // If it's a folder or workspace, pessimistically assume we will need a maximum path
                             match dependency::Tag::infer(value) {
-                                dependency::Tag::Folder
-                                | dependency::Tag::Workspace => {
+                                dependency::Tag::Folder | dependency::Tag::Workspace => {
                                     string_builder.cap += MAX_PATH_BYTES;
                                 }
                                 _ => {}

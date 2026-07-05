@@ -18,8 +18,9 @@
  * as code moves.
  *
  * The file is never committed. Release builds generate it from their own pass-1
- * binary and relink against it; canary builds link against the last successful
- * build's file (see store.ts) and publish a fresh one. Locally:
+ * binary and relink against it; canary builds inherit the last successful
+ * build's file and re-publish it (scripts/build/ci.ts — inheritOrderFile /
+ * packageAndUpload). Locally:
  *
  *   bun run orderfile                      # uses build/release, writes build/release/linker.order
  *   bun run orderfile -- --build-dir=build/release-lto

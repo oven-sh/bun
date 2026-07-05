@@ -18,6 +18,7 @@ import { generateOrderFile } from "../../../../scripts/orderfile/generate.ts";
 const cfg = (overrides: Partial<Config> = {}) =>
   ({
     linux: true,
+    abi: "gnu",
     release: true,
     asan: false,
     valgrind: false,
@@ -39,6 +40,10 @@ describe("symbol ordering file", () => {
     expect(usesOrderFile(cfg({ release: false }))).toBe(false); // debug: not worth a relink
     expect(usesOrderFile(cfg({ asan: true }))).toBe(false); // tracer mprotects .text
     expect(usesOrderFile(cfg({ valgrind: true }))).toBe(false);
+    // Both of these would otherwise attempt a trace that can never succeed and
+    // annotate every build about it.
+    expect(usesOrderFile(cfg({ abi: "musl" }))).toBe(false); // static: no LD_PRELOAD
+    expect(usesOrderFile(cfg({ abi: "android" }))).toBe(false); // cross: cannot run the binary
   });
 
   it("lives in the build directory, never the source tree", () => {

@@ -1420,9 +1420,14 @@ export const linkerFlags: Flag[] = [
  * only where the startup win is worth a relink: release linux builds.
  * Not under a sanitizer — the tracer mprotects `.text` out from under it, and
  * nobody measures startup RSS on an ASAN build anyway.
+ *
+ * gnu only: musl links statically, so LD_PRELOAD cannot load the tracer, and
+ * android is cross-compiled, so the build host cannot run the binary to trace
+ * it. Neither can produce an order file, so link them unordered rather than
+ * attempt a trace that always fails and annotate every build about it.
  */
-export function usesOrderFile(cfg: Pick<Config, "linux" | "release" | "asan" | "valgrind">): boolean {
-  return cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind;
+export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "asan" | "valgrind">): boolean {
+  return cfg.linux && cfg.abi === "gnu" && cfg.release && !cfg.asan && !cfg.valgrind;
 }
 
 /** The order file lives in the build directory — it is generated, never committed. */

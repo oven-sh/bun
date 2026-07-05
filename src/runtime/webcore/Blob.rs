@@ -2320,6 +2320,7 @@ impl BlobExt for Blob {
                                 throw_if_no_entry: true,
                             },
                             vm,
+                            crate::node::fs::FsCompletion::init(global_this, None),
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
@@ -2337,6 +2338,7 @@ impl BlobExt for Blob {
                                 big_int: false,
                             },
                             vm,
+                            crate::node::fs::FsCompletion::init(global_this, None),
                         ))
                     }
                 }

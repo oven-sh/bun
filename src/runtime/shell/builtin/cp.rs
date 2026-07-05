@@ -721,7 +721,7 @@ impl ShellCpTask {
                     args,
                     vm,
                     std::ptr::from_mut::<ShellCpTask>(self),
-                    false,
+                    crate::node::fs::FsCompletion::Detached,
                 );
             }
             EventLoopHandle::Mini(mini) => {

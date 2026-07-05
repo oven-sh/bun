@@ -5231,3 +5231,113 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("callback ordering", () => {
+  // node drains the process.nextTick queue before the microtask queue. An fs
+  // completion callback must therefore run from the event-loop task, not from a
+  // promise reaction (which is itself a microtask, and inverts the two).
+  const orderingFixture = String.raw`
+    const fs = require("fs");
+    const path = require("path");
+    const order = [];
+    function record(name) {
+      Promise.resolve().then(() => order.push(name + ":microtask"));
+      process.nextTick(() => order.push(name + ":nextTick"));
+    }
+    const dir = __dirname;
+    const file = path.join(dir, "input.txt");
+    fs.readFile(file, () => record("readFile"));
+    fs.stat(file, () => record("stat"));
+    fs.access(file, () => record("access"));
+    fs.readdir(dir, () => record("readdir"));
+    fs.readdir(dir, { recursive: true }, () => record("readdirRecursive"));
+    fs.open(file, "r", (err, fd) => {
+      record("open");
+      fs.close(fd, () => record("close"));
+    });
+    fs.rm(path.join(dir, "doomed.txt"), () => record("rm"));
+    fs.cp(path.join(dir, "sub"), path.join(dir, "copy"), { recursive: true }, () => record("cp"));
+    fs.readFile(path.join(dir, "missing.txt"), err => record("readFileError:" + err.code));
+    process.on("exit", () => console.log(JSON.stringify(order)));
+  `;
+
+  it("runs process.nextTick before microtasks inside fs callbacks", async () => {
+    using dir = tempDir("fs-nexttick-ordering", {
+      "index.js": orderingFixture,
+      "input.txt": "hello",
+      "doomed.txt": "bye",
+      "sub/nested.txt": "nested",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const names = [
+      "readFile",
+      "stat",
+      "access",
+      "readdir",
+      "readdirRecursive",
+      "open",
+      "close",
+      "rm",
+      "cp",
+      "readFileError:ENOENT",
+    ];
+    const order: string[] = stdout.trim() ? JSON.parse(stdout.trim()) : [];
+    // Completion order across operations belongs to the thread pool, but within
+    // each callback the tick has to come before the microtask.
+    const perCallback = Object.fromEntries(names.map(name => [name, order.filter(e => e.startsWith(name + ":"))]));
+    expect({ perCallback, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      perCallback: Object.fromEntries(names.map(name => [name, [`${name}:nextTick`, `${name}:microtask`]])),
+      exitCode: 0,
+      stderr: "",
+    });
+  });
+
+  it("restores the AsyncLocalStorage context of the call site", async () => {
+    const { AsyncLocalStorage } = require("node:async_hooks");
+    using dir = tempDir("fs-als", { "input.txt": "hello" });
+    const file = join(String(dir), "input.txt");
+    const als = new AsyncLocalStorage<number>();
+
+    const seen = await new Promise<(number | undefined)[]>(resolve => {
+      als.run(1, () => {
+        fs.readFile(file, () => {
+          const outer = als.getStore();
+          als.run(2, () => {
+            fs.stat(file, () => resolve([outer, als.getStore()]));
+          });
+        });
+      });
+    });
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it("passes null, not undefined, as the error of a successful callback", async () => {
+    using dir = tempDir("fs-null-error", { "input.txt": "hello" });
+    const file = join(String(dir), "input.txt");
+    const starters = [
+      (cb: any) => fs.access(file, cb),
+      (cb: any) => fs.symlink(file, join(String(dir), "link.txt"), cb),
+      (cb: any) => fs.utimes(file, new Date(), new Date(), cb),
+    ];
+    const args = await Promise.all(
+      starters.map(
+        start =>
+          new Promise<unknown[]>(resolve =>
+            start(function () {
+              // node calls back with exactly one argument for value-less ops.
+              resolve(Array.prototype.slice.call(arguments));
+            }),
+          ),
+      ),
+    );
+    expect(args).toEqual([[null], [null], [null]]);
+  });
+});

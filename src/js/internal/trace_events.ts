@@ -625,7 +625,14 @@ function installFsInstrumentation() {
   }
   for (const method in asyncOps) {
     const original = binding[method];
-    if (typeof original === "function") binding[method] = wrapFsAsyncMethod(original, asyncOps[method]);
+    if (typeof original === "function") binding[method] = wrapFsAsyncMethod(original, asyncOps[method], false);
+    // `node:fs` goes through the `*Cb` siblings, which settle a callback instead
+    // of a promise; the span has to close from that callback.
+    const callbackMethod = method + "Cb";
+    const originalCb = binding[callbackMethod];
+    if (typeof originalCb === "function") {
+      binding[callbackMethod] = wrapFsAsyncMethod(originalCb, asyncOps[method], true);
+    }
   }
   // fs.opendir never reaches the binding (Bun's Dir reads lazily), so wrap the
   // node:fs export for the node.fs_dir.async category.
@@ -658,9 +665,16 @@ function emitFsAsyncEnd(names: string[]) {
   for (let i = names.length - 1; i >= 0; i--) emitEvent("e", kFsAsyncCat, names[i]);
 }
 
-function wrapFsAsyncMethod(original, names: string[]) {
+function wrapFsAsyncMethod(original, names: string[], hasCallback: boolean) {
   return function (...args) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
+    if (hasCallback && args.length > 0) {
+      const callback = args[args.length - 1];
+      args[args.length - 1] = function (...callbackArgs) {
+        emitFsAsyncEnd(names);
+        return callback.$apply(this, callbackArgs);
+      };
+    }
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
     let result;
     try {
@@ -671,6 +685,7 @@ function wrapFsAsyncMethod(original, names: string[]) {
       emitFsAsyncEnd(names);
       throw err;
     }
+    if (hasCallback) return result;
     if (result && typeof result.then === "function") {
       // Chain (rather than tap) so rejections stay unhandled if the caller
       // never handles the returned promise.

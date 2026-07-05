@@ -6,8 +6,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsCompletion, FsReturn,
+    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
 /// Signature of every generated NodeFS host function.
@@ -58,6 +58,37 @@ where
     }
 }
 
+/// Which flavour of entry point was called.
+///
+/// The `*Cb` entry points take the completion callback as their final argument
+/// *by contract*, never by sniffing for a trailing function: fs operations do
+/// accept functions in positional slots (`fs.read(fd, buf, 0, 4, fn)` has to
+/// reject `fn` as an invalid `position`), so a callable last argument says
+/// nothing about what the caller meant.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum CallShape {
+    /// `node:fs/promises` — every argument is positional; returns a promise.
+    Promise,
+    /// `node:fs` — the last argument is the completion callback.
+    Callback,
+}
+
+/// Splits the completion callback off the positional arguments. What remains is
+/// exactly the argument list the `args::*` parsers see in promise mode.
+fn split_callback(frame: &CallFrame, shape: CallShape) -> (&[JSValue], Option<JSValue>) {
+    let arguments = frame.arguments();
+    match shape {
+        CallShape::Promise => (arguments, None),
+        // `node:fs` runs `ensureCallback` before it reaches us, so the split is
+        // total for every real caller; a zero-argument call falls through to
+        // promise mode and the argument parser reports the missing path/fd.
+        CallShape::Callback => match arguments.split_last() {
+            Some((callback, rest)) => (rest, Some(*callback)),
+            None => (arguments, None),
+        },
+    }
+}
+
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
 ///
@@ -69,11 +100,13 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine, FsCompletion) -> JSValue,
+    shape: CallShape,
 ) -> JsResult<JSValue> {
     // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
+    let (arguments, callback) = split_callback(frame, shape);
+    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, arguments));
     slice.will_be_async = true;
 
     // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
@@ -103,16 +136,22 @@ fn run_async<A: FsArgument>(
     if A::HAVE_ABORT_SIGNAL {
         if let Some(signal) = args.signal() {
             if let Some(abort_error) = signal.node_abort_error_if_aborted(global) {
-                let promise =
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global,
-                        abort_error,
-                    );
                 args.unprotect();
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
-                return Ok(promise);
+                // The callback must not fire synchronously; node defers it to the
+                // next tick, same as the rejected promise does for `fs.promises`.
+                let Some(callback) = callback else {
+                    return Ok(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global,
+                            abort_error,
+                        ),
+                    );
+                };
+                JSValue::call_next_tick_1(callback, global, abort_error)?;
+                return Ok(JSValue::UNDEFINED);
             }
         }
     }
@@ -121,7 +160,8 @@ fn run_async<A: FsArgument>(
     // bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    let completion = FsCompletion::init(global, callback);
+    Ok(create_task(global, this, args, vm, completion))
 }
 
 #[inline(always)]
@@ -207,7 +247,8 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        let completion = FsCompletion::init(global, None);
+        Ok(AsyncCpTask::create(global, this, cp_args, vm, completion))
     }
 
     /// `callSync(.cp)`.
@@ -233,9 +274,28 @@ impl Binding {
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub fn readdir(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        Self::readdir_impl(this, global, frame, CallShape::Promise)
+    }
+
+    /// `readdir` with a trailing completion callback. See [`CallShape`].
+    pub fn readdir_cb(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::readdir_impl(this, global, frame, CallShape::Callback)
+    }
+
+    fn readdir_impl(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        shape: CallShape,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
+        let (arguments, callback) = split_callback(frame, shape);
+        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, arguments));
         slice.will_be_async = true;
 
         let rd_args = match args::Readdir::from_js(global, &mut slice) {
@@ -256,10 +316,15 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+        let completion = FsCompletion::init(global, callback);
         if rd_args.recursive {
-            return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
+            return Ok(AsyncReaddirRecursiveTask::create(
+                global, rd_args, vm, completion,
+            ));
         }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        Ok(async_::Readdir::create(
+            global, this, rd_args, vm, completion,
+        ))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -338,7 +403,7 @@ impl Binding {
 /// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block.
 /// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple for one op.
 macro_rules! node_fs_bindings {
-    ( $( $sync:ident / $async_:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
+    ( $( $sync:ident / $async_:ident / $async_cb:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
         impl Binding {
             $(
                 pub const $sync: NodeFSFunction =
@@ -348,7 +413,14 @@ macro_rules! node_fs_bindings {
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, async_::$F::create)
+                    run_async::<$Args>(this, global, frame, async_::$F::create, CallShape::Promise)
+                }
+                pub fn $async_cb(
+                    this: &Self,
+                    global: &JSGlobalObject,
+                    frame: &CallFrame,
+                ) -> JsResult<JSValue> {
+                    run_async::<$Args>(this, global, frame, async_::$F::create, CallShape::Callback)
                 }
             )*
         }
@@ -357,46 +429,46 @@ macro_rules! node_fs_bindings {
 
 #[rustfmt::skip]
 node_fs_bindings! {
-    access_sync       / access            => Access,            args::Access,    ret::Access;
-    append_file_sync  / append_file       => AppendFile,        args::AppendFile,ret::AppendFile;
-    close_sync        / close             => Close,             args::Close,     ret::Close;
-    copy_file_sync    / copy_file         => CopyFile,          args::CopyFile,  ret::CopyFile;
-    exists_sync       / exists            => Exists,            args::Exists,    ret::Exists;
-    chown_sync        / chown             => Chown,             args::Chown,     ret::Chown;
-    chmod_sync        / chmod             => Chmod,             args::Chmod,     ret::Chmod;
-    fchmod_sync       / fchmod            => Fchmod,            args::FChmod,    ret::Fchmod;
-    fchown_sync       / fchown            => Fchown,            args::Fchown,    ret::Fchown;
-    fstat_sync        / fstat             => Fstat,             args::Fstat,     ret::Fstat;
-    fsync_sync        / fsync             => Fsync,             args::Fsync,     ret::Fsync;
-    ftruncate_sync    / ftruncate         => Ftruncate,         args::FTruncate, ret::Ftruncate;
-    futimes_sync      / futimes           => Futimes,           args::Futimes,   ret::Futimes;
-    lchmod_sync       / lchmod            => Lchmod,            args::LCHmod,    ret::Lchmod;
-    lchown_sync       / lchown            => Lchown,            args::LChown,    ret::Lchown;
-    link_sync         / link              => Link,              args::Link,      ret::Link;
-    lstat_sync        / lstat             => Lstat,             args::Lstat,     ret::Lstat;
-    mkdir_sync        / mkdir             => Mkdir,             args::Mkdir,     ret::Mkdir;
-    mkdtemp_sync      / mkdtemp           => Mkdtemp,           args::MkdirTemp, ret::Mkdtemp;
-    open_sync         / open              => Open,              args::Open,      ret::Open;
-    read_sync         / read              => Read,              args::Read,      ret::Read;
-    write_sync        / write             => Write,             args::Write,     ret::Write;
-    read_file_sync    / read_file         => ReadFile,          args::ReadFile,  ret::ReadFile;
-    write_file_sync   / write_file        => WriteFile,         args::WriteFile, ret::WriteFile;
-    readlink_sync     / readlink          => Readlink,          args::Readlink,  ret::Readlink;
-    rm_sync           / rm                => Rm,                args::Rm,        ret::Rm;
-    rmdir_sync        / rmdir             => Rmdir,             args::RmDir,     ret::Rmdir;
-    realpath_sync     / realpath          => RealpathNonNative, args::Realpath,  ret::Realpath;
-    realpath_native_sync / realpath_native => Realpath,         args::Realpath,  ret::Realpath;
-    rename_sync       / rename            => Rename,            args::Rename,    ret::Rename;
-    stat_sync         / stat              => Stat,              args::Stat,      ret::Stat;
-    statfs_sync       / statfs            => Statfs,            args::StatFS,    ret::StatFS;
-    symlink_sync      / symlink           => Symlink,           args::Symlink,   ret::Symlink;
-    truncate_sync     / truncate          => Truncate,          args::Truncate,  ret::Truncate;
-    unlink_sync       / unlink            => Unlink,            args::Unlink,    ret::Unlink;
-    utimes_sync       / utimes            => Utimes,            args::Utimes,    ret::Utimes;
-    lutimes_sync      / lutimes           => Lutimes,           args::Lutimes,   ret::Lutimes;
-    writev_sync       / writev            => Writev,            args::Writev,    ret::Writev;
-    readv_sync        / readv             => Readv,             args::Readv,     ret::Readv;
-    fdatasync_sync    / fdatasync         => Fdatasync,         args::FdataSync, ret::Fdatasync;
+    access_sync          / access          / access_cb          => Access,            args::Access,     ret::Access;
+    append_file_sync     / append_file     / append_file_cb     => AppendFile,        args::AppendFile, ret::AppendFile;
+    close_sync           / close           / close_cb           => Close,             args::Close,      ret::Close;
+    copy_file_sync       / copy_file       / copy_file_cb       => CopyFile,          args::CopyFile,   ret::CopyFile;
+    exists_sync          / exists          / exists_cb          => Exists,            args::Exists,     ret::Exists;
+    chown_sync           / chown           / chown_cb           => Chown,             args::Chown,      ret::Chown;
+    chmod_sync           / chmod           / chmod_cb           => Chmod,             args::Chmod,      ret::Chmod;
+    fchmod_sync          / fchmod          / fchmod_cb          => Fchmod,            args::FChmod,     ret::Fchmod;
+    fchown_sync          / fchown          / fchown_cb          => Fchown,            args::Fchown,     ret::Fchown;
+    fstat_sync           / fstat           / fstat_cb           => Fstat,             args::Fstat,      ret::Fstat;
+    fsync_sync           / fsync           / fsync_cb           => Fsync,             args::Fsync,      ret::Fsync;
+    ftruncate_sync       / ftruncate       / ftruncate_cb       => Ftruncate,         args::FTruncate,  ret::Ftruncate;
+    futimes_sync         / futimes         / futimes_cb         => Futimes,           args::Futimes,    ret::Futimes;
+    lchmod_sync          / lchmod          / lchmod_cb          => Lchmod,            args::LCHmod,     ret::Lchmod;
+    lchown_sync          / lchown          / lchown_cb          => Lchown,            args::LChown,     ret::Lchown;
+    link_sync            / link            / link_cb            => Link,              args::Link,       ret::Link;
+    lstat_sync           / lstat           / lstat_cb           => Lstat,             args::Lstat,      ret::Lstat;
+    mkdir_sync           / mkdir           / mkdir_cb           => Mkdir,             args::Mkdir,      ret::Mkdir;
+    mkdtemp_sync         / mkdtemp         / mkdtemp_cb         => Mkdtemp,           args::MkdirTemp,  ret::Mkdtemp;
+    open_sync            / open            / open_cb            => Open,              args::Open,       ret::Open;
+    read_sync            / read            / read_cb            => Read,              args::Read,       ret::Read;
+    write_sync           / write           / write_cb           => Write,             args::Write,      ret::Write;
+    read_file_sync       / read_file       / read_file_cb       => ReadFile,          args::ReadFile,   ret::ReadFile;
+    write_file_sync      / write_file      / write_file_cb      => WriteFile,         args::WriteFile,  ret::WriteFile;
+    readlink_sync        / readlink        / readlink_cb        => Readlink,          args::Readlink,   ret::Readlink;
+    rm_sync              / rm              / rm_cb              => Rm,                args::Rm,         ret::Rm;
+    rmdir_sync           / rmdir           / rmdir_cb           => Rmdir,             args::RmDir,      ret::Rmdir;
+    realpath_sync        / realpath        / realpath_cb        => RealpathNonNative, args::Realpath,   ret::Realpath;
+    realpath_native_sync / realpath_native / realpath_native_cb => Realpath,          args::Realpath,   ret::Realpath;
+    rename_sync          / rename          / rename_cb          => Rename,            args::Rename,     ret::Rename;
+    stat_sync            / stat            / stat_cb            => Stat,              args::Stat,       ret::Stat;
+    statfs_sync          / statfs          / statfs_cb          => Statfs,            args::StatFS,     ret::StatFS;
+    symlink_sync         / symlink         / symlink_cb         => Symlink,           args::Symlink,    ret::Symlink;
+    truncate_sync        / truncate        / truncate_cb        => Truncate,          args::Truncate,   ret::Truncate;
+    unlink_sync          / unlink          / unlink_cb          => Unlink,            args::Unlink,     ret::Unlink;
+    utimes_sync          / utimes          / utimes_cb          => Utimes,            args::Utimes,     ret::Utimes;
+    lutimes_sync         / lutimes         / lutimes_cb         => Lutimes,           args::Lutimes,    ret::Lutimes;
+    writev_sync          / writev          / writev_cb          => Writev,            args::Writev,     ret::Writev;
+    readv_sync           / readv           / readv_cb           => Readv,             args::Readv,      ret::Readv;
+    fdatasync_sync       / fdatasync       / fdatasync_cb       => Fdatasync,         args::FdataSync,  ret::Fdatasync;
 }
 
 // `readdirSync` goes through the generic sync path; only the async side is

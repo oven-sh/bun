@@ -707,6 +707,82 @@ it.skipIf(!isWindows || isFFIUnavailable)("dlopen accepts non-ASCII library path
   });
 });
 
+// `expect(fn).toThrow()` is satisfied by a *returned* Error, so spell the
+// difference out: these used to hand the caller an Error object as the result.
+it("toArrayBuffer and toBuffer throw argument errors instead of returning them", () => {
+  const address = ptr(new Uint8Array(8));
+  const outcome = view => {
+    try {
+      const result = view();
+      return `returned ${result instanceof Error ? result.constructor.name : typeof result}`;
+    } catch (error) {
+      return `threw ${error.constructor.name}: ${error.message}`;
+    }
+  };
+
+  expect([
+    outcome(() => toArrayBuffer(0)),
+    outcome(() => toBuffer(0)),
+    outcome(() => toArrayBuffer(address, 0, 0)),
+    outcome(() => toBuffer(address, 0, -1)),
+    outcome(() => toArrayBuffer(address, 0, 8, "not a pointer")),
+    outcome(() => toBuffer(address, 0, 8, "not a pointer")),
+  ]).toEqual([
+    "threw TypeError: ptr cannot be zero, that would segfault Bun :(",
+    "threw TypeError: ptr cannot be zero, that would segfault Bun :(",
+    "threw TypeError: length must be > 0. This usually means a bug in your code.",
+    "threw TypeError: length must be > 0. This usually means a bug in your code.",
+    "threw TypeError: Expected callback to be a C pointer (number or BigInt)",
+    "threw TypeError: Expected callback to be a C pointer (number or BigInt)",
+  ]);
+});
+
+// A byteLength JSC cannot back an ArrayBuffer with used to abort the process:
+// toArrayBuffer panicked on an int cast, toBuffer tripped a JSC RELEASE_ASSERT.
+it("toArrayBuffer and toBuffer reject a byteLength past the max ArrayBuffer size", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { ptr, toArrayBuffer, toBuffer } from "bun:ffi";
+      const address = ptr(new Uint8Array(64));
+      for (const [name, view] of [["toArrayBuffer", toArrayBuffer], ["toBuffer", toBuffer]]) {
+        for (const byteLength of [2 ** 32 + 1, 2 ** 33, Number.MAX_SAFE_INTEGER]) {
+          try {
+            view(address, 0, byteLength);
+            console.log(name, byteLength, "did not throw");
+          } catch (e) {
+            console.log(name, e.constructor.name, e.code, e.message);
+          }
+        }
+      }
+      // exactly MAX_ARRAY_BUFFER_SIZE is what new ArrayBuffer(2 ** 32) accepts.
+      // Held alive so neither view's backing store is finalized before exit.
+      globalThis.views = [toArrayBuffer(address, 0, 2 ** 32), toBuffer(address, 0, 2 ** 32)];
+      console.log("at the limit", globalThis.views[0].byteLength, globalThis.views[1].byteLength);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const outOfRange = "is out of range. It must be <= 4294967296. Received";
+  expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      `toArrayBuffer RangeError ERR_OUT_OF_RANGE The value of "byteLength" ${outOfRange} 4294967297`,
+      `toArrayBuffer RangeError ERR_OUT_OF_RANGE The value of "byteLength" ${outOfRange} 8589934592`,
+      `toArrayBuffer RangeError ERR_OUT_OF_RANGE The value of "byteLength" ${outOfRange} 9007199254740991`,
+      `toBuffer RangeError ERR_OUT_OF_RANGE The value of "byteLength" ${outOfRange} 4294967297`,
+      `toBuffer RangeError ERR_OUT_OF_RANGE The value of "byteLength" ${outOfRange} 8589934592`,
+      `toBuffer RangeError ERR_OUT_OF_RANGE The value of "byteLength" ${outOfRange} 9007199254740991`,
+      "at the limit 4294967296 4294967296",
+      "",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it('suffix does not start with a "."', () => {
   expect(suffix).not.toMatch(/^\./);
 });

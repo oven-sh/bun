@@ -1070,11 +1070,23 @@ describe("net.Socket onread", () => {
     return buf;
   }
 
-  async function withServer(onConnection: (c: Socket) => void, run: (port: number) => Promise<void>) {
-    const server = createServer(onConnection);
+  // `fail` races the server's errors against the test body, so a server-side
+  // failure surfaces as that error instead of hanging on a promise the server
+  // can no longer settle.
+  async function withServer(
+    onConnection: (c: Socket, fail: (err: Error) => void) => void,
+    run: (port: number) => Promise<void>,
+  ) {
+    const failed = Promise.withResolvers<never>();
+    failed.promise.catch(() => {}); // an error after the body finished is not a failure
+    const server = createServer(c => onConnection(c, failed.reject));
     try {
-      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
-      await run((server.address() as import("node:net").AddressInfo).port);
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await Promise.race([run(port), failed.promise]);
     } finally {
       server.close();
     }
@@ -1083,8 +1095,8 @@ describe("net.Socket onread", () => {
   it("hands the callback the user's own buffer, never more than its length", async () => {
     const payload = pattern(64 * 1024);
     await withServer(
-      c => {
-        c.on("error", () => {});
+      (c, fail) => {
+        c.on("error", fail);
         c.end(payload);
       },
       async port => {
@@ -1135,8 +1147,8 @@ describe("net.Socket onread", () => {
     const second = Buffer.alloc(4096, 0x5a);
     const secondWritten = Promise.withResolvers<void>();
     await withServer(
-      c => {
-        c.on("error", () => {});
+      (c, fail) => {
+        c.on("error", fail);
         c.write(first);
         c.on("data", () => c.write(second, () => secondWritten.resolve()));
       },
@@ -1197,8 +1209,8 @@ describe("net.Socket onread", () => {
   it("calls the buffer factory before the first read and after every delivery", async () => {
     const payload = pattern(4096);
     await withServer(
-      c => {
-        c.on("error", () => {});
+      (c, fail) => {
+        c.on("error", fail);
         c.end(payload);
       },
       async port => {
@@ -1241,6 +1253,38 @@ describe("net.Socket onread", () => {
     );
   });
 
+  it("stops delivering a chunk the moment the callback destroys the socket", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      c => {
+        // The client destroys mid-stream, so an unflushed write can surface here
+        // as ECONNRESET/EPIPE; that is the behavior under test, not a failure.
+        c.on("error", () => {});
+        c.end(payload);
+      },
+      async port => {
+        const buffer = Buffer.alloc(512);
+        const nreads: number[] = [];
+        const closed = Promise.withResolvers<void>();
+        const socket = connect({
+          port,
+          onread: {
+            buffer,
+            callback(nread) {
+              nreads.push(nread);
+              socket.destroy();
+            },
+          },
+        });
+        socket.on("error", closed.reject);
+        socket.on("close", () => closed.resolve());
+        await closed.promise;
+        // The remaining slices of that chunk must not reach a destroyed socket.
+        expect(nreads).toEqual([buffer.length]);
+      },
+    );
+  });
+
   it("ignores an onread option that does not match Node's shape", async () => {
     // Node only installs onread when buffer is a Uint8Array or a function and
     // callback is a function; anything else leaves the socket emitting 'data'.
@@ -1249,8 +1293,8 @@ describe("net.Socket onread", () => {
 
     const payload = pattern(1024);
     await withServer(
-      c => {
-        c.on("error", () => {});
+      (c, fail) => {
+        c.on("error", fail);
         c.end(payload);
       },
       async port => {

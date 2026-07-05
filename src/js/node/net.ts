@@ -1279,7 +1279,9 @@ function onreadDeliver(self, chunk) {
       self.bytesRead += length;
       const result = self[kBufferCb].$call(self, length, buffer);
       onreadNextBuffer(self);
-      if (result === false) {
+      // The callback runs user JS: it may have destroyed the socket, and the
+      // remaining slices of this chunk must not reach it.
+      if (result === false || self.destroyed) {
         stopped = true;
         break;
       }

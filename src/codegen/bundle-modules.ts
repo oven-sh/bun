@@ -255,15 +255,20 @@ for (const entrypoint of bundledEntryPoints) {
   let defaultRewrite = false;
   captured =
     captured
-      .replace(/\$\$EXPORT\$\$\((.*?)\)\.\$\$EXPORT_END\$\$;?\s*export\s*\{([^}]*)\}\s*;?/, (_m: string, _dflt: string, names: string) => {
-        // The clause is spliced into an object literal, so only plain
-        // identifier names are representable ("a as b" / "default" are not).
-        if (/[^\w$,\s]/.test(names) || /\bas\b|\bdefault\b/.test(names)) {
-          throw new Error(`Builtin Bundler: unsupported export clause \`{${names}}\` in ${file_path}; export plain names only`);
-        }
-        namedRewrite = true;
-        return `return{${names}}`;
-      })
+      .replace(
+        /\$\$EXPORT\$\$\((.*?)\)\.\$\$EXPORT_END\$\$;?\s*export\s*\{([^}]*)\}\s*;?/,
+        (_m: string, _dflt: string, names: string) => {
+          // The clause is spliced into an object literal, so only plain
+          // identifier names are representable ("a as b" / "default" are not).
+          if (/[^\w$,\s]/.test(names) || /\bas\b|\bdefault\b/.test(names)) {
+            throw new Error(
+              `Builtin Bundler: unsupported export clause \`{${names}}\` in ${file_path}; export plain names only`,
+            );
+          }
+          namedRewrite = true;
+          return `return{${names}}`;
+        },
+      )
       .replace(/\$\$EXPORT\$\$\((.*?)\)\.\$\$EXPORT_END\$\$;?/, (_m: string, dflt: string) => {
         defaultRewrite = true;
         return `return ${dflt}`;

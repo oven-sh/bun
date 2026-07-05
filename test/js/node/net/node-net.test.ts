@@ -1285,7 +1285,13 @@ describe("net.Socket onread", () => {
           });
           await firstCall.promise;
           for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
-          expect({ calls, bytesRead: socket.bytesRead }).toEqual({ calls: 1, bytesRead: buffer.length });
+          // How big that one delivery was is up to how the kernel framed the
+          // payload; that there was exactly one of it, and that it counted
+          // towards bytesRead without overrunning the buffer, is not.
+          expect({
+            calls,
+            bytesOutOfRange: socket.bytesRead < 1 || socket.bytesRead > buffer.length,
+          }).toEqual({ calls: 1, bytesOutOfRange: false });
 
           paused = false;
           socket.resume();

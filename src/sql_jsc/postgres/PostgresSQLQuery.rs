@@ -201,6 +201,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -228,6 +229,13 @@ impl PostgresSQLQuery {
         );
     }
 
+    /// Drop the query's strong GC edge to the connection it ran on. Every
+    /// terminal path has to do this, or holding a settled `Query` keeps the whole
+    /// connection (socket buffers, prepared-statement map) reachable.
+    fn release_connection(this_value: JSValue, global_object: &JSGlobalObject) {
+        js::connection_set_cached(this_value, global_object, JSValue::ZERO);
+    }
+
     pub fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
@@ -235,6 +243,7 @@ impl PostgresSQLQuery {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
+        Self::release_connection(this_value, global_object);
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
@@ -306,7 +315,7 @@ impl PostgresSQLQuery {
         js::binding_set_cached(this_value, global_object, JSValue::ZERO);
         js::pending_value_set_cached(this_value, global_object, JSValue::ZERO);
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
-        js::connection_set_cached(this_value, global_object, JSValue::ZERO);
+        Self::release_connection(this_value, global_object);
     }
 
     pub fn on_result(

@@ -176,7 +176,13 @@ describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workloa
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // node warns about the fixture's module type on every run, so stderr is never
+    // empty; an uncaught error is the part worth reading. It is also how this
+    // notices generate.ts growing TypeScript that node cannot strip, which would
+    // break the real build the same way.
+    const crash = /^\w*Error\b.*/m.exec(stderr)?.[0] ?? null;
 
     // cli-fixture.js answers `name?` with the first line it is typed and counts
     // the rest, so "read 0 lines" is what an empty stdin looks like. On a
@@ -185,8 +191,9 @@ describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workloa
     expect({
       greeted: stdout.includes("hi world"),
       read: /read (\d+) lines/.exec(stdout)?.[1],
+      crash,
       exitCode,
-    }).toEqual({ greeted: true, read: "3", exitCode: 0 });
+    }).toEqual({ greeted: true, read: "3", crash: null, exitCode: 0 });
   });
 });
 

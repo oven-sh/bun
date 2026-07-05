@@ -2498,6 +2498,119 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `node:https` Server.addContext() post-listen path. Registers a new SNI
+    /// TLS context on the running uWS app and reinstalls routes for that
+    /// domain so it serves the same handlers as the default context.
+    pub fn add_sni_context(
+        &mut self,
+        global: &JSGlobalObject,
+        hostname: &[u8],
+        options: JSValue,
+    ) -> JsResult<JSValue> {
+        use crate::socket::{SSLConfig, SSLConfigFromJs};
+        if !SSL {
+            return Err(
+                global.throw_invalid_arguments(format_args!("addContext requires SSL support"))
+            );
+        }
+        if self.app.is_none() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let ssl_config =
+            SSLConfig::from_js(self.vm(), global, options)?.unwrap_or_else(SSLConfig::zero);
+        let ssl_opts = ssl_config.as_usockets();
+
+        let server_name = match std::ffi::CString::new(hostname) {
+            Ok(s) => s,
+            Err(_) => {
+                return Err(global
+                    .throw_invalid_arguments(format_args!("hostname must not contain NUL bytes")));
+            }
+        };
+        // Validate that an SSL_CTX can be built from these options before
+        // touching the existing SNI entry. uWS's addServerName builds the
+        // SSL_CTX internally, so without this probe a malformed cert/key
+        // would fail after remove_server_name() had already stripped the
+        // previous entry, leaving the hostname with no SNI context.
+        {
+            let mut create_err = uws::create_bun_socket_error_t::none;
+            match ssl_opts.create_ssl_context(&mut create_err) {
+                Some(probe) => {
+                    // SAFETY: create_ssl_context returned a +1 ref; release it.
+                    unsafe { bun_boringssl_sys::SSL_CTX_free(probe) };
+                }
+                None => {
+                    if create_err != uws::create_bun_socket_error_t::none {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                                create_err, global,
+                            ),
+                        ));
+                    }
+                    if !super::throw_ssl_error_if_necessary(global) {
+                        return Err(global.throw(format_args!(
+                            "Failed to create SSL context for serverName: {}",
+                            bstr::BStr::new(server_name.to_bytes())
+                        )));
+                    }
+                    return Err(JsError::Thrown);
+                }
+            }
+        }
+        // Node's addContext() permits repeated calls with the same hostname
+        // (last one wins). uWS's addServerName rejects a duplicate and its
+        // rollback also removes the existing entry from every listen socket,
+        // so without this a second addContext() would both throw and strip
+        // the previous SNI context. Remove first so the re-add replaces.
+        self.app_mut().remove_server_name(&server_name);
+        if self
+            .app_mut()
+            .add_server_name_with_options(&server_name, &ssl_opts)
+            .is_err()
+        {
+            if !global.has_exception() && !super::throw_ssl_error_if_necessary(global) {
+                return Err(global.throw(format_args!(
+                    "Failed to add serverName: {}",
+                    bstr::BStr::new(server_name.to_bytes())
+                )));
+            }
+            return Err(JsError::Thrown);
+        }
+        if super::throw_ssl_error_if_necessary(global) {
+            return Err(JsError::Thrown);
+        }
+        // SAFETY: server_name is a CString with a trailing NUL byte.
+        let z = unsafe {
+            bun_core::ZStr::from_raw(server_name.as_ptr().cast(), server_name.as_bytes().len())
+        };
+        self.app_mut().domain(z);
+        if super::throw_ssl_error_if_necessary(global) {
+            return Err(JsError::Thrown);
+        }
+
+        if Self::HAS_H3 {
+            if let Some(h3_app) = self.h3_app {
+                if bun_opaque::opaque_deref_mut(h3_app)
+                    .add_server_name_with_options(z, &ssl_opts)
+                    .is_err()
+                {
+                    if !global.has_exception() && !super::throw_ssl_error_if_necessary(global) {
+                        return Err(global.throw(format_args!(
+                            "Failed to add serverName \"{}\" for HTTP/3",
+                            bstr::BStr::new(server_name.to_bytes())
+                        )));
+                    }
+                    return Err(JsError::Thrown);
+                }
+                if super::throw_ssl_error_if_necessary(global) {
+                    return Err(JsError::Thrown);
+                }
+            }
+        }
+        let _ = self.set_routes();
+        Ok(JSValue::UNDEFINED)
+    }
+
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 

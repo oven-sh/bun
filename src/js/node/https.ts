@@ -7,10 +7,22 @@ const { isIP } = require("node:net");
 const net = require("node:net");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const {
+  kProxyConfig,
+  checkShouldUseProxy,
+  kWaitForProxyTunnel,
+  kSNIContexts,
+  isTlsSymbol,
+  tlsSymbol,
+  serverSymbol,
+} = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
+const { throwOnInvalidTLSArray } = require("internal/tls");
+
+const httpServerAddServerName = $newRustFunction("node_http_binding.rs", "httpServerAddServerName", 3);
 
 const ArrayPrototypeShift = Array.prototype.shift;
+const ArrayPrototypePush = Array.prototype.push;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
@@ -493,6 +505,120 @@ Agent.prototype._evictSession = function _evictSession(key) {
   delete this._sessionCache.map[key];
 };
 
+function Server(options, requestListener): void {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
+  http.Server.$call(this, options, requestListener);
+  this[isTlsSymbol] = true;
+  // An https.Server is always TLS. When no cert/key were supplied,
+  // http.Server leaves tlsSymbol null and the server would listen as plain
+  // HTTP. Seed a minimal TLS config so Bun.serve creates an SSL app, which
+  // in turn lets post-listen addContext() register SNI contexts instead of
+  // throwing "addContext requires SSL support". Matches the defaults used
+  // by normalizeServerTls when requestCert is false.
+  this[tlsSymbol] ??= { requestCert: false, rejectUnauthorized: false };
+}
+$toClass(Server, "Server", http.Server);
+
+function tlsOptionsFromContext(context) {
+  const { key, cert, ca, passphrase, secureOptions, requestCert, rejectUnauthorized } = context || {};
+  if (cert) throwOnInvalidTLSArray("options.cert", cert);
+  if (key) throwOnInvalidTLSArray("options.key", key);
+  if (ca) throwOnInvalidTLSArray("options.ca", ca);
+  if (passphrase && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
+  const requested = !!requestCert;
+  return {
+    key,
+    cert,
+    ca,
+    passphrase,
+    secureOptions,
+    requestCert: requested,
+    rejectUnauthorized: requested ? rejectUnauthorized !== false : false,
+  };
+}
+
+Server.prototype.addContext = function (hostname, context) {
+  if (typeof hostname !== "string") {
+    throw new TypeError("hostname must be a string");
+  }
+  const entry = tlsOptionsFromContext(context);
+  entry.serverName = hostname;
+  const contexts = (this[kSNIContexts] ??= []);
+  const bunServer = this[serverSymbol];
+  if (bunServer) {
+    // Register on the running app first so a failed add (malformed PEM,
+    // key/cert mismatch) throws before we drop the previous JS-side entry.
+    httpServerAddServerName(bunServer, hostname, entry);
+  }
+  // Node's addContext() lets the most recently added context for a given
+  // hostname win. uWS rejects a duplicate serverName at register time, so
+  // drop any earlier entry for the same hostname rather than passing both
+  // to Bun.serve.
+  for (let i = contexts.length - 1; i >= 0; i--) {
+    if (contexts[i].serverName === hostname) {
+      contexts.splice(i, 1);
+    }
+  }
+  ArrayPrototypePush.$call(contexts, entry);
+};
+
+Server.prototype.setSecureContext = function (options) {
+  if (options == null) return;
+  // Seed with the same defaults normalizeServerTls produces so that a
+  // server constructed with no TLS options (tlsSymbol === null) does not
+  // end up with an un-normalized config where the native side defaults
+  // rejectUnauthorized to true and rejects every client that presents no
+  // certificate.
+  const current = this[tlsSymbol] || { requestCert: false, rejectUnauthorized: false };
+  const { cert, key, ca, passphrase, servername, secureOptions, requestCert, rejectUnauthorized } = options;
+  // Assign unconditionally so a later setSecureContext() that omits an
+  // option clears the previous call's value (Node resets each omitted
+  // field) instead of silently keeping stale key material. Matches the
+  // tls.Server implementation.
+  if (cert) throwOnInvalidTLSArray("options.cert", cert);
+  current.cert = cert;
+  if (key) throwOnInvalidTLSArray("options.key", key);
+  current.key = key;
+  if (ca) throwOnInvalidTLSArray("options.ca", ca);
+  current.ca = ca;
+  if (passphrase && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
+  current.passphrase = passphrase;
+  if (servername && typeof servername !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
+  }
+  current.serverName = servername;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+  }
+  current.secureOptions = secureOptions;
+  if (requestCert !== undefined) current.requestCert = !!requestCert;
+  if (rejectUnauthorized !== undefined) current.rejectUnauthorized = rejectUnauthorized;
+  if (!current.requestCert) current.rejectUnauthorized = false;
+  this[tlsSymbol] = current;
+};
+
+Server.prototype.getTicketKeys = function () {
+  throw Error("Not implemented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function (keys) {
+  if (!ArrayBuffer.isView(keys)) {
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
+  }
+  if (keys.byteLength !== 48) {
+    throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+  }
+  throw Error("Not implemented in Bun yet");
+};
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
+}
+
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
 var https = {
@@ -503,8 +629,8 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
-  createServer: http.createServer,
+  Server,
+  createServer,
   get,
   request,
 };

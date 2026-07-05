@@ -40,6 +40,41 @@ pub(crate) fn get_bun_server_all_closed_promise(
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
 }
 
+pub(crate) fn http_server_add_server_name(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arguments = frame.arguments_old::<3>();
+    let arguments = arguments.slice();
+    if arguments.len() < 3 {
+        return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len()));
+    }
+
+    let server = arguments[0];
+    let hostname = arguments[1];
+    let options = arguments[2];
+
+    let name = bun_core::OwnedString::new(hostname.to_bun_string(global)?);
+    let name_utf8 = name.to_utf8_bytes();
+
+    macro_rules! try_server {
+        ($ty:ty) => {
+            if let Some(this) = server.as_::<$ty>() {
+                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
+                // JS-owned server instance; we hold the JS thread for the
+                // duration of this call so the GC cannot collect it under us.
+                return unsafe { &mut *this }.add_sni_context(global, &name_utf8, options);
+            }
+        };
+    }
+    try_server!(HTTPSServer);
+    try_server!(DebugHTTPSServer);
+    try_server!(HTTPServer);
+    try_server!(DebugHTTPServer);
+
+    Err(global.throw_invalid_argument_type_value("server", "bun.Server", server))
+}
+
 pub(crate) fn get_max_http_header_size(
     _global: &JSGlobalObject,
     _frame: &CallFrame,

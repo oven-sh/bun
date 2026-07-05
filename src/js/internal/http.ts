@@ -89,6 +89,7 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 const kDeferredTimeouts = Symbol("deferredTimeouts");
+const kSNIContexts = Symbol("sniContexts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -567,6 +568,7 @@ export {
   kRequest,
   kRes,
   kReusedSocket,
+  kSNIContexts,
   kSignal,
   kSocketPath,
   kTimeoutTimer,

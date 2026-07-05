@@ -176,6 +176,14 @@ public:
             });
             for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
                 if (it->hostname == hostname_pattern) {
+                    /* Live keep-alive connections accepted under this SNI
+                     * still hold a ref on it->ctx (via SSL_set_SSL_CTX in
+                     * sni_cb) and would read the freed router through
+                     * us_socket_server_name_userdata() on their next
+                     * request. Clear the ex_data slot so those connections
+                     * fall back to the default router instead of
+                     * dereferencing freed memory. */
+                    us_internal_ssl_ctx_clear_sni_userdata(it->ctx);
                     us_internal_ssl_ctx_unref(it->ctx);
                     delete it->router;
                     it = pendingServerNames.erase(it);

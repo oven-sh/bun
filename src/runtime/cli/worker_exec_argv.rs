@@ -71,7 +71,8 @@ const PER_PROCESS_SHORT: &[u8] = b"hv";
 ///
 /// Taken from Node v26.3.0's `PerIsolateOptionsParser` (which folds in
 /// `EnvironmentOptionsParser`); its V8 and per-process options are left out
-/// because Node rejects those too.
+/// because Node rejects those too. A name a later Node adds and this table
+/// misses is rejected rather than ignored, so the drift fails loudly.
 /// <https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc>
 ///
 /// Sorted — looked up with `binary_search`.

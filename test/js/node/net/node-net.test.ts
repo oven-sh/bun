@@ -1114,21 +1114,18 @@ describe("net.Socket onread", () => {
 
   // `fail` races the server's errors against the test body, so a server-side
   // failure surfaces as that error instead of hanging on a promise the server
-  // can no longer settle.
+  // can no longer settle. The target carries the host the server bound to, so a
+  // connect can never fall back to resolving "localhost".
   async function withServer(
     onConnection: (c: Socket, fail: (err: Error) => void) => void,
-    run: (port: number) => Promise<void>,
+    run: (target: { port: number; host: string }) => Promise<void>,
   ) {
     const failed = Promise.withResolvers<never>();
     failed.promise.catch(() => {}); // an error after the body finished is not a failure
     const server = createServer(c => onConnection(c, failed.reject));
     try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const { port } = server.address() as import("node:net").AddressInfo;
-      await Promise.race([run(port), failed.promise]);
+      const port = await listen(server);
+      await Promise.race([run({ port, host: "127.0.0.1" }), failed.promise]);
     } finally {
       server.close();
     }
@@ -1141,7 +1138,7 @@ describe("net.Socket onread", () => {
         c.on("error", fail);
         c.end(payload);
       },
-      async port => {
+      async target => {
         const buffer = Buffer.alloc(100);
         const received: Buffer[] = [];
         const nreads: number[] = [];
@@ -1149,7 +1146,7 @@ describe("net.Socket onread", () => {
         let sameBuffer = true;
         const { promise, resolve, reject } = Promise.withResolvers<void>();
         const socket = connect({
-          port,
+          ...target,
           onread: {
             buffer,
             callback(nread, buf) {
@@ -1194,7 +1191,7 @@ describe("net.Socket onread", () => {
         c.write(first);
         c.on("data", () => c.write(second, () => secondWritten.resolve()));
       },
-      async port => {
+      async target => {
         const buffer = Buffer.alloc(512);
         const received: Buffer[] = [];
         const nreads: number[] = [];
@@ -1203,7 +1200,7 @@ describe("net.Socket onread", () => {
         const firstCall = Promise.withResolvers<void>();
         const everything = Promise.withResolvers<void>();
         const socket = connect({
-          port,
+          ...target,
           onread: {
             buffer,
             callback(nread, buf) {
@@ -1255,13 +1252,13 @@ describe("net.Socket onread", () => {
         c.on("error", fail);
         c.end(payload);
       },
-      async port => {
+      async target => {
         const generated: Buffer[] = [];
         const delivered: Buffer[] = [];
         const received: Buffer[] = [];
         const { promise, resolve, reject } = Promise.withResolvers<void>();
         const socket = connect({
-          port,
+          ...target,
           onread: {
             buffer() {
               const buf = Buffer.alloc(512);
@@ -1446,12 +1443,12 @@ describe("net.Socket onread", () => {
         c.on("error", () => {});
         c.end(payload);
       },
-      async port => {
+      async target => {
         const buffer = Buffer.alloc(512);
         const nreads: number[] = [];
         const closed = Promise.withResolvers<void>();
         const socket = connect({
-          port,
+          ...target,
           onread: {
             buffer,
             callback(nread) {
@@ -1552,11 +1549,11 @@ describe("net.Socket onread", () => {
         c.on("error", fail);
         c.end(payload);
       },
-      async port => {
+      async target => {
         const chunks: Buffer[] = [];
         let onreadCalls = 0;
         const { promise, resolve, reject } = Promise.withResolvers<void>();
-        const socket = connect({ port, onread: { callback: () => onreadCalls++ } } as any);
+        const socket = connect({ ...target, onread: { callback: () => onreadCalls++ } } as any);
         try {
           socket.on("data", chunk => chunks.push(chunk));
           socket.on("error", reject);

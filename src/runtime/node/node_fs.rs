@@ -629,9 +629,10 @@ mod _async_tasks {
             err: &sys::Error,
         ) -> JsResult<JSValue> {
             match self {
-                // SAFETY: the cell is GC-rooted for this frame (see `ensure_still_alive`).
                 Self::Promise(promise) => {
-                    err.to_js_with_async_stack(global_object, unsafe { &*promise })
+                    // SAFETY: the cell is GC-rooted for this frame (see `ensure_still_alive`).
+                    let promise = unsafe { &*promise };
+                    err.to_js_with_async_stack(global_object, promise)
                 }
                 Self::Callback(_) | Self::Detached => err.to_js(global_object),
             }

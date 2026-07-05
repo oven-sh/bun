@@ -397,18 +397,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        macro_rules! default_replacement_entry {
+            () => {
+                p.options
+                    .features
+                    .replace_exports
+                    .get_ptr(b"default")
+                    .cloned()
+                    .expect("infallible: mark_for_replace implies an entry")
+            };
+        }
+
         // `is_control_flow_dead` is only set above for a non-replace entry. The original
         // value is gone either way, but `inject` still has to emit its renamed export.
         macro_rules! inject_default_replacement {
             () => {
                 if mark_for_replace {
-                    let entry = p
-                        .options
-                        .features
-                        .replace_exports
-                        .get_ptr(b"default")
-                        .cloned()
-                        .expect("infallible: mark_for_replace implies an entry");
+                    let entry = default_replacement_entry!();
                     let _ =
                         p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, &entry);
                 }
@@ -567,13 +572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if mark_for_replace {
-                    let entry = p
-                        .options
-                        .features
-                        .replace_exports
-                        .get_ptr(b"default")
-                        .cloned()
-                        .unwrap();
+                    let entry = default_replacement_entry!();
                     if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry
                     {
                         *expr = replace_expr;
@@ -659,13 +658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if mark_for_replace {
-                            let entry = p
-                                .options
-                                .features
-                                .replace_exports
-                                .get_ptr(b"default")
-                                .cloned()
-                                .unwrap();
+                            let entry = default_replacement_entry!();
                             if let crate::parser::Runtime::ReplaceableExport::Replace(
                                 replace_expr,
                             ) = entry
@@ -804,13 +797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if mark_for_replace {
-                            let entry = p
-                                .options
-                                .features
-                                .replace_exports
-                                .get_ptr(b"default")
-                                .cloned()
-                                .unwrap();
+                            let entry = default_replacement_entry!();
                             if let crate::parser::Runtime::ReplaceableExport::Replace(
                                 replace_expr,
                             ) = entry

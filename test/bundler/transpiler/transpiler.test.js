@@ -1658,7 +1658,7 @@ export default class {
           expect(transpiler.scan(source).exports).toEqual(["__N_SSG", "keep"]);
         });
 
-        it.each(hoistable)("eliminates a leading `%s`", async (source, exports) => {
+        it.concurrent.each(hoistable)("eliminates a leading `%s`", async (source, exports) => {
           await using proc = Bun.spawn({
             cmd: [
               bunExe(),
@@ -1671,7 +1671,8 @@ export default class {
             stderr: "pipe",
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stdout, exitCode }).toEqual({ stdout: '""', exitCode: 0 });
+          // stderr is asserted so that an abort surfaces its panic trace on failure.
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: '""', stderr: "", exitCode: 0 });
         });
 
         it("does not touch a namespace member that happens to share the name", () => {

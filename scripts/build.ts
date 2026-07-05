@@ -25,12 +25,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   downloadArtifacts,
+  inheritOrderFile,
   isCI,
+  orderFileEligible,
   packageAndUpload,
   printEnvironment,
+  regenerateOrderFile,
+  reportOrderFileFailure,
+  shouldGenerateOrderFile,
   spawnWithAnnotations,
   startGroup,
   uploadArtifacts,
+  verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
@@ -124,9 +130,42 @@ async function main(): Promise<void> {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
 
-    await startGroup("Build", () =>
-      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.cfg, result.env) }),
-    );
+    // Builds that don't trace their own binary link against the last successful
+    // build's order file. Must land before ninja: it is a link input.
+    if (orderFileEligible(result.cfg) && !shouldGenerateOrderFile(result.cfg)) {
+      await startGroup("Inherit symbol order file", () => inheritOrderFile(result.cfg));
+    }
+
+    const runNinja = () =>
+      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.cfg, result.env) });
+
+    await startGroup("Build", runNinja);
+
+    // Release (and [generate symbol order]) trace the binary they just linked
+    // and relink against the result. Overwriting the order file dirties exactly
+    // one ninja edge — the link — so this second pass relinks and nothing else.
+    // The order file is an optimization, not correctness: a flaky trace workload
+    // must not fail a release build 40 minutes in. Link unordered, loudly.
+    if (shouldGenerateOrderFile(result.cfg)) {
+      let traced = true;
+      await startGroup("Generate symbol order file", () => {
+        try {
+          regenerateOrderFile(result.cfg);
+        } catch (error) {
+          traced = false;
+          reportOrderFileFailure(error as Error);
+        }
+      });
+      if (traced) {
+        await startGroup("Relink against symbol order file", runNinja);
+        // We traced this exact binary: every symbol must resolve. Hard-fail.
+        if (result.output.exe) verifyOrderFileApplied(result.cfg, result.output.exe);
+      }
+    } else if (orderFileEligible(result.cfg) && result.output.exe) {
+      // Inherited: report how much of it still resolved (code moved since), but
+      // a stale file is a slower binary, not a broken one — never fail here.
+      verifyOrderFileApplied(result.cfg, result.output.exe, { strict: false });
+    }
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.
     // link-only: package + upload zips for downstream test steps.

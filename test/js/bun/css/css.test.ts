@@ -3118,7 +3118,7 @@ describe("css tests", () => {
       `,
       indoc`
         .foo {
-          background: #af5cae linear-gradient(#c65d07, #00807c);
+          background: #af5cae linear-gradient(#c65d07, #00817d);
           background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
         }
       `,

@@ -5300,6 +5300,50 @@ describe("callback ordering", () => {
     });
   });
 
+  // fs.rm's non-recursive path starts the native rm from inside an lstat
+  // callback, where a throw from the native option parser would become an
+  // uncaught exception rather than reaching the caller.
+  it("hands invalid fs.rm options to the callback instead of throwing uncaught", async () => {
+    using dir = tempDir("fs-rm-bad-options", {
+      "input.txt": "hello",
+      "index.js": String.raw`
+        const fs = require("fs");
+        const path = require("path");
+        const file = path.join(__dirname, "input.txt");
+        const seen = [];
+        // The recursive fast path reaches the native rm in this frame, so node and
+        // bun both throw synchronously there.
+        try {
+          fs.rm(file, { recursive: true, force: "yes" }, () => seen.push("recursive:called"));
+        } catch (e) {
+          seen.push("recursive:" + e.name);
+        }
+        fs.rm(file, { force: "yes" }, err => seen.push("force:" + err?.name));
+        fs.rm(file, { retryDelay: "nope" }, err => seen.push("retryDelay:" + err?.name));
+        fs.rm(file, null, err => seen.push("null:" + err?.name));
+        process.on("exit", () => {
+          seen.push("survived:" + fs.existsSync(file));
+          console.log(JSON.stringify(seen.sort()));
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const seen: string[] = stdout.trim() ? JSON.parse(stdout.trim()) : [];
+    expect({ seen, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      seen: ["force:TypeError", "null:TypeError", "recursive:TypeError", "retryDelay:TypeError", "survived:true"],
+      exitCode: 0,
+      stderr: "",
+    });
+  });
+
   it("restores the AsyncLocalStorage context of the call site", async () => {
     const { AsyncLocalStorage } = require("node:async_hooks");
     using dir = tempDir("fs-als", { "input.txt": "hello" });

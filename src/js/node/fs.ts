@@ -89,8 +89,15 @@ var access = function access(path, mode, callback) {
         );
         return;
       }
-      // an lstat error is ignored: let the native call produce it (respects force/ENOENT)
-      fs.rmCb(path, options, callback);
+      // The native rm rejects a bad `options` by throwing, and a throw from inside
+      // a completion callback becomes an uncaught exception. Hand it to the
+      // callback instead (node throws it synchronously from this frame).
+      try {
+        // an lstat error is ignored: let the native call produce it (respects force/ENOENT)
+        fs.rmCb(path, options, callback);
+      } catch (e) {
+        callback(e);
+      }
     });
   },
   rmdir = function rmdir(path, options, callback) {

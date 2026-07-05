@@ -99,8 +99,11 @@ describe.skipIf(!existsSync(shim))("rustc metadata shim", () => {
       env: { ...bunEnv, CARGO_PKG_NAME: pkg },
       stderr: "pipe",
     });
+    // stderr is drained so the pipe can't fill, but not asserted empty — a debug
+    // or ASAN bun writes benign noise there. It does carry the wrapper's own
+    // failure message, so surface it when the exit code is wrong.
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    if (exitCode !== 0) throw new Error(`wrapper exited ${exitCode}\n${stderr}`);
     return stdout.split("\n").filter(Boolean);
   }
 

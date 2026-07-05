@@ -604,9 +604,11 @@ describe("writeFile with a non-truncating flag", () => {
 });
 
 // A write that dies partway through must not leave the old tail sitting behind
-// the bytes that did land. RLIMIT_FSIZE makes write() fail with EFBIG after 512
-// bytes, which `ulimit -f 1` sets for the child.
-describe.skipIf(isWindows)("writeFileSync when the write fails partway", () => {
+// the bytes that did land. `ulimit -f 1` gives the child a 512 byte RLIMIT_FSIZE,
+// and Linux's generic_write_checks() then clamps the write to the limit and fails
+// the next one with EFBIG. Linux-only: BSD kernels reject the whole write instead,
+// so the byte split is not portable.
+describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
   const fixture = join(import.meta.dir, "fs-writeFile-write-error-fixture.js");
 
   async function runUnderFileSizeLimit(path: string, flag: string) {
@@ -631,10 +633,11 @@ describe.skipIf(isWindows)("writeFileSync when the write fails partway", () => {
     });
   });
 
+  // 512 new bytes over the head, the other 1488 untouched, and no resize.
   it("with flag 'r+' the rest of the file survives", async () => {
     const path = join(tmpdirSync(), "write-error-in-place.bin");
-    const { code, size, stale } = await runUnderFileSizeLimit(path, "r+");
-    expect({ code, size, stale }).toEqual({ code: "EFBIG", size: 2000, stale: 1488 });
+    const { code, size, written, stale } = await runUnderFileSizeLimit(path, "r+");
+    expect({ code, size, written, stale }).toEqual({ code: "EFBIG", size: 2000, written: 512, stale: 1488 });
   });
 });
 

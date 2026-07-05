@@ -164,6 +164,7 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -911,8 +912,6 @@ pub(crate) unsafe fn __bun_run_wtf_timer(
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
-    use bun_jsc::garbage_collection_controller::GarbageCollectionController;
-
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
@@ -976,6 +975,18 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             timer_arm!(AbortSignalTimeout, event_loop_timer, |c, _now, vm| {
                 AbortSignalTimeout::run(c, vm)
             })
+        }
+        EventLoopTimerTag::GcOneShot => {
+            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
+                GarbageCollectionController::on_gc_timer(c)
+            })
+        }
+        EventLoopTimerTag::GcRepeating => {
+            timer_arm!(
+                GarbageCollectionController,
+                gc_repeating_timer,
+                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+            )
         }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
@@ -1091,17 +1102,6 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
             CronJob::on_timer_fire(c, VirtualMachine::get());
-        }
-        EventLoopTimerTag::GCTimer => {
-            let c = owner!(GarbageCollectionController, gc_timer);
-            // SAFETY: per fn contract — `c` is the VM's embedded controller.
-            unsafe { GarbageCollectionController::on_gc_timer(c) };
-        }
-        EventLoopTimerTag::GCRepeatingTimer => {
-            let c = owner!(GarbageCollectionController, gc_repeating_timer);
-            // SAFETY: per fn contract — `c` is `vm`'s embedded controller, and
-            // `vm` owns the heap the node was just popped from.
-            unsafe { GarbageCollectionController::on_gc_repeating_timer(c, vm) };
         }
     }
 }

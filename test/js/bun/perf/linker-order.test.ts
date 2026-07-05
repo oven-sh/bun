@@ -96,6 +96,13 @@ describe("order file generator", () => {
 
 const compiler = process.env.CC || Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
 
+async function compile(args: string[]) {
+  await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+}
+
 /**
  * One of the traced workloads runs on a pseudo-terminal, because bun's stdio,
  * tty and readline code take a path there that a pipe never reaches, and an
@@ -112,13 +119,6 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
     `  process.stdin.pause();`,
     `});`,
   ].join("\n");
-
-  async function compile(args: string[]) {
-    await using proc = Bun.spawn({ cmd: [compiler!, "-O1", ...args], env: bunEnv, stderr: "pipe" });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
 
   async function type(cmd: string[], env: Record<string, string>) {
     await using proc = Bun.spawn({
@@ -154,5 +154,45 @@ describe.skipIf(process.platform !== "linux" || !compiler)("pty runner", () => {
       ptyExit: 0,
       pipeExit: 0,
     });
+  });
+});
+
+/**
+ * The tracer loads into the binary under trace and nowhere else. Every workload
+ * that execs something — `bun install` runs lifecycle scripts, the cli workload
+ * shells out — hands LD_PRELOAD to the child, and a child that created and
+ * truncated the trace file would wipe the pages recorded so far. Those are the
+ * earliest-touched ones, which is to say the hottest.
+ */
+describe.skipIf(process.platform !== "linux" || !compiler)("page tracer", () => {
+  it("keeps the pages it recorded before the traced process execs a child", async () => {
+    using dir = tempDir("pagetrace", { "child.c": "int main(void) { return 0; }\n" });
+    const root = String(dir);
+    const tracer = join(root, "pagetrace.so");
+    const fixture = join(root, "fixture");
+    const child = join(root, "child");
+    const trace = join(root, "trace.bin");
+
+    await compile(["-shared", "-fPIC", "-o", tracer, join(import.meta.dir, "../../../../scripts/orderfile/pagetrace.c"), "-ldl"]); // prettier-ignore
+    await compile(["-o", fixture, join(import.meta.dir, "pagetrace-fixture.c")]);
+    await compile(["-o", child, join(root, "child.c")]);
+
+    // The fixture reads 32 pages of its own .rodata, execs `child` (dynamically
+    // linked, so it inherits LD_PRELOAD), then reads one more.
+    await using proc = Bun.spawn({
+      cmd: [fixture, child],
+      env: { ...bunEnv, LD_PRELOAD: tracer, BUN_PAGETRACE_BIN: fixture, BUN_PAGETRACE_OUT: trace },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "1", stderr: "", exitCode: 0 });
+
+    // Layout: u64 page size, u64 count, then `count` u64 page addresses.
+    const header = new BigUint64Array(await Bun.file(trace).slice(0, 16).arrayBuffer());
+    expect(Number(header[0])).toBeGreaterThan(0);
+    // The 32 pages, the one after, and whatever the fixture's own startup
+    // touched. A child that truncated the file leaves a handful.
+    expect(Number(header[1])).toBeGreaterThanOrEqual(33);
   });
 });

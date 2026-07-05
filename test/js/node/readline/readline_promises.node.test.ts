@@ -92,4 +92,42 @@ describe("readline/promises.createInterface()", () => {
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
   });
+
+  describe("use after close", () => {
+    const useAfterClose = { name: "Error", code: "ERR_USE_AFTER_CLOSE", message: "readline was closed" };
+
+    function closedInterface() {
+      const fi = new FakeInput();
+      const rl = readlinePromises.createInterface({ input: fi, output: fi });
+      rl.close();
+      return rl;
+    }
+
+    it("question() rejects instead of throwing synchronously", async () => {
+      const rl = closedInterface();
+      const promise = rl.question("how are you?");
+      assert.strictEqual(promise instanceof Promise, true);
+
+      let err: any;
+      let resolved = false;
+      try {
+        await promise;
+        resolved = true;
+      } catch (e) {
+        err = e;
+      }
+      assert.strictEqual(resolved, false);
+      assert.strictEqual(err.name, useAfterClose.name);
+      assert.strictEqual(err.code, useAfterClose.code);
+      assert.strictEqual(err.message, useAfterClose.message);
+    });
+
+    it("prompt(), write(), pause() and resume() throw ERR_USE_AFTER_CLOSE", () => {
+      const rl = closedInterface();
+      assert.throws(() => rl.prompt(), useAfterClose);
+      assert.throws(() => rl.write("foo\n"), useAfterClose);
+      assert.throws(() => rl.pause(), useAfterClose);
+      assert.throws(() => rl.resume(), useAfterClose);
+    });
+  });
 });

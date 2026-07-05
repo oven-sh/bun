@@ -2086,4 +2086,49 @@ describe("readline.createInterface()", () => {
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
   });
+
+  describe("use after close", () => {
+    const useAfterClose = { name: "Error", code: "ERR_USE_AFTER_CLOSE", message: "readline was closed" };
+
+    for (const terminal of [false, true]) {
+      it(`prompt() throws ERR_USE_AFTER_CLOSE (terminal: ${terminal})`, () => {
+        const [rli] = getInterface({ terminal });
+        rli.close();
+        assert.throws(() => rli.prompt(), useAfterClose);
+      });
+
+      it(`write() throws ERR_USE_AFTER_CLOSE (terminal: ${terminal})`, () => {
+        const [rli] = getInterface({ terminal });
+        rli.on("line", () => assert.ok(false, "line should not be emitted after close"));
+        rli.close();
+        assert.throws(() => rli.write("foo\n"), useAfterClose);
+      });
+
+      it(`pause() throws ERR_USE_AFTER_CLOSE (terminal: ${terminal})`, () => {
+        const [rli] = getInterface({ terminal });
+        rli.close();
+        assert.throws(() => rli.pause(), useAfterClose);
+      });
+
+      it(`resume() throws ERR_USE_AFTER_CLOSE (terminal: ${terminal})`, () => {
+        const [rli] = getInterface({ terminal });
+        rli.close();
+        assert.throws(() => rli.resume(), useAfterClose);
+      });
+
+      it(`question() throws ERR_USE_AFTER_CLOSE (terminal: ${terminal})`, () => {
+        const [rli] = getInterface({ terminal });
+        rli.close();
+        assert.throws(() => rli.question("how are you?", () => {}), useAfterClose);
+      });
+    }
+
+    it("close() stays idempotent and setPrompt()/getPrompt() keep working", () => {
+      const [rli] = getInterface({ terminal: false });
+      rli.close();
+      rli.close();
+      rli.setPrompt("$ ");
+      assert.strictEqual(rli.getPrompt(), "$ ");
+    });
+  });
 });

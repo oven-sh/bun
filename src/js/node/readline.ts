@@ -1403,6 +1403,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void | Interface}
    */
   pause() {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (this.paused) return;
     this.input.pause();
     this.paused = true;
@@ -1415,6 +1418,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void | Interface}
    */
   resume() {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (!this.paused) return;
     this.input.resume();
     this.paused = false;
@@ -1435,6 +1441,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void}
    */
   write(d, key) {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (this.paused) this.resume();
     if (this.terminal) {
       this[kTtyWrite](d, key);
@@ -2719,7 +2728,11 @@ var PromisesInterface = class Interface extends _Interface {
         resolve(answer);
       };
     }
-    this[kQuestion](query, cb);
+    try {
+      this[kQuestion](query, cb);
+    } catch (err) {
+      reject(err);
+    }
     return promise;
   }
 };

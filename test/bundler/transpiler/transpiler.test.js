@@ -4156,6 +4156,19 @@ console.log("boop");
       expect(out).toContain('from "bun:wrap"');
     });
 
+    // A missing options object took an early return past the `allowBunRuntime`
+    // default, so `new Bun.Transpiler()` kept importing the helpers.
+    it.each([
+      ["using", "function f() { using x = a; }"],
+      ["decorators", "function d(x) { return x; }\n@d class Foo { @d m() {} }"],
+    ])("new Bun.Transpiler() inlines %s like new Bun.Transpiler({})", (_, code) => {
+      const noArguments = new Bun.Transpiler().transformSync(code);
+      expect(noArguments).not.toContain("bun:wrap");
+      expect(noArguments).toBe(new Bun.Transpiler({}).transformSync(code));
+      expect(new Bun.Transpiler(undefined).transformSync(code)).toBe(noArguments);
+      expect(new Bun.Transpiler({ allowBunRuntime: true }).transformSync(code)).toContain('from "bun:wrap"');
+    });
+
     it.skipIf(!nodeExe())("transformed output for target node runs under node", async () => {
       const files = {};
       for (const [name, { code, tsconfig }] of Object.entries(cases)) {

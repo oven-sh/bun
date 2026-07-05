@@ -98,6 +98,9 @@ impl Default for Config {
             log: bun_ast::Log::default(), // overwritten at construction
             runtime: Runtime::Features {
                 top_level_await: true,
+                // `bun:wrap` only resolves inside Bun, and this output is handed
+                // to another runtime. `allowBunRuntime: true` opts back in.
+                allow_runtime: false,
                 ..Default::default()
             },
             tree_shaking: false,
@@ -337,8 +340,6 @@ impl Config {
                 }
             }
         }
-
-        self.runtime.allow_runtime = false;
 
         if let Some(macros) = object.get_truthy(global, "macro")? {
             'macros: {

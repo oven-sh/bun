@@ -39,6 +39,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::ZStr;
 use bun_core::env_var;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[cfg(not(target_env = "ohos"))]
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::O;

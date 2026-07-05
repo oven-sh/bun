@@ -1906,11 +1906,10 @@ mod _async_tasks {
             // Detached up front because `Self::destroy(self)` runs *before* the settle;
             // the JS cell outlives the dropped `Strong` via `ensure_still_alive()`.
             let completion = self.completion.detach();
+            // A conversion that throws settles too, so it must not skip `destroy`.
             let outcome = match fs_result_to_js(self.result.get_mut(), global_object, completion) {
                 Ok(outcome) => outcome,
-                Err(exception) => {
-                    return completion.settle(global_object, FsOutcome::error(exception));
-                }
+                Err(exception) => FsOutcome::error(exception),
             };
             completion.ensure_still_alive();
 
@@ -2721,14 +2720,11 @@ mod _async_tasks {
             // Detached up front: `Self::destroy` must run before the settle, and the
             // JS cell outlives the dropped `Strong` via `ensure_still_alive()`.
             let completion = self.completion.detach();
-            let outcome = if let Some(err) = &mut self.pending_err {
-                match completion.error_to_js(global_object, err) {
-                    Ok(v) => FsOutcome::error(v),
-                    Err(e) => {
-                        let e = global_object.take_exception(e);
-                        return completion.settle(global_object, FsOutcome::error(e));
-                    }
-                }
+            // A conversion that throws settles too, so it must not skip `destroy`.
+            let converted = if let Some(err) = &mut self.pending_err {
+                completion
+                    .error_to_js(global_object, err)
+                    .map(FsOutcome::error)
             } else {
                 let res = match core::mem::replace(
                     &mut self.result_list,
@@ -2740,13 +2736,12 @@ mod _async_tasks {
                     ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
                     ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
                 };
-                match res.to_js(global_object) {
-                    Ok(v) => FsOutcome::value(v, ret::Readdir::IS_VOID),
-                    Err(e) => {
-                        let e = global_object.take_exception(e);
-                        return completion.settle(global_object, FsOutcome::error(e));
-                    }
-                }
+                res.to_js(global_object)
+                    .map(|v| FsOutcome::value(v, ret::Readdir::IS_VOID))
+            };
+            let outcome = match converted {
+                Ok(outcome) => outcome,
+                Err(exception) => FsOutcome::error(global_object.take_exception(exception)),
             };
             completion.ensure_still_alive();
 

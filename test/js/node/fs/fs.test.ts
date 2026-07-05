@@ -14,6 +14,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -5345,7 +5346,6 @@ describe("callback ordering", () => {
   });
 
   it("restores the AsyncLocalStorage context of the call site", async () => {
-    const { AsyncLocalStorage } = require("node:async_hooks");
     using dir = tempDir("fs-als", { "input.txt": "hello" });
     const file = join(String(dir), "input.txt");
     const als = new AsyncLocalStorage<number>();
@@ -5368,8 +5368,10 @@ describe("callback ordering", () => {
     const file = join(String(dir), "input.txt");
     const starters = [
       (cb: any) => fs.access(file, cb),
-      (cb: any) => fs.symlink(file, join(String(dir), "link.txt"), cb),
+      (cb: any) => fs.copyFile(file, join(String(dir), "copy.txt"), cb),
       (cb: any) => fs.utimes(file, new Date(), new Date(), cb),
+      // Same callback shape, but creating a symlink needs a privilege on Windows.
+      ...(isWindows ? [] : [(cb: any) => fs.symlink(file, join(String(dir), "link.txt"), cb)]),
     ];
     const args = await Promise.all(
       starters.map(
@@ -5382,6 +5384,6 @@ describe("callback ordering", () => {
           ),
       ),
     );
-    expect(args).toEqual([[null], [null], [null]]);
+    expect(args).toEqual(starters.map(() => [null]));
   });
 });

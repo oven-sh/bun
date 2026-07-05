@@ -1126,11 +1126,9 @@ pub fn parse_color_function(
 ) -> CssResult<CssColor> {
     let mut parser = ComponentParser::new(true);
 
-    // The percentage reference ranges are defined by CSS Color 4: `lab()`
-    // L/a/b 100% = 100/125/125, `lch()` C 100% = 150, `oklab()` L/a/b
-    // 100% = 1.0/0.4/0.4, `oklch()` C 100% = 0.4.
+    // CSS Color 4 percentage reference ranges: lab() L/a/b 100% = 100/125/125,
+    // lch() C 100% = 150, oklab() L/a/b 100% = 1.0/0.4/0.4, oklch() C 100% = 0.4.
     // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
-    // https://www.w3.org/TR/css-color-4/#specifying-oklab-oklch
     crate::match_ignore_ascii_case! { function, {
         b"lab" => parse_lab::<LAB>(input, &mut parser, 100.0, 125.0, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
@@ -1327,11 +1325,9 @@ pub(crate) fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     (delta_l.powi(2) + delta_a.powi(2) + delta_b.powi(2)).sqrt()
 }
 
-/// `l_basis` is both the `<percentage>` reference range of the lightness
-/// component and the value it is normalized by before being stored (the `l`
-/// fields hold a unit fraction), so `lab(50)`, `lab(50%)`, `oklab(0.5)` and
-/// `oklab(50%)` all store `0.5`. `ab_basis` is the `<percentage>` reference
-/// range of the `a`/`b` components, which are stored unscaled.
+/// `l_basis` is the lightness `<percentage>` reference range, and also what it
+/// is normalized by before being stored: `lab(50)`, `lab(50%)` and `oklab(0.5)`
+/// all store `0.5`. `ab_basis` is the a/b reference range; they store unscaled.
 pub fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
@@ -1505,14 +1501,9 @@ pub fn parse_number_or_percentage(
     })
 }
 
-/// Parses a `<percentage> | <number>` color component, scaling a percentage so
-/// that `100%` maps to `percent_basis` and using a `<number>` as-is.
-/// <https://www.w3.org/TR/css-color-4/#typedef-color-percentage>
-///
-/// The two forms go through the two typed component parsers so that relative
-/// color syntax resolves channel keywords and `calc()` against the channel's
-/// own type: in `lab(from red l a b)`, `a` and `b` are `<number>` channels and
-/// must not be scaled by `percent_basis`.
+/// Parses a `<percentage> | <number>` component, scaling a percentage so `100%`
+/// maps to `percent_basis`. Going through the two typed parsers keeps relative
+/// channel keywords (`a` in `lab(from red l a b)`) resolving by their own type.
 fn parse_number_or_percentage_with_basis(
     input: &mut css::Parser,
     parser: &ComponentParser,
@@ -1524,10 +1515,9 @@ fn parse_number_or_percentage_with_basis(
     parser.parse_number(input)
 }
 
-/// Converting a color on the sRGB gamut boundary from another space leaves
-/// ~1e-6 of f32 error on the channels (`lab(54.2905% 80.8049 69.891)`, which
-/// is `#ff0000`, lands at `g = -8e-7`). The tolerance is far below a visible
-/// difference (255 * 1e-4 is 0.03 of a channel step).
+/// A boundary color converted from another space lands ~1e-6 off (`#ff0000` as
+/// `lab(54.2905% 80.8049 69.891)` gives `g = -8e-7`). Well below one channel
+/// step: 255 * 1e-4 is 0.03.
 const SRGB_GAMUT_EPSILON: f32 = 1e-4;
 
 fn is_approximately_in_srgb_gamut(srgb: &SRGB) -> bool {
@@ -2006,12 +1996,9 @@ impl ComponentParser {
             return Ok(C::light_dark_owned(light, dark));
         }
 
-        // A legacy sRGB function cannot represent an out-of-gamut origin
-        // color, and gamut mapping it here would bake a visibly different
-        // color into the declaration than a browser resolving the relative
-        // color itself would render. Refuse to resolve so that the
-        // declaration is preserved as written.
-        // https://github.com/w3c/csswg-drafts/issues/8444
+        // A legacy sRGB function cannot represent an out-of-gamut origin, and gamut
+        // mapping one here would bake in a different color than a browser renders.
+        // Leave it unresolved. https://github.com/w3c/csswg-drafts/issues/8444
         if srgb_bounded
             && !SRGB::try_from_css_color(&from)
                 .is_some_and(|srgb| is_approximately_in_srgb_gamut(&srgb.resolve_missing()))

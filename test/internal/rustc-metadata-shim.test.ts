@@ -114,7 +114,7 @@ describe.skipIf(rustc === null)("rustc metadata shim", () => {
 
   const unit = ["--crate-name", "bun_runtime", "--crate-type", "lib", "--target", "x86_64-unknown-linux-gnu"];
 
-  test("two dependency-graph states collapse to the same metadata", async () => {
+  test.concurrent("two dependency-graph states collapse to the same metadata", async () => {
     // The only difference is cargo's dependency hash — exactly what moves when a
     // crate anywhere below this one gains or loses a dependency. `extra-filename`
     // must survive: it keys cargo's on-disk artifact names.
@@ -129,11 +129,11 @@ describe.skipIf(rustc === null)("rustc metadata shim", () => {
     );
   });
 
-  test("distinct packages keep distinct metadata", async () => {
+  test.concurrent("distinct packages keep distinct metadata", async () => {
     expect(await argvFor([...unit, "-C", "metadata=aaaa"], "bun_core")).toContain("metadata=bun.bun_core");
   });
 
-  test("an invocation without -C metadata passes through untouched", async () => {
+  test.concurrent("an invocation without -C metadata passes through untouched", async () => {
     // cargo probes the wrapper with `-vV` / `--print` before it compiles anything.
     expect(await argvFor(["-vV"])).toEqual(["-vV"]);
     expect(await argvFor(["--print", "cfg"])).toEqual(["--print", "cfg"]);

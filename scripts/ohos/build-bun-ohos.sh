@@ -168,6 +168,8 @@ run_codegen() {
 
     info "运行 configure (含 codegen)..."
     cd "$CI_SRC"
+    OHOS_CROSS_LIBS="$OHOS_CROSS_LIBS" \
+    OHOS_ICU_DIR="${OHOS_ICU}/target" \
     "$BUN" scripts/build.ts \
         --config-file="${BUILD_DIR}/configure.json" \
         --build-dir="$BUILD_DIR" \
@@ -175,8 +177,6 @@ run_codegen() {
         --arch=aarch64 \
         --target=aarch64-linux-ohos \
         --ohos-sysroot="$OHOS_SYSROOT" \
-        --ohos-cross-libs="$OHOS_CROSS_LIBS" \
-        --ohos-icu="$OHOS_ICU" \
         --webkit=local \
         --configure-only 2>&1 || {
         err "configure 失败"

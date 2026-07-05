@@ -45,6 +45,7 @@
 #include "BunObjectModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
+#include "NodeURL.h"
 #include "Secrets.h"
 
 #ifdef WIN32
@@ -966,8 +967,16 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         return {};
 
     // UNC paths look like '\\server\share\etc', but in a URL they look like 'file://server/share/etc'.
-    if (!host.isEmpty())
-        return JSC::JSValue::encode(JSC::jsString(vm, makeString("\\\\"_s, host, decodedPath)));
+    if (!host.isEmpty()) {
+        // The parser leaves IDN hosts punycode-encoded; node hands the share name back in Unicode.
+        // Bun's parser, unlike node's, accepts hosts that are not decodable; keep those as-is rather
+        // than producing a UNC path with an empty server name.
+        String asciiHost = host.toString();
+        String serverName = Bun::domainToUnicode(asciiHost);
+        if (serverName.isNull())
+            serverName = asciiHost;
+        return JSC::JSValue::encode(JSC::jsString(vm, makeString("\\\\"_s, serverName, decodedPath)));
+    }
 
     // Otherwise it is a local path, which requires a drive letter: '\C:\etc' -> 'C:\etc'.
     if (decodedPath.length() < 3 || !isASCIIAlpha(decodedPath[1]) || decodedPath[2] != ':') [[unlikely]] {

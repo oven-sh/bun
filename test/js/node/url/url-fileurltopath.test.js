@@ -203,6 +203,14 @@ describe("url.fileURLToPath", () => {
       );
     });
 
+    test("decodes punycode UNC server names", () => {
+      // The URL parser stores the host punycode-encoded, the UNC path uses the Unicode form.
+      assert.strictEqual(url.fileURLToPath("file://münchen/foo", { windows: true }), "\\\\münchen\\foo");
+      assert.strictEqual(url.fileURLToPath("file://xn--mnchen-3ya/foo", { windows: true }), "\\\\münchen\\foo");
+      assert.strictEqual(url.fileURLToPath("file://xn--e1awd7f.com/x", { windows: true }), "\\\\еріс.com\\x");
+      assert.strictEqual(url.fileURLToPath("file://127.0.0.1/x", { windows: true }), "\\\\127.0.0.1\\x");
+    });
+
     test("rejects encoded separators", () => {
       assert.throws(() => url.fileURLToPath("file:///C:/a%5Cb", { windows: true }), {
         code: "ERR_INVALID_FILE_URL_PATH",

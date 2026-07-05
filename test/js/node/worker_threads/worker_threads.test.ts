@@ -866,4 +866,44 @@ describe("MessagePort EventEmitter interface", () => {
       port1.close();
     }
   });
+
+  test("on()/once() bind this to the port, like node's NodeEventTarget", async () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const onThis = Promise.withResolvers();
+      const onceThis = Promise.withResolvers();
+      port1.on("message", function (this: unknown) {
+        onThis.resolve(this);
+      });
+      port1.once("message", function (this: unknown) {
+        onceThis.resolve(this);
+      });
+      port2.postMessage("a");
+      expect(await onThis.promise).toBe(port1);
+      expect(await onceThis.promise).toBe(port1);
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+
+  test("parentPort.removeAllListeners() leaves unrelated global listeners intact", async () => {
+    const worker = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       let errorFired = false;
+       self.addEventListener("error", () => { errorFired = true; });
+       parentPort.on("message", () => {});
+       parentPort.removeAllListeners();
+       // If the user's global 'error' listener survived, this dispatch flips the flag.
+       self.dispatchEvent(new ErrorEvent("error", {}));
+       parentPort.postMessage({
+         messageCleared: parentPort.listenerCount("message") === 0,
+         errorHandlerKept: errorFired,
+       });`,
+      { eval: true },
+    );
+    const [message] = await once(worker, "message");
+    await worker.terminate();
+    expect(message).toEqual({ messageCleared: true, errorHandlerKept: true });
+  });
 });

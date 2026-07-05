@@ -79,8 +79,12 @@ function injectFakeEmitter(Class) {
     let wrapper = byEvent.$get(event);
     if (wrapper === undefined) {
       const unwrap = event === "error" || event === "messageerror" ? errorEventHandler : messageEventHandler;
+      // Node's NodeEventTarget binds `this` to the target for emitter-style
+      // listeners; the wrapper is dispatched with `this` === the port, so
+      // forward it so `port.on('message', function () { this.postMessage(...) })`
+      // works like it does in node.
       wrapper = function (e) {
-        return listener(unwrap(e));
+        return listener.$call(this, unwrap(e));
       };
       byEvent.$set(event, wrapper);
     }
@@ -495,7 +499,17 @@ function fakeParentPort() {
 
   Object.defineProperty(fake, "removeAllListeners", {
     value(event) {
-      eventTargetRemoveAllListeners(self, event);
+      if (event === undefined) {
+        // This port is a facade over the worker's global scope, which can also
+        // hold the user's own error / unhandledrejection / message handlers.
+        // A no-arg clear must only drop the events a MessagePort delivers, not
+        // wipe every listener on `self`.
+        eventTargetRemoveAllListeners(self, "message");
+        eventTargetRemoveAllListeners(self, "messageerror");
+        eventTargetRemoveAllListeners(self, "close");
+      } else {
+        eventTargetRemoveAllListeners(self, event);
+      }
       return this;
     },
     enumerable: false,

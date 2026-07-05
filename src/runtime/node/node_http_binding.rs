@@ -1,5 +1,5 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `{get,set}MaxHTTPHeaderSize`.
+//! `httpServerAddServerName` / `{get,set}MaxHTTPHeaderSize`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
@@ -37,6 +37,39 @@ pub(crate) fn get_bun_server_all_closed_promise(
     try_server!(DebugHTTPSServer);
 
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
+}
+
+pub(crate) fn http_server_add_server_name(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
+    if arguments.len() < 3 {
+        return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len()));
+    }
+
+    let server = arguments[0];
+    let hostname = arguments[1];
+    let options = arguments[2];
+
+    let name = hostname.to_utf8(global)?;
+
+    macro_rules! try_server {
+        ($ty:ty) => {
+            if let Some(this) = server.as_::<$ty>() {
+                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
+                // JS-owned server instance; we hold the JS thread for the
+                // duration of this call so the GC cannot collect it under us.
+                return unsafe { &mut *this }.add_sni_context(global, &name, options);
+            }
+        };
+    }
+    try_server!(HTTPSServer);
+    try_server!(DebugHTTPSServer);
+    try_server!(HTTPServer);
+    try_server!(DebugHTTPServer);
+
+    Err(global.throw_invalid_argument_type_value("server", "bun.Server", server))
 }
 
 pub(crate) fn get_max_http_header_size(

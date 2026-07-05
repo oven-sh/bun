@@ -1361,6 +1361,13 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
     }
     SSL_free(s_ssl(s));
     s->ssl = NULL;
+    /* Same for a parked handshake reason: no dispatch can claim it now, and a
+     * socket reusing this address would report it as its own failure. */
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+      loop_ssl_data->ssl_last_fatal_error[0] = 0;
+      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+    }
   }
 }
 
@@ -1440,6 +1447,26 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 }
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
+
+/* Park the fatal OpenSSL reason behind a failed SSL_* call where the
+ * handshake-failure dispatch can find it, then drain the queue and mark the
+ * socket fatal. Only parks while the handshake is unfinished: that dispatch is
+ * the sole consumer, so a later reason would linger and be misreported as some
+ * other socket's handshake failure. */
+static void ssl_park_fatal_reason(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *) s->group->loop->data.ssl_data;
+  if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+    unsigned long ssl_queue_err = ERR_peek_last_error();
+    if (ssl_queue_err != 0) {
+      ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
+                         sizeof(loop_ssl_data->ssl_last_fatal_error));
+      loop_ssl_data->ssl_last_fatal_error_owner = s;
+    }
+  }
+  ERR_clear_error();
+  s->ssl_fatal_error = 1;
+}
 
 /* The on_handshake callback runs JS which may us_socket_close(s) — that frees
  * s->ssl. Every caller MUST check ssl_gone(s) immediately after this returns
@@ -1694,16 +1721,7 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     }
     if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        struct loop_ssl_data *loop_ssl_data =
-            (struct loop_ssl_data *) s->group->loop->data.ssl_data;
-        unsigned long ssl_queue_err = ERR_peek_last_error();
-        if (loop_ssl_data && ssl_queue_err != 0) {
-          ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
-                             sizeof(loop_ssl_data->ssl_last_fatal_error));
-          loop_ssl_data->ssl_last_fatal_error_owner = s;
-        }
-        ERR_clear_error();
-        s->ssl_fatal_error = 1;
+        ssl_park_fatal_reason(s);
       }
       ssl_trigger_handshake(s, 0);
       return;
@@ -1885,22 +1903,7 @@ restart:
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-          /* Only park the reason while the handshake is still pending - that
-           * is the only consumer (the close path's EPROTO dispatch). For a
-           * completed handshake nothing reads it for this socket, and the
-           * ssl_close below runs JS that could tear down a different
-           * mid-handshake socket on this loop, which would then pick up this
-           * socket's reason as its own. */
-          if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-            unsigned long ssl_queue_err = ERR_peek_last_error();
-            if (ssl_queue_err != 0) {
-              ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
-                                 sizeof(loop_ssl_data->ssl_last_fatal_error));
-              loop_ssl_data->ssl_last_fatal_error_owner = s;
-            }
-          }
-          ERR_clear_error();
-          s->ssl_fatal_error = 1;
+          ssl_park_fatal_reason(s);
         }
         ssl_close(s, 0, NULL);
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
@@ -2099,8 +2102,12 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
     } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-      ERR_clear_error();
-      s->ssl_fatal_error = 1;
+      /* SSL_write drives the handshake when it has not finished, so this is
+       * where a handshake-configuration failure (impossible version window,
+       * no shared cipher) surfaces for a caller that wrote before
+       * 'secureConnect'. Park the reason: the handshake dispatch this failure
+       * triggers reports it instead of a bare verification verdict. */
+      ssl_park_fatal_reason(s);
     }
   }
   return 0;

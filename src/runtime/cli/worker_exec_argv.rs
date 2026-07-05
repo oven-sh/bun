@@ -195,8 +195,22 @@ const NODE_ONLY_SHORT_WITH_VALUE: &[u8] = b"C";
 
 /// Classify a long flag by the name between `--` and `=`.
 fn lookup_long(name: &[u8]) -> Flag {
+    // Node canonicalises `_` to `-` in a long option's name before looking it
+    // up, so `--no_warnings` names the same option as `--no-warnings`.
+    if name.contains(&b'_') {
+        let canonical: Vec<u8> = name
+            .iter()
+            .map(|&byte| if byte == b'_' { b'-' } else { byte })
+            .collect();
+        return lookup_canonical_long(&canonical);
+    }
+    lookup_canonical_long(name)
+}
+
+/// Look `name` up in the tables verbatim. `None` when no table names it.
+fn lookup_exact(name: &[u8]) -> Option<Flag> {
     if PER_PROCESS_LONG.binary_search(&name).is_ok() {
-        return Flag::PerProcess;
+        return Some(Flag::PerProcess);
     }
     // The same table `process.execArgv`'s re-parser derives its value-consuming
     // set from, so the two agree on what `bun <entrypoint>` accepts.
@@ -204,22 +218,43 @@ fn lookup_long(name: &[u8]) -> Flag {
         .iter()
         .find(|param| param.names.matches_long(name))
     {
-        return Flag::Supported(param.takes_value);
+        return Some(Flag::Supported(param.takes_value));
     }
     if NODE_ONLY_BOOLEAN.binary_search(&name).is_ok() {
-        return Flag::Supported(Values::None);
+        return Some(Flag::Supported(Values::None));
     }
     if NODE_ONLY_WITH_VALUE.binary_search(&name).is_ok() {
-        return Flag::Supported(Values::One);
+        return Some(Flag::Supported(Values::One));
     }
-    // Node's parser strips a leading `no-` and negates the boolean option named
-    // by the rest, so `--no-<boolean>` is valid for every boolean option.
-    if let Some(negated) = name.strip_prefix(b"no-".as_slice()) {
-        return match lookup_long(negated) {
-            Flag::Supported(Values::None) => Flag::Supported(Values::None),
-            Flag::Supported(_) => Flag::InvalidNegation,
-            Flag::Unknown | Flag::InvalidNegation | Flag::PerProcess => Flag::Unknown,
+    None
+}
+
+/// [`lookup_long`] with `_` already canonicalised to `-`.
+fn lookup_canonical_long(name: &[u8]) -> Flag {
+    if let Some(flag) = lookup_exact(name) {
+        return flag;
+    }
+    // Node registers one canonical name per boolean option and derives the
+    // other spelling from it, so `--x` and `--no-x` both name a boolean `x`.
+    // It strips `no-` exactly once, which leaves `--no-no-x` naming nothing.
+    if let Some(base) = name.strip_prefix(b"no-".as_slice()) {
+        if base.starts_with(b"no-") {
+            return Flag::Unknown;
+        }
+        return match lookup_exact(base) {
+            Some(Flag::Supported(Values::None)) => Flag::Supported(Values::None),
+            Some(Flag::Supported(_)) => Flag::InvalidNegation,
+            _ => Flag::Unknown,
         };
+    }
+    // The tables carry the documented spelling of each boolean, which for a
+    // default-true option is the negative one (`--no-warnings`). Derive the
+    // positive spelling Node also accepts.
+    let mut negated = Vec::with_capacity("no-".len() + name.len());
+    negated.extend_from_slice(b"no-");
+    negated.extend_from_slice(name);
+    if matches!(lookup_exact(&negated), Some(Flag::Supported(Values::None))) {
+        return Flag::Supported(Values::None);
     }
     Flag::Unknown
 }
@@ -412,10 +447,31 @@ mod tests {
             Flag::Supported(Values::None)
         );
         assert_eq!(lookup_long(b"no-conditions"), Flag::InvalidNegation);
+        // Both spellings of a boolean, even when only one is documented.
+        assert_eq!(lookup_long(b"warnings"), Flag::Supported(Values::None));
+        assert_eq!(lookup_long(b"addons"), Flag::Supported(Values::None));
+        assert_eq!(lookup_long(b"strip-types"), Flag::Supported(Values::None));
+        // `no-` is stripped exactly once.
+        assert_eq!(lookup_long(b"no-no-addons"), Flag::Unknown);
+        // `_` is canonicalised to `-`.
+        assert_eq!(lookup_long(b"no_warnings"), Flag::Supported(Values::None));
+        assert_eq!(
+            lookup_long(b"experimental_vm_modules"),
+            Flag::Supported(Values::None)
+        );
+        assert_eq!(lookup_long(b"definitely_not_a_flag"), Flag::Unknown);
         // Per-process and unknown.
         assert_eq!(lookup_long(b"title"), Flag::PerProcess);
         assert_eq!(lookup_long(b"expose-gc"), Flag::PerProcess);
         assert_eq!(lookup_long(b"definitely-not-a-flag"), Flag::Unknown);
+    }
+
+    #[test]
+    fn a_repeated_negation_does_not_recurse() {
+        // `lookup_long` must not recurse per `no-`: a pathological entry has to
+        // come back as an ordinary unrecognised flag, not a stack overflow.
+        let name = b"no-".repeat(200_000);
+        assert_eq!(lookup_long(&name), Flag::Unknown);
     }
 
     #[test]

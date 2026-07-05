@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -340,15 +340,34 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 
   // https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-worker-execargv-invalid.js
-  it("throws ERR_INVALID_ARG_TYPE when execArgv is not an array", () => {
+  it("throws ERR_INVALID_ARG_TYPE when execArgv is not an array", async () => {
     for (const execArgv of ["hello", 6]) {
-      expect(() => new Worker("", { eval: true, execArgv: execArgv as any })).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
-      );
+      let worker: InstanceType<typeof Worker> | undefined;
+      try {
+        expect(() => {
+          worker = new Worker("", { eval: true, execArgv: execArgv as any });
+        }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }));
+      } finally {
+        await worker?.terminate();
+      }
     }
   });
 
   describe("throws ERR_WORKER_INVALID_EXEC_ARGV for", () => {
+    // A worker is only born when the constructor fails to throw, which is the
+    // bug this suite is about. Clean it up so a failure doesn't then leak a
+    // thread into every test that follows.
+    async function expectRejected(execArgv: string[], expected: Record<string, string>) {
+      let worker: InstanceType<typeof Worker> | undefined;
+      try {
+        expect(() => {
+          worker = new Worker("", { eval: true, execArgv });
+        }).toThrow(expect.objectContaining(expected));
+      } finally {
+        await worker?.terminate();
+      }
+    }
+
     it.each([
       // Unknown to both Bun and Node.
       [["--definitely-not-a-flag"], "--definitely-not-a-flag"],
@@ -368,14 +387,27 @@ describe("execArgv option", async () => {
       [["--conditions"], "--conditions requires an argument"],
       // The value of a flag is consumed, so validation resumes after it.
       [["--conditions", "react-server", "--definitely-not-a-flag"], "--definitely-not-a-flag"],
-    ])("%p", (execArgv, message) => {
-      expect(() => new Worker("", { eval: true, execArgv })).toThrow(
-        expect.objectContaining({
-          code: "ERR_WORKER_INVALID_EXEC_ARGV",
-          name: "Error",
-          message: `Initiated Worker with invalid execArgv flags: ${message}`,
-        }),
-      );
+      // Node strips `no-` exactly once, so a doubled prefix names nothing.
+      [["--no-no-addons"], "--no-no-addons"],
+      // `_` is canonicalised to `-` for the lookup, but the entry is reported
+      // as the user spelled it.
+      [["--definitely_not_a_flag"], "--definitely_not_a_flag"],
+    ])("%p", async (execArgv, message) => {
+      await expectRejected(execArgv, {
+        code: "ERR_WORKER_INVALID_EXEC_ARGV",
+        name: "Error",
+        message: `Initiated Worker with invalid execArgv flags: ${message}`,
+      });
+    });
+
+    // Classifying a flag must not recurse per `no-`, or this overflows the
+    // stack instead of reporting the flag. The message is 600 KB, so only the
+    // error's identity is asserted.
+    it("a pathologically repeated negation, without overflowing the stack", async () => {
+      await expectRejected(["--" + "no-".repeat(200_000)], {
+        code: "ERR_WORKER_INVALID_EXEC_ARGV",
+        name: "Error",
+      });
     });
   });
 
@@ -389,6 +421,11 @@ describe("execArgv option", async () => {
       // rejecting them here would be stricter than Node.
       [["--experimental-vm-modules"]],
       [["--no-warnings", "--no-deprecation", "--tls-min-v1.2"]],
+      // Node registers every boolean under one name and derives the other
+      // spelling, so both are valid even when only one is documented.
+      [["--warnings", "--addons", "--deprecation"]],
+      // Node canonicalises `_` to `-` in a long flag's name.
+      [["--experimental_vm_modules", "--no_warnings"]],
       // Everything from the first positional on is a positional, never a flag.
       [["--", "--definitely-not-a-flag"]],
       [["entrypoint.js", "--definitely-not-a-flag"]],
@@ -406,19 +443,25 @@ describe("execArgv option", async () => {
   });
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "eval-source-leak-fixture.js"],
-    env: bunEnv,
-    cwd: __dirname,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+test(
+  "eval does not leak source code",
+  async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "eval-source-leak-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await proc.stderr.text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  },
+  // The fixture hands 600 MiB of source to six workers; that takes ~30s under a
+  // debug build, well past the 5s default.
+  isDebug ? 120_000 : 20_000,
+);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is

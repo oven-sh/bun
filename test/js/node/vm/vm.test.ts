@@ -1371,6 +1371,57 @@ describe("node:vm SourceTextModule graph evaluation order", () => {
     await expect(modules.B.evaluate()).rejects.toThrow("meta boom");
   });
 
+  test("a module the failure never reached cannot evaluate through an errored dependency", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "C"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "D"; order.push("B");`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "D"; order.push("C");`, { identifier: "C", context }),
+      D: new SourceTextModule(`import.meta.x; order.push("D");`, {
+        identifier: "D",
+        context,
+        initializeImportMeta() {
+          throw new Error("never reached");
+        },
+      }),
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("never reached");
+
+    // C was never walked (the failure cut A's request list short), so like node
+    // it stays linked. Evaluating it must still fail on D rather than run D's
+    // body: the error lives on D's record, not just its wrapper.
+    expect([modules.A.status, modules.B.status, modules.D.status]).toEqual(["errored", "errored", "errored"]);
+    expect(modules.C.status).toBe("linked");
+    await expect(modules.C.evaluate()).rejects.toThrow("never reached");
+    expect(context.order).toEqual([]);
+  });
+
+  test("an unreached module cannot evaluate through an errored intermediate", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S = new SyntheticModule(
+      ["x"],
+      () => {
+        throw new Error("via boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "C"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import { x } from "S"; order.push("B" + x);`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "B"; order.push("C");`, { identifier: "C", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("via boom");
+
+    expect(modules.B.status).toBe("errored");
+    await expect(modules.C.evaluate()).rejects.toThrow("via boom");
+    expect(context.order).toEqual([]);
+  });
+
   test("import.meta is initialized for every module in a cycle before any body runs", async () => {
     const context = createContext({ order: [] as string[] });
     const initialized: string[] = [];

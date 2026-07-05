@@ -344,16 +344,18 @@ void NodeVMModule::prepareGraphForEvaluation(JSGlobalObject* globalObject, uint3
     visited.add(this);
     stack.append(Frame { this, 0 });
 
-    // A callback threw. record->evaluate() never runs, so the records of the
-    // modules that were waiting on it stay Linked and reconcileEvaluationState()
-    // leaves their wrappers linked -- free to evaluate later on top of a
-    // dependency that never produced its exports. Error everything that
-    // transitively imports the thrower, found by walking importer edges.
+    // A callback threw, so record->evaluate() never runs and nothing in the graph
+    // has evaluated. Error the thrower and everything that transitively imports
+    // it, found by walking importer edges back from it. The stack alone is not
+    // that set: post-order pops a cycle member as soon as its own requests are
+    // done, which can happen before a sibling of a still-stacked cycle member
+    // throws. `visited` is not it either: a module that does not import the
+    // thrower is untouched by the failure and has to stay evaluable.
     //
-    // The stack is not that set: post-order pops a cycle member as soon as its
-    // own requests are done, which can happen before a sibling of a still-stacked
-    // cycle member throws. Nor is `visited`: a module that does not import the
-    // thrower is untouched by the failure and must stay evaluable.
+    // The error is recorded on the module record as well as the wrapper, the way
+    // innerModuleEvaluation does for an abrupt completion. A wrapper-only error
+    // leaves the record Linked, so a module outside the walk (a sibling the
+    // failure cut short) would evaluate straight through it and run its body.
     auto propagateEvaluationError = [&](NodeVMModule* thrower) {
         JSC::Exception* exception = scope.exception();
         if (!exception) [[unlikely]]
@@ -380,6 +382,12 @@ void NodeVMModule::prepareGraphForEvaluation(JSGlobalObject* globalObject, uint3
             if (module->status() != Status::Errored) {
                 module->status(Status::Errored);
                 module->m_evaluationException.set(vm, module, exception);
+            }
+            if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+                if (JSC::JSModuleRecord* record = sourceTextModule->moduleRecordIfExists(); record && !record->evaluationError()) {
+                    record->setStatus(JSC::CyclicModuleRecord::Status::Evaluated);
+                    record->setEvaluationError(vm, exception->value());
+                }
             }
             if (auto iter = importers.find(module); iter != importers.end())
                 worklist.appendVector(iter->value);

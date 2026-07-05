@@ -206,6 +206,13 @@ const NODE_ONLY_WITH_VALUE: &[&[u8]] = &[
 /// one.
 const NODE_ONLY_SHORT_WITH_VALUE: &[u8] = b"C";
 
+/// Bun declares these `<STR>?`, but Node registers them as plain booleans whose
+/// address is a separate implied `--inspect-port`, so they negate like one.
+/// Bun's other `<STR>?` flag, `--config`, really does name a value, and Node
+/// rejects `--no-config` just as it rejects `--no-inspect-port`.
+/// <https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L475>
+const NEGATABLE_WITH_OPTIONAL_VALUE: &[&[u8]] = &[b"inspect", b"inspect-brk", b"inspect-wait"];
+
 /// Classify a long flag by the name between `--` and `=`.
 fn lookup_long(name: &[u8]) -> Flag {
     // Node canonicalises `_` to `-` in a long option's name before looking it
@@ -259,6 +266,11 @@ fn lookup_canonical_long(name: &[u8]) -> Flag {
         }
         return match lookup_exact(base) {
             Some(Flag::Supported(Values::None)) => Flag::Supported(Values::None),
+            Some(Flag::Supported(Values::OneOptional))
+                if NEGATABLE_WITH_OPTIONAL_VALUE.contains(&base) =>
+            {
+                Flag::Supported(Values::None)
+            }
             Some(Flag::Supported(_)) => Flag::InvalidNegation,
             _ => Flag::Unknown,
         };
@@ -454,6 +466,19 @@ mod tests {
             Flag::Supported(Values::None)
         );
         assert_eq!(lookup_long(b"no-conditions"), Flag::InvalidNegation);
+        // `--inspect[=host:port]` is a boolean to Node, so it negates; Bun's
+        // other `<STR>?` flag names a value, so it does not.
+        assert_eq!(lookup_long(b"no-inspect"), Flag::Supported(Values::None));
+        assert_eq!(
+            lookup_long(b"no-inspect-brk"),
+            Flag::Supported(Values::None)
+        );
+        assert_eq!(
+            lookup_long(b"no-inspect-wait"),
+            Flag::Supported(Values::None)
+        );
+        assert_eq!(lookup_long(b"no-inspect-port"), Flag::InvalidNegation);
+        assert_eq!(lookup_long(b"no-config"), Flag::InvalidNegation);
         // Both spellings of a boolean, even when only one is documented.
         assert_eq!(lookup_long(b"warnings"), Flag::Supported(Values::None));
         assert_eq!(lookup_long(b"no-warnings"), Flag::Supported(Values::None));

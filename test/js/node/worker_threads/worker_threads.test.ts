@@ -397,6 +397,8 @@ describe("execArgv option", async () => {
       // spelling, in Bun or in Node.
       [["--macros"], "--macros"],
       [["--clear-screen"], "--clear-screen"],
+      // Only a boolean can be negated.
+      [["--no-inspect-port"], "--no-inspect-port is an invalid negation because it is not a boolean option"],
     ])("%p", async (execArgv, message) => {
       await expectRejected(execArgv, {
         code: "ERR_WORKER_INVALID_EXEC_ARGV",
@@ -434,6 +436,8 @@ describe("execArgv option", async () => {
       [["--experimental_vm_modules", "--no_warnings"]],
       // Unlike its two siblings above, Node made this one per-environment.
       [["--use-system-ca"]],
+      // `--inspect[=host:port]` negates like the boolean Node registers it as.
+      [["--no-inspect", "--no-inspect-brk", "--no-inspect-wait"]],
       // Everything from the first positional on is a positional, never a flag.
       [["--", "--definitely-not-a-flag"]],
       [["entrypoint.js", "--definitely-not-a-flag"]],

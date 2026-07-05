@@ -247,11 +247,33 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
-            let _ = self.drain_microtasks();
-        }
+        let drained = count == 1
+            && !self.vm_ref().is_inside_deferred_task_queue.get()
+            && self.drain_microtasks().is_ok();
 
         self.entered_event_loop_count -= 1;
+        if drained {
+            self.handle_rejected_promises_after_tick();
+        }
+    }
+
+    /// The tail of a macrotask callback, once its microtasks have drained:
+    /// report what it left unhandled before anything it scheduled runs. Node
+    /// does this from `processTicksAndRejections`, which its timer and
+    /// immediate queues run after every callback.
+    ///
+    /// Only valid once the enter/exit counter is back at 0: the handler is
+    /// user JS, and its own `enter()`/`exit()` must see depth 0 to drain.
+    fn handle_rejected_promises_after_tick(&mut self) {
+        debug_assert_eq!(self.entered_event_loop_count, 0);
+        // spawnSync's isolated loop shares this VM and global object; running
+        // JS on it is forbidden, which is also why `drain_microtasks` bails.
+        if self.vm_ref().suppress_microtask_drain.get() {
+            return;
+        }
+        // `global_ref()` hands back a `'static` reference, so no borrow of the
+        // loop spans the `unhandledRejection` handler, which re-enters it.
+        self.global_ref().handle_rejected_promises();
     }
 
     /// `enter()` now, `exit()` on drop. Takes the raw VM-owned pointer so the
@@ -275,7 +297,8 @@ impl EventLoop {
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
         let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
-        let result = if allow_drain_microtask && count == 1 && !inside_deferred {
+        let drained = allow_drain_microtask && count == 1 && !inside_deferred;
+        let result = if drained {
             self.drain_microtasks()
         } else {
             Ok(())
@@ -285,6 +308,9 @@ impl EventLoop {
         // decremented.
         if result.is_ok() {
             self.entered_event_loop_count -= 1;
+            if drained {
+                self.handle_rejected_promises_after_tick();
+            }
         }
         result
     }

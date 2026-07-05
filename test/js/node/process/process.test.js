@@ -957,6 +957,88 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Node reports unhandled rejections at the end of the callback that created
+  // them (processTicksAndRejections), so the event always precedes anything
+  // that callback scheduled, and anything already queued behind it.
+  it.each([
+    [
+      "timer scheduled by the rejecting setImmediate",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => log("later timer"), 0);
+       });`,
+      ["unhandledRejection", "later timer"],
+    ],
+    [
+      "setImmediate queued behind the rejecting setImmediate",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+       });
+       setImmediate(() => log("second immediate"));`,
+      ["unhandledRejection", "second immediate"],
+    ],
+    [
+      "timer already scheduled when a setImmediate rejects",
+      `setTimeout(() => log("pending timer"), 5);
+       setImmediate(() => {
+         Promise.reject(new Error("x"));
+       });`,
+      ["unhandledRejection", "pending timer"],
+    ],
+    [
+      // Both timers are overdue by the time the loop first drains them, so they
+      // fire in a single batch and the rejection must split them.
+      "timer due in the same batch as the rejecting timer",
+      `setTimeout(() => log("second timer"), 30);
+       setTimeout(() => {
+         Promise.reject(new Error("x"));
+       }, 10);
+       for (const until = Date.now() + 60; Date.now() < until; );`,
+      ["unhandledRejection", "second timer"],
+    ],
+    [
+      // Same, for a rejection created in the poll phase: the socket handler
+      // stalls long enough that its own timer is due when the drain runs.
+      "timer due when a socket data handler rejects",
+      `const net = require("net");
+       const server = net.createServer(socket => {
+         socket.on("data", () => {
+           Promise.reject(new Error("x"));
+           setTimeout(() => {
+             log("later timer");
+             socket.end();
+             server.close();
+           }, 0);
+           for (const until = Date.now() + 10; Date.now() < until; );
+         });
+       });
+       server.listen(0, () => {
+         const client = net.connect(server.address().port, () => client.write("hi"));
+         client.on("error", () => {});
+       });`,
+      ["unhandledRejection", "later timer"],
+    ],
+  ])("unhandledRejection is emitted before the %s", async (_name, body, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const log = line => console.log(line);
+         process.on("unhandledRejection", () => log("unhandledRejection"));
+         ${body}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

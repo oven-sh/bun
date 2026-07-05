@@ -553,9 +553,6 @@ impl AnimationTimeline {
             AnimationTimeline::None => AnimationTimeline::None,
             // `DashedIdent` is a `Copy` arena-slice pointer.
             AnimationTimeline::DashedIdent(d) => AnimationTimeline::DashedIdent(*d),
-            AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
-                unreachable!("ScrollTimeline / ViewTimeline are uninstantiated (no parse path)")
-            }
         }
     }
 }

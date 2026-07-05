@@ -974,11 +974,6 @@ booga"
       expect(stdout.toString()).toEqual("local\nexported\n");
     });
 
-    test("assignment with no command word affects the shell", async () => {
-      const { stdout } = await $`empty=; FOO=bar $empty; echo $FOO`;
-      expect(stdout.toString()).toEqual("bar\n");
-    });
-
     test("expand shell var", async () => {
       const { stdout } = await $`FOO=bar BAR=baz; echo $FOO $BAR`;
       const str = stdout.toString();

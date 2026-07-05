@@ -71,10 +71,6 @@ impl EnvMap {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
-
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub fn insert(&mut self, key: EnvStr, val: EnvStr) {

@@ -116,6 +116,8 @@ export function asyncIterator(this: Console) {
 }
 
 export function write(this: Console, input) {
+  if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
+
   var writer = $getByIdDirectPrivate(this, "writer");
   if (!writer) {
     var length = $toLength(input?.length ?? 0);

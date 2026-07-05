@@ -2702,6 +2702,18 @@ class Readline {
   }
 }
 
+// Bound rather than closed over: a pending question outlives the call, and an
+// inline closure would pin question()'s whole activation until it is answered.
+function onQuestionAbort(signal, reject) {
+  this[kQuestionCancel]();
+  reject($makeAbortError(undefined, { cause: signal.reason }));
+}
+
+function onQuestionAnswer(signal, onAbort, resolve, answer) {
+  signal.removeEventListener("abort", onAbort);
+  resolve(answer);
+}
+
 var PromisesInterface = class Interface extends _Interface {
   // eslint-disable-next-line no-useless-constructor
   constructor(input, output, completer, terminal) {
@@ -2720,15 +2732,9 @@ var PromisesInterface = class Interface extends _Interface {
           reject($makeAbortError(undefined, { cause: signal.reason }));
           return promise;
         }
-        var onAbort = () => {
-          this[kQuestionCancel]();
-          reject($makeAbortError(undefined, { cause: signal.reason }));
-        };
+        var onAbort = onQuestionAbort.bind(this, signal, reject);
         signal.addEventListener("abort", onAbort, { once: true });
-        cb = answer => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(answer);
-        };
+        cb = onQuestionAnswer.bind(undefined, signal, onAbort, resolve);
       }
       this[kQuestion](query, cb);
     } catch (err) {

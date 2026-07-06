@@ -461,6 +461,18 @@ JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject
 {
 }
 
+bool BunPlugin::OnLoad::hasModuleMock(const String& specifier) const
+{
+    if (!virtualModules)
+        return false;
+
+    auto it = virtualModules->find(specifier);
+    if (it == virtualModules->end() || !it->value)
+        return false;
+
+    return dynamicDowncast<JSModuleMock>(it->value.get()) != nullptr;
+}
+
 Structure* JSModuleMock::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());

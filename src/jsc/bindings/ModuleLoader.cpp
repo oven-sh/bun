@@ -660,9 +660,21 @@ JSValue fetchCommonJSModule(
 
     bool wasModuleMock = false;
 
+    // require() of a module already in the ESM registry returns that instance (the
+    // jsNumber(-1) below), so re-running a plugin's onLoad() re-executes user code for
+    // a result we discard. The ESM path never re-fetches a registered module either.
+    const bool alreadyLoadedAsESM = [&]() -> bool {
+        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
+    }();
+
+    // mock.module() is exempt: it patches the registry entry when it is installed, and
+    // require() relies on running it here so a mocked builtin still beats the real one.
+    const bool shouldRunVirtualModule = !alreadyLoadedAsESM || globalObject->onLoadPlugins.hasModuleMock(specifierWtfString);
+
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
-    if (isBunTest) {
+    if (isBunTest && shouldRunVirtualModule) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
@@ -717,7 +729,7 @@ JSValue fetchCommonJSModule(
     }
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
-    if (!isBunTest) {
+    if (!isBunTest && shouldRunVirtualModule) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
@@ -760,12 +772,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
-        return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
-    }();
-
-    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
+    if (alreadyLoadedAsESM) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 

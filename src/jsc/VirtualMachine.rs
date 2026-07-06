@@ -6694,9 +6694,8 @@ pub fn plugin_runner_on_resolve_jsc(
     let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
 
     // A `file`-namespace result (the default) is a filesystem path, not a new
-    // specifier: hand it back unprefixed so the module loader loads that file.
-    // `bun:`, `node:` and custom namespaces keep the `ns:path` form the loader
-    // dispatches on.
+    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
+    // form the module loader dispatches on.
     if user_namespace.eql_comptime(b"file") {
         return Ok(Some(ErrorableString::ok(file_path.into_inner())));
     }

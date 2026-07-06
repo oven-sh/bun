@@ -1050,6 +1050,19 @@ describe("sparse arrays", () => {
         };
       }
 
+      // Both reserved indices, and nothing the index slot can carry: every key the walk
+      // produces is escaped, so it writes no element at all before the named properties.
+      const onlyReserved = [];
+      onlyReserved[4294967293] = "low";
+      onlyReserved[4294967294] = "high";
+      const clonedOnlyReserved = deserialize(serialize(structuredClone(onlyReserved)));
+      results.onlyReserved = {
+        keys: Object.keys(clonedOnlyReserved),
+        low: clonedOnlyReserved[4294967293],
+        high: clonedOnlyReserved[4294967294],
+        length: clonedOnlyReserved.length,
+      };
+
       console.log(JSON.stringify(results));
     `;
 
@@ -1083,6 +1096,12 @@ describe("sparse arrays", () => {
           at0: "first",
           atIndex: { nested: 4294967294 },
           tag: "named",
+          length: 4294967295,
+        },
+        onlyReserved: {
+          keys: ["4294967293", "4294967294"],
+          low: "low",
+          high: "high",
           length: 4294967295,
         },
       },

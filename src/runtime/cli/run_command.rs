@@ -2756,10 +2756,37 @@ impl RunCommand {
                 }
             }
 
+            // Try restricted PATH first
+            let mut found = false;
             if !path_for_which.is_empty() {
                 let mut path_buf = PathBuffer::uninit();
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
+                {
+                    found = true;
+                    let out = destination.as_bytes();
+                    let stored = fs.dirname_store.append_slice(out)?;
+                    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                    Self::run_binary_without_bunx_path(
+                        ctx,
+                        stored,
+                        destination,
+                        top_level_dir,
+                        env_loader,
+                        &passthrough,
+                        Some(target_name),
+                    )?;
+                }
+            }
+
+            // On OHOS, bun-node shim creation fails (read-only /tmp), so
+            // the restricted search above may miss system-installed
+            // binaries. Fall back to full PATH if restricted search failed.
+            #[cfg(target_env = "ohos")]
+            if !found && bin_dirs_only {
+                let mut path_buf = PathBuffer::uninit();
+                if let Some(destination) =
+                    which(&mut path_buf, path, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;

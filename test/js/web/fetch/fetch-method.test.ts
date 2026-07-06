@@ -2,43 +2,18 @@ import { describe, expect, test } from "bun:test";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-// Raw-socket server: hand back the verbatim request line so the assertions see
-// the bytes that actually went out, not what Bun echoes back in `request.method`.
-async function requestLine(run: (url: string) => Promise<unknown>): Promise<string> {
-  const { promise: line, resolve, reject } = Promise.withResolvers<string>();
+const NO_CONTENT = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+const OK = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+const redirect = (status: number) =>
+  `HTTP/1.1 ${status} Redirect\r\nLocation: /hop2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`;
 
-  const server = net.createServer(socket => {
-    let buffered = "";
-    // A request body can arrive in a later `data` event than its headers.
-    let responded = false;
-    socket.on("error", reject);
-    socket.on("data", chunk => {
-      buffered += chunk.toString("latin1");
-      if (responded || !buffered.includes("\r\n\r\n")) return;
-      responded = true;
-      resolve(buffered.slice(0, buffered.indexOf("\r\n")));
-      socket.end("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
-    });
-  });
-  server.on("error", reject);
-
-  try {
-    await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
-    await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
-    return await line;
-  } finally {
-    server.close();
-  }
-}
-
-const wireMethod = (method: string) => requestLine(url => fetch(url, { method })).then(line => line.split(" ")[0]);
-
-// Redirects once, then answers 200. Returns the method of every request line the
-// server saw, so a custom method's token can be watched across hops: it borrows
-// FetchTasklet-owned storage that the HTTP thread reads again on the second hop.
-async function redirectedMethods(status: number, init: RequestInit): Promise<string[]> {
-  const methods: string[] = [];
-  const { promise: finished, resolve, reject } = Promise.withResolvers<void>();
+// Runs `run` against a raw-socket server on an ephemeral port and returns the
+// verbatim request line of every request it saw, so the assertions read the
+// bytes that actually went out rather than what Bun echoes back in
+// `request.method`. `respond` picks the reply for the nth request.
+async function requestLines(respond: (nth: number) => string, run: (url: string) => Promise<unknown>) {
+  const lines: string[] = [];
+  const { promise: socketFailed, reject } = Promise.withResolvers<never>();
 
   const server = net.createServer(socket => {
     let buffered = "";
@@ -50,29 +25,37 @@ async function redirectedMethods(status: number, init: RequestInit): Promise<str
       buffered += chunk.toString("latin1");
       if (responded || !buffered.includes("\r\n\r\n")) return;
       responded = true;
-      methods.push(buffered.slice(0, buffered.indexOf(" ")));
-      if (methods.length === 1) {
-        socket.end(`HTTP/1.1 ${status} Redirect\r\nLocation: /hop2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
-      } else {
-        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-        resolve();
-      }
+      lines.push(buffered.slice(0, buffered.indexOf("\r\n")));
+      socket.end(respond(lines.length));
     });
   });
   server.on("error", reject);
 
   try {
     await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
-    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`, init);
-    expect(await res.text()).toBe("ok");
-    await finished;
-    return methods;
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    await Promise.race([run(url), socketFailed]);
+    return lines;
   } finally {
     server.close();
   }
 }
 
-describe("fetch() method", () => {
+const requestLine = async (run: (url: string) => Promise<unknown>) => (await requestLines(() => NO_CONTENT, run))[0];
+const wireMethod = (method: string) => requestLine(url => fetch(url, { method })).then(line => line.split(" ")[0]);
+
+// Redirects once, then answers 200, so a custom method's token can be watched
+// across hops: it borrows FetchTasklet-owned storage that the HTTP thread reads
+// again on the second hop.
+async function redirectedMethods(status: number, init: RequestInit): Promise<string[]> {
+  const lines = await requestLines(
+    nth => (nth === 1 ? redirect(status) : OK),
+    async url => expect(await (await fetch(url, init)).text()).toBe("ok"),
+  );
+  return lines.map(line => line.slice(0, line.indexOf(" ")));
+}
+
+describe.concurrent("fetch() method", () => {
   // https://fetch.spec.whatwg.org/#concept-method-normalize — only these six
   // are case-normalized, and only to uppercase.
   test.each([

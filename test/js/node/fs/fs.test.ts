@@ -2704,17 +2704,18 @@ describe("rm", () => {
       using dir = tempDir("rm-notdir", { afile: "x" });
       const target = join(String(dir), "afile", "x");
       const notDir = expect.objectContaining({ code: "ENOTDIR" });
+      const rmCallback = (options?: { force?: boolean; recursive?: boolean }) =>
+        new Promise<any>(resolve => (options === undefined ? fs.rm(target, resolve) : fs.rm(target, options, resolve)));
 
       expect(() => rmSync(target)).toThrow(notDir);
-      expect(() => rmSync(target, { force: true })).toThrow(notDir);
-      expect(() => rmSync(target, { recursive: true })).toThrow(notDir);
-
       await expect(promises.rm(target)).rejects.toThrow(notDir);
-      await expect(promises.rm(target, { force: true })).rejects.toThrow(notDir);
-      await expect(promises.rm(target, { recursive: true })).rejects.toThrow(notDir);
+      expect((await rmCallback())?.code).toBe("ENOTDIR");
 
-      const callbackError = await new Promise<any>(resolve => fs.rm(target, resolve));
-      expect(callbackError?.code).toBe("ENOTDIR");
+      for (const options of [{ force: true }, { recursive: true }]) {
+        expect(() => rmSync(target, options)).toThrow(notDir);
+        await expect(promises.rm(target, options)).rejects.toThrow(notDir);
+        expect((await rmCallback(options))?.code).toBe("ENOTDIR");
+      }
     });
 
     it("{ recursive: true, force: true } treats it as already gone", async () => {

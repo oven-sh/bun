@@ -677,6 +677,8 @@ impl MySQLConnection {
             .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
         self.auth_data
             .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
+        // The wire nonce is NUL-terminated; see `Auth::SCRAMBLE_LENGTH` (#26195).
+        self.auth_data.truncate(Auth::SCRAMBLE_LENGTH);
 
         // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {
@@ -924,6 +926,8 @@ impl MySQLConnection {
                 self.auth_switch_count += 1;
 
                 let auth_data = auth_switch.plugin_data.slice();
+                // Terminated the same way as the handshake's auth-plugin-data.
+                let auth_data = &auth_data[..auth_data.len().min(Auth::SCRAMBLE_LENGTH)];
                 self.auth_plugin = Some(auth_method);
                 self.auth_data.clear();
                 self.auth_data.extend_from_slice(auth_data);

@@ -3186,3 +3186,52 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+it("http2 allowHTTP1 fallback delivers every request header when there are more than 31", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    const keys = Object.keys(req.headers);
+    res.end(
+      JSON.stringify({
+        host: req.headers.host,
+        cookie: req.headers.cookie,
+        authorization: req.headers.authorization,
+        first: req.headers["x-c0"],
+        last: req.headers["x-c39"],
+        count: keys.length,
+      }),
+    );
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => {
+        // 45 request headers total (host, cookie, authorization, connection +
+        // 40 x-c*, plus the request line). The native parser flushes full
+        // 31-pair blocks through a separate callback, so anything over 31
+        // headers exercises the flush path the fallback used to drop.
+        let request =
+          "GET / HTTP/1.1\r\nHost: example.test\r\nCookie: sid=abc123\r\nAuthorization: Bearer token-xyz\r\nConnection: close\r\n";
+        for (let i = 0; i < 40; i++) request += `x-c${i}: value-${i}\r\n`;
+        socket.write(request + "\r\n");
+      },
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect(JSON.parse(body)).toEqual({
+      host: "example.test",
+      cookie: "sid=abc123",
+      authorization: "Bearer token-xyz",
+      first: "value-0",
+      last: "value-39",
+      count: 44,
+    });
+  } finally {
+    server.close();
+  }
+});

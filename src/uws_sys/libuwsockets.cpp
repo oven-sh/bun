@@ -1348,6 +1348,10 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
+        // Every other termination path reaches writeMark() through internalEnd();
+        // this one hand-rolls the terminator, so Date is written here instead
+        // (RFC 9110 6.6.1). writeMark() is idempotent.
+        uwsRes->writeMark();
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
@@ -1368,6 +1372,10 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
       {
+        // Every other termination path reaches writeMark() through internalEnd();
+        // this one hand-rolls the terminator, so Date is written here instead
+        // (RFC 9110 6.6.1). writeMark() is idempotent.
+        uwsRes->writeMark();
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.
         uwsRes->AsyncSocket<false>::write("\r\n", 2);

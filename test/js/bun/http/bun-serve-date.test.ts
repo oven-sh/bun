@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 test("Date header is not updated every request", async () => {
   const twoSecondsAgo = new Date(Date.now() - 2 * 1000);
@@ -52,4 +52,60 @@ test("Date header is not updated every request", async () => {
     expect(stamp).toBeGreaterThan(twoSecondsAgo.getTime());
     expect(stamp).toBeLessThan(Date.now() + 100);
   }
+});
+
+// RFC 9110 6.6.1: an origin server with a clock sends Date in every response.
+// The bodiless ones terminate through a different path than a normal body write,
+// which used to skip it entirely.
+describe("Date header on bodiless responses", () => {
+  async function drain(url: string, init?: RequestInit) {
+    const res = await fetch(url, init);
+    await res.arrayBuffer();
+    return res;
+  }
+
+  function expectFreshDate(res: Response, label: string) {
+    const date = res.headers.get("date");
+    expect(date, `${label} must carry a Date header`).toBeTruthy();
+    const stamp = new Date(date!).getTime();
+    expect(Number.isFinite(stamp), `${label} Date must parse`).toBe(true);
+    // Date has one-second resolution and the server caches it, so allow a window.
+    expect(stamp).toBeGreaterThan(Date.now() - 60_000);
+    expect(stamp).toBeLessThan(Date.now() + 60_000);
+  }
+
+  test("HEAD responses carry Date", async () => {
+    using server = Bun.serve({
+      port: 0,
+      static: { "/static": new Response("hello") },
+      fetch: () => new Response("hello"),
+    });
+
+    const dynamic = await drain(new URL("/dynamic", server.url).href, { method: "HEAD" });
+    expect(dynamic.status).toBe(200);
+    expectFreshDate(dynamic, "dynamic HEAD");
+
+    const staticRoute = await drain(new URL("/static", server.url).href, { method: "HEAD" });
+    expect(staticRoute.status).toBe(200);
+    expectFreshDate(staticRoute, "static HEAD");
+  });
+
+  test("304 responses carry Date", async () => {
+    using server = Bun.serve({
+      port: 0,
+      static: { "/static": new Response("hello") },
+      fetch: () => new Response("fallback"),
+    });
+    const url = new URL("/static", server.url).href;
+
+    const first = await drain(url);
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+
+    for (const method of ["GET", "HEAD"]) {
+      const notModified = await drain(url, { method, headers: { "if-none-match": etag! } });
+      expect(notModified.status).toBe(304);
+      expectFreshDate(notModified, `${method} 304`);
+    }
+  });
 });

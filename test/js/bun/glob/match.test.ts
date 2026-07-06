@@ -379,9 +379,11 @@ describe("Glob.match", () => {
     expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.ts")).toBeTrue();
     expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.go")).toBeFalse();
 
-    // 200 groups (below the depth cap) still matches.
-    const deep = Array.from({ length: 200 }, () => "{a,b}").join("");
-    expect(new Glob(deep).match(Buffer.alloc(200, "a").toString())).toBeTrue();
+    // At the depth cap (MAX_BRACE_DEPTH = 256): 256 groups match, 257 do not.
+    const atCap = Array.from({ length: 256 }, () => "{a,b}").join("");
+    expect(new Glob(atCap).match(Buffer.alloc(256, "a").toString())).toBeTrue();
+    const pastCap = Array.from({ length: 257 }, () => "{a,b}").join("");
+    expect(new Glob(pastCap).match(Buffer.alloc(257, "a").toString())).toBeFalse();
   });
 
   test("pathologically deep brace patterns do not overflow the stack", () => {

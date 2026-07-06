@@ -1850,6 +1850,11 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
   }
 });
 
+// 10000 is node's count. Bun charges 152 bytes/stream, so its 1 MB cap only
+// trips past ~13800 retained streams: the count is a throughput smoke test here,
+// not the assertion. A debug build runs ~30x slower, so shrink it there.
+const MAX_SESSION_MEMORY_REQUESTS = isDebug ? 2000 : 10000;
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {
@@ -1877,7 +1882,7 @@ it(
         const client = http2.connect(`http://localhost:${port}`);
 
         function next(i) {
-          if (i === 10000) {
+          if (i === MAX_SESSION_MEMORY_REQUESTS) {
             client.close();
             server.close();
             resolve();

@@ -3209,8 +3209,12 @@ pub mod internal {
             poll_ref.ref_(js_event_loop_ctx());
             bun_core::heap::into_raw(Box::new(Self {
                 global_this: bun_ptr::BackRef::new(global_this),
-                // SAFETY: `bun_vm()` is non-null for a Bun-owned global; the VM
-                // outlives the lookup (the `KeepAlive` above holds the loop open).
+                // SAFETY: `bun_vm()` is non-null for a Bun-owned global. The
+                // `KeepAlive` above keeps the loop drained-open, so the VM
+                // outlives the lookup under normal teardown. `worker.terminate()`
+                // frees the VM regardless of KeepAlive — the same outstanding
+                // work-pool-task gap every `WorkTask` consumer shares (fs, napi,
+                // `dns.lookup`); a fix belongs in that shared contract.
                 event_loop: global_this.bun_vm().event_loop(),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,

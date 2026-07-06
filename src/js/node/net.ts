@@ -1830,6 +1830,10 @@ Socket.prototype.connect = function connect(...args) {
     this._peername = null;
     this._sockname = null;
   }
+  // Per-connect state: a prior connect may have left this set (e.g. destroyed
+  // mid-flight), and this connect may never overwrite it (IP literal, pipe,
+  // custom lookup). Reset so a failure can't evict the wrong host's entry.
+  this[kDnsCacheHost] = undefined;
 
   this.connecting = true;
 
@@ -2530,7 +2534,12 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  const usesDnsCache = !optionsLookup && canLookupViaDnsCache(dnsopts);
+  // The shared cache stores addresses in a v6-first interleave, not the
+  // resolver's order, so it only matches `verbatim` semantics on the
+  // autoSelectFamily path where Happy Eyeballs tries every address anyway. The
+  // single-address path takes the first result verbatim, so keep it on
+  // dns.lookup to preserve the resolver's ordering.
+  const usesDnsCache = !optionsLookup && canLookupViaDnsCache(dnsopts) && autoSelectFamily && !localAddress;
   const lookup = optionsLookup || (usesDnsCache ? dnsCacheLookupFor(port) : dns.lookup);
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
@@ -2565,10 +2574,6 @@ function lookupAndConnect(self, options) {
       process.nextTick(destroyNT, self, err);
     } else {
       self._unrefTimer();
-      // The addresses came from the shared cache; a failed connect has to evict
-      // the entry so the next attempt re-resolves, the way the usockets connect
-      // path does. Cleared on a successful connect.
-      if (usesDnsCache) self[kDnsCacheHost] = host;
       internalConnect(self, options, ip, port, addressType, localAddress, localPort);
     }
   });

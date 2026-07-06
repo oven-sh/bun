@@ -2093,33 +2093,34 @@ describe.concurrent("should error with invalid options", async () => {
     }).toThrow("SNI tls object must have a serverName");
   });
 });
+// The client is still uploading, so the pending read resolves with the bytes it
+// was waiting on rather than being force-rejected (node delivers them too). The
+// point of the test is that the promise settles: it must never be left hanging.
 it.concurrent("should resolve pending promise if requested ended with pending read", async () => {
-  let error: Error;
-  function shouldError(e: Error) {
-    error = e;
-  }
-  let is_done = false;
-  function shouldMarkDone(result: { done: boolean; value: any }) {
-    is_done = result.done;
-  }
+  const read = Promise.withResolvers<{ done: boolean; value: Uint8Array } | string>();
   await runTest(
     {
       fetch(req) {
-        // @ts-ignore
-        req.body?.getReader().read().then(shouldMarkDone).catch(shouldError);
+        req.body
+          ?.getReader()
+          .read()
+          .then(read.resolve, (e: Error) => read.resolve(`${e.name}: ${e.message}`));
         return new Response("OK");
       },
     },
     async server => {
       const response = await fetch(server.url.origin, {
         method: "POST",
-        body: "1".repeat(64 * 1024),
+        body: Buffer.alloc(64 * 1024, "1").toString(),
       });
       const text = await response.text();
       expect(text).toContain("OK");
-      expect(is_done).toBe(false);
-      expect(error).toBeDefined();
-      expect(error.name).toContain("AbortError");
+
+      const result = await read.promise;
+      expect(typeof result).not.toBe("string");
+      const { done, value } = result as { done: boolean; value: Uint8Array };
+      expect(done).toBe(false);
+      expect(value.byteLength).toBeGreaterThan(0);
     },
   );
 });

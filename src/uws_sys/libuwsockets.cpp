@@ -1545,6 +1545,18 @@ extern "C"
     }
   }
 
+  void uws_res_set_keep_request_body_on_done(int ssl, uws_res_r res, bool value)
+  {
+    if (ssl)
+    {
+      ((uWS::HttpResponse<true> *)res)->setKeepRequestBodyOnDone(value);
+    }
+    else
+    {
+      ((uWS::HttpResponse<false> *)res)->setKeepRequestBodyOnDone(value);
+    }
+  }
+
   bool uws_req_is_ancient(uws_req_t *res)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;

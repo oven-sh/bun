@@ -826,6 +826,13 @@ public:
         data->received_bytes_per_timeout = 0;
     }
 
+    /* Keep the request-body and abort handlers armed past markDone(), so a
+     * consumer that is still reading the request body receives the remaining
+     * bytes after the response was sent. The caller owns disarming them. */
+    void setKeepRequestBodyOnDone(bool value) {
+        getHttpResponseData()->keepRequestBodyOnDone = value;
+    }
+
     void* getSocketData() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 

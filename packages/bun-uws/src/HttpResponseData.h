@@ -43,21 +43,24 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* When we are done with a response we mark it like so */
     void markDone(uWS::HttpResponse<SSL> *uwsRes) {
-        onAborted = nullptr;
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
         writableUserData = nullptr;
-        /* Ignore data after this point */
-        inStream = nullptr;
 
         // Ensure we don't call a timeout callback
         onTimeout = nullptr;
+
+        if (!keepRequestBodyOnDone) {
+            onAborted = nullptr;
+            /* Ignore data after this point */
+            inStream = nullptr;
+        }
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
-        httpResponseData->isIdle = true;
+        httpResponseData->isIdle = !keepRequestBodyOnDone;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -126,6 +129,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * no Content-Length and no chunked framing, then close. Used by node:http
      * when the user removed the framing headers. */
     bool closeDelimited = false;
+    /* Set while a consumer is still reading the request body. markDone() then
+     * keeps inStream armed so the remaining request bytes are delivered after
+     * the response has been sent (node.js delivers them too), and keeps
+     * onAborted armed so the consumer learns when the peer disappears instead
+     * of waiting forever. Reset per request in HttpContext::onData. */
+    bool keepRequestBodyOnDone = false;
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;

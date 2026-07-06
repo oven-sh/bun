@@ -47,7 +47,8 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 
-const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
+const uvBinding = process.binding("uv");
+const { UV_ECANCELED, UV_ETIMEDOUT } = uvBinding;
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -3744,8 +3745,23 @@ function uvListenErrorDescription(code) {
       return undefined;
   }
 }
+// The native listen error reports the positive system errno (a raw WSA code on
+// Windows), but Node's networking errors all carry the negative libuv errno.
+// `code` is already normalized natively, so map it back through the uv table.
+function toUvErrno(errno, code) {
+  const uvErrno = typeof code === "string" ? uvBinding[`UV_${code}`] : undefined;
+  return typeof uvErrno === "number" ? uvErrno : -errno;
+}
 function formatListenError(err, address, port) {
-  const desc = err && typeof err.code === "string" ? uvListenErrorDescription(err.code) : undefined;
+  if (!err) return err;
+
+  const code = err.code;
+  const errno = err.errno;
+  if (typeof errno === "number" && errno > 0) {
+    err.errno = toUvErrno(errno, code);
+  }
+
+  const desc = typeof code === "string" ? uvListenErrorDescription(code) : undefined;
   if (desc) {
     err.syscall = "listen";
     // Node's exceptionWithHostPort also exposes the failing address/port as
@@ -3753,7 +3769,7 @@ function formatListenError(err, address, port) {
     err.address = address;
     if (port) err.port = port;
     const where = port ? `${address}:${port}` : address;
-    err.message = `listen ${err.code}: ${desc}${where ? ` ${where}` : ""}`;
+    err.message = `listen ${code}: ${desc}${where ? ` ${where}` : ""}`;
   }
   return err;
 }

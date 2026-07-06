@@ -1,7 +1,10 @@
 import { realpathSync } from "fs";
+import { isWindows } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { constants } from "node:os";
+import { getSystemErrorName } from "node:util";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -21,14 +24,14 @@ describe("net.createServer listen", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
+    // The first listen() of a process takes a few hundred ms on a debug build,
+    // so a fixed deadline here always loses the race. "listening" or "error"
+    // always arrives, and the test runner owns the timeout.
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -292,6 +295,72 @@ describe("net.createServer listen", () => {
         done();
       }),
     );
+  });
+});
+
+// Resolves with the "error" that listen() emitted, or null once it is listening.
+function listenResult(server: Server, ...args: any[]): Promise<NodeJS.ErrnoException | null> {
+  const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+  server.once("error", resolve);
+  server.once("listening", () => resolve(null));
+  server.listen(...args);
+  return promise;
+}
+
+describe("net.createServer listen errors", () => {
+  // Node puts the negative libuv errno on every networking error. Bun's
+  // client-side errors (ECONNREFUSED -> -111) already agreed; the server-side
+  // listen path used to report the positive system errno.
+  it("EADDRINUSE carries the negative libuv errno", async () => {
+    const first = createServer();
+    try {
+      expect(await listenResult(first, 0, "127.0.0.1")).toBeNull();
+      const { port } = first.address() as AddressInfo;
+
+      const second = createServer();
+      const err = await listenResult(second, port, "127.0.0.1");
+
+      expect({ code: err?.code, errno: err?.errno, syscall: err?.syscall }).toEqual({
+        code: "EADDRINUSE",
+        errno: -constants.errno.EADDRINUSE,
+        syscall: "listen",
+      });
+    } finally {
+      first.close();
+    }
+  });
+
+  // Not every listen error gets its message rewritten, but all of them must
+  // still report the libuv errno. The parent directory does not exist.
+  it.skipIf(isWindows)("ENOENT on a unix socket carries the negative libuv errno", async () => {
+    const server = createServer();
+    const missing = join(realpathSync(tmpdir()), "node-net-server-missing-dir", "x.sock");
+    const err = await listenResult(server, missing);
+
+    expect({ code: err?.code, errno: err?.errno, syscall: err?.syscall }).toEqual({
+      code: "ENOENT",
+      errno: -constants.errno.ENOENT,
+      syscall: "listen",
+    });
+  });
+
+  // util.getSystemErrorName() rejects positive errnos with ERR_OUT_OF_RANGE, so
+  // Node's own way of naming an errno used to throw on a Bun listen error.
+  // Skipped on Windows: names there come from libuv's synthetic errno table,
+  // which none of Bun's errors use.
+  it.skipIf(isWindows)("util.getSystemErrorName() names a listen error's errno", async () => {
+    const first = createServer();
+    try {
+      expect(await listenResult(first, 0, "127.0.0.1")).toBeNull();
+      const { port } = first.address() as AddressInfo;
+
+      const second = createServer();
+      const err = await listenResult(second, port, "127.0.0.1");
+
+      expect(getSystemErrorName(err!.errno!)).toBe("EADDRINUSE");
+    } finally {
+      first.close();
+    }
   });
 });
 

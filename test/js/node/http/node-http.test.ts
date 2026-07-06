@@ -1513,8 +1513,9 @@ describe("a 'request' listener that fails", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+    // Drain stderr without asserting it is empty: debug/ASAN builds emit benign warnings there.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
     return JSON.parse(stdout).raw as string;
   }
 

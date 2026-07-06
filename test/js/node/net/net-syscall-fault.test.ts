@@ -96,6 +96,42 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(received.length).toBe(256);
   });
 
+  // EAGAIN forever parks the write callback on a drain that can never arrive,
+  // so the socket's teardown is the only path left to it. Node hands the
+  // cancelled write request's error to the callback; Bun dropped it entirely.
+  test("a peer reset fails a client's parked write callback", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const clientFd = (p.client as any)._handle.fd;
+    expect(clientFd).toBeGreaterThanOrEqual(0);
+    p.client.on("error", () => {});
+
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: clientFd });
+    const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    p.client.write(Buffer.alloc(256, "x"), err => written.resolve(err));
+    p.serverSock.resetAndDestroy();
+
+    const writeErr = await written.promise;
+    expect(writeErr?.code).toBe("ECONNRESET");
+    expect(p.client.writableFinished).toBe(false);
+  });
+
+  // Same gap on the accepted side, which reaches it through SocketEmitEndNT:
+  // a server still writing a response when the client resets.
+  test("a peer reset fails a server socket's parked write callback", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const serverFd = (p.serverSock as any)._handle.fd;
+    expect(serverFd).toBeGreaterThanOrEqual(0);
+
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: serverFd });
+    const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    p.serverSock.write(Buffer.alloc(256, "x"), err => written.resolve(err));
+    p.client.resetAndDestroy();
+
+    const writeErr = await written.promise;
+    expect(writeErr).toBeTruthy();
+    expect(p.serverSock.writableFinished).toBe(false);
+  });
+
   test("send → short writes still deliver complete payload to peer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {

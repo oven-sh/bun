@@ -660,6 +660,13 @@ const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
 
+  // This fast path skips Writable.prototype.write, which is also where the
+  // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED checks live. Hand those
+  // writes back to it so the chunk is dropped and the error is reported.
+  if (this.writableEnded || this.destroyed) {
+    return writablePrototypeWrite.$call(this, data, encoding, cb);
+  }
+
   if (typeof encoding === "function") {
     cb = encoding;
     encoding = undefined;

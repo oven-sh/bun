@@ -4065,7 +4065,8 @@ declare module "bun" {
      * alert.
      *
      * `Bun.serve` defaults to `http/1.1`. `Bun.listen` negotiates nothing unless
-     * this is set. An empty value disables ALPN entirely.
+     * this is set. An empty value disables ALPN entirely. A value that is not in
+     * wire format (`"h2"` rather than `"\x02h2"`) throws.
      */
     ALPNProtocols?: string | BufferSource;
 

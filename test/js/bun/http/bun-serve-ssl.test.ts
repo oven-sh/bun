@@ -211,6 +211,21 @@ describe("Bun.serve ALPN", () => {
     expect(await probe(server.port, ["http/1.1"])).toEqual({ alpn: false });
   });
 
+  // A list that isn't wire format refuses every client that offers ALPN, so say
+  // so up front rather than at handshake time. `"h2"` is the shape a reader of
+  // node's `ALPNProtocols: ["h2"]` would reach for first.
+  test.each([
+    ["a bare protocol name", "h2"],
+    ["a bare protocol name with a slash", "http/1.1"],
+    ["a length byte running past the end", Buffer.from([0xff])],
+    ["a name shorter than its length byte", Buffer.from([0x02, 0x68])],
+    ["a trailing length byte with no name", Buffer.from("\x02h2\x08", "binary")],
+  ])("rejects ALPNProtocols that is not wire format: %s", (_label, ALPNProtocols) => {
+    expect(() => serve({ ...COMMON_CERT, ALPNProtocols })).toThrow(
+      /TLSOptions\.ALPNProtocols is not in ALPN wire format/,
+    );
+  });
+
   test("SNI contexts negotiate ALPN too", async () => {
     using server = Bun.serve({
       port: 0,

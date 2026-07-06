@@ -220,8 +220,10 @@ impl SSLConfigFromJs for SSLConfig {
             }
         };
         if !protocols.is_null() {
+            // Assign before validating so `result`'s Drop frees `protocols` on `?`.
             result.protos = protocols;
             result.requires_custom_request_ctx = true;
+            validate_alpn_protocols(global, result.protos_bytes().unwrap_or_default())?;
         }
         if let Some(ciphers) = generated.ciphers.get() {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
@@ -270,6 +272,24 @@ pub fn resolve_reject_unauthorized(
         Some(cfg) => (!is_server || cfg.request_cert != 0) && cfg.reject_unauthorized != 0,
         None => !is_server && vm.get_tls_reject_unauthorized(),
     }
+}
+
+/// ALPN wire format: a series of 1-byte length-prefixed, non-empty names. An
+/// empty list is valid and opts out of ALPN. A malformed list would otherwise
+/// refuse every client that offers ALPN, with no diagnostic but the alert.
+fn validate_alpn_protocols(global: &JSGlobalObject, wire: &[u8]) -> JsResult<()> {
+    let mut i = 0usize;
+    while i < wire.len() {
+        let len = wire[i] as usize;
+        if len == 0 || i + 1 + len > wire.len() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "TLSOptions.ALPNProtocols is not in ALPN wire format. Expected a series of \
+                 1-byte length-prefixed protocol names, like \"\\x08http/1.1\" for [\"http/1.1\"]",
+            )));
+        }
+        i += 1 + len;
+    }
+    Ok(())
 }
 
 // ── handlePath / handleFile helpers ──────────────────────────────────

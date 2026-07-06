@@ -36,9 +36,10 @@
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_sourcemap.cpp"
-// OHOS: restrict to NEON-only (SVE/SVE2 detected by compiler macros).
+// BitsFromMask only defined for fixed-size SVE (SVE2_128/SVE_256) and
+// NEON, not for scalable SVE/SVE2. Disable all SVE, use NEON instead.
 #if defined(__OHOS__)
-#define HWY_TARGETS (HWY_NEON)
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE)
 #endif
 #include <hwy/foreach_target.h> // Must come before highway.h
 

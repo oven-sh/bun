@@ -24,6 +24,10 @@
 #undef HWY_TARGET_INCLUDE
 // Path relative to the build root (CMakeLists.txt), matching highway_strings.cpp.
 #define HWY_TARGET_INCLUDE "xxhash3.cpp"
+// BitsFromMask only defined for fixed-size SVE targets; disable all SVE.
+#if defined(__OHOS__)
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE)
+#endif
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>

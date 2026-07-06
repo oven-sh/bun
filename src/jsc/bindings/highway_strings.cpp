@@ -1,10 +1,8 @@
 // Must be first
-// OHOS: Highway detects SVE support from compiler predefined macros even
-// with -march=armv8-a. Restrict to NEON-only to exclude SVE/SVE2 targets
-// which highway_strings.cpp doesn't fully implement.
-// TODO(ohos): remove when upstream adds SVE paths (track: bun#31553).
+// BitsFromMask only defined for fixed-size SVE (SVE2_128/SVE_256) and
+// NEON, not for scalable SVE/SVE2. Disable all SVE, use NEON instead.
 #if defined(__OHOS__)
-#define HWY_TARGETS (HWY_NEON)
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE)
 #endif
 #include "root.h"
 #undef HWY_TARGET_INCLUDE

@@ -3,9 +3,10 @@
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_json.cpp"
-// SVE/SVE2 lack BitsFromMask in this Highway version.
-#if defined(__aarch64__)
-#define HWY_TARGETS (HWY_NEON)
+// BitsFromMask is only defined for fixed-size SVE (SVE2_128/SVE_256) and
+// NEON, not for scalable SVE/SVE2. Disable all SVE and use NEON instead.
+#if defined(__OHOS__)
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE)
 #endif
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>

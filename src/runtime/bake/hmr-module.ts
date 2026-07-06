@@ -803,7 +803,12 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     // them as accepting. `??=` keeps handlers re-registered mid-eval.
     for (let i = reloadCursor; i < staleReloads.length; i++) {
       const [mod, selfAccept, depAccepts] = staleReloads[i];
-      if (mod.state !== State.Stale) continue;
+      // Stale: never reloaded. Error: its eval threw (sync ESM throws land
+      // here via finishLoadModuleAsync). Pending at the cursor is the frame
+      // that threw; later Pending entries are in-flight TLA loads — keep.
+      const restorable =
+        mod.state === State.Stale || mod.state === State.Error || (i === reloadCursor && mod.state === State.Pending);
+      if (!restorable) continue;
       mod.selfAccept ??= selfAccept;
       mod.depAccepts ??= depAccepts;
     }

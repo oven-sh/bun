@@ -3425,8 +3425,10 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf.latin1Slice(1, 2)).toStrictEqual("é");
 
         expect(() => buf.latin1Slice(1, 4)).toThrow(RangeError);
-        expect(() => buf.latin1Slice(4, 1)).toThrow(RangeError);
-        expect(() => buf.latin1Slice(4, 0)).toThrow(RangeError);
+
+        // start >= end short-circuits to "" before the range check, as in Node.
+        expect(buf.latin1Slice(4, 1)).toStrictEqual("");
+        expect(buf.latin1Slice(4, 0)).toStrictEqual("");
 
         expect(buf.latin1Slice(3)).toStrictEqual("");
         expect(buf.latin1Slice(3, 1)).toStrictEqual("");
@@ -3444,9 +3446,10 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(latin1Slice.call(buf, 1, 2)).toStrictEqual("é");
 
         expect(() => latin1Slice.call(buf, 1, 4)).toThrow(RangeError);
-        expect(() => latin1Slice.call(buf, 4, 1)).toThrow(RangeError);
-        expect(() => latin1Slice.call(buf, 4, 0)).toThrow(RangeError);
         expect(() => latin1Slice.call(buf, 3, 999999)).toThrow(RangeError);
+
+        expect(latin1Slice.call(buf, 4, 1)).toStrictEqual("");
+        expect(latin1Slice.call(buf, 4, 0)).toStrictEqual("");
 
         expect(latin1Slice.call(buf, 3)).toStrictEqual("");
         expect(latin1Slice.call(buf, 3, 1)).toStrictEqual("");
@@ -4037,6 +4040,11 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       expect(result).toBeLessThanOrEqual(buf.length);
     });
 
+  }
+
+  // Node only put utf8/latin1/ascii behind the strict JS wrapper that rejects an
+  // oversized length; the remaining encodings are still the raw C++ binding.
+  for (const method of ["utf8Write", "latin1Write", "asciiWrite"]) {
     it(`${method} should throw on length larger than available buffer space`, () => {
       const buf = Buffer.from("string");
       // Length 1000 with valid offset 0 should throw ERR_BUFFER_OUT_OF_BOUNDS
@@ -4047,6 +4055,206 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       );
     });
   }
+
+  for (const method of ["utf16leWrite", "ucs2Write", "base64Write", "base64urlWrite", "hexWrite"]) {
+    it(`${method} should clamp length larger than available buffer space`, () => {
+      const buf = Buffer.from("string");
+      const written = buf[method]("test".repeat(100), 0, 1000);
+      expect(written).toBeLessThanOrEqual(buf.length);
+    });
+  }
+});
+
+// These raw prototype methods come straight from Node's C++ bindings, not from the
+// documented toString()/write() wrappers, and they have looser bounds rules:
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc
+describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
+  const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE", message: "Index out of range" });
+  const OUT_OF_BOUNDS = expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" });
+
+  const sliceMethods = [
+    "utf8Slice",
+    "latin1Slice",
+    "asciiSlice",
+    "ucs2Slice",
+    "utf16leSlice",
+    "base64Slice",
+    "base64urlSlice",
+    "hexSlice",
+  ];
+  // "hello!", 6 bytes.
+  const hello = () => Buffer.from("68656c6c6f21", "hex");
+
+  describe("<enc>Slice", () => {
+    it.each(sliceMethods)('%s returns "" when start >= end, without a range check', method => {
+      const buf = hello();
+      expect(buf[method](6)).toBe("");
+      expect(buf[method](7)).toBe("");
+      expect(buf[method](7, 3)).toBe("");
+      expect(buf[method](7, 7)).toBe("");
+      expect(buf[method](3, 1)).toBe("");
+      expect(buf[method](1e9)).toBe("");
+      expect(buf[method](2 ** 53)).toBe("");
+      expect(buf[method](2 ** 64)).toBe("");
+      expect(buf[method](Infinity)).toBe("");
+      expect(buf[method](0, NaN)).toBe("");
+    });
+
+    it.each(sliceMethods)("%s still throws when end is past the end of the buffer", method => {
+      const buf = hello();
+      expect(() => buf[method](0, 7)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](2, 1e9)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](6, 1e9)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](0, Infinity)).toThrow(OUT_OF_RANGE);
+    });
+
+    it.each(sliceMethods)("%s treats NaN as 0 and rejects negative indexes", method => {
+      const buf = hello();
+      expect(buf[method](NaN)).toBe(buf[method]());
+      expect(buf[method](-0)).toBe(buf[method]());
+      expect(() => buf[method](-1)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](-Infinity)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](0, -1)).toThrow(OUT_OF_RANGE);
+    });
+
+    it("decodes the same ranges Node decodes", () => {
+      const buf = hello();
+      expect(buf.hexSlice()).toBe("68656c6c6f21");
+      expect(buf.hexSlice(2)).toBe("6c6c6f21");
+      expect(buf.hexSlice(0, 2)).toBe("6865");
+      expect(buf.hexSlice(5, 6)).toBe("21");
+      expect(buf.utf8Slice(1.9)).toBe("ello!");
+      expect(buf.utf8Slice("2", "4")).toBe("ll");
+    });
+
+    it("the documented toString() wrapper is unchanged", () => {
+      const buf = hello();
+      expect(buf.toString("hex", 7)).toBe("");
+      expect(buf.toString("hex", 7, 3)).toBe("");
+      expect(buf.toString("hex", 0, 1e9)).toBe("68656c6c6f21");
+    });
+
+    // Both <enc>Slice and toString() read byteLength before coercing their indexes, so a
+    // valueOf() that shrinks a resizable buffer leaves the range stale. Spawned because an
+    // unclamped range aborts a debug build rather than throwing.
+    it.each(["hexSlice", "toString"])("%s clamps the range when valueOf() shrinks the buffer", async method => {
+      const read = method === "toString" ? `buf.toString("hex", 0, shrink)` : `buf.hexSlice(0, shrink)`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ab = new ArrayBuffer(9, { maxByteLength: 9 });
+           const buf = Buffer.from(ab);
+           buf.fill(0x41);
+           const shrink = { valueOf() { ab.resize(2); return 9; } };
+           console.log(JSON.stringify({ read: ${read}, length: buf.length }));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(`{"read":"4141","length":2}`);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("<enc>Write", () => {
+    // Node's utf8Write/latin1Write/asciiWrite go through a JS wrapper that rejects an
+    // out-of-range length; base64/base64url/hex/ucs2 stay on the clamping C++ binding.
+    const strict = ["utf8Write", "latin1Write", "asciiWrite"];
+    const clamping = ["ucs2Write", "utf16leWrite", "base64Write", "base64urlWrite", "hexWrite"];
+    const source = {
+      utf8Write: "hello",
+      latin1Write: "hello",
+      asciiWrite: "hello",
+      ucs2Write: "hello",
+      utf16leWrite: "hello",
+      base64Write: "aGVsbG8=",
+      base64urlWrite: "aGVsbG8",
+      hexWrite: "68656c6c6f",
+    };
+    // 9 bytes of 0xcc, so offset 6 leaves 3 bytes of room.
+    const dest = () => Buffer.alloc(9, 0xcc);
+    const untouched = "cccccccccccccccccc";
+
+    it.each(clamping)("%s clamps an oversized length to the space left", method => {
+      const expected = {
+        ucs2Write: { written: 2, hex: "cccccccccccc6800cc" },
+        utf16leWrite: { written: 2, hex: "cccccccccccc6800cc" },
+        base64Write: { written: 3, hex: "cccccccccccc68656c" },
+        base64urlWrite: { written: 3, hex: "cccccccccccc68656c" },
+        hexWrite: { written: 3, hex: "cccccccccccc68656c" },
+      };
+      const buf = dest();
+      const written = buf[method](source[method], 6, 1000);
+      expect({ written, hex: buf.toString("hex") }).toEqual(expected[method]);
+    });
+
+    it.each(clamping)("%s writes nothing when no space is left", method => {
+      const buf = dest();
+      expect(buf[method](source[method], 9, 1)).toBe(0);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(clamping)("%s reports a negative offset or length as ERR_OUT_OF_RANGE", method => {
+      const buf = dest();
+      expect(() => buf[method](source[method], -1)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](source[method], -1, 2)).toThrow(OUT_OF_RANGE);
+      expect(() => buf[method](source[method], 0, -1)).toThrow(OUT_OF_RANGE);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(strict)("%s rejects an oversized length with ERR_BUFFER_OUT_OF_BOUNDS", method => {
+      const buf = dest();
+      expect(() => buf[method](source[method], 6, 1000)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 9, 1)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], -1)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 0, -1)).toThrow(OUT_OF_BOUNDS);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each([...strict, ...clamping])("%s rejects an offset past the end of the buffer", method => {
+      const buf = dest();
+      expect(() => buf[method](source[method], 10)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 10, 1)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], Infinity)).toThrow(OUT_OF_BOUNDS);
+      expect(() => buf[method](source[method], 2 ** 53, 1)).toThrow(OUT_OF_BOUNDS);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(strict)("%s with a NaN offset and no length writes nothing", method => {
+      // The wrapper's default length is `byteLength - offset`, i.e. NaN, which truncates to 0.
+      const buf = dest();
+      expect(buf[method](source[method], NaN)).toBe(0);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it.each(clamping)("%s with a NaN offset and no length writes from offset 0", method => {
+      const expected = {
+        ucs2Write: { written: 8, hex: "680065006c006c00cc" },
+        utf16leWrite: { written: 8, hex: "680065006c006c00cc" },
+        base64Write: { written: 5, hex: "68656c6c6fcccccccc" },
+        base64urlWrite: { written: 5, hex: "68656c6c6fcccccccc" },
+        hexWrite: { written: 5, hex: "68656c6c6fcccccccc" },
+      };
+      const buf = dest();
+      const written = buf[method](source[method], NaN);
+      expect({ written, hex: buf.toString("hex") }).toEqual(expected[method]);
+    });
+
+    it.each([...strict, ...clamping])("%s with a NaN length writes nothing", method => {
+      const buf = dest();
+      expect(buf[method](source[method], 0, NaN)).toBe(0);
+      expect(buf.toString("hex")).toBe(untouched);
+    });
+
+    it("the documented write() wrapper is unchanged", () => {
+      const buf = dest();
+      expect(() => buf.write("hello", 6, 1000)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+      expect(buf.write("hello", 6)).toBe(3);
+      expect(buf.toString("hex")).toBe("cccccccccccc68656c");
+    });
+  });
 });
 
 describe("Buffer.copyBytesFrom", () => {

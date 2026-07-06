@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { readFileSync, realpathSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -113,20 +113,123 @@ it("version", () => {
   }
 });
 
-it("userInfo", () => {
-  const info = os.userInfo();
+describe("userInfo", () => {
+  // Runs `os.userInfo()` in a child whose account-related environment variables
+  // are poisoned with `marker`. node reads the passwd database instead, so the
+  // result must not depend on any of them.
+  async function userInfoWithPoisonedEnv(marker) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify(require("node:os").userInfo()))`],
+      env: {
+        ...bunEnv,
+        USER: `nobody-${marker}`,
+        LOGNAME: `nobody-${marker}`,
+        USERNAME: `nobody-${marker}`,
+        SHELL: `/not-a-real-shell-${marker}`,
+        HOME: `/not-a-real-home-${marker}`,
+        USERPROFILE: `/not-a-real-home-${marker}`,
+      },
+      stderr: "pipe",
+    });
 
-  if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
-    expect(info.shell).toBe(process.env.SHELL || "unknown");
-    expect(info.uid >= 0).toBe(true);
-    expect(info.gid >= 0).toBe(true);
-  } else {
-    expect(info.username).toBe(process.env.USERNAME);
-    expect(info.shell).toBe(null);
-    expect(info.uid).toBe(-1);
-    expect(info.gid).toBe(-1);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`child exited with ${exitCode}\n${stderr}`);
+    return JSON.parse(stdout);
   }
+
+  it("is read from the operating system, not the environment", async () => {
+    const [a, b] = await Promise.all([userInfoWithPoisonedEnv("a"), userInfoWithPoisonedEnv("b")]);
+
+    // Two children that disagree on every relevant environment variable must
+    // still report the same account.
+    expect(a).toEqual(b);
+    expect(a.username).not.toBe("nobody-a");
+    expect(a.homedir).not.toBe("/not-a-real-home-a");
+    expect(a.shell).not.toBe("/not-a-real-shell-a");
+  });
+
+  // getpwuid_r() goes through NSS, so /etc/passwd is only the source of truth
+  // when the effective uid actually has a row there. It does in Bun's CI images.
+  const passwdEntry = !isLinux
+    ? undefined
+    : readFileSync("/etc/passwd", "utf8")
+        .split("\n")
+        .map(line => line.split(":"))
+        .find(fields => fields.length >= 7 && Number(fields[2]) === process.geteuid());
+
+  it.skipIf(!passwdEntry)("reports the passwd entry of the effective uid", async () => {
+    expect(await userInfoWithPoisonedEnv("passwd")).toEqual({
+      uid: process.geteuid(),
+      gid: Number(passwdEntry[3]),
+      username: passwdEntry[0],
+      homedir: passwdEntry[5],
+      shell: passwdEntry[6],
+    });
+  });
+
+  it("has node's shape", () => {
+    const info = os.userInfo();
+
+    expect(Object.getPrototypeOf(info)).toBe(null);
+    expect(Object.keys(info)).toEqual(["uid", "gid", "username", "homedir", "shell"]);
+    expect(typeof info.username).toBe("string");
+    expect(typeof info.homedir).toBe("string");
+
+    if (isWindows) {
+      expect(info.uid).toBe(-1);
+      expect(info.gid).toBe(-1);
+      expect(info.shell).toBe(null);
+    } else {
+      expect(info.uid).toBe(process.geteuid());
+      expect(typeof info.shell).toBe("string");
+    }
+  });
+
+  it("honors the encoding option", () => {
+    const info = os.userInfo();
+    const buf = os.userInfo({ encoding: "buffer" });
+
+    expect(buf.uid).toBe(info.uid);
+    expect(buf.gid).toBe(info.gid);
+    expect(buf.username).toBeInstanceOf(Buffer);
+    expect(buf.username.toString("utf8")).toBe(info.username);
+    expect(buf.homedir).toBeInstanceOf(Buffer);
+    expect(buf.homedir.toString("utf8")).toBe(info.homedir);
+
+    if (isWindows) {
+      expect(buf.shell).toBe(null);
+    } else {
+      expect(buf.shell).toBeInstanceOf(Buffer);
+      expect(buf.shell.toString("utf8")).toBe(info.shell);
+    }
+
+    const hex = os.userInfo({ encoding: "hex" });
+    expect(hex.username).toBe(Buffer.from(info.username).toString("hex"));
+    expect(hex.homedir).toBe(Buffer.from(info.homedir).toString("hex"));
+  });
+
+  it("ignores options it cannot use, like node", () => {
+    const info = os.userInfo();
+
+    // Non-object options and non-string encodings fall back to utf8.
+    expect(os.userInfo(42)).toEqual(info);
+    expect(os.userInfo(null)).toEqual(info);
+    expect(os.userInfo("buffer")).toEqual(info);
+    expect(os.userInfo(() => {})).toEqual(info);
+    expect(os.userInfo({ encoding: 42 })).toEqual(info);
+    expect(os.userInfo({ encoding: undefined })).toEqual(info);
+    expect(os.userInfo({ encoding: "not-an-encoding" })).toEqual(info);
+  });
+
+  it("propagates an encoding getter that throws", () => {
+    expect(() =>
+      os.userInfo({
+        get encoding() {
+          throw new Error("xyz");
+        },
+      }),
+    ).toThrow("xyz");
+  });
 });
 
 it("cpus", () => {

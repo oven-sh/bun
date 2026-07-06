@@ -1,6 +1,6 @@
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
 #[cfg(not(windows))]
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_uint, c_void};
 
 use bun_core;
 use bun_core::String as BunString;
@@ -36,18 +36,23 @@ pub(crate) fn freemem() -> u64 {
 mod _impl {
     use super::*;
     use crate::node::ErrorCode;
+    use crate::node::types::Encoding;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
     #[cfg(not(windows))]
+    use bun_core::env_var;
+    use bun_core::fmt as bun_fmt;
+    #[cfg(not(windows))]
     use bun_core::strings;
-    use bun_core::{env_var, fmt as bun_fmt};
-    use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
+    #[cfg(windows)]
+    use bun_jsc::StringJsc as _;
+    use bun_jsc::{CallFrame, JSArray, SysErrorJsc as _, SystemError};
     #[cfg(windows)]
     use bun_paths::PathBuffer;
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use bun_sys::c;
     #[cfg(windows)]
     use bun_sys::windows::{self, libuv};
@@ -130,10 +135,9 @@ mod _impl {
     // (`GeneratedBindings.cpp`) defines the SYSV-ABI `bindgen_Node_os_js*` host
     // functions, which validate/decode arguments and call back into the
     // `bindgen_Node_os_dispatch*` entry points. This module provides the
-    // public surface: `js*` extern pointers + `create*Callback` wrappers
-    // + the `UserInfoOptions` dictionary.
+    // public surface: `js*` extern pointers + `create*Callback` wrappers.
     pub mod gen_ {
-        use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
+        use super::{CallFrame, JSGlobalObject, JSValue, ZigString};
         use bun_jsc::host_fn;
 
         // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
@@ -187,22 +191,6 @@ mod _impl {
             create_user_info_callback,          "userInfo",          2, bindgen_Node_os_jsUserInfo;
             create_version_callback,            "version",           0, bindgen_Node_os_jsVersion;
             create_set_priority_callback,       "setPriority",       2, bindgen_Node_os_jsSetPriority;
-        }
-
-        /// `t.dictionary({ encoding: t.DOMString.default("") })` from
-        /// `node_os.bind.ts`. Mirrors the extern struct emitted by bindgen;
-        /// the C++ side passes a pointer to this layout, so it must stay
-        /// `#[repr(C)]`.
-        #[repr(C)]
-        pub struct UserInfoOptions {
-            pub encoding: BunString,
-        }
-        impl Default for UserInfoOptions {
-            fn default() -> Self {
-                Self {
-                    encoding: BunString::empty(),
-                }
-            }
         }
     }
 
@@ -726,6 +714,74 @@ mod _impl {
         Ok(result)
     }
 
+    /// `getpwuid_r(geteuid())`, mirroring libuv's `uv__getpwuid_r`: retry on
+    /// `EINTR`, double the scratch buffer on `ERANGE`. `Ok(None)` is libuv's
+    /// `UV_ENOENT` case — the effective uid has no passwd entry.
+    #[cfg(not(windows))]
+    fn with_euid_passwd<T>(f: impl FnOnce(&libc::passwd) -> T) -> Result<Option<T>, bun_sys::E> {
+        // From libuv:
+        // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
+        // > is frequently 1024 or 4096, so we can just use that directly. The pwent
+        // > will not usually be large.
+        // Instead of always using an allocation, first try a stack allocation
+        // of 4096, then fallback to heap.
+        let mut stack_string_bytes = [0u8; 4096];
+        let mut heap_bytes: Vec<u8>;
+        let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
+
+        // SAFETY: zeroed POD
+        let mut pw: libc::passwd = bun_core::ffi::zeroed();
+        let mut result: *mut libc::passwd = core::ptr::null_mut();
+
+        let ret: c_int = loop {
+            // SAFETY: valid buffers and out-pointer
+            let ret = unsafe {
+                libc::getpwuid_r(
+                    libc::geteuid(),
+                    &raw mut pw,
+                    string_bytes.as_mut_ptr().cast::<c_char>(),
+                    string_bytes.len(),
+                    &raw mut result,
+                )
+            };
+
+            if ret == bun_sys::E::EINTR as c_int {
+                continue;
+            }
+
+            // If the system call wants more memory, double it.
+            if ret == bun_sys::E::ERANGE as c_int {
+                let len = string_bytes.len();
+                heap_bytes = vec![0u8; len * 2];
+                string_bytes = &mut heap_bytes[..];
+                continue;
+            }
+
+            break ret;
+        };
+
+        if ret != 0 {
+            // `ret` is a libc errno; `E::from_raw` is the centralized
+            // `@enumFromInt` (debug-asserts the discriminant).
+            return Err(bun_sys::E::from_raw(ret as u16));
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        // `pw` borrows `string_bytes`, which outlives the call to `f`.
+        Ok(Some(f(&pw)))
+    }
+
+    /// Copy a passwd-entry C string out of the buffer that owns it (the
+    /// `getpwuid_r` scratch buffer, or libuv's `uv_passwd_t` allocation).
+    fn passwd_field(field: *const c_char) -> Vec<u8> {
+        if field.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: non-null NUL-terminated C string from the passwd entry
+        unsafe { bun_core::ffi::cstr(field) }.to_bytes().to_vec()
+    }
+
     pub(crate) fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
@@ -750,83 +806,30 @@ mod _impl {
                 }
             }
 
-            // From libuv:
-            // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-            // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-            // > will not usually be large.
-            // Instead of always using an allocation, first try a stack allocation
-            // of 4096, then fallback to heap.
-            let mut stack_string_bytes = [0u8; 4096];
-            let mut heap_bytes: Vec<u8>;
-            let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
-            let mut using_heap = false;
-
-            // SAFETY: zeroed POD
-            let mut pw: libc::passwd = bun_core::ffi::zeroed();
-            let mut result: *mut libc::passwd = core::ptr::null_mut();
-
-            let ret: c_int = loop {
-                // SAFETY: valid buffers and out-pointer
-                let ret = unsafe {
-                    libc::getpwuid_r(
-                        libc::geteuid(),
-                        &raw mut pw,
-                        string_bytes.as_mut_ptr().cast::<c_char>(),
-                        string_bytes.len(),
-                        &raw mut result,
-                    )
-                };
-
-                if ret == bun_sys::E::EINTR as c_int {
-                    continue;
+            let dir = match with_euid_passwd(|pw| passwd_field(pw.pw_dir)) {
+                Ok(Some(dir)) => dir,
+                Ok(None) => {
+                    // bionic has no passwd entries for app uids; with HOME also unset
+                    // (zygote/run-as), return a usable default rather than throwing.
+                    #[cfg(target_os = "android")]
+                    {
+                        return Ok(BunString::static_("/data/local/tmp"));
+                    }
+                    // in uv__getpwuid_r, null result throws UV_ENOENT.
+                    #[cfg(not(target_os = "android"))]
+                    return Err(global.throw_value(
+                        bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
+                            .to_js(global),
+                    ));
                 }
-
-                // If the system call wants more memory, double it.
-                if ret == bun_sys::E::ERANGE as c_int {
-                    let len = string_bytes.len();
-                    heap_bytes = vec![0u8; len * 2];
-                    string_bytes = &mut heap_bytes[..];
-                    using_heap = true;
-                    continue;
+                Err(errno) => {
+                    return Err(global.throw_value(
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_homedir).to_js(global),
+                    ));
                 }
-
-                break ret;
             };
-            let _ = using_heap;
 
-            if ret != 0 {
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(
-                        // `ret` is a libc errno; `E::from_raw` is the centralized
-                        // `@enumFromInt` (debug-asserts the discriminant).
-                        bun_sys::E::from_raw(ret as u16),
-                        bun_sys::Tag::uv_os_homedir,
-                    )
-                    .to_js(global),
-                ));
-            }
-
-            if result.is_null() {
-                // bionic has no passwd entries for app uids; with HOME also unset
-                // (zygote/run-as), return a usable default rather than throwing.
-                #[cfg(target_os = "android")]
-                {
-                    return Ok(BunString::static_("/data/local/tmp"));
-                }
-                // in uv__getpwuid_r, null result throws UV_ENOENT.
-                #[cfg(not(target_os = "android"))]
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
-                        .to_js(global),
-                ));
-            }
-
-            return Ok(if !pw.pw_dir.is_null() {
-                // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
-                BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
-            } else {
-                BunString::empty()
-            });
+            return Ok(BunString::clone_utf8(&dir));
         }
     }
 
@@ -1585,53 +1588,96 @@ mod _impl {
         }
     }
 
+    /// The passwd entry of the effective uid. `shell` is `None` when the entry
+    /// has none (libuv leaves `pwd->shell` null, as it always does on Windows).
+    struct UserInfo {
+        uid: f64,
+        gid: f64,
+        username: Vec<u8>,
+        homedir: Vec<u8>,
+        shell: Option<Vec<u8>>,
+    }
+
+    /// In Node.js, this is a wrapper around uv_os_get_passwd: the entry is read
+    /// from the passwd database, never from `$USER`/`$SHELL`/`$HOME`.
     pub(crate) fn user_info(
         global_this: &JSGlobalObject,
-        options: &gen_::UserInfoOptions,
+        encoding: &BunString,
     ) -> JsResult<JSValue> {
-        let _ = options; // TODO:
-
-        let result = JSValue::create_empty_object(global_this, 5);
-
-        let home = homedir(global_this)?;
-        let home = scopeguard::guard(home, |h| h.deref());
-
-        result.put(global_this, b"homedir", home.to_js(global_this)?);
+        // node's `ParseEncoding(..., UTF8)`: an unrecognized name is utf8.
+        let encoding = Encoding::from_bun_string(encoding).unwrap_or(Encoding::Utf8);
 
         #[cfg(windows)]
-        {
-            result.put(
-                global_this,
-                b"username",
-                ZigString::init(env_var::USER.get().unwrap_or(b"unknown"))
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-            result.put(global_this, b"uid", JSValue::js_number(-1.0));
-            result.put(global_this, b"gid", JSValue::js_number(-1.0));
-            result.put(global_this, b"shell", JSValue::NULL);
-        }
-        #[cfg(not(windows))]
-        {
-            let username = env_var::USER.get().unwrap_or(b"unknown");
+        let info = {
+            // SAFETY: zeroed POD (all-zero is a valid `uv_passwd_t`)
+            let mut pwd: libuv::uv_passwd_t = unsafe { bun_core::ffi::zeroed_unchecked() };
+            // SAFETY: valid out-pointer
+            if let Some(err) = unsafe { libuv::uv_os_get_passwd(&mut pwd) }
+                .to_error(bun_sys::Tag::uv_os_get_passwd)
+            {
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+            // SAFETY: `uv_os_get_passwd` succeeded, so `pwd` owns one allocation
+            // reachable from `pwd.username`; `uv_os_free_passwd` releases it.
+            let pwd =
+                scopeguard::guard(pwd, |mut pwd| unsafe { libuv::uv_os_free_passwd(&mut pwd) });
+            UserInfo {
+                // libuv stores -1 in an `unsigned long`; node reads the low 32
+                // bits back as a signed int32.
+                uid: f64::from(pwd.uid as u32 as i32),
+                gid: f64::from(pwd.gid as u32 as i32),
+                username: passwd_field(pwd.username),
+                homedir: passwd_field(pwd.homedir),
+                shell: None,
+            }
+        };
 
-            result.put(
-                global_this,
-                b"username",
-                ZigString::init(username).with_encoding().to_js(global_this),
-            );
-            result.put(
-                global_this,
-                b"shell",
-                ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown"))
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-            // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
-            // fail) — discharges the per-site proof the raw `libc` re-export needed.
-            result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));
-            result.put(global_this, b"gid", JSValue::js_number(c::getgid() as f64));
-        }
+        #[cfg(not(windows))]
+        let info = match with_euid_passwd(|pw| UserInfo {
+            uid: f64::from(pw.pw_uid),
+            gid: f64::from(pw.pw_gid),
+            username: passwd_field(pw.pw_name),
+            homedir: passwd_field(pw.pw_dir),
+            shell: (!pw.pw_shell.is_null()).then(|| passwd_field(pw.pw_shell)),
+        }) {
+            Ok(Some(info)) => info,
+            // in uv__getpwuid_r, null result throws UV_ENOENT.
+            Ok(None) => {
+                return Err(global_this.throw_value(
+                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_get_passwd)
+                        .to_js(global_this),
+                ));
+            }
+            Err(errno) => {
+                return Err(global_this.throw_value(
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_get_passwd)
+                        .to_js(global_this),
+                ));
+            }
+        };
+
+        // node builds a null-prototype object with these keys in this order.
+        let result = JSValue::create_empty_object_with_null_prototype(global_this);
+        result.put(global_this, b"uid", JSValue::js_number(info.uid));
+        result.put(global_this, b"gid", JSValue::js_number(info.gid));
+        result.put(
+            global_this,
+            b"username",
+            encoding.encode(global_this, &info.username)?,
+        );
+        result.put(
+            global_this,
+            b"homedir",
+            encoding.encode(global_this, &info.homedir)?,
+        );
+        result.put(
+            global_this,
+            b"shell",
+            match &info.shell {
+                Some(shell) => encoding.encode(global_this, shell)?,
+                None => JSValue::NULL,
+            },
+        );
 
         Ok(result)
     }

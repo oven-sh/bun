@@ -3168,7 +3168,7 @@ unsafe extern "C" {
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
     pub fn uv_os_tmpdir(buffer: *mut u8, size: *mut usize) -> c_int;
-    pub fn uv_os_get_passwd(pwd: *mut uv_passwd_t) -> c_int;
+    pub fn uv_os_get_passwd(pwd: *mut uv_passwd_t) -> ReturnCode;
     pub fn uv_os_free_passwd(pwd: *mut uv_passwd_t);
     pub fn uv_os_get_passwd2(pwd: *mut uv_passwd_t, uid: uv_uid_t) -> c_int;
     pub fn uv_os_get_group(grp: *mut uv_group_t, gid: uv_uid_t) -> c_int;

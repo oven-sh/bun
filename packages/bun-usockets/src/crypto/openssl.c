@@ -158,10 +158,9 @@ long us_ssl_ctx_live_count(void) {
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
-/* Server-side ALPN list (wire format) this SSL_CTX offers, as a
- * `struct us_ctx_alpn_t *`. Per-CTX rather than per-SSL because SNI swaps
- * `ssl->ctx`, and BoringSSL reads both the select callback and (through it)
- * this list off the post-SNI context. */
+/* Server-side ALPN list, a `struct us_ctx_alpn_t *`. Per-CTX because SNI
+ * swaps `ssl->ctx` and BoringSSL reads the select callback (and through it
+ * this list) off the post-SNI context. */
 static int us_ctx_alpn_ex_idx = -1;
 /* Marks an SSL_CTX whose verification store holds user-provided CAs (the
  * ca/caFile options or a later addCACert): the per-socket client attach must
@@ -933,7 +932,8 @@ static int us_ctx_alpn_select(SSL *ssl, const unsigned char **out,
   return SSL_TLSEXT_ERR_OK;
 }
 
-/* Returns 0 when the copy could not be allocated. */
+/* Returns 0 on allocation failure. The ex_data slot owns the copy from the
+ * moment the setter succeeds: its free_func releases it with the SSL_CTX. */
 static int ssl_ctx_set_alpn(SSL_CTX *ctx, const unsigned char *protos,
                             unsigned int protos_len) {
   us_ex_idx_ensure();
@@ -943,7 +943,10 @@ static int ssl_ctx_set_alpn(SSL_CTX *ctx, const unsigned char *protos,
   }
   alpn->len = protos_len;
   memcpy(alpn->data, protos, protos_len);
-  SSL_CTX_set_ex_data(ctx, us_ctx_alpn_ex_idx, alpn);
+  if (!SSL_CTX_set_ex_data(ctx, us_ctx_alpn_ex_idx, alpn)) {
+    us_free(alpn);
+    return 0;
+  }
   SSL_CTX_set_alpn_select_cb(ctx, us_ctx_alpn_select, NULL);
   return 1;
 }

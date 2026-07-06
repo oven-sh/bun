@@ -603,10 +603,12 @@ impl<'a> RouteLoader<'a> {
 
         // /index.js
         if route.full_hash == INDEX_ROUTE_HASH {
-            // Park the `Box` first, then derive `index` from it, and from a
-            // `&mut`: moving a `Box` retags it, so a pointer taken before the
-            // move is a stale sibling of the one `all_routes` owns, and a `&*`
-            // downgrade would freeze the tag.
+            // Derived from a `&mut`, not a `&*` downgrade: `NonNull::from(&T)`
+            // yields a frozen tag. Today `index` is only read through (`match_`
+            // takes `as_ref()`), so the old spelling was not live UB, but it was
+            // one write away from it. The static arm below needs no such change:
+            // `&raw const *box` forms no reference at all. Parking the `Box`
+            // before deriving is belt-and-braces.
             self.all_routes.push(Box::new(route));
             let parked = self.all_routes.last_mut().expect("just pushed");
             // Box contents have a stable address; never removed from

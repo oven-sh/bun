@@ -53,12 +53,14 @@ const tracked: Set<string> | null = (() => {
 const FROZEN_REBORROW = /NonNull::from\(\s*&\s*\*/g;
 
 const offenders: string[] = [];
+let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
   // `src/cli` is a symlink into `src/runtime/cli`; count each file once under
   // its canonical path.
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   if (tracked !== null && !tracked.has(source)) continue;
+  scanned++;
   const content = await file(abs).text();
   // Strip full-line comments so prose mentions (including this file's siblings)
   // don't count.
@@ -68,6 +70,13 @@ for (const abs of rustSources) {
     if (FROZEN_REBORROW.test(line)) offenders.push(`${source}: ${line.trim()}`);
   }
 }
+
+test("scans a non-empty set of tracked Rust sources", () => {
+  // Guards against the tracked/realpath filters above over-firing (e.g. a
+  // symlinked checkout root) and leaving nothing to scan, which would make the
+  // ban below pass vacuously. Same guard as unsound-erased-box.test.ts.
+  expect(scanned).toBeGreaterThan(0);
+});
 
 test("NonNull::from(&*x) — frozen reborrow stored past its borrow", () => {
   expect(offenders).toEqual([]);

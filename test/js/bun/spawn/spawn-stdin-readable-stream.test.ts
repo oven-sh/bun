@@ -486,6 +486,54 @@ describe("spawn stdin ReadableStream", () => {
     };
   `;
 
+  // Backpressure parks the pump on `sink.flush(true)`, and resolving that promise
+  // re-enters JS from inside the sink's write-completion handler, so the pump can
+  // write the stream's last chunks and end the sink before the handler returns.
+  // Ending the writer there on the stale "buffer is drained" state closed the pipe
+  // on top of the bytes that had just been buffered, truncating the child's stdin.
+  // Chunks larger than the sink's high-water mark make every other write park, and
+  // an odd count leaves one chunk in flight when the stream closes.
+  test("a child behind backpressure still receives every byte", async () => {
+    const chunkSize = 256 * 1024;
+    const numChunks = 5;
+    const chunk = Buffer.alloc(chunkSize, "x");
+
+    // Where the final resume lands varies; a few rounds is enough to pin it.
+    for (let round = 0; round < 3; round++) {
+      let pushed = 0;
+      const stream = new ReadableStream({
+        pull(controller) {
+          if (pushed < numChunks) {
+            controller.enqueue(chunk);
+            pushed++;
+          } else {
+            controller.close();
+          }
+        },
+      });
+
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let n = 0;
+           process.stdin.on("data", d => (n += d.length));
+           process.on("beforeExit", () => console.log(n));`,
+        ],
+        stdin: stream,
+        stdout: "pipe",
+        env: bunEnv,
+      });
+
+      const received = parseInt(await proc.stdout.text());
+      expect({ round, received, exitCode: await proc.exited }).toEqual({
+        round,
+        received: chunkSize * numChunks,
+        exitCode: 0,
+      });
+    }
+  });
+
   test("a synchronous pull() does not starve the event loop", async () => {
     await using proc = spawn({
       cmd: [

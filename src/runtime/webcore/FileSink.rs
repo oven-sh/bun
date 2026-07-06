@@ -444,10 +444,15 @@ impl FileSink {
 
                 FileSink::run_pending(this);
 
+                // `run_pending` resolves the flush promise and drains microtasks, so a
+                // suspended stream pump can buffer more bytes before this returns. POSIX
+                // `end()` closes the fd at once, so re-read instead of using the snapshot.
+                let has_pending_data = (*this).writer.get().has_pending_data();
+
                 // this.done == true means ended was called
                 let ended_and_done = (*this).done.get() && status == WriteStatus::EndOfFile;
 
-                if (*this).done.get() && status == WriteStatus::Drained {
+                if (*this).done.get() && status == WriteStatus::Drained && !has_pending_data {
                     // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
                     (*this).writer.with_mut(|w| w.end());
                 } else if ended_and_done && !has_pending_data {

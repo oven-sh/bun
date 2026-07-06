@@ -78,16 +78,16 @@ static void* nodeHTTPServerSocketSSL(JSC::JSValue thisValue)
     return us_socket_get_native_handle(thisObject->socket);
 }
 
-#define BUN_DEFINE_NODE_HTTP_TLS_READER(name)                                                                               \
-    JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocket##name, (JSGlobalObject * globalObject, CallFrame* callFrame))    \
-    {                                                                                                                       \
-        return Bun__NodeHTTPServerSocket__##name(globalObject, nodeHTTPServerSocketSSL(callFrame->thisValue()));             \
+#define BUN_DEFINE_NODE_HTTP_TLS_READER(name)                                                                              \
+    JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocket##name, (JSGlobalObject * globalObject, CallFrame * callFrame)) \
+    {                                                                                                                      \
+        return Bun__NodeHTTPServerSocket__##name(globalObject, nodeHTTPServerSocketSSL(callFrame->thisValue()));           \
     }
 
 #define BUN_DEFINE_NODE_HTTP_TLS_READER_WITH_ARGS(name)                                                                     \
-    JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocket##name, (JSGlobalObject * globalObject, CallFrame* callFrame))    \
+    JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocket##name, (JSGlobalObject * globalObject, CallFrame * callFrame))  \
     {                                                                                                                       \
-        return Bun__NodeHTTPServerSocket__##name(globalObject, nodeHTTPServerSocketSSL(callFrame->thisValue()), callFrame);  \
+        return Bun__NodeHTTPServerSocket__##name(globalObject, nodeHTTPServerSocketSSL(callFrame->thisValue()), callFrame); \
     }
 
 BUN_DEFINE_NODE_HTTP_TLS_READER(getCertificate)

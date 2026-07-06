@@ -1546,6 +1546,9 @@ mod node_http {
         if err.error_no == 0 {
             return JSValue::NULL;
         }
-        host_fn::to_js_host_fn_result(global, bun_jsc::system_error::verify_error_to_js(&err, global))
+        host_fn::to_js_host_fn_result(
+            global,
+            bun_jsc::system_error::verify_error_to_js(&err, global),
+        )
     }
 }

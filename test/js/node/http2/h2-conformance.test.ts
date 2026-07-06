@@ -40,6 +40,7 @@ const ErrorCode = {
   REFUSED_STREAM: 0x7,
   CANCEL: 0x8,
   COMPRESSION_ERROR: 0x9,
+  ENHANCE_YOUR_CALM: 0xb,
 } as const;
 
 type Frame = { length: number; type: number; flags: number; streamId: number; payload: Buffer };
@@ -1035,7 +1036,9 @@ describe("inbound stream lifecycle", () => {
       await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
       c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // node refuses an over-budget stream with ENHANCE_YOUR_CALM (Http2Session::OnBeginHeadersCallback);
+      // node's own sequential/test-http2-max-session-memory.js asserts this exact code.
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
       expect(c.frames.find(f => f.type === FrameType.HEADERS && f.streamId === 3)).toBeUndefined();
     } finally {
       c.destroy();
@@ -1110,7 +1113,9 @@ describe("inbound stream lifecycle", () => {
         ]),
       );
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // node refuses an over-budget stream with ENHANCE_YOUR_CALM (Http2Session::OnBeginHeadersCallback);
+      // node's own sequential/test-http2-max-session-memory.js asserts this exact code.
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
 
       await drainFirstStream(c);
       c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
@@ -1141,7 +1146,9 @@ describe("inbound stream lifecycle", () => {
         ]),
       );
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // node refuses an over-budget stream with ENHANCE_YOUR_CALM (Http2Session::OnBeginHeadersCallback);
+      // node's own sequential/test-http2-max-session-memory.js asserts this exact code.
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
 
       await drainFirstStream(c);
       // 0xbe: indexed field 62 = the entry the refused block inserted. If that block had

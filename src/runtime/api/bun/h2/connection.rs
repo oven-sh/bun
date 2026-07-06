@@ -122,8 +122,8 @@ pub trait Sink {
     fn on_stream_open(&self, _stream_id: u32) {}
     /// Whether the embedder can afford the state for a new peer-initiated stream (the session
     /// memory budget, node's maxSessionMemory). `false` refuses the HEADERS with RST_STREAM
-    /// (REFUSED_STREAM) before any stream state is allocated; the header block is still decoded
-    /// for HPACK-table sync (§4.3).
+    /// (ENHANCE_YOUR_CALM, node's Http2Session::OnBeginHeadersCallback) before any stream state
+    /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
         true
     }
@@ -233,7 +233,7 @@ pub struct Connection {
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory): the
-    /// block is decoded for HPACK sync (§4.3), then answered with RST_STREAM(REFUSED_STREAM).
+    /// block is decoded for HPACK sync (§4.3), then answered with RST_STREAM(ENHANCE_YOUR_CALM).
     header_stream_refused: bool,
     /// A locally-detected connection error already tore the session down: ignore further input.
     terminated: bool,
@@ -1158,7 +1158,10 @@ impl Connection {
             return true;
         }
         if stream_refused {
-            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
+            // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which is
+            // what node's own test-http2-max-session-memory asserts.
+            self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
             sink.on_stream_rejected(target);
             return false;
         }

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -216,7 +216,12 @@ describe.concurrent("process-stdio", () => {
       };
     }
 
-    test("writableLength, writableNeedDrain and cork() track the buffered bytes", async () => {
+    // Windows hands the chunk to uv_write and reports it complete the moment
+    // libuv accepts it, so the sink never tells the stream it had to buffer and
+    // writableLength can't see libuv's queue. That's native-side and predates
+    // this change (`write()` returns true on main there too); cork() accounting
+    // does work on Windows, it's only the backpressure signal that doesn't.
+    test.skipIf(isWindows)("writableLength, writableNeedDrain and cork() track the buffered bytes", async () => {
       await using proc = spawn({
         cmd: [
           bunExe(),
@@ -258,7 +263,9 @@ describe.concurrent("process-stdio", () => {
       expect(await proc.exited).toBe(0);
     });
 
-    test("'drain' resets writableLength and writableNeedDrain", async () => {
+    // Skipped on Windows for the same reason: nothing backpressures, so the
+    // write never sets needDrain and 'drain' never fires.
+    test.skipIf(isWindows)("'drain' resets writableLength and writableNeedDrain", async () => {
       await using proc = spawn({
         cmd: [
           bunExe(),
@@ -351,6 +358,40 @@ describe.concurrent("process-stdio", () => {
       } finally {
         fs.closeSync(outFd);
       }
+    });
+  });
+
+  // Behavior change: the old fast path fed anything the native sink accepted
+  // straight through, so an ArrayBuffer written to stdio "worked" while the very
+  // same write on an fs.WriteStream already threw. Both now reject it, as node does.
+  test("process.stdout - write() rejects an ArrayBuffer like node", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const codes = [];
+         for (const chunk of [new ArrayBuffer(4), new SharedArrayBuffer(4)]) {
+           try {
+             process.stdout.write(chunk);
+             codes.push("accepted");
+           } catch (e) {
+             codes.push(e.code);
+           }
+         }
+         // A view over the same buffer is the supported spelling, and still works.
+         process.stdout.write(new Uint8Array([0x41, 0x42]));
+         process.stderr.write(codes.join(","));`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode }).toEqual({
+      stderr: "ERR_INVALID_ARG_TYPE,ERR_INVALID_ARG_TYPE",
+      stdout: "AB",
+      exitCode: 0,
     });
   });
 

@@ -563,6 +563,17 @@ describe("bunshell", () => {
       TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {x~,y}`
         .stdout("x~ y\n")
         .runAsTest("mid-element tilde stays literal");
+      // A prefix before the brace group means no element is at a word start.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo x{~,y}`
+        .stdout("x~ xy\n")
+        .runAsTest("tilde in braced group after prefix stays literal");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo x{foo,~}`
+        .stdout("xfoo x~\n")
+        .runAsTest("tilde after comma with prefix stays literal");
+      // A `~` suffix after a non-empty brace group is not at a word start.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {a,b}~`
+        .stdout("a~ b~\n")
+        .runAsTest("tilde suffix after brace group stays literal");
     });
 
     describe("interpolated values", async () => {

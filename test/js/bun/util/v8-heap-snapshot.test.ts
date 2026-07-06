@@ -78,8 +78,11 @@ test("v8.getHeapSnapshot()", async () => {
 test("v8.writeHeapSnapshot()", async () => {
   // Without a path the snapshot is written to the cwd, so give it one we own.
   using dir = tempDir("v8-heap-snapshot", {});
-  const { filename, ...rest } = await runFixture("write-default", { cwd: String(dir) });
-  expect(filename).toMatch(/^Heap-\d{8}-\d{6}-\d+-\d+\.heapsnapshot$/);
+  const { filename, dateBefore, dateAfter, ...rest } = await runFixture("write-default", { cwd: String(dir) });
+  const defaultName = /^Heap-(\d{8})-\d{6}-\d+-\d+\.heapsnapshot$/;
+  expect(filename).toMatch(defaultName);
+  // The date is the calendar date the snapshot was taken on, not a 0-based month.
+  expect([dateBefore, dateAfter]).toContain(filename.match(defaultName)?.[1]);
   expect(rest).toEqual(structure);
 });
 

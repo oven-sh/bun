@@ -114,7 +114,8 @@ function getDefaultHeapSnapshotPath() {
   const thread_id = worker_threads.threadId;
 
   const yyyy = date.getFullYear();
-  const mm = date.getMonth().toString().padStart(2, "0");
+  // getMonth() is 0-based; the filename carries the calendar month.
+  const mm = (date.getMonth() + 1).toString().padStart(2, "0");
   const dd = date.getDate().toString().padStart(2, "0");
   const hh = date.getHours().toString().padStart(2, "0");
   const MM = date.getMinutes().toString().padStart(2, "0");

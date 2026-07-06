@@ -467,6 +467,8 @@ function getHostname(self, rest, hostname: string, url) {
     if (!isValid) {
       // If leftover starts with :, then it represents an invalid port.
       if (code === Char.COLON) {
+        // node passes the reason where ERR_INVALID_ARG_VALUE expects the value,
+        // which reads oddly. Kept so the message matches node's exactly.
         throw $ERR_INVALID_ARG_VALUE("url", "Invalid port in url", url);
       }
       self.hostname = hostname.slice(0, i);

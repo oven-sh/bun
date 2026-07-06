@@ -145,6 +145,17 @@ describe("Url.prototype.parse host handling", () => {
   it("reports the whole url as the input of an ERR_INVALID_URL", () => {
     expect(parseError("http://[127.0.0.1\0c8763]:8000/").input).toBe("http://[127.0.0.1\0c8763]:8000/");
   });
+
+  /*
+   * This message reads oddly because node passes the reason where
+   * ERR_INVALID_ARG_VALUE expects the value. It is verbatim what node v26.3.0
+   * prints, so don't "fix" the argument order in getHostname.
+   */
+  it("words the invalid port error exactly like node", () => {
+    expect(parseError("http://h:8a/x").message).toBe(
+      "The argument 'url' http://h:8a/x. Received 'Invalid port in url'",
+    );
+  });
 });
 
 it("URL constructor throws ERR_MISSING_ARGS", () => {

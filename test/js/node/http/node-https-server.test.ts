@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { tls as validCert } from "harness";
 import http from "node:http";
 import https from "node:https";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 import tls from "node:tls";
 
 function listen(server: http.Server): Promise<number> {

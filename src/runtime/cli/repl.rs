@@ -1021,16 +1021,18 @@ impl<'a> Repl<'a> {
     }
 
     fn end_interruptible_eval(&mut self, scope: Option<SigintScope>) {
-        let Some(global) = self.global else {
-            return;
-        };
         let Some(scope) = scope else {
             return;
         };
 
+        // Before anything fallible: leaving the prompt in cooked mode is worse
+        // than any error we could hit below.
         #[cfg(unix)]
         let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
 
+        // A scope is only handed out once `begin_interruptible_eval` has seen a
+        // global, and `self.global` is set once per session.
+        let global = self.global.expect("sigint scope armed without a global");
         // SAFETY: `scope.scope` came from `Bun__REPL__armSigint` and is consumed
         // once; `global` is a live opaque `JSGlobalObject` handle.
         unsafe { Bun__REPL__disarmSigint(global, scope.scope) };

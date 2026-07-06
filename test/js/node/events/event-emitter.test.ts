@@ -1,5 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, isPosix } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -911,4 +912,164 @@ test("getEventListeners", () => {
 
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
+});
+
+// `process` is backed by a native EventEmitter rather than the one above, so it gets its own coverage
+// of the EventEmitter contract.
+describe("process", () => {
+  // Anything that touches process-wide listener state runs in a child, so it cannot disturb the test
+  // runner's own handlers.
+  async function runFixture(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`fixture exited with code ${exitCode}\n${stderr}`);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function runJSON(source: string) {
+    const { stdout } = await runFixture(source);
+    return JSON.parse(stdout);
+  }
+
+  test("emits 'removeListener' from off(), removeListener() and removeAllListeners()", async () => {
+    expect(
+      await runJSON(`
+        const seen = [];
+        const f = () => {};
+        process.on("removeListener", (name, listener) => {
+          if (name === "foo" || name === "SIGWINCH") seen.push([name, listener === f]);
+        });
+
+        process.on("foo", f);
+        process.off("foo", f);
+
+        process.on("SIGWINCH", f);
+        process.removeListener("SIGWINCH", f);
+
+        process.on("SIGWINCH", f);
+        process.removeAllListeners("SIGWINCH");
+
+        console.log(JSON.stringify(seen));
+      `),
+    ).toEqual([
+      ["foo", true],
+      ["SIGWINCH", true],
+      ["SIGWINCH", true],
+    ]);
+  });
+
+  test("emits 'removeListener' when a once() listener fires", async () => {
+    expect(
+      await runJSON(`
+        const seen = [];
+        const f = () => {};
+        process.on("removeListener", name => name === "foo" && seen.push(name));
+        process.once("foo", f);
+        process.emit("foo");
+        console.log(JSON.stringify({ seen, remaining: process.listenerCount("foo") }));
+      `),
+    ).toEqual({ seen: ["foo"], remaining: 0 });
+  });
+
+  test("removeAllListeners() with no arguments emits 'removeListener' for every listener", async () => {
+    expect(
+      await runJSON(`
+        const seen = [];
+        const f = () => {};
+        process.on("foo", f);
+        process.on("foo", () => {});
+        process.on("bar", f);
+        process.on("removeListener", name => (name === "foo" || name === "bar") && seen.push(name));
+        process.removeAllListeners();
+        console.log(JSON.stringify({ seen: seen.sort(), names: process.eventNames() }));
+      `),
+    ).toEqual({ seen: ["bar", "foo", "foo"], names: [] });
+  });
+
+  test.skipIf(!isPosix)("removeAllListeners() uninstalls the OS signal handler", async () => {
+    // With the handler still installed the default action never runs and the child prints "survived".
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.on("SIGUSR2", () => {});
+          process.removeAllListeners();
+          process.kill(process.pid, "SIGUSR2");
+          console.log("survived");
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, signalCode: proc.signalCode }).toEqual({ stdout: "", signalCode: "SIGUSR2" });
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("is an instanceof EventEmitter", () => {
+    expect(process instanceof EventEmitter).toBe(true);
+    expect(EventEmitter.prototype.isPrototypeOf(process)).toBe(true);
+  });
+
+  test("rawListeners() exposes once() wrappers with a .listener back-pointer", () => {
+    const f = () => {};
+    try {
+      process.once("bun-raw-listeners", f);
+
+      const [wrapper] = process.rawListeners("bun-raw-listeners");
+      expect(typeof wrapper).toBe("function");
+      expect(wrapper.listener).toBe(f);
+      // listeners() stays unwrapped, and the wrapper keeps its identity across calls.
+      expect(process.listeners("bun-raw-listeners")).toEqual([f]);
+      expect(process.rawListeners("bun-raw-listeners")[0]).toBe(wrapper);
+    } finally {
+      process.removeAllListeners("bun-raw-listeners");
+    }
+  });
+
+  test("rawListeners() returns plain listeners for on()", () => {
+    const f = () => {};
+    try {
+      process.on("bun-raw-listeners-plain", f);
+      expect(process.rawListeners("bun-raw-listeners-plain")).toEqual([f]);
+    } finally {
+      process.removeAllListeners("bun-raw-listeners-plain");
+    }
+  });
+
+  test("removeListener() accepts a wrapper returned by rawListeners()", () => {
+    const f = mock(() => {});
+    try {
+      process.once("bun-raw-listeners-off", f);
+      process.removeListener("bun-raw-listeners-off", process.rawListeners("bun-raw-listeners-off")[0]);
+      expect(process.listenerCount("bun-raw-listeners-off")).toBe(0);
+
+      // Calling the wrapper removes the registration it wraps and invokes the original listener.
+      process.once("bun-raw-listeners-off", f);
+      process.rawListeners("bun-raw-listeners-off")[0]();
+      expect(f).toHaveBeenCalledTimes(1);
+      expect(process.listenerCount("bun-raw-listeners-off")).toBe(0);
+    } finally {
+      process.removeAllListeners("bun-raw-listeners-off");
+    }
+  });
+
+  test("newListener still receives the original function for once()", () => {
+    const f = () => {};
+    const seen: unknown[] = [];
+    const onNewListener = (name: string, listener: unknown) => name === "bun-new-listener" && seen.push(listener);
+    try {
+      process.on("newListener", onNewListener);
+      process.once("bun-new-listener", f);
+      expect(seen).toEqual([f]);
+    } finally {
+      process.off("newListener", onNewListener);
+      process.removeAllListeners("bun-new-listener");
+    }
+  });
 });

@@ -6,6 +6,8 @@
 #include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include "EventListener.h"
 
 namespace WebCore {
@@ -23,6 +25,11 @@ public:
 
     void markAsRemoved() { m_wasRemoved = true; }
 
+    // rawListeners() hands out a wrapper for `once()` listeners, cached here so repeated calls keep
+    // returning the same function. Weak: once nothing holds the wrapper its identity is unobservable.
+    JSC::JSObject* onceWrapper() const { return m_onceWrapper.get(); }
+    void setOnceWrapper(JSC::JSObject* wrapper) { m_onceWrapper = JSC::Weak<JSC::JSObject>(wrapper); }
+
 private:
     SimpleRegisteredEventListener(Ref<EventListener>&& listener, bool once)
         : m_isOnce(once)
@@ -34,6 +41,7 @@ private:
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
     Ref<EventListener> m_callback;
+    JSC::Weak<JSC::JSObject> m_onceWrapper;
 };
 
 using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 2, CrashOnOverflow, 6>;

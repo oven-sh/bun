@@ -865,4 +865,12 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
+// `process` is backed by the native EventEmitter, which gives it a prototype of its own that already
+// implements every method above. Splice this prototype in underneath it so `process instanceof
+// EventEmitter` holds, as it does in Node.
+const processPrototype = Object.getPrototypeOf(process);
+if (processPrototype !== EventEmitterPrototype && Object.getPrototypeOf(processPrototype) === Object.prototype) {
+  Object.setPrototypeOf(processPrototype, EventEmitterPrototype);
+}
+
 export default EventEmitter as any as typeof import("node:events");

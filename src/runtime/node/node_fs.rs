@@ -6613,8 +6613,8 @@ impl NodeFS {
                 if !is_root {
                     match err.get_errno() {
                         // The entry can't be descended into: dangling symlink, not a
-                        // directory, unreadable, or a symlink loop. Node's recursive
-                        // walkers skip these instead of failing the whole operation.
+                        // directory, not permitted, or a symlink loop. EACCES is absent on
+                        // purpose: like Node, an unreadable directory fails the whole walk.
                         E::ENOENT | E::ENOTDIR | E::EPERM | E::ELOOP => return Ok(()),
                         _ => {}
                     }
@@ -6818,8 +6818,8 @@ impl NodeFS {
                     }
                     match err.get_errno() {
                         // The entry can't be descended into: dangling symlink, not a
-                        // directory, unreadable, or a symlink loop. Node's recursive
-                        // walkers skip these instead of failing the whole operation.
+                        // directory, not permitted, or a symlink loop. EACCES is absent on
+                        // purpose: like Node, an unreadable directory fails the whole walk.
                         E::ENOENT | E::ENOTDIR | E::EPERM | E::ELOOP => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)

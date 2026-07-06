@@ -1526,35 +1526,20 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
 // even though a dangling symlink (ENOENT) at the same point was already skipped.
 // Node's recursive walkers ignore per-entry stat failures and list the whole tree.
 it.skipIf(isWindows)("recursive readdir skips symlink cycles instead of failing with ELOOP", async () => {
-  using dir = tempDir("readdir-symlink-cycle", {
-    "d1/f": "x",
-    "real/inside.txt": "i",
-  });
+  using dir = tempDir("readdir-symlink-cycle", { "d1/f": "x" });
   const root = String(dir);
   mkdirSync(join(root, "d1", "d2"));
   symlinkSync("missing", join(root, "dangling")); // broken: open fails with ENOENT
   symlinkSync("lpB", join(root, "lpA")); // two-link cycle: open fails with ELOOP
   symlinkSync("lpA", join(root, "lpB"));
   symlinkSync("self", join(root, "self")); // self-referential cycle
-  symlinkSync("real", join(root, "link")); // resolvable: still walked into
 
   // The cycle must really be a cycle, otherwise everything below passes vacuously.
   expect(() => readdirSync(join(root, "lpA"))).toThrow(expect.objectContaining({ code: "ELOOP" }));
 
-  const paths = [
-    "d1",
-    "d1/d2",
-    "d1/f",
-    "dangling",
-    "link",
-    "link/inside.txt",
-    "lpA",
-    "lpB",
-    "real",
-    "real/inside.txt",
-    "self",
-  ];
-  const names = ["d1", "d2", "dangling", "f", "inside.txt", "inside.txt", "link", "lpA", "lpB", "real", "self"];
+  // Every listing below matches node v26.3.0 on this tree, entry for entry.
+  const paths = ["d1", "d1/d2", "d1/f", "dangling", "lpA", "lpB", "self"];
+  const names = ["d1", "d2", "dangling", "f", "lpA", "lpB", "self"];
   const sorted = (entries: (string | Dirent)[]) =>
     entries.map(entry => (typeof entry === "string" ? entry : entry.name)).sort();
 
@@ -1563,10 +1548,29 @@ it.skipIf(isWindows)("recursive readdir skips symlink cycles instead of failing 
   expect(sorted(await promises.readdir(root, { recursive: true }))).toEqual(paths);
   expect(sorted(await promises.readdir(root, { recursive: true, withFileTypes: true }))).toEqual(names);
 
-  const drained: string[] = [];
-  using handle = fs.opendirSync(root, { recursive: true });
-  for (let entry: Dirent | null; (entry = handle.readSync()); ) drained.push(entry.name);
-  expect(drained.sort()).toEqual(names);
+  const drainedSync: string[] = [];
+  {
+    using handle = fs.opendirSync(root, { recursive: true });
+    for (let entry: Dirent | null; (entry = handle.readSync()); ) drainedSync.push(entry.name);
+  }
+  expect(drainedSync.sort()).toEqual(names);
+
+  const drainedAsync: string[] = [];
+  {
+    await using handle = await promises.opendir(root, { recursive: true });
+    for await (const entry of handle) drainedAsync.push(entry.name);
+  }
+  expect(drainedAsync.sort()).toEqual(names);
+});
+
+// Skipping entries the walker cannot open must not skip the ones it can: a symlink
+// to a real directory is still descended into.
+it.skipIf(isWindows)("recursive readdir still descends into a symlink to a real directory", () => {
+  using dir = tempDir("readdir-symlink-descend", { "real/inside.txt": "i" });
+  const root = String(dir);
+  symlinkSync("real", join(root, "link"));
+
+  expect(readdirSync(root, { recursive: true }).sort()).toEqual(["link", "link/inside.txt", "real", "real/inside.txt"]);
 });
 
 describe("readSync", () => {

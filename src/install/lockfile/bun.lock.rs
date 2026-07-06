@@ -530,17 +530,28 @@ impl Stringifier {
 
             tree_sort_buf.sort_by(tree_sort_is_less_than);
 
-            if found_trusted_dependencies.len() > 0 {
+            // Emit `trustedDependencies` whenever the user defined it in
+            // package.json, even as `[]` or an array of packages that aren't
+            // installed. The lockfile's `trusted_dependencies` is `Some(set)`
+            // iff the key was present; `None` means "use Bun's default allow
+            // list". Dropping the key when the set didn't match any installed
+            // dep would make a later reload silently fall back to the
+            // defaults, re-enabling postinstall for packages the user meant
+            // to block.
+            if lockfile.trusted_dependencies.is_some() {
                 Self::write_indent(writer, *indent)?;
-                writer.write_all(b"\"trustedDependencies\": [\n")?;
-                *indent += 1;
-                for dep_name in found_trusted_dependencies.values() {
-                    Self::write_indent(writer, *indent)?;
-                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
+                if found_trusted_dependencies.is_empty() {
+                    writer.write_all(b"\"trustedDependencies\": [],\n")?;
+                } else {
+                    writer.write_all(b"\"trustedDependencies\": [\n")?;
+                    *indent += 1;
+                    for dep_name in found_trusted_dependencies.values() {
+                        Self::write_indent(writer, *indent)?;
+                        writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
+                    }
+                    Self::dec_indent(writer, indent)?;
+                    writer.write_all(b"],\n")?;
                 }
-
-                Self::dec_indent(writer, indent)?;
-                writer.write_all(b"],\n")?;
             }
 
             if found_patched_dependencies.len() > 0 {

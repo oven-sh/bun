@@ -2481,8 +2481,10 @@ class Http2Stream extends Duplex {
     }
 
     if ((status & StreamState.EndedCalled) !== 0) {
-      typeof callback == "function" && callback();
-      return;
+      // Already ended: let Writable#end route the callback so it keeps node's contract (never
+      // invoked synchronously, sees ERR_STREAM_ALREADY_FINISHED). The ending flag is already set,
+      // so this cannot re-enter _final. A repeat chunk is dropped, as it was before.
+      return super.end(undefined, undefined, callback);
     }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
     // Don't create an empty buffer for end() without data - let the Duplex stream
@@ -5079,14 +5081,19 @@ class ClientHttp2Session extends Http2Session {
       }
 
       let rejectContentLengthOnNoPayload = false;
-      if (NoPayloadMethods.has(method.toUpperCase())) {
-        if (!options || !$isObject(options)) {
-          options = { endStream: true };
-        } else {
-          options = { ...options, endStream: true };
-        }
+      const noPayloadMethod = NoPayloadMethods.has(method.toUpperCase());
+      // The per-method default only applies when the caller left endStream unset: an explicit
+      // `endStream: false` keeps the writable side open so a GET/HEAD/DELETE can carry a body.
+      if (noPayloadMethod && (!$isObject(options) || options.endStream === undefined)) {
+        options = $isObject(options) ? { ...options, endStream: true } : { endStream: true };
+      }
+      // A non-boolean endStream throws from the native request() below, so the two always agree
+      // on whether the HEADERS frame carries END_STREAM.
+      const endStream = $isObject(options) && options.endStream === true;
+      if (noPayloadMethod && endStream) {
         // nghttp2 refuses content-length on a request that cannot carry a payload: the stream is
-        // reset with PROTOCOL_ERROR after creation (an async stream error, not a throw).
+        // reset with PROTOCOL_ERROR after creation (an async stream error, not a throw). Only the
+        // endStream form cannot carry a payload; `endStream: false` sends a body like any other.
         for (const key of Object.keys(headers)) {
           if (key.toLowerCase() === "content-length") {
             rejectContentLengthOnNoPayload = true;
@@ -5094,7 +5101,6 @@ class ClientHttp2Session extends Http2Session {
           }
         }
       }
-
       {
         // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
         // surfaces it as a stream error rather than a synchronous throw; mirror that. Validate
@@ -5108,6 +5114,7 @@ class ClientHttp2Session extends Http2Session {
               const req = new ClientHttp2Stream(undefined, this, headers);
               req.authority = authority;
               req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+              if (endStream) req.end();
               req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
               process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
               process.nextTick(emitEventNT, req, "ready");
@@ -5124,6 +5131,7 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+        if (endStream) req.end();
         process.nextTick(rejectNoPayloadContentLengthNT, req);
         process.nextTick(emitEventNT, req, "ready");
         return req;
@@ -5143,6 +5151,7 @@ class ClientHttp2Session extends Http2Session {
         if (options.signal.aborted) {
           const req = new ClientHttp2Stream(undefined, this, headers);
           const signal = options.signal;
+          if (endStream) req.end();
           // The request never started, so the stream counts as aborted but the
           // 'aborted' event is not emitted — only the AbortError.
           req[kAborted] = true;
@@ -5177,6 +5186,9 @@ class ClientHttp2Session extends Http2Session {
           sensitiveNames,
           options,
         });
+        // The stream has no id yet, so `_final` parks on 'ready' and runs once the queued
+        // HEADERS frame is submitted.
+        if (endStream) req.end();
         // node corks every Http2Stream until its native handle is assigned; same here so
         // synchronous writes after a queued request() batch through _writev once the slot frees.
         req.cork();
@@ -5188,6 +5200,7 @@ class ClientHttp2Session extends Http2Session {
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
+        if (endStream) req.end();
         process.nextTick(emitOutofStreamErrorNT, req);
         return req;
       }
@@ -5206,6 +5219,10 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }
+      // The HEADERS frame carried END_STREAM, so the writable half is done: close it like node
+      // does, otherwise _destroy/close see an open writable side and emit a spurious 'aborted'
+      // on every body-less request. Must follow the native request() that registered the stream.
+      if (endStream) req.end();
       this.#trackActiveRequest(req);
       // node corks every Http2Stream until its native handle is assigned (always at least one tick
       // after request() returns), so body chunks written synchronously after request() are buffered

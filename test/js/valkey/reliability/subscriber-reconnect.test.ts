@@ -348,8 +348,22 @@ describe("Valkey: subscriber reconnect", () => {
       // The replayed SUBSCRIBE carries no promise, so its -NOPERM must not consume
       // the pair PING parked in the in-flight queue behind it. It used to, and the
       // pair was then dropped unsettled, hanging this await forever.
-      await expect(subscriber.ping()).rejects.toThrow(/NOPERM/);
-      expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "SUBSCRIBE news", "PING"]);
+      //
+      // Asserted together with the wire so a failure says which half broke: the
+      // server's view of the reconnect, or where PING's reply went.
+      const pinged = await subscriber.ping().then(
+        value => ({ settled: "resolved", value }),
+        error => ({ settled: "rejected", message: String(error?.message ?? error) }),
+      );
+
+      expect({ pinged, connected: subscriber.connected, wire: server.connections.map(commandLines) }).toEqual({
+        pinged: { settled: "rejected", message: expect.stringContaining("NOPERM") },
+        connected: true,
+        wire: [
+          ["HELLO 3", "SUBSCRIBE news"],
+          ["HELLO 3", "SUBSCRIBE news", "PING"],
+        ],
+      });
     } finally {
       await closeSubscriber(subscriber);
     }

@@ -471,7 +471,10 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    this.write = writeFast as any;
+    // The FileSink encodes strings straight into its own buffer, so skip the
+    // Buffer.from() round-trip. node's process.stdout/stderr (net.Socket) also
+    // run with decodeStrings: false.
+    options.decodeStrings = false;
     if (fd != null) {
       // Already-open fd (stdio): skip the async _construct round-trip so the
       // stream is born constructed, like node's stdio streams (net.Socket /
@@ -586,13 +589,20 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
-function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
+// `_write` for FileSink-backed streams (process.stdout/stderr, tty.WriteStream,
+// child.stdin). Completes synchronously when the sink took the whole chunk, so
+// that back-to-back writes don't pile up in the Writable buffer, and defers to
+// the sink's promise when it had to buffer, which is what keeps
+// writableLength/writableNeedDrain honest.
+function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
     // When the fast path is disabled, the write function gets reset.
     this._write = _write;
-    return this._write(data, encoding, cb);
+    return this._write(chunk, encoding, cb);
   }
+
+  let maybePromise;
   try {
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
@@ -600,82 +610,22 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       this.fd = fileSink._getFd();
     }
 
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise.then(
-        () => {
-          if (cb) cb(null);
-          this.emit("drain");
-        },
-        err => {
-          if (cb) cb(err);
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
-      );
-      return false;
-    } else {
-      if (cb) process.nextTick(cb, null);
-      return true;
+    // decodeStrings is off for this path: the sink encodes UTF-8 itself, but
+    // every other encoding has to be decoded here.
+    if (typeof chunk === "string" && encoding !== "utf8" && encoding !== "utf-8") {
+      chunk = Buffer.from(chunk, encoding);
     }
+
+    maybePromise = fileSink.write(chunk);
   } catch (e) {
-    if (cb) process.nextTick(cb, e);
-    require("internal/streams/destroy").errorOrDestroy(this, e, true);
-    return false;
-  }
-}
-
-// This function implementation is not correct.
-const writablePrototypeWrite = Writable.prototype.write;
-const kWriteMonkeyPatchDefense = Symbol("!");
-function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
-
-  // After end()/destroy() the Writable contract requires write() to fail with
-  // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
-  const state = this._writableState;
-  if (state !== undefined && (state.ending || state.destroyed)) {
-    return writablePrototypeWrite.$call(this, data, encoding, cb);
+    cb(e);
+    return;
   }
 
-  if (typeof encoding === "function") {
-    cb = encoding;
-    encoding = undefined;
-  }
-  if (typeof cb !== "function") {
-    cb = streamNoop;
-  }
-
-  const fileSink = this[kWriteStreamFastPath];
-  if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      // Two-arg then(): a throw from the fulfillment handler must not be
-      // mistaken for a write failure.
-      maybePromise.then(
-        () => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        },
-        err => {
-          cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
-      );
-      return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
-    }
+  if ($isPromise(maybePromise)) {
+    maybePromise.then(() => cb(null), cb);
   } else {
-    const result: any = this._write(data, encoding, cb);
-    if (this.write === writeFast) {
-      this.write = writablePrototypeWrite;
-    } else {
-      this[kWriteMonkeyPatchDefense] = true;
-    }
-    return result;
+    cb(null);
   }
 }
 

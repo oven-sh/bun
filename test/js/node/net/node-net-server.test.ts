@@ -1,5 +1,5 @@
 import { realpathSync } from "fs";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, BlockList, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -459,6 +459,79 @@ describe("net.createServer events", () => {
         }
         await Promise.all(promises).catch(closeAndFail);
       });
+  });
+
+  // The server ends the accepted socket in every case below, so waiting for the
+  // client's "close" proves the server already ran its onconnection handler.
+  async function connectToRejectingServer({
+    blockedAddress,
+    maxConnections,
+  }: {
+    blockedAddress: string;
+    maxConnections?: number;
+  }) {
+    const blockList = new BlockList();
+    blockList.addAddress(blockedAddress);
+
+    let connections = 0;
+    const drops: any[] = [];
+    const server = createServer({ blockList }, () => {
+      connections++;
+    });
+    if (maxConnections !== undefined) {
+      server.maxConnections = maxConnections;
+    }
+    server.on("drop", data => drops.push(data));
+
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const { port } = server.address() as AddressInfo;
+      const client = connect({ port, host: "127.0.0.1" });
+      client.on("error", () => {});
+      await once(client, "close");
+
+      return { connections, drops };
+    } finally {
+      server.close();
+    }
+  }
+
+  it("should not emit drop when blockList rejects the connection", async () => {
+    const { connections, drops } = await connectToRejectingServer({ blockedAddress: "127.0.0.1" });
+
+    expect({ connections, drops }).toEqual({ connections: 0, drops: [] });
+  });
+
+  it("should emit drop when maxConnections is reached and a blockList allows the address", async () => {
+    const { connections, drops } = await connectToRejectingServer({
+      blockedAddress: "1.1.1.1",
+      maxConnections: 0,
+    });
+
+    expect(connections).toBe(0);
+    expect(drops.length).toBe(1);
+    expect(Object.keys(drops[0]).sort()).toEqual([
+      "localAddress",
+      "localFamily",
+      "localPort",
+      "remoteAddress",
+      "remoteFamily",
+      "remotePort",
+    ]);
+  });
+
+  // maxConnections is checked before the blockList, so a blocked address still
+  // reports the saturation, matching Node.
+  it("should emit drop when maxConnections is reached and a blockList blocks the address", async () => {
+    const { connections, drops } = await connectToRejectingServer({
+      blockedAddress: "127.0.0.1",
+      maxConnections: 0,
+    });
+
+    expect(connections).toBe(0);
+    expect(drops.length).toBe(1);
   });
 
   it("should error on an invalid port", () => {

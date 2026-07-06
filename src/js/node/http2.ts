@@ -6266,6 +6266,12 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
+    // node's resOnFinish: release the socket once the response completes so the next
+    // keep-alive request's response can attach (assignSocket throws
+    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    res.on("finish", function onFallbackResponseFinish() {
+      this.detachSocket(socket);
+    });
 
     server.emit("request", req, res);
     return 0;

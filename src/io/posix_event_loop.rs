@@ -39,7 +39,7 @@ use bun_sys::syslog;
 /// Decodes the -1-sentinel *return-code* convention (the thread-local errno is
 /// only read when `rc` is the all-ones failure value). Do NOT feed it a value
 /// that already is an errno — use [`kevent_change_error`] for those.
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos", target_os = "freebsd"))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
@@ -375,7 +375,7 @@ impl FilePoll {
         self.on_update(kqueue_event.data as i64);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
     pub fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
         self.on_update(0);
@@ -655,14 +655,16 @@ impl FilePoll {
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
-            target_os = "freebsd"
+            target_os = "freebsd",
+            target_env = "ohos"
         ))]
         return self.register_with_fd_impl(loop_, flag, one_shot, fd);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
-            target_os = "freebsd"
+            target_os = "freebsd",
+            target_env = "ohos"
         )))]
         {
             let _ = (loop_, flag, one_shot, fd);
@@ -674,7 +676,8 @@ impl FilePoll {
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
-        target_os = "freebsd"
+        target_os = "freebsd",
+        target_env = "ohos"
     ))]
     fn register_with_fd_impl(
         &mut self,
@@ -699,7 +702,7 @@ impl FilePoll {
             self.flags.insert(Flags::OneShot);
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
         {
             use bun_sys::linux::{self, EPOLL};
             let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot) {
@@ -928,11 +931,11 @@ impl FilePoll {
         self.flags.insert(match flag {
             Flags::Readable => Flags::PollReadable,
             Flags::Process => {
-                #[cfg(any(target_os = "linux", target_os = "android"))]
+                #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
                 {
                     Flags::PollReadable
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                #[cfg(not(any(target_os = "linux", target_os = "android", target_env = "ohos")))]
                 {
                     Flags::PollProcess
                 }
@@ -1051,7 +1054,7 @@ impl FilePoll {
             fd
         );
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
@@ -1354,7 +1357,7 @@ impl Flags {
         flags
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
     pub fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
         use bun_sys::linux::EPOLL;
         let mut flags = FlagsSet::empty();
@@ -1604,7 +1607,7 @@ pub(crate) unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
     file_poll.on_epoll_event(&ev);
 }
 
@@ -1637,7 +1640,7 @@ const INVALID_FD: Fd = Fd::INVALID;
 pub use crate::closer::Closer;
 #[cfg(target_os = "macos")]
 pub use crate::waker::KEventWaker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos", target_os = "freebsd"))]
 pub use crate::waker::Waker;
 
 #[cfg(test)]

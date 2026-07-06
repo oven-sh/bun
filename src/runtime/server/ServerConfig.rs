@@ -1,5 +1,6 @@
 use std::io::Write as _;
 
+use bun_core::env_var;
 use bun_core::ZBox;
 
 use bun_collections::StringHashMap;

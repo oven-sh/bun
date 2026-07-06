@@ -896,6 +896,21 @@ describe("a materialized body stream is not read through its native handle", () 
     expect(await (await fetch(server.url)).text()).toBe(payload);
   });
 
+  // fetch()'s request body goes through ResumableSink, which has its own native fast path.
+  test("fetch() uploads a re-wrapped body in full", async () => {
+    using upstream = Bun.serve({ port: 0, fetch: () => new Response(payload) });
+    using target = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(String((await req.arrayBuffer()).byteLength));
+      },
+    });
+    const res = await fetch(upstream.url);
+    res.body!.getReader().releaseLock(); // materialize, do not read
+    const uploaded = await fetch(target.url, { method: "POST", body: res.body, duplex: "half" });
+    expect(await uploaded.text()).toBe(String(payload.length));
+  });
+
   // HTMLRewriter buffers through ValueBufferer, which has no way to read a stream's controller
   // queue. It used to reach for the native handle regardless and hit an `unreachable!()`.
   test("HTMLRewriter rejects instead of crashing on a materialized body", async () => {

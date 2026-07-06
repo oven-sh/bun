@@ -190,8 +190,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if let Some(byte_stream) = stream.ptr.bytes() {
             // BACKREF: see `Source::bytes()` — payload owned by `stream`.
             // R-2: all touched ByteStream methods/fields are `&self`/interior-mutable.
-            // if pipe is empty, we can pipe
-            if byte_stream.pipe.get().is_empty() {
+            // if pipe is empty, we can pipe. A materialized stream has already moved its
+            // buffered bytes into the controller's queue, so draining the handle here would
+            // upload a short body — the JS route below reads through the controller instead.
+            if byte_stream.pipe.get().is_empty() && !stream.is_native_source_consumed(global_this) {
                 // equivalent to onStart to get the highWaterMark
                 this_ref.high_water_mark = byte_stream.high_water_mark.min(i64::MAX as u64) as i64;
 

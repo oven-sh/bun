@@ -1,8 +1,9 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import type net from "node:net";
 import path from "path";
-import { listeningServer } from "./wire-frames";
+import { listeningServer, mysqlHandshakeV10, mysqlOkPacket, mysqlReadPackets } from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
   "select.sql": `select CAST(1 AS SIGNED) as x`,
@@ -141,6 +142,28 @@ if (isDockerEnabled()) {
           const { affectedRows } =
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
+        });
+        test("lastInsertRowid above 2^53 is the key the server assigned", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+          // (1 << 62) + 7 — a legal BIGINT UNSIGNED auto-increment key, and the
+          // magnitude Snowflake-style id generators land on. It has no exact
+          // double: as a JS number it reads back as 4611686018427388000.
+          const firstId = 4611686018427387911n;
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
+          await sql.unsafe(`ALTER TABLE \`${t}\` AUTO_INCREMENT = ${firstId}`);
+
+          const { lastInsertRowid } = await sql`INSERT INTO ${sql(t)} (name) VALUES (${"test"})`;
+          expect(lastInsertRowid).toBe(firstId);
+
+          // Narrowing by the reported id must reach the row that was just
+          // inserted, which only holds if every one of the 64 bits survived.
+          // The id goes in as a literal because binding a BigInt parameter is a
+          // separate bug, fixed in #32265.
+          const rows = await sql.unsafe(`SELECT name FROM \`${t}\` WHERE id = ${lastInsertRowid}`);
+          expect(rows).toEqual([{ name: "test" }]);
         });
         test("MEDIUMINT not in the last column reads following columns correctly", async () => {
           // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
@@ -1194,3 +1217,118 @@ if (isDockerEnabled()) {
     );
   }
 }
+
+// The OK packet's affected_rows and last_insert_id are u64, so they carry
+// values a double cannot hold. A mock server is used because seeding
+// AUTO_INCREMENT past 2^53 is the only way a real server reaches there, and
+// these must also run without Docker.
+describe("MySQL OK packet 64-bit integers", () => {
+  const COM_QUERY = 0x03;
+
+  // (1 << 62) + 7 — a legal BIGINT UNSIGNED auto-increment key, and the
+  // magnitude Snowflake-style id generators land on. The nearest double is
+  // 4611686018427388000, so a lossy hand-off is visible in the low digits.
+  const hugeId = 4611686018427387911n;
+
+  function handshakeThen(onCommand: (socket: net.Socket, seq: number, payload: Buffer) => void) {
+    return listeningServer(socket => {
+      let buffered = Buffer.alloc(0);
+      let authed = false;
+      socket.write(mysqlHandshakeV10());
+      socket.on("data", chunk => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          if (!authed) {
+            authed = true;
+            socket.write(mysqlOkPacket(seq + 1));
+            return;
+          }
+          onCommand(socket, seq, payload);
+        });
+      });
+      socket.on("error", () => {});
+    });
+  }
+
+  // `sql.unsafe` with no bind values takes the COM_QUERY path, so the OK packet
+  // is the only frame the server has to produce.
+  async function unsafeInsert(
+    rows: { affectedRows?: number | bigint; lastInsertId?: number | bigint },
+    options: { bigint?: boolean } = {},
+  ) {
+    const { server, port } = await handshakeThen((socket, seq, payload) => {
+      if (payload[0] === COM_QUERY) socket.write(mysqlOkPacket(seq + 1, 0x00, rows));
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1, ...options });
+      const result = await sql.unsafe("INSERT INTO t (v) VALUES (1)");
+      return { lastInsertRowid: result.lastInsertRowid, affectedRows: result.affectedRows };
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  test.each([false, true])("last_insert_id above 2^53 reaches JS exactly (bigint: %p)", async bigint => {
+    expect(await unsafeInsert({ affectedRows: 1, lastInsertId: hugeId }, { bigint })).toEqual({
+      lastInsertRowid: hugeId,
+      affectedRows: 1,
+    });
+  });
+
+  test("affected_rows above 2^53 reaches JS exactly", async () => {
+    expect(await unsafeInsert({ affectedRows: hugeId, lastInsertId: 0 })).toEqual({
+      lastInsertRowid: 0,
+      affectedRows: hugeId,
+    });
+  });
+
+  test("values inside the safe-integer range stay plain numbers", async () => {
+    expect(await unsafeInsert({ affectedRows: 2, lastInsertId: Number.MAX_SAFE_INTEGER })).toEqual({
+      lastInsertRowid: Number.MAX_SAFE_INTEGER,
+      affectedRows: 2,
+    });
+  });
+
+  test("the first value that is not a safe integer crosses over to BigInt", async () => {
+    // 2**53 is exactly representable as a double, but Number.isSafeInteger(2**53)
+    // is false: it shares its double with 2**53 + 1. The cutoff sits here.
+    expect(await unsafeInsert({ affectedRows: 1, lastInsertId: 2n ** 53n })).toEqual({
+      lastInsertRowid: 9007199254740992n,
+      affectedRows: 1,
+    });
+  });
+
+  test("allocating the BigInt leaves no unchecked JS exception", async () => {
+    // JSBigInt::createFrom declares a JSC ThrowScope. Delivering the result
+    // re-enters JS, which aborts if that scope was never checked, so the client
+    // runs in a child with the validator on (a no-op outside debug/ASAN builds,
+    // where the printed id still has to be exact).
+    const { server, port } = await handshakeThen((socket, seq, payload) => {
+      if (payload[0] === COM_QUERY) {
+        socket.write(mysqlOkPacket(seq + 1, 0x00, { affectedRows: 1, lastInsertId: hugeId }));
+      }
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `await using sql = new Bun.SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
+           const result = await sql.unsafe("INSERT INTO t (v) VALUES (1)");
+           console.log(String(result.lastInsertRowid));`,
+        ],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", BUN_JSC_dumpSimulatedThrows: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // An unchecked scope aborts the child, so stdout is empty and exitCode is a signal.
+      expect({ stdout: stdout.trim(), exitCode, abort: stderr.includes("exception check validation failed") }).toEqual({
+        stdout: String(hugeId),
+        exitCode: 0,
+        abort: false,
+      });
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+});

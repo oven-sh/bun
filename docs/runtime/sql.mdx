@@ -1323,6 +1323,14 @@ const now = await mysql`SELECT NOW() as current_time`;
 const uuid = await mysql`SELECT UUID() as id`;
 ```
 
+`lastInsertRowid` and `affectedRows` are 64-bit on the wire. They are `number`s while they stay inside `Number.MAX_SAFE_INTEGER`, and `BigInt`s past it, so a large `BIGINT UNSIGNED` auto-increment key is never rounded:
+
+```ts
+// AUTO_INCREMENT keys seeded from a snowflake-style generator
+const { lastInsertRowid } = await mysql`INSERT INTO events (kind) VALUES (${"click"})`;
+console.log(lastInsertRowid); // 4611686018427387911n
+```
+
 ### MySQL Error Handling
 
 ```ts

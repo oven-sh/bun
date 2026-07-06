@@ -354,18 +354,18 @@ describe("spawn stdin ReadableStream", () => {
           });
         }
 
-        // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink always holds an in-flight write. Kill the child on the
-        // second chunk: the first one is already in flight by then, and the sink
-        // stops pulling once it is backed up, so a higher count never arrives.
-        // How far the pump gets before the parent notices the death varies, so
-        // run several rounds.
+        // The child never reads its stdin, so the first 256 KiB write fills the
+        // pipe, gets EAGAIN on the rest, and leaves the sink holding an in-flight
+        // write. The pump parks right there, so no further chunk is ever produced:
+        // kill on the first one, from a macrotask, which runs after the microtask
+        // that issued the write. How far the pump gets before the parent notices
+        // the death varies, so run several rounds.
         function round() {
           let produced = 0;
           const child = Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
             stdin: (${useIterator} ? iterate : readable)(() => {
-              if (++produced === 2) child.kill();
+              if (++produced === 1) setTimeout(() => child.kill(), 0);
             }),
             stdout: "ignore",
             stderr: "ignore",
@@ -412,9 +412,10 @@ describe("spawn stdin ReadableStream", () => {
         const chunk = Buffer.alloc(256 * 1024, "x");
         let produced = 0;
         function producedOne() {
-          // Second chunk: the first is in flight, and the sink stops pulling
-          // once it is backed up, so a higher count never arrives.
-          if (++produced === 2) child.kill();
+          // The pump parks on the first refused write, so no second chunk is ever
+          // produced. Kill from a macrotask, which runs after the microtask that
+          // issued the write, so the sink is holding it when the child dies.
+          if (++produced === 1) setTimeout(() => child.kill(), 0);
         }
         async function* iterate() {
           while (true) {
@@ -510,13 +511,11 @@ describe("spawn stdin ReadableStream", () => {
     };
   `;
 
-  // Backpressure parks the pump on `sink.flush(true)`, and resolving that promise
-  // re-enters JS from inside the sink's write-completion handler, so the pump can
-  // write the stream's last chunks and end the sink before the handler returns.
-  // Ending the writer there on the stale "buffer is drained" state closed the pipe
-  // on top of the bytes that had just been buffered, truncating the child's stdin.
-  // Chunks larger than the sink's high-water mark make every other write park, and
-  // an odd count leaves one chunk in flight when the stream closes.
+  // Chunks larger than the pipe make the kernel refuse every write, so the pump
+  // parks on `sink.flush(true)` and resumes once per chunk. Resolving that promise
+  // re-enters JS from inside the sink's write-completion handler, which is where a
+  // stale "buffer is drained" snapshot once closed the pipe on top of bytes that
+  // had just been buffered. None of that may cost the child a byte.
   test("a child behind backpressure still receives every byte", async () => {
     const chunkSize = 256 * 1024;
     const numChunks = 5;

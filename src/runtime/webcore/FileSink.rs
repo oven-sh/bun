@@ -150,12 +150,6 @@ fn is_pollable(mode: sys::Mode) -> bool {
 pub type IOWriter = bun_io::StreamingWriter<FileSink>;
 pub type Poll = IOWriter;
 
-/// How many bytes the sink buffers in memory for a `ReadableStream` pump before
-/// it reports backpressure. Four Linux pipe buffers: enough to keep the
-/// destination busy across a drain round-trip, small enough that a destination
-/// which reads slowly (or has gone away) cannot grow the process without bound.
-const STREAM_BACKPRESSURE_HIGH_WATER_MARK: usize = 4 * 64 * 1024;
-
 // `StreamingWriter<P>` requires `P: PosixStreamingWriterParent` (POSIX) /
 // `WindowsStreamingWriterParent` (Windows). The vtable methods forward to the
 // FileSink state-machine handlers below.
@@ -1294,9 +1288,11 @@ impl FileSink {
     }
 
     /// `to_result`, plus the backpressure signal the `readStreamIntoSink` pump
-    /// needs. Once more than [`STREAM_BACKPRESSURE_HIGH_WATER_MARK`] bytes are
-    /// sitting unflushed in the writer, report `Backpressure` so the pump awaits
-    /// `flush(true)` instead of reading the whole stream into memory.
+    /// needs. The destination itself decides: once it refuses bytes (`EAGAIN`
+    /// from `write(2)`, a `uv_write` already in flight on Windows) report
+    /// `Backpressure` so the pump awaits `flush(true)` instead of reading the
+    /// rest of the stream into memory. The writer then holds at most the one
+    /// chunk the kernel would not take.
     ///
     /// Only that pump understands the negative sentinel, so this must never reach
     /// a write user JS issued. `readable_stream` is set by exactly one caller,
@@ -1307,9 +1303,7 @@ impl FileSink {
     /// `write()`'s number-or-Promise contract.
     fn write_result(&self, write_result: WriteResult, accepted: u64) -> streams::Writable {
         let result = self.to_result(write_result, accepted);
-        if !self.readable_stream.with_mut(|s| s.has())
-            || self.writer.get().buffered_len() <= STREAM_BACKPRESSURE_HIGH_WATER_MARK
-        {
+        if !self.readable_stream.with_mut(|s| s.has()) || !self.writer.get().is_backed_up() {
             return result;
         }
         match result {

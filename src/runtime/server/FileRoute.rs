@@ -146,6 +146,15 @@ impl FileRoute {
             body_value.to_blob_if_possible();
             let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
             if needs_read {
+                if let Some(name) = response
+                    .get_init_headers()
+                    .and_then(FetchHeaders::find_invalid_value_header_name)
+                {
+                    return Err(
+                        global.throw_value(bun_jsc::invalid_header_value_error(global, &name))
+                    );
+                }
+
                 // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
                 let is_fd = matches!(
                     body_value,

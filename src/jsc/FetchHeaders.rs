@@ -2,8 +2,8 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
-use bun_core::{String as BunString, StringPointer, ZigString};
+use crate::{ErrorCode, JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use bun_core::{OwnedString, String as BunString, StringPointer, ZigString};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -67,6 +67,10 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut ZigString);
     safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: u8) -> bool;
     safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: u8);
+    safe fn WebCore__FetchHeaders__findInvalidValueHeaderName(
+        arg0: &FetchHeaders,
+        arg1: &mut BunString,
+    );
     safe fn WebCore__FetchHeaders__get_(
         arg0: &FetchHeaders,
         arg1: &ZigString,
@@ -206,6 +210,22 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
     }
 
+    /// Name of the first header whose value holds a character that cannot be
+    /// written as an HTTP field-value (RFC 9110 §5.5: VCHAR / obs-text / SP /
+    /// HTAB), or `None` when every value can go on the wire as-is.
+    ///
+    /// `Headers` only rejects NUL/CR/LF (the Fetch spec's rule) and code units
+    /// above 0xFF, so anything serializing these headers into an HTTP message
+    /// must reject the remaining control characters, as `node:http` does.
+    pub fn find_invalid_value_header_name(&self) -> Option<OwnedString> {
+        let mut name = BunString::DEAD;
+        WebCore__FetchHeaders__findInvalidValueHeaderName(self, &mut name);
+        if name.is_empty() {
+            return None;
+        }
+        Some(OwnedString::new(name))
+    }
+
     pub fn create_empty() -> NonNull<FetchHeaders> {
         NonNull::new(WebCore__FetchHeaders__createEmpty())
             .expect("WebCore__FetchHeaders__createEmpty returned null")
@@ -340,6 +360,29 @@ impl FetchHeaders {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
     }
+}
+
+/// RFC 9110 §5.5 `field-value`: `field-vchar` (VCHAR / obs-text), SP and HTAB.
+/// The byte-slice form of the scan
+/// [`FetchHeaders::find_invalid_value_header_name`] runs over a `FetchHeaders`,
+/// for values the HTTP serializers write without going through the header map.
+pub fn is_valid_header_value(value: &[u8]) -> bool {
+    !value
+        .iter()
+        .any(|&byte| byte != b'\t' && (byte < 0x20 || byte == 0x7f))
+}
+
+/// Node's `ERR_INVALID_CHAR` for a header whose value failed
+/// [`is_valid_header_value`]. Matches the message `validateHeaderValue` throws
+/// from `node:http`'s `setHeader`.
+pub fn invalid_header_value_error(
+    global: &JSGlobalObject,
+    name: impl core::fmt::Display,
+) -> JSValue {
+    ErrorCode::ERR_INVALID_CHAR.fmt(
+        global,
+        format_args!("Invalid character in header content [\"{name}\"]"),
+    )
 }
 
 // Canonical enum lives in `bun_http_types::Method::HeaderName` (same 92

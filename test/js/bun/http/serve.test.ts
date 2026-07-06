@@ -1354,6 +1354,327 @@ describe("Response.error()", () => {
   });
 });
 
+// A `Headers` value may hold C0 controls and DEL -- the Fetch spec only bans
+// NUL/CR/LF there -- but RFC 9110 5.5 `field-value` cannot encode them, so the
+// HTTP/1 serializer must refuse them the way node's `setHeader` does, instead
+// of writing bytes no strict parser (bun's own `fetch()` included) accepts.
+describe("header values that cannot be written to the wire", () => {
+  const invalidChar = (name: string) => `Invalid character in header content ["${name}"]`;
+
+  async function rawResponse(port: number): Promise<string> {
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    connection.flush();
+    await promise;
+    return Buffer.concat(received).toString("latin1");
+  }
+
+  // A WebSocket handshake a real client cannot send: `WebSocket` rejects a
+  // subprotocol holding DEL long before it reaches the wire.
+  async function rawHandshake(port: number, extraHeader: string): Promise<string> {
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        // The server answers in one write either way: a 400 and close, or the
+        // 101 block. Resolving on the first chunk avoids waiting on a close
+        // that a successful upgrade would never send.
+        data(socket, data) {
+          received.push(data);
+          resolve();
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(
+      "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${extraHeader}\r\n`,
+    );
+    connection.flush();
+    await promise;
+    return Buffer.concat(received).toString("latin1");
+  }
+
+  // The `Headers` constructor has to accept every one of these (see the
+  // Fetch spec's header value definition), which is what makes them reachable.
+  const unwritable: [label: string, header: string, value: string][] = [
+    ["SOH in set-cookie", "Set-Cookie", "k=a\x01b"],
+    ["DEL in set-cookie", "Set-Cookie", "k=a\x7fb"],
+    ["form feed in a common header", "Location", "/a\x0cb"],
+    ["unit separator in an uncommon header", "X-Request-Id", "a\x1fb"],
+  ];
+
+  it.each(unwritable)("Headers accepts %s, the wire does not", (_label, header, value) => {
+    expect(new Headers({ [header]: value }).get(header)).toBe(value);
+  });
+
+  describe.each(unwritable)("%s", (_label, header, value) => {
+    // `Headers` keys are lowercase, so that is how the offender is named.
+    const reported = header.toLowerCase();
+
+    it.each([
+      ["sync", () => new Response("hello", { headers: { [header]: value } })],
+      ["async", async () => new Response("hello", { headers: { [header]: value } })],
+    ])("a %s fetch handler returning it reaches error()", async (_kind, fetchImpl) => {
+      const errors: Error[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: fetchImpl,
+        error(error) {
+          errors.push(error);
+          return new Response("handled", { status: 502 });
+        },
+      });
+
+      const raw = await rawResponse(server.port);
+      expect(raw.split("\r\n")[0]).toBe("HTTP/1.1 502 Bad Gateway");
+      expect(raw).not.toContain(value);
+      expect(errors.map(error => [error.name, (error as NodeJS.ErrnoException).code, error.message])).toEqual([
+        ["TypeError", "ERR_INVALID_CHAR", invalidChar(reported)],
+      ]);
+    });
+
+    it.each([
+      ["an in-memory body", () => "hello"],
+      ["a file body", () => file(import.meta.path)],
+    ])("is rejected when registered as a static route with %s", (_kind, body) => {
+      expect(() =>
+        Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          routes: { "/": new Response(body(), { headers: { [header]: value } }) },
+        }),
+      ).toThrow(invalidChar(reported));
+    });
+
+    // An HTML import's manifest carries per-file headers straight to the same
+    // static/file route writers, bypassing the Response constructor entirely.
+    it("is rejected in an HTML import manifest", () => {
+      using dir = tempDir("serve-html-manifest-header", { "index.html": "<!DOCTYPE html><html></html>" });
+      const manifest = {
+        index: "./index.html",
+        files: [
+          {
+            input: "index.html",
+            path: join(String(dir), "index.html"),
+            loader: "html",
+            isEntry: true,
+            headers: { [header]: value },
+          },
+        ],
+      };
+
+      expect(() => Bun.serve({ port: 0, hostname: "127.0.0.1", routes: { "/": manifest } })).toThrow(
+        invalidChar(reported),
+      );
+    });
+
+    // The 101 response carries `options.headers` verbatim, so upgrade() has to
+    // refuse the same values. It throws inside the fetch handler, like
+    // `setHeader` would, rather than writing them after the status line.
+    it("is rejected by server.upgrade()", async () => {
+      const errors: Error[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch(request, server) {
+          try {
+            server.upgrade(request, { headers: { [header]: value } });
+            return new Response("upgraded");
+          } catch (error) {
+            errors.push(error as Error);
+            return new Response("rejected", { status: 400 });
+          }
+        },
+        websocket: { message() {} },
+      });
+
+      const { resolve, reject, promise } = Promise.withResolvers<void>();
+      const socket = new WebSocket(server.url);
+      socket.onopen = () => reject(new Error("handshake should not have succeeded"));
+      socket.onerror = () => resolve();
+      socket.onclose = () => resolve();
+      await promise;
+
+      expect(errors.map(error => [error.name, (error as NodeJS.ErrnoException).code, error.message])).toEqual([
+        ["TypeError", "ERR_INVALID_CHAR", invalidChar(reported)],
+      ]);
+    });
+  });
+
+  // uWS echoes these two into the 101 response through its upgrade arguments
+  // rather than the header map, so they never pass through `options.headers`.
+  // Their value can also come from a mutated `request.headers` or straight off
+  // the client's request, and all three reach the wire.
+  describe.each(["sec-websocket-protocol", "sec-websocket-extensions"])("%s", header => {
+    it("is rejected by server.upgrade() when it comes from request.headers", async () => {
+      const errors: Error[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch(request, server) {
+          request.headers.set(header, "a\x01b");
+          try {
+            server.upgrade(request);
+            return new Response("upgraded");
+          } catch (error) {
+            errors.push(error as Error);
+            return new Response("rejected", { status: 400 });
+          }
+        },
+        websocket: { message() {} },
+      });
+
+      const { resolve, reject, promise } = Promise.withResolvers<void>();
+      const socket = new WebSocket(server.url);
+      socket.onopen = () => reject(new Error("handshake should not have succeeded"));
+      socket.onerror = () => resolve();
+      socket.onclose = () => resolve();
+      await promise;
+
+      expect(errors.map(error => [error.name, (error as NodeJS.ErrnoException).code, error.message])).toEqual([
+        ["TypeError", "ERR_INVALID_CHAR", invalidChar(header)],
+      ]);
+    });
+
+    // uWS's request parser rejects bytes below SP in a field-value but lets DEL
+    // through, so a client can hand the server one it must not echo back.
+    it("is rejected by server.upgrade() when the client sends DEL in it", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch(request, server) {
+          try {
+            server.upgrade(request);
+            return new Response("upgraded");
+          } catch {
+            return new Response("rejected", { status: 400 });
+          }
+        },
+        websocket: { message() {} },
+      });
+
+      const raw = await rawHandshake(server.port, `${header}: a\x7fb\r\n`);
+      expect(raw.split("\r\n")[0]).toBe("HTTP/1.1 400 Bad Request");
+      expect(raw).not.toContain("\x7f");
+    });
+  });
+
+  // Bun reports the synthesized error the same way it reports a thrown one, which
+  // would fail this test process, so the default 500 page is checked in a child.
+  // An error() handler that returns an equally unwritable Response -- directly or
+  // through a promise -- falls back to that page instead of writing the bytes.
+  it("responds 500 with no error() handler, and when error() returns one too", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const bad = () => new Response("hello", { headers: { "Set-Cookie": "k=a\\x01b" } });
+        const servers = [
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: bad }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: bad, error: bad }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: bad, error: async () => bad() }),
+        ];
+        for (const server of servers) {
+          const response = await fetch(server.url);
+          console.log(response.status, await response.text());
+          server.stop(true);
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("500 Something went wrong!\n".repeat(3));
+    expect(stderr).toContain(invalidChar("set-cookie"));
+  });
+
+  // `new Response(Bun.file(path))` derives `Content-Disposition: filename="..."`
+  // from the file name, which an app serving user uploads does not control.
+  // Windows cannot name a file this way, so only POSIX can reach it.
+  describe.skipIf(!isPosix)("the auto Content-Disposition filename", () => {
+    it.each([
+      ["is dropped when the file name holds a control character", "a\x01b.bin", null],
+      ["is dropped when the file name holds DEL", "a\x7fb.bin", null],
+      // `filename="a\"` escapes the closing quote, leaving the value unterminated.
+      ["is dropped when the file name holds a backslash", "a\\b.bin", null],
+      ["is kept for a writable file name", "a~b.bin", 'filename="a~b.bin"'],
+    ])("%s", async (_label, name, expected) => {
+      using dir = tempDir("serve-content-disposition", { [name]: "x" });
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: () => new Response(file(join(String(dir), name))),
+      });
+
+      // Nothing the field-value grammar excludes reaches the socket. CR and LF
+      // are the message's own framing, and the body here is a single `x`.
+      expect(await rawResponse(server.port)).not.toMatch(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/);
+      const response = await fetch(server.url);
+      expect(await response.text()).toBe("x");
+      expect(response.headers.get("content-disposition")).toBe(expected);
+    });
+  });
+
+  // The rule is RFC 9110's `field-vchar / SP / HTAB`, not "ASCII printable":
+  // rejecting more than that would break header values that are legal today.
+  // `~` (0x7e) and SP (0x20) sit right next to the two rejected boundaries.
+  it.each([
+    ["interior HTAB", "a\tb"],
+    ["interior space", "a b"],
+    ["obs-text", "caf\u00e9"],
+    ["VCHAR below DEL", "a~b"],
+  ])("still writes %s", async (_label, value) => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      fetch: () => new Response("hello", { headers: { "X-Request-Id": value } }),
+      error: error => new Response(error.message, { status: 502 }),
+    });
+
+    // The value has to reach the client intact, not merely escape rejection: a
+    // silent drop would satisfy a status-only assertion.
+    const response = await fetch(server.url);
+    expect(response.headers.get("x-request-id")).toBe(value);
+    expect(await response.text()).toBe("hello");
+    expect(response.status).toBe(200);
+  });
+});
+
 describe("response framing", () => {
   type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
   // Read the raw response so that `Content-Length: 0` and an absent

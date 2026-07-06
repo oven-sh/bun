@@ -754,7 +754,7 @@ where
         };
         // SAFETY: `response` is the live cell pointer; `value` is rooted by the
         // caller's frame and protect()'d below.
-        if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+        if unsafe { ctx.reject_unsendable_response(response) } {
             return;
         }
         ctx.response_jsvalue = value;
@@ -2656,7 +2656,7 @@ where
         // for as long as `response` is used.
         if let Some(response) = as_response(response_value) {
             // SAFETY: `response` is the live, rooted cell pointer.
-            if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+            if unsafe { ctx.reject_unsendable_response(response) } {
                 return;
             }
             ctx.response_jsvalue = response_value;
@@ -2733,7 +2733,7 @@ where
                     };
 
                     // SAFETY: `response` is the live, rooted cell pointer.
-                    if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+                    if unsafe { ctx.reject_unsendable_response(response) } {
                         return;
                     }
 
@@ -3363,13 +3363,29 @@ where
     }
 
     /// `false` when the Response can be written. A status outside `100..=999`
-    /// has no HTTP status line, so the Response can never reach the client:
-    /// report it like a thrown error rather than writing an unparseable one.
+    /// has no HTTP status line, and a header value holding a C0 control or DEL
+    /// has no HTTP field-value encoding, so neither can reach the client
+    /// intact: report them like a thrown error rather than writing an
+    /// unparseable response.
     ///
-    /// Takes the status, not the Response: `run_error_handler` below runs user
-    /// JS, which may write through the cell pointer the caller holds.
-    fn reject_unsendable_response(&mut self, status: u16) -> bool {
-        if HTTPStatusText::is_sendable(status) {
+    /// Takes the cell pointer, not `&Response`: the header scan yields an owned
+    /// name, and `run_error_handler` below runs user JS that may write through
+    /// the pointer, so no borrow may be held across it.
+    ///
+    /// # Safety
+    /// `response` must be a live, rooted `Response` cell pointer.
+    unsafe fn reject_unsendable_response(&mut self, response: *mut Response) -> bool {
+        // SAFETY: caller contract; both reads produce owned values and hold no
+        // borrow across `run_error_handler`.
+        let status = unsafe { (*response).status_code() };
+        let status_is_sendable = HTTPStatusText::is_sendable(status);
+        let invalid_header = if status_is_sendable {
+            // SAFETY: caller contract; the returned name owns its bytes.
+            unsafe { invalid_response_header_name(response) }
+        } else {
+            None
+        };
+        if status_is_sendable && invalid_header.is_none() {
             return false;
         }
         let Some(server) = self.server else {
@@ -3378,9 +3394,12 @@ where
         };
         // SAFETY: BACKREF
         let global_this = (*server).global_this();
-        let err = global_this.create_error_instance(format_args!(
-            "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
-        ));
+        let err = match &invalid_header {
+            Some(name) => jsc::invalid_header_value_error(global_this, name),
+            None => global_this.create_error_instance(format_args!(
+                "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+            )),
+        };
         self.run_error_handler(err);
         true
     }
@@ -3476,7 +3495,7 @@ where
                         // An unsendable Response from the error handler itself
                         // falls through to the default error page below.
                         // SAFETY: `response` is the live, rooted cell pointer.
-                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                        if unsafe { response_is_sendable(response) } {
                             // SAFETY: as above.
                             unsafe { self.render(response) };
                             return;
@@ -3530,7 +3549,7 @@ where
                 };
 
                 // SAFETY: `response` is the live, rooted cell pointer.
-                if !HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                if !unsafe { response_is_sendable(response) } {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 }
@@ -3678,9 +3697,12 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !truncated
-                        .iter()
-                        .any(|&b| matches!(b, b'\r' | b'\n' | 0 | b'"'))
+                    // On top of the field-value rule, `"` closes the
+                    // quoted-string early and `\` escapes whatever follows it,
+                    // including the closing quote. A filename that cannot be
+                    // encoded drops the header.
+                    if jsc::is_valid_header_value(truncated)
+                        && !truncated.iter().any(|&b| b == b'"' || b == b'\\')
                     {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
@@ -4477,6 +4499,31 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         #[cfg(not(debug_assertions))]
         let _ = v;
     }
+}
+
+/// Name of the first header on `response` whose value cannot be written as an
+/// HTTP field-value. Paired with [`jsc::invalid_header_value_error`] to report
+/// it the way `node:http`'s `setHeader` does.
+///
+/// # Safety
+/// `response` must be a live, rooted `Response` cell pointer. The returned
+/// `OwnedString` owns its bytes, so the transient borrow ends with this call.
+unsafe fn invalid_response_header_name(response: *mut Response) -> Option<bun_core::OwnedString> {
+    // SAFETY: caller contract — transient shared read, no borrow escapes.
+    unsafe { &*response }
+        .get_init_headers()
+        .and_then(FetchHeaders::find_invalid_value_header_name)
+}
+
+/// Both halves of a Response that the HTTP serializer must be able to encode:
+/// a status line and header values. See [`invalid_response_header_name`].
+///
+/// # Safety
+/// `response` must be a live, rooted `Response` cell pointer.
+unsafe fn response_is_sendable(response: *mut Response) -> bool {
+    // SAFETY: caller contract.
+    HTTPStatusText::is_sendable(unsafe { (*response).status_code() })
+        && unsafe { invalid_response_header_name(response) }.is_none()
 }
 
 fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {

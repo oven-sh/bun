@@ -1868,6 +1868,50 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
     return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
 }
 
+// RFC 9110 §5.5 `field-value`: `field-vchar` (VCHAR / obs-text) plus SP and
+// HTAB. Everything below SP except HTAB, and DEL, is unwritable. Node's
+// `checkInvalidHeaderChar` (`/[^\t\x20-\x7e\x80-\xff]/`) rejects the same
+// characters; `Headers` already rejects the code units above 0xFF it also bans.
+static bool isInvalidHTTPHeaderValue(const WTF::String& value)
+{
+    return value.contains([](char16_t character) {
+        return character != '\t' && (character < 0x20 || character == 0x7f);
+    });
+}
+
+// Writes the name of the first header whose value cannot be serialized into an
+// HTTP field-value, or the empty string when every value can go on the wire.
+// `Headers` itself only rejects NUL/CR/LF (per the Fetch spec), so the HTTP
+// serializers have to reject the remaining control characters themselves.
+// Names are reported lowercased, the form `Headers` exposes through its keys.
+void WebCore__FetchHeaders__findInvalidValueHeaderName(WebCore::FetchHeaders* headers, BunString* outName)
+{
+    const auto& internalHeaders = headers->internalHeaders();
+
+    for (const auto& value : internalHeaders.getSetCookieHeaders()) {
+        if (isInvalidHTTPHeaderValue(value)) {
+            *outName = Bun::toStringRef(WTF::httpHeaderNameStringImpl(WebCore::HTTPHeaderName::SetCookie));
+            return;
+        }
+    }
+
+    for (const auto& header : internalHeaders.commonHeaders()) {
+        if (isInvalidHTTPHeaderValue(header.value)) {
+            *outName = Bun::toStringRef(WTF::httpHeaderNameStringImpl(header.key));
+            return;
+        }
+    }
+
+    for (const auto& header : internalHeaders.uncommonHeaders()) {
+        if (isInvalidHTTPHeaderValue(header.value)) {
+            *outName = Bun::toStringRef(header.key.convertToASCIILowercase());
+            return;
+        }
+    }
+
+    *outName = BunStringEmpty;
+}
+
 void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
 {
     auto iter = headers->createIterator(false);

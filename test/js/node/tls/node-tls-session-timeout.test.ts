@@ -12,8 +12,12 @@ import tls, { connect, createServer } from "node:tls";
 // only guaranteed expired once two full seconds of wall clock have elapsed.
 const SESSION_TIMEOUT_SECONDS = 1;
 const PAST_THE_TIMEOUT_MS = SESSION_TIMEOUT_SECONDS * 2000 + 250;
+const GET = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
 
-async function startServer(label: string, options: tls.TlsOptions, resumesAfterTheWait: boolean) {
+// `sessionTimeout` is exempt from validation when null, so tests pass it.
+type Options = tls.TlsOptions & { sessionTimeout?: number | null };
+
+async function startServer(label: string, options: Options, resumesAfterTheWait: boolean) {
   const reusedServerSide: boolean[] = [];
   const server = createServer({ ...COMMON_CERT, ...options }, socket => {
     reusedServerSide.push(socket.isSessionReused());
@@ -46,10 +50,11 @@ test("tls.createServer refuses a ticket handed back after sessionTimeout has pas
   const servers = await Promise.all(
     (["TLSv1.2", "TLSv1.3"] as const).flatMap(maxVersion => [
       startServer(`${maxVersion} sessionTimeout=1`, { maxVersion, sessionTimeout: SESSION_TIMEOUT_SECONDS }, false),
-      // 0 and "omitted" both mean the TLS library's own (hours-long) default.
-      // Same cert, key and version as the one-second server above, so these
-      // also pin that the SSL_CTX cache keys on sessionTimeout.
+      // 0, null and "omitted" all mean the TLS library's own (hours-long)
+      // default. Same cert, key and version as the one-second server above, so
+      // these also pin that the SSL_CTX cache keys on sessionTimeout.
       startServer(`${maxVersion} sessionTimeout=0`, { maxVersion, sessionTimeout: 0 }, true),
+      startServer(`${maxVersion} sessionTimeout=null`, { maxVersion, sessionTimeout: null }, true),
       startServer(`${maxVersion} no sessionTimeout`, { maxVersion }, true),
     ]),
   );
@@ -83,7 +88,6 @@ test("tls.createServer refuses a ticket handed back after sessionTimeout has pas
 });
 
 test("https.createServer stamps sessionTimeout into its tickets too", async () => {
-  const GET = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
   const server = https.createServer({ ...COMMON_CERT, sessionTimeout: SESSION_TIMEOUT_SECONDS }, (_, res) => res.end());
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -95,6 +99,25 @@ test("https.createServer stamps sessionTimeout into its tickets too", async () =
     await Bun.sleep(PAST_THE_TIMEOUT_MS);
 
     expect((await handshake(port, fresh.ticket, GET)).reused).toBe(false);
+  } finally {
+    server.close();
+  }
+  await once(server, "close");
+});
+
+// A null sessionTimeout is exempt from validation (Node's check is the same) and
+// has to reach the native option parser as `undefined`, which is the only value
+// that parser reads as absent. The server cases above already cover
+// tls.createServer; these are the other two paths that forward the option.
+test("sessionTimeout: null is accepted as 'not provided'", async () => {
+  expect(tls.createSecureContext({ sessionTimeout: null } as Options)).toBeDefined();
+
+  const server = https.createServer({ ...COMMON_CERT, sessionTimeout: null } as Options, (_, res) => res.end());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { reused } = await handshake((server.address() as AddressInfo).port, undefined, GET);
+    expect(reused).toBe(false);
   } finally {
     server.close();
   }

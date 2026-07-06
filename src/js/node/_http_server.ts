@@ -310,7 +310,8 @@ function Server(options, callback): void {
         ca,
         passphrase,
         secureOptions,
-        sessionTimeout: options.sessionTimeout,
+        // null means "not provided"; the native parser only reads undefined as absent.
+        sessionTimeout: options.sessionTimeout ?? undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });

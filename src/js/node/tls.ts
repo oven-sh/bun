@@ -754,7 +754,9 @@ function newNativeSecureContext(options, cached = true) {
         minVersion = tlsStringToProtocolVersion(optMinVersion ?? DEFAULT_MIN_VERSION);
         maxVersion = tlsStringToProtocolVersion(optMaxVersion ?? DEFAULT_MAX_VERSION);
       }
-      options = { ...options, minVersion, maxVersion };
+      // A null sessionTimeout means "not provided" (Node's check is the same),
+      // but the native option parser only reads `undefined` as absent.
+      options = { ...options, minVersion, maxVersion, sessionTimeout: options.sessionTimeout ?? undefined };
     }
   }
   const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
@@ -1380,10 +1382,10 @@ function Server(options, secureConnectionListener): void {
       }
       this.secureOptions = secureOptions;
 
-      // validateSecureContextOptions already range-checked this. Assign
-      // unconditionally so an omitted sessionTimeout clears a previous call's
-      // value instead of keeping the old lifetime on the next listen.
-      this.sessionTimeout = options.sessionTimeout;
+      // validateSecureContextOptions already range-checked this, and exempts
+      // null the way Node does. Assign unconditionally so an omitted (or null)
+      // sessionTimeout clears a previous call's value on the next listen.
+      this.sessionTimeout = options.sessionTimeout ?? undefined;
 
       const requestCert = options.requestCert || false;
 

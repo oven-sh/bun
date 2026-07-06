@@ -3189,8 +3189,7 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
 
 // Opens a raw TLS/http-1.1 connection to the allowHTTP1 fallback, writes
 // requestText, and resolves with the full response once the socket ends.
-// onData(buf, socket) fires on every chunk so a caller can send the body
-// after seeing a 100 Continue, mirroring an RFC-following uploader.
+// onData(buf, socket) fires per chunk so callers can send the body on 100 Continue.
 async function sendRawHttp1Request(server, requestText, onData) {
   await new Promise(resolve => server.listen(0, resolve));
   try {

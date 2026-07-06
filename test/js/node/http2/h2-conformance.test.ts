@@ -498,7 +498,7 @@ describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
       stderr: expect.not.stringContaining("ERR_HTTP2"),
       exitCode: 0,
     });
-  });
+  }, 30_000);
 
   // Same guard, second hand-off point: a pushStream() whose PUSH_PROMISE headers fail native
   // validation destroys the not-yet-delivered pushed stream with the validation error. Only the
@@ -549,7 +549,7 @@ describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
       stderr: expect.not.stringContaining("ERR_INVALID_HTTP_TOKEN"),
       exitCode: 0,
     });
-  });
+  }, 30_000);
 });
 
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`

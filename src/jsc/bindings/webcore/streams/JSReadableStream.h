@@ -30,7 +30,8 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_reader, m_storedError, m_controller, m_nativePtr,
-    // m_directUnderlyingSource, m_asyncContext. No barrier container ⇒ no cellLock needed.
+    // m_directUnderlyingSource, m_asyncContext, m_closedPromise. No barrier container ⇒ no
+    // cellLock needed.
     DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
@@ -84,6 +85,9 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_directUnderlyingSource;
     // `$asyncContext` snapshot at construction. Written once in finishCreation.
     JSC::WriteBarrier<JSC::Unknown> m_asyncContext;
+    // Settles when the stream reaches a terminal state, for observers that must not lock it
+    // (node:stream's finished()). Created on first request; empty until then.
+    JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
     // `$highWaterMark` on the STREAM (the raw strategy HWM, ToNumber'd once). NaN = unset.
     // Written by ALL FOUR constructor arms.
     double m_bunHighWaterMark { std::numeric_limits<double>::quiet_NaN() };

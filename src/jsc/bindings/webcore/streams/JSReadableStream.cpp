@@ -487,6 +487,7 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nativePtr);
     visitor.append(thisObject->m_directUnderlyingSource);
     visitor.append(thisObject->m_asyncContext);
+    visitor.append(thisObject->m_closedPromise);
 }
 
 void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)

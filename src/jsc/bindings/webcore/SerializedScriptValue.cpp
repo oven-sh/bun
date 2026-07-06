@@ -5659,6 +5659,9 @@ DeserializationResult CloneDeserializer::deserialize()
         }
         case ObjectEndVisitMember: {
             putProperty(outputObjectStack.last(), propertyNameStack.last(), outValue);
+            if (scope.exception()) [[unlikely]] {
+                goto error;
+            }
             propertyNameStack.removeLast();
             goto objectStartVisitMember;
         }

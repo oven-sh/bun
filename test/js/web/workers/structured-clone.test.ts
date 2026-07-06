@@ -1012,6 +1012,36 @@ describe("sparse arrays", () => {
     }
   });
 
+  // Deserializing a non-terminal value under a numeric property name puts it with
+  // putDirectMayBeIndex, which reaches a throwing path once the index is past the object's
+  // vector. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.
+  test("a nested value at a numeric property name checks for an exception", async () => {
+    const fixture = /* js */ `
+      // A plain object whose key is above JSC's MIN_SPARSE_ARRAY_INDEX.
+      const sparseKey = structuredClone({ "200000": { nested: "a" } });
+      // And an array index the serializer writes as a name for the same reason.
+      const reserved = [];
+      reserved[4294967293] = { nested: "b" };
+      const clonedReserved = structuredClone(reserved);
+      console.log(sparseKey[200000].nested + clonedReserved[4294967293].nested);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Combined so stderr, where JSC prints the exception check failure, lands in the diff.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: expect.stringMatching(/ab\n$/),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   // The serializer writes each element as <index:uint32_t>, and 0xFFFFFFFD..0xFFFFFFFF are
   // reserved there for control tags. 4294967293 and 4294967294 are the last two valid array
   // indices, so they have to be written as named properties instead.

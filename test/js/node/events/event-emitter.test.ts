@@ -1059,6 +1059,45 @@ describe("process", () => {
     }
   });
 
+  test("a re-registered rawListeners() wrapper still fires only once", () => {
+    const f = mock(() => {});
+    try {
+      process.once("bun-raw-listeners-re", f);
+      const [wrapper] = process.rawListeners("bun-raw-listeners-re");
+      process.removeAllListeners("bun-raw-listeners-re");
+
+      process.on("bun-raw-listeners-re", wrapper);
+      process.emit("bun-raw-listeners-re");
+      process.emit("bun-raw-listeners-re");
+
+      expect(f).toHaveBeenCalledTimes(1);
+      expect(process.listenerCount("bun-raw-listeners-re")).toBe(0);
+    } finally {
+      process.removeAllListeners("bun-raw-listeners-re");
+    }
+  });
+
+  test("symbol event names survive the once() wrapper round-trip", () => {
+    const eventName = Symbol("bun-symbol-event");
+    const f = () => {};
+    const seen: unknown[] = [];
+    const onRemove = (name: unknown) => name === eventName && seen.push(name);
+    try {
+      process.on("removeListener", onRemove);
+
+      process.once(eventName, f);
+      const [wrapper] = process.rawListeners(eventName);
+      expect(wrapper.listener).toBe(f);
+
+      process.removeListener(eventName, wrapper);
+      expect(process.listenerCount(eventName)).toBe(0);
+      expect(seen).toEqual([eventName]);
+    } finally {
+      process.off("removeListener", onRemove);
+      process.removeAllListeners(eventName);
+    }
+  });
+
   test("newListener still receives the original function for once()", () => {
     const f = () => {};
     const seen: unknown[] = [];

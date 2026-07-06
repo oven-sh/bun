@@ -469,6 +469,7 @@ describe("delete with prefixed cookie names", () => {
       'Invalid cookie name: "__Host-" prefix requires path: "/"',
     );
     expect(map.get("__Host-id")).toBe("1");
+    expect(map.toSetCookieHeaders()).toEqual([]);
   });
 });
 
@@ -507,7 +508,9 @@ describe("set with prefixed cookie names", () => {
 
   test("a rejected set leaves the previous cookie in place", () => {
     const map = new Bun.CookieMap("__Host-s=original");
-    expect(() => map.set("__Host-s", "replacement")).toThrow();
+    expect(() => map.set("__Host-s", "replacement")).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires secure: true',
+    );
     expect(map.get("__Host-s")).toBe("original");
     expect(map.toSetCookieHeaders()).toEqual([]);
   });

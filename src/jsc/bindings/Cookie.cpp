@@ -73,12 +73,12 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const CookieInit& init)
 // RFC 6265bis 4.1.3: a user agent ignores a cookie whose name carries one of these prefixes
 // unless the cookie satisfies the prefix's requirements. Browsers match the prefix
 // case-insensitively.
-static bool hasHostPrefix(const String& name)
+bool Cookie::hasHostPrefix(const String& name)
 {
     return name.startsWithIgnoringASCIICase("__Host-"_s);
 }
 
-static bool hasSecurePrefix(const String& name)
+bool Cookie::hasSecurePrefix(const String& name)
 {
     return name.startsWithIgnoringASCIICase("__Secure-"_s);
 }

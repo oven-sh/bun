@@ -118,6 +118,9 @@ public:
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 
+    static bool hasHostPrefix(const String& name);
+    static bool hasSecurePrefix(const String& name);
+
     static ExceptionOr<void> validateCookiePath(const String& path);
     static ExceptionOr<void> validateNamePrefix(const String& name, const String& domain, const String& path, bool secure);
 

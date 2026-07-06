@@ -142,6 +142,8 @@ cookies.delete({
 });
 ```
 
+The expiring cookie has to satisfy the name's prefix requirements too, so `delete()` throws a `TypeError` for the same combinations `set()` rejects. Deleting a `__Host-` cookie with a `domain`, or with a `path` other than `"/"`, would emit a cookie the browser ignores, leaving the original cookie in place.
+
 #### `toJSON(): Record<string, string>`
 
 Converts the cookie map to a serializable format.
@@ -390,10 +392,15 @@ const cookie = Bun.Cookie.from("session", "abc123", {
 
 ```ts title="types.ts" icon="/icons/typescript.svg"
 interface CookieInit {
+  /**
+   * A name starting with `__Secure-` requires `secure`, and a name starting with `__Host-`
+   * requires `secure`, no `domain`, and a `path` of `/`. Browsers ignore cookies that use
+   * one of these prefixes without meeting its requirements.
+   */
   name?: string;
   value?: string;
   domain?: string;
-  /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
+  /** Defaults to '/'. Must start with '/'. To allow the browser to set the path, use an empty string. */
   path?: string;
   expires?: number | Date | string;
   secure?: boolean;

@@ -199,7 +199,7 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     String name = options.name;
     // The expiring cookie has to satisfy the prefix rules too, or the user agent ignores it
     // and the cookie stays in the browser.
-    bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
+    bool secure = Cookie::hasSecurePrefix(name) || Cookie::hasHostPrefix(name);
     CookieInit init { name, ""_s, options.domain, options.path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false };
 
     auto cookie_exception = Cookie::create(init);

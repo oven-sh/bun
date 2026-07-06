@@ -494,6 +494,11 @@ pub(crate) fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject)
     ReadableStream__isDisturbed(value, global_object)
 }
 
+pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
+    // SAFETY: FFI call; value may be any JSValue (C++ side checks).
+    ReadableStream__isLocked(value, global_object)
+}
+
 // ─── Tag / Source ────────────────────────────────────────────────────────────
 
 #[repr(i32)]

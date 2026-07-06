@@ -1235,19 +1235,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request_mut!() {
             let body_value = req.get_body_value();
-            let already_used = match body_value {
-                BodyValue::Used => true,
-                BodyValue::Locked(locked) => {
+            // fetch spec: a Request whose body is unusable (disturbed *or* locked) is a TypeError.
+            let (already_used, is_locked) = match body_value {
+                BodyValue::Used => (true, false),
+                BodyValue::Locked(locked) => (
                     locked.action != BodyValueLockedAction::None
-                        || locked.is_disturbed::<Request>(global_this, first_arg)
-                }
-                _ => false,
+                        || locked.is_disturbed::<Request>(global_this, first_arg),
+                    locked.is_locked::<Request>(global_this, first_arg),
+                ),
+                _ => (false, false),
             };
             if already_used {
                 return Err(global_this
                     .err(
                         jsc::ErrorCode::BODY_ALREADY_USED,
                         format_args!("Request body already used"),
+                    )
+                    .throw());
+            }
+            if is_locked {
+                return Err(global_this
+                    .err(
+                        jsc::ErrorCode::INVALID_STATE_TypeError,
+                        format_args!("Invalid state: ReadableStream is locked"),
                     )
                     .throw());
             }

@@ -355,6 +355,24 @@ impl PendingValue {
         false
     }
 
+    /// The other half of the fetch spec's "body unusable": a reader is attached to the body's
+    /// stream. Mirrors [`Self::is_disturbed`] — the JS-side stream cache is the source of truth.
+    pub(crate) fn is_locked<T: BodyOwnerJs>(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+    ) -> bool {
+        if let Some(body_value) = T::body_get_cached(this_value) {
+            return webcore::readable_stream::is_locked_value(body_value, global_object);
+        }
+
+        if let Some(readable) = self.readable.get(global_object) {
+            return readable.is_locked(global_object);
+        }
+
+        false
+    }
+
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
         if self.promise.is_some() {
             return true;

@@ -227,10 +227,13 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
     using dir = tempDir("stdout-hangup", { "fixture.js": fixture });
     const resultFile = join(String(dir), "result.json");
 
+    let output = "";
+    const decoder = new TextDecoder();
     const { promise: ready, resolve } = Promise.withResolvers<void>();
     await using terminal = new Bun.Terminal({
-      data(_terminal, chunk) {
-        if (Buffer.from(chunk).toString().includes("READY")) resolve();
+      data(_terminal, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("READY")) resolve();
       },
     });
 

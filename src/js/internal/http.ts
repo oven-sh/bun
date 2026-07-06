@@ -72,6 +72,7 @@ const firstWriteSymbol = Symbol("firstWrite");
 const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kHttp1FallbackResponse = Symbol("http1FallbackResponse");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
@@ -549,6 +550,7 @@ export {
   kEmptyObject,
   kFetchRequest,
   kHandle,
+  kHttp1FallbackResponse,
   kHost,
   kInternalSocketData,
   kMaxHeaderSize,

@@ -756,8 +756,7 @@ where
             ctx.render_missing_invalid_response(value);
             return;
         };
-        if !HTTPStatusText::is_sendable(response.status_code()) {
-            ctx.reject_unsendable_response(response.status_code());
+        if ctx.reject_unsendable_response(response) {
             return;
         }
         ctx.response_jsvalue = value;
@@ -2649,8 +2648,7 @@ where
         // `response_value` is rooted via ensure_still_alive() / protect()
         // below for the duration of the borrow.
         if let Some(response) = unsafe { as_response(response_value) } {
-            if !HTTPStatusText::is_sendable(response.status_code()) {
-                ctx.reject_unsendable_response(response.status_code());
+            if ctx.reject_unsendable_response(response) {
                 return;
             }
             ctx.response_jsvalue = response_value;
@@ -2724,8 +2722,7 @@ where
                         return;
                     };
 
-                    if !HTTPStatusText::is_sendable(response.status_code()) {
-                        ctx.reject_unsendable_response(response.status_code());
+                    if ctx.reject_unsendable_response(response) {
                         return;
                     }
 
@@ -3351,12 +3348,17 @@ where
         self.run_error_handler_with_status_code(value, 500);
     }
 
-    /// A status outside `100..=999` has no HTTP status line, so the Response
-    /// can never reach the client. Report it like a thrown error instead of
-    /// writing an unparseable status line to the socket.
-    fn reject_unsendable_response(&mut self, status: u16) {
+    /// `false` when the Response can be written. A status outside `100..=999`
+    /// has no HTTP status line, so the Response can never reach the client:
+    /// report it like a thrown error rather than writing an unparseable one.
+    fn reject_unsendable_response(&mut self, response: &Response) -> bool {
+        let status = response.status_code();
+        if HTTPStatusText::is_sendable(status) {
+            return false;
+        }
         let Some(server) = self.server else {
-            return self.render_production_error(500);
+            self.render_production_error(500);
+            return true;
         };
         // SAFETY: BACKREF
         let global_this = (*server).global_this();
@@ -3364,6 +3366,7 @@ where
             "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
         ));
         self.run_error_handler(err);
+        true
     }
 
     fn ensure_pathname(&self) -> PathnameFormatter<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3> {

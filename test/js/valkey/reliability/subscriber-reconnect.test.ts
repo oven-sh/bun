@@ -120,6 +120,13 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
 
             case "UNSUBSCRIBE": {
               const channels = command.length > 1 ? command.slice(1) : [...state.connection.channels];
+              // Redis always answers, even when the connection holds no subscriptions:
+              // in that case with a single nil-channel confirmation. Staying silent here
+              // hangs the caller's `await unsubscribe()`.
+              if (channels.length === 0) {
+                socket.write(`>3${CRLF}` + bulk("unsubscribe") + `_${CRLF}` + `:0${CRLF}`);
+                break;
+              }
               for (const channel of channels) {
                 state.connection.channels.delete(channel);
                 socket.write(

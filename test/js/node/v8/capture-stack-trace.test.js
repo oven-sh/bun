@@ -1074,3 +1074,42 @@ test("delete Error.prepareStackTrace restores the default formatter", async () =
     exitCode: 0,
   });
 });
+
+// https://github.com/oven-sh/bun/issues/23493
+// error-callsites replaces Error.prepareStackTrace with a JS accessor, then depd assigns
+// through that setter and expects its formatter to receive the CallSite array.
+test("an Error.prepareStackTrace accessor installed with defineProperty is honored", async () => {
+  const fixture = [
+    `let installed;`,
+    `Object.defineProperty(Error, "prepareStackTrace", {`,
+    `  configurable: true,`,
+    `  enumerable: true,`,
+    `  get: () => (err, callsites) => installed(err, callsites),`,
+    `  set: fn => { installed = fn; },`,
+    `});`,
+
+    `Error.prepareStackTrace = (err, callsites) => callsites;`,
+    `const obj = {};`,
+    `function captureHere() { Error.captureStackTrace(obj); }`,
+    `captureHere();`,
+
+    `console.log(JSON.stringify({`,
+    `  isArray: Array.isArray(obj.stack),`,
+    `  topFrame: typeof obj.stack?.[0]?.getFunctionName === "function" ? obj.stack[0].getFunctionName() : null,`,
+    `}));`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout || "null"), exitCode }).toEqual({
+    out: { isArray: true, topFrame: "captureHere" },
+    exitCode: 0,
+  });
+});

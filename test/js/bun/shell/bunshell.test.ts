@@ -531,6 +531,17 @@ describe("bunshell", () => {
         .runAsTest("cmd subst as last atom");
     });
 
+    describe("backslash escaped", async () => {
+      // POSIX: a backslash-escaped tilde is quoted, so it is never expanded.
+      TestBuilder.command`echo \~`.stdout("~\n").runAsTest("escaped lone tilde stays literal");
+      TestBuilder.command`echo \~/x`.stdout("~/x\n").runAsTest("escaped tilde with path stays literal");
+      TestBuilder.command`echo \~nobody`.stdout("~nobody\n").runAsTest("escaped tilde prefix stays literal");
+      TestBuilder.command`echo x\~`.stdout("x~\n").runAsTest("mid-word tilde never expands");
+      // controls: quoting already suppresses expansion correctly.
+      TestBuilder.command`echo '~'`.stdout("~\n").runAsTest("single quotes suppress");
+      TestBuilder.command`echo "~"`.stdout("~\n").runAsTest("double quotes suppress");
+    });
+
     describe("interpolated values", async () => {
       // A `~` that comes from an interpolated value is data, not syntax.
       TestBuilder.command`echo ${"~"}/x`.stdout("~/x\n").runAsTest("interpolated tilde stays literal");

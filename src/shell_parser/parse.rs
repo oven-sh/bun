@@ -3134,6 +3134,22 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
                 continue;
             }
+            // A backslash-escaped leading `~` is quoted, so tilde expansion
+            // must not apply. Flush just that byte as a quoted-text token so
+            // the parser does not read it as a home-directory reference,
+            // matching how `'~'` and `"~"` are handled.
+            else if escaped
+                && char == u32::from(b'~')
+                && self.chars.state == CharState::Normal
+                && self.j == self.word_start
+            {
+                let start = self.word_start;
+                self.append_char_to_str_pool(char)?;
+                self.tokens
+                    .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));
+                self.word_start = self.j;
+                continue;
+            }
 
             self.append_char_to_str_pool(char)?;
         }

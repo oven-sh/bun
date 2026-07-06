@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -578,10 +578,25 @@ impl Stdio {
     pub fn extract_blob(
         &mut self,
         global: &JSGlobalObject,
-        blob: webcore::blob::Any,
+        mut blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
+
+        // `Bun.file(path).slice(a, b)` narrows the Blob to `[offset, offset + size)`.
+        // The fast path below hands the child the fd/path behind the Blob, and an fd
+        // carries no end bound, so the child would read the whole file. Read the
+        // range up front and pipe exactly those bytes instead.
+        if i == 0 {
+            if let Some(result) = webcore::blob::read_file_view(&blob) {
+                let bytes = match result {
+                    Ok(bytes) => bytes,
+                    Err(err) => return Err(err.throw(global)),
+                };
+                blob.detach();
+                blob = webcore::blob::Any::from_owned_slice(bytes);
+            }
+        }
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {

@@ -21,7 +21,7 @@ use bun_core::{
 };
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::StringJsc as _;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3_stub as S3;
@@ -6357,6 +6357,99 @@ fn resolve_file_stat(store: &StoreRef) {
             _ => {}
         },
     }
+}
+
+/// The `[offset, offset + size)` range a `Bun.file(path).slice(a, b)` addresses,
+/// clamped to the file's real size. `None` when there is no range to honor: the
+/// Blob covers the whole file, or its length can't be resolved (pipes, ttys,
+/// missing files).
+fn file_view_range(blob: &Any) -> Option<(SizeType, SizeType)> {
+    let Any::Blob(blob) = blob else {
+        return None;
+    };
+    let offset = blob.offset.get();
+    let size = blob.size.get();
+    // `Bun.file(path)` with no `.slice()`: the whole file, length still unknown.
+    if offset == 0 && size == MAX_SIZE {
+        return None;
+    }
+
+    let store = blob.store.get().as_ref()?;
+    // see `resolve_size` — dispatch on the copied tag and re-read via
+    // `StoreRef::data_mut` after `resolve_file_stat` so no `Deref`-produced
+    // `&Data`/`&File` is live across the mutating call.
+    if store.data_mut().tag() != store::DataTag::File {
+        return None;
+    }
+    if store.data_mut().as_file().seekable.is_none() {
+        resolve_file_stat(store);
+    }
+    let file = store.data_mut().as_file();
+    if file.seekable != Some(true) || file.max_size == MAX_SIZE {
+        return None;
+    }
+
+    let file_size = file.max_size;
+    let offset = offset.min(file_size);
+    let size = size.min(file_size - offset);
+    if offset == 0 && size == file_size {
+        return None;
+    }
+    Some((offset, size))
+}
+
+/// Read the byte range a `Bun.file(path).slice(a, b)` narrows its store to.
+///
+/// For callers that would otherwise pass the underlying fd or path on to
+/// someone else (a child process): an fd carries no end bound, so the whole file
+/// would be readable through it. `None` means the Blob addresses the whole file
+/// (or has no resolvable length) and the fd/path can be passed as-is.
+pub fn read_file_view(blob: &Any) -> Option<bun_sys::Maybe<Vec<u8>>> {
+    let (offset, size) = file_view_range(blob)?;
+    Some(read_file_range(blob.store()?.data.as_file(), offset, size))
+}
+
+/// A short read, because the file shrank since it was stat'd, yields fewer bytes.
+fn read_file_range(
+    file: &store::File,
+    offset: SizeType,
+    size: SizeType,
+) -> bun_sys::Maybe<Vec<u8>> {
+    let mut path_buf = bun_paths::PathBuffer::uninit();
+    // `pread` leaves the seek position alone, so the store's own fd would do;
+    // dup it anyway so one guard closes whichever fd we end up with.
+    let fd = match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd)?,
+        PathOrFileDescriptor::Path(path) => {
+            let flags = if cfg!(windows) {
+                bun_sys::O::RDONLY
+            } else {
+                bun_sys::O::RDONLY | bun_sys::O::NOCTTY
+            };
+            bun_sys::open(path.slice_z(&mut path_buf), flags, 0)?
+        }
+    };
+    let fd = scopeguard::guard(fd, |fd| fd.close());
+
+    let len = usize::try_from(size).expect("int cast");
+    let mut bytes = Vec::<u8>::new();
+    bytes
+        .try_reserve_exact(len)
+        .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+    bytes.resize(len, 0);
+
+    let mut read: usize = 0;
+    while read < len {
+        let at = i64::try_from(offset + read as SizeType).expect("int cast");
+        match bun_sys::pread(*fd, &mut bytes[read..], at) {
+            Ok(0) => break,
+            Ok(n) => read += n,
+            Err(err) if err.get_errno() == bun_sys::E::EINTR => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    bytes.truncate(read);
+    Ok(bytes)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

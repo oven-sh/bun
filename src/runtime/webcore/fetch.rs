@@ -1841,9 +1841,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         &credentials_with_options.credentials,
                         Default::default(),
                         Some(s3_options),
-                        None,
-                        None,
-                        false,
                         global_this,
                     )?;
                 }

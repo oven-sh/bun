@@ -29,6 +29,7 @@ pub use error_jsc::throw_sign_error;
 
 pub use bun_s3_signing::credentials::S3Credentials;
 pub use bun_s3_signing::credentials::S3CredentialsWithOptions;
+pub use bun_s3_signing::credentials::S3DefaultOptions;
 use bun_s3_signing::credentials::encode_uri_component;
 
 pub use crate::webcore::s3::list_objects::S3ListObjectsOptions;
@@ -422,11 +423,12 @@ pub(crate) fn writable_stream(
     path: &[u8],
     global_this: &JSGlobalObject,
     options: MultiPartUploadOptions,
+    acl: Option<ACL>,
+    storage_class: Option<StorageClass>,
     content_type: Option<&[u8]>,
     content_disposition: Option<&[u8]>,
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
-    storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
     // Local callback wrapper
@@ -500,7 +502,7 @@ pub(crate) fn writable_stream(
         ref_count: core::cell::Cell::new(2), // +1 for the stream
         ended: false,
         options,
-        acl: None,
+        acl,
         storage_class,
         request_payer,
         credentials,

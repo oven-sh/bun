@@ -83,7 +83,7 @@ describe("$.braces", () => {
 // globbed on its own. `{d1,d2}/*` used to emit the literal `d1/*` and `d2/*`
 // words *in addition to* their matches, because the brace-expand state pushed
 // every variant to argv and then globbed the un-expanded pattern.
-describe("brace + glob composition", () => {
+describe.concurrent("brace + glob composition", () => {
   // The glob walker joins matched paths with the native separator on Windows,
   // and readdir order is not sorted, so normalize before asserting.
   const words = (out: string) => out.trim().replaceAll("\\", "/").split(" ").sort();
@@ -121,7 +121,9 @@ describe("brace + glob composition", () => {
     using dir = tempDir("shell-brace-glob5", {
       "d1/f1": "",
     });
-    const { stderr, exitCode } = await $`echo {d1,nope}/*`.cwd(String(dir)).quiet().nothrow();
+    const { stdout, stderr, exitCode } = await $`echo {d1,nope}/*`.cwd(String(dir)).quiet().nothrow();
+    // The matches `d1/*` already produced never reach argv: the word fails.
+    expect(stdout.toString()).toBe("");
     expect(stderr.toString()).toBe("bun: no matches found: nope/*\n");
     expect(exitCode).toBe(1);
   });
@@ -136,6 +138,29 @@ describe("brace + glob composition", () => {
     // The interpolated `,foo` is matched as a single literal branch, and does
     // not split into a spurious `]foo` branch.
     expect(words(out)).toEqual(["x.,foo", "x.ts"]);
+  });
+
+  test("an interpolated * inside a brace variant is data, not a pattern", async () => {
+    using dir = tempDir("shell-brace-glob6", {
+      "a1.txt": "",
+      "b1.txt": "",
+    });
+    // The template holds no `*`, so no variant is a glob: both stay literal
+    // even though `a1.txt`/`b1.txt` would match.
+    const out = await $`echo {a,b}${"*"}.txt`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["a*.txt", "b*.txt"]);
+  });
+
+  test("a literal * globs a variant while an interpolated metacharacter stays data", async () => {
+    using dir = tempDir("shell-brace-glob7", {
+      "a[c]1.txt": "",
+      "ac1.txt": "",
+      "b[c]2.txt": "",
+    });
+    // Each variant is neutralized on its own, so the recovered metacharacter
+    // offsets must still point at the template `*` and not at the `[c]`.
+    const out = await $`echo {a,b}${"[c]"}*`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["a[c]1.txt", "b[c]2.txt"]);
   });
 });
 

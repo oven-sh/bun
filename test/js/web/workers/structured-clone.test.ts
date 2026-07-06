@@ -1063,6 +1063,38 @@ describe("sparse arrays", () => {
         length: clonedOnlyReserved.length,
       };
 
+      // A sparse array at a reserved index of another sparse array: the outer walk holds a
+      // pending escaped key while the inner one pushes and pops a whole frame of its own.
+      const inner = [];
+      inner[0] = "inner-first";
+      inner[4294967294] = "inner-high";
+      const outer = [];
+      outer[0] = "outer-first";
+      outer[4294967293] = inner;
+      const clonedNested = deserialize(serialize(structuredClone(outer)));
+      results.nested = {
+        keys: Object.keys(clonedNested),
+        at0: clonedNested[0],
+        length: clonedNested.length,
+        innerKeys: Object.keys(clonedNested[4294967293]),
+        innerAt0: clonedNested[4294967293][0],
+        innerHigh: clonedNested[4294967293][4294967294],
+        innerLength: clonedNested[4294967293].length,
+      };
+
+      // The escaped index goes out as its decimal name, not as a raw <index:uint32_t>. The
+      // control index stays in-band, so its digits never appear in the payload.
+      const nameInPayload = index => {
+        const a = [];
+        a[index] = 1;
+        return Buffer.from(serialize(a)).includes(String(index));
+      };
+      results.wireFormat = {
+        control: nameInPayload(4294967292),
+        reservedLow: nameInPayload(4294967293),
+        reservedHigh: nameInPayload(4294967294),
+      };
+
       console.log(JSON.stringify(results));
     `;
 
@@ -1104,6 +1136,16 @@ describe("sparse arrays", () => {
           high: "high",
           length: 4294967295,
         },
+        nested: {
+          keys: ["0", "4294967293"],
+          at0: "outer-first",
+          length: 4294967294,
+          innerKeys: ["0", "4294967294"],
+          innerAt0: "inner-first",
+          innerHigh: "inner-high",
+          innerLength: 4294967295,
+        },
+        wireFormat: { control: false, reservedLow: true, reservedHigh: true },
       },
       stderr: "",
       exitCode: 0,

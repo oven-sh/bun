@@ -95,9 +95,9 @@ void SigintWatcher::uninstall()
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        // Undo only our own handler. Code that ran while we were armed may have
-        // installed its own (`process.on("SIGINT")`), and clobbering that would
-        // strand the listener for good: BunProcess installs it exactly once.
+        // Undo only our own handler: a native addon may have installed its own
+        // while we were armed, and clobbering it would strand that handler.
+        // `process.on("SIGINT")` instead routes through deferSigintDisposition.
         struct sigaction current;
         if (sigaction(SIGINT, nullptr, &current) == 0
             && !(current.sa_flags & SA_SIGINFO)
@@ -110,6 +110,26 @@ void SigintWatcher::uninstall()
         m_thread->waitForCompletion();
     }
 }
+
+#if !OS(WINDOWS)
+bool SigintWatcher::deferSigintDisposition(const struct sigaction& action)
+{
+    WTF::Locker locker { m_refCountMutex };
+    if (!m_installed.load()) {
+        return false;
+    }
+
+    struct sigaction current;
+    if (sigaction(SIGINT, nullptr, &current) != 0
+        || (current.sa_flags & SA_SIGINFO)
+        || current.sa_handler != sigintWatcherHandler) {
+        return false;
+    }
+
+    m_previousAction = action;
+    return true;
+}
+#endif
 
 void SigintWatcher::signalReceived()
 {

@@ -1030,6 +1030,41 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  // And the mirror: dropping the last listener has to put the default action back.
+  // BunProcess reinstates the watcher's own handler rather than uninstalling it,
+  // so the disarm used to see its handler intact and restore the stale snapshot.
+  test("removing the last SIGINT listener restores the default disposition", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("globalThis.h = () => {}; process.on('SIGINT', globalThis.h); 1 + 1\n");
+      await waitFor(/\n\s*2\b/);
+
+      send("process.removeListener('SIGINT', globalThis.h); 3 + 4\n");
+      await waitFor(/\n\s*7\b/);
+
+      proc.kill("SIGINT");
+      const outcome = await Promise.race([
+        proc.exited.then(() => "exited"),
+        Bun.sleep(4000).then(() => "still running"),
+      ]);
+      expect(outcome).toBe("exited");
+    });
+  });
+
+  // Adding a listener used to install over the watcher's handler, downgrading
+  // Ctrl+C to a JS event that the loop it is meant to break out of never drains.
+  test("Ctrl+C interrupts a loop that installed a SIGINT listener first", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(`process.on("SIGINT", () => {}); process.stdout.write("LOOP" + "ING\\n"); while (true) {}\n`);
+      await waitFor("LOOPING");
+      send("\x03"); // Ctrl+C
+      const output = await waitFor(/interrupted/);
+      expect(stripAnsi(output)).toContain("Script execution was interrupted by `SIGINT`");
+
+      send("111 + 222\n");
+      await waitFor(/\n\s*333\b/);
+    });
+  });
+
   // The REPL used to stay in raw mode while evaluating, so Ctrl+C was delivered
   // as a byte nobody read and a synchronous loop could only be escaped by
   // killing the process (which left the terminal in raw mode).

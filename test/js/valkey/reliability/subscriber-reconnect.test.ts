@@ -92,7 +92,6 @@ type ServerOptions = {
 
 function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOptions = {}) {
   const connections: Connection[] = [];
-  const waiters: { count: number; resolve: () => void }[] = [];
 
   const server = Bun.listen<{ buffer: Buffer; connection: Connection }>({
     hostname: "127.0.0.1",
@@ -102,10 +101,6 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
         const connection: Connection = { socket, commands: [], channels: new Set(), pending: Buffer.alloc(0) };
         connections.push(connection);
         socket.data = { buffer: Buffer.alloc(0), connection };
-        for (const waiter of waiters.splice(0)) {
-          if (connections.length >= waiter.count) waiter.resolve();
-          else waiters.push(waiter);
-        }
       },
       close(socket) {
         if (socket.data) socket.data.connection.socket = null;
@@ -189,11 +184,6 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
   return {
     connections,
     url: `redis://127.0.0.1:${server.port}`,
-    /** Resolves once the server has accepted at least `count` connections. */
-    waitForConnections(count: number): Promise<void> {
-      if (connections.length >= count) return Promise.resolve();
-      return new Promise<void>(resolve => waiters.push({ count, resolve }));
-    },
     [Symbol.dispose]() {
       server.stop(true);
     },
@@ -233,9 +223,22 @@ async function closeSubscriber(client: RedisClient) {
   client.close();
 }
 
-// Deliberately not `describe.concurrent`. Each case drives a client through a
-// real reconnect, and six of those at once starved the 10s connection timeout on
-// the Windows CI agents. Serial, the whole file is under 4s.
+/**
+ * Force a reconnect deterministically. An explicit close()/connect() drives the
+ * same path as an auto-reconnect (on_valkey_connect -> resubscribe), but the
+ * connect() promise resolves only once the new HELLO handshake completes, so
+ * there is no race against the client's internal connection timeout. Dropping
+ * the socket server-side and waiting on the backoff-timer reconnect instead
+ * flaked on the loaded Windows CI agents, where that timer plus the handshake
+ * could exceed the 10s timeout.
+ */
+async function reconnect(client: RedisClient) {
+  client.close();
+  await client.connect();
+}
+
+// Serial on purpose: six clients reconnecting at once flaked on the Windows CI
+// agents. The whole file runs in a few seconds.
 describe("Valkey: subscriber reconnect", () => {
   test("replays SUBSCRIBE for every channel with a listener", async () => {
     using server = startRespServer();
@@ -252,9 +255,7 @@ describe("Valkey: subscriber reconnect", () => {
       expect(await publisher.publish("news", "before")).toBe(1);
       expect(await messages.next()).toBe("before");
 
-      // Drop the subscriber's connection from the server side.
-      server.connections[0].socket!.end();
-      await server.waitForConnections(3);
+      await reconnect(subscriber);
 
       // PING is written after the reconnect handshake, so its reply proves the
       // server has already seen everything else the client sent on the new
@@ -285,8 +286,7 @@ describe("Valkey: subscriber reconnect", () => {
       await subscriber.subscribe(["news", "sports"], message => messages.push(message));
       await subscriber.unsubscribe("sports");
 
-      server.connections[0].socket!.end();
-      await server.waitForConnections(2);
+      await reconnect(subscriber);
       expect(await subscriber.ping()).toBe("PONG");
 
       expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "SUBSCRIBE news", "PING"]);
@@ -304,8 +304,7 @@ describe("Valkey: subscriber reconnect", () => {
       await client.connect();
       expect(await client.ping()).toBe("PONG");
 
-      server.connections[0].socket!.end();
-      await server.waitForConnections(2);
+      await reconnect(client);
       expect(await client.ping()).toBe("PONG");
 
       expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "PING"]);
@@ -342,8 +341,7 @@ describe("Valkey: subscriber reconnect", () => {
       await subscriber.connect();
       await subscriber.subscribe("news", () => {});
 
-      server.connections[0].socket!.end();
-      await server.waitForConnections(2);
+      await reconnect(subscriber);
 
       // The replayed SUBSCRIBE carries no promise, so its -NOPERM must not consume
       // the pair PING parked in the in-flight queue behind it. It used to, and the
@@ -384,8 +382,7 @@ describe("Valkey: subscriber reconnect", () => {
       expect(commandLines(server.connections[0])).toEqual(["HELLO 3", "SELECT 3", "SUBSCRIBE news"]);
 
       await publisher.connect();
-      server.connections[0].socket!.end();
-      await server.waitForConnections(3);
+      await reconnect(subscriber);
       expect(await subscriber.ping()).toBe("PONG");
 
       expect(commandLines(server.connections[2])).toEqual(["HELLO 3", "SELECT 3", "SUBSCRIBE news", "PING"]);

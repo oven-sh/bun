@@ -1209,4 +1209,30 @@ describe.concurrent("If-Range", () => {
       expect((await res.bytes()).length).toBe(400);
     }
   });
+
+  it.each([
+    ["matching Last-Modified → 206", "Wed, 21 Oct 2015 07:28:00 GMT", 206],
+    ["stale Last-Modified → 200", "Tue, 15 Nov 1994 08:12:31 GMT", 200],
+  ])("fetch handler Last-Modified: %s", async (_label, ifRange, expectedStatus) => {
+    using dir = tempDir("serve-if-range-handler-lm", { "asset.bin": Buffer.alloc(400, "A") });
+    const filePath = join(String(dir), "asset.bin");
+    const lastModified = "Wed, 21 Oct 2015 07:28:00 GMT";
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(Bun.file(filePath), { headers: { "last-modified": lastModified } }),
+    });
+
+    const res = await fetch(server.url, {
+      headers: { Range: "bytes=200-399", "If-Range": ifRange },
+    });
+    expect(res.status).toBe(expectedStatus);
+    if (expectedStatus === 206) {
+      expect(res.headers.get("content-range")).toBe("bytes 200-399/400");
+    } else {
+      expect(res.headers.get("content-range")).toBeNull();
+      expect((await res.bytes()).length).toBe(400);
+    }
+  });
 });

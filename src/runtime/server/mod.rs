@@ -2780,11 +2780,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         port
                     } else {
                         use std::hash::{BuildHasher, Hasher};
-                        let mut h =
-                            std::collections::hash_map::RandomState::new().build_hasher();
+                        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
                         h.write_u8(attempt);
                         const EPHEMERAL_START: u16 = 49152;
-                        EPHEMERAL_START + (h.finish() % u64::from(u16::MAX - EPHEMERAL_START)) as u16
+                        EPHEMERAL_START
+                            + (h.finish() % u64::from(u16::MAX - EPHEMERAL_START)) as u16
                     };
                     if http1 {
                         if attempt > 1 && attempt < max_attempts {

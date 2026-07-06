@@ -283,29 +283,32 @@ void NodeVMScript::destroy(JSCell* cell)
 
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
-    if (vm.hasTerminationRequest()) {
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            // Terminated by an enclosing scope that armed the watcher itself —
-            // the REPL's Ctrl+C, say. Still a SIGINT, so report it as one
-            // rather than asserting on a reachable state.
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        }
+    if (!vm.hasTerminationRequest())
+        return false;
+
+    // Neither this script's own SIGINT nor its own timeout: an enclosing scope
+    // asked for the termination — an outer `timeout`, or the REPL's Ctrl+C
+    // watcher. Only that scope can classify it, so re-raise and let its own
+    // `checkForTermination` (or `Bun__REPL__evaluate`) report it.
+    if (!script->getSigintReceived() && !timeout) {
+        JSC::throwException(globalObject, scope, vm.ensureTerminationException());
         return true;
     }
 
-    return false;
+    vm.drainMicrotasksForGlobalObject(globalObject);
+    // The termination may have fired inside an afterEvaluate microtask
+    // checkpoint, leaving the termination exception pending; clear it so
+    // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+    if (vm.hasPendingTerminationException())
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    vm.clearHasTerminationRequest();
+    if (script->getSigintReceived()) {
+        script->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
+    }
+    return true;
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)

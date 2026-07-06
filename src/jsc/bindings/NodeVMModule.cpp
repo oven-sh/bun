@@ -245,19 +245,22 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+        // Neither this module's own SIGINT nor its own timeout: an enclosing
+        // scope asked for the termination — an outer `timeout`, or the REPL's
+        // Ctrl+C watcher. Only that scope can classify it, so re-raise and let
+        // it report.
+        if (!getSigintReceived() && timeout == 0) {
+            JSC::throwException(globalObject, scope, vm.ensureTerminationException());
+            return {};
+        }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         } else {
-            // Terminated by an enclosing scope that armed the watcher itself —
-            // the REPL's Ctrl+C, say. Still a SIGINT, so report it as one
-            // rather than asserting on a reachable state.
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         }
     } else {
         setSigintReceived(false);

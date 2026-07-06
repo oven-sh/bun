@@ -86,6 +86,23 @@ describe("vm", () => {
       });
       expect(result).toBe(2);
     });
+
+    // An outer watchdog firing while a nested no-options script is on the stack
+    // used to abort the process, and then to report it as a SIGINT. Only the
+    // scope that armed the termination can classify it.
+    test("an outer timeout reports ERR_SCRIPT_EXECUTION_TIMEOUT through a nested script", () => {
+      (globalThis as any).__nestedSpin = () => runInThisContext("while (true) {}");
+      try {
+        expect(() => runInThisContext("__nestedSpin()", { timeout: 100 })).toThrow(
+          expect.objectContaining({
+            code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+            message: "Script execution timed out after 100ms",
+          }),
+        );
+      } finally {
+        delete (globalThis as any).__nestedSpin;
+      }
+    });
   });
 
   describe("compileFunction()", () => {

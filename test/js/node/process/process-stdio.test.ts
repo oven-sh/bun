@@ -172,8 +172,10 @@ describe.concurrent("process-stdio", () => {
         for (let i = 0; i < ${N}; i++) console.log("O" + i + " " + pad);
       `,
     });
-    // The reader starts 400ms late via a shell fifo, so the 64 KiB pipe fills
-    // and write(2) on the now-nonblocking fd 1 returns EAGAIN mid-run.
+    // A separate `cat` reader starts 400ms late behind a shell fifo, so the
+    // 64 KiB pipe fills and write(2) on the now-nonblocking fd 1 returns EAGAIN
+    // mid-run. The pipeline's exit status is cat's, not bun's, so the delivered
+    // count is what proves the regression is gone.
     await using proc = Bun.spawn({
       cmd: [
         "/bin/sh",
@@ -186,9 +188,8 @@ describe.concurrent("process-stdio", () => {
       stdout: "pipe",
       stderr: "inherit",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const stdout = await proc.stdout.text();
     const delivered = stdout.split("\n").filter(l => /^O\d+ x+$/.test(l)).length;
     expect(delivered).toBe(N);
-    expect(exitCode).toBe(0);
   });
 });

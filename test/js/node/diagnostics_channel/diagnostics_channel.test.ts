@@ -445,6 +445,28 @@ describe("TracingChannel", () => {
 
     expect(events).toEqual(["start", "end", "asyncStart", "asyncEnd"]);
   });
+
+  // https://github.com/oven-sh/bun/issues/27805
+  test("traceSync publishes when hasSubscribers is used as a guard", () => {
+    const tc = tracingChannel<{ name: string }>("tracing-channel7");
+    const events: string[] = [];
+
+    tc.subscribe({
+      start: ctx => events.push(`start:${ctx.name}`),
+      end: ctx => events.push(`end:${ctx.name}`),
+      asyncStart: () => events.push("asyncStart"),
+      asyncEnd: () => events.push("asyncEnd"),
+      error: () => events.push("error"),
+    });
+
+    let result;
+    if (tc.hasSubscribers) {
+      result = tc.traceSync(() => "ok:demo-success", { name: "demo-success" });
+    }
+
+    expect(result).toBe("ok:demo-success");
+    expect(events).toEqual(["start:demo-success", "end:demo-success"]);
+  });
 });
 
 const mocks = new Map();

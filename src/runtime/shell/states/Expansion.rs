@@ -14,6 +14,71 @@ use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
+/// Look up a user's home directory by name (`~user`). POSIX-only; Windows has
+/// no `getpwnam`, so there it always leaves `~user` literal (as bash does).
+#[cfg(not(windows))]
+fn lookup_user_home(name: &[u8]) -> Option<Vec<u8>> {
+    use core::ffi::{c_char, c_int};
+    // getpwnam_r needs a NUL-terminated name; a name with an embedded NUL can
+    // never be a real user.
+    if name.is_empty() || name.contains(&0) {
+        return None;
+    }
+    let mut cname: Vec<u8> = Vec::with_capacity(name.len() + 1);
+    cname.extend_from_slice(name);
+    cname.push(0);
+
+    // Try a stack buffer first, doubling onto the heap on ERANGE.
+    let mut stack_buf = [0u8; 1024];
+    let mut heap_buf: Vec<u8>;
+    let mut buf: &mut [u8] = &mut stack_buf[..];
+    // SAFETY: `passwd` is a C POD; a zeroed value is a valid initial state.
+    let mut pw: libc::passwd = bun_core::ffi::zeroed();
+    let mut result: *mut libc::passwd = core::ptr::null_mut();
+
+    loop {
+        // SAFETY: NUL-terminated name, live output struct, live scratch buffer.
+        let ret = unsafe {
+            libc::getpwnam_r(
+                cname.as_ptr().cast::<c_char>(),
+                &raw mut pw,
+                buf.as_mut_ptr().cast::<c_char>(),
+                buf.len(),
+                &raw mut result,
+            )
+        };
+        if ret == bun_sys::E::EINTR as c_int {
+            continue;
+        }
+        if ret == bun_sys::E::ERANGE as c_int {
+            let len = buf.len();
+            if len >= 1 << 20 {
+                return None;
+            }
+            heap_buf = vec![0u8; len * 2];
+            buf = &mut heap_buf[..];
+            continue;
+        }
+        if ret != 0 {
+            return None;
+        }
+        break;
+    }
+
+    // A null result means no such user (ret was 0 but nothing matched).
+    if result.is_null() || pw.pw_dir.is_null() {
+        return None;
+    }
+    // SAFETY: pw_dir is a NUL-terminated C string owned by `buf`.
+    let dir = unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes();
+    (!dir.is_empty()).then(|| dir.to_vec())
+}
+
+#[cfg(windows)]
+fn lookup_user_home(_name: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
 pub struct Expansion {
     pub base: Base,
     pub node: bun_ptr::BackRef<ast::Atom>,
@@ -37,6 +102,13 @@ pub struct Expansion {
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
     pub meta_offsets: Vec<u32>,
+    /// Byte offsets in `current_out` of non-leading `~` atoms (assignment
+    /// values, where a tilde expands after each `:`). Resolved after the walk
+    /// by [`Expansion::resolve_inner_tildes`].
+    pub tilde_offsets: Vec<u32>,
+    /// Whether this expansion is an assignment value (`FOO=~/x`). Enables
+    /// tilde expansion after each `:`, not just at the word start.
+    pub is_assignment: bool,
     pub child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
@@ -86,6 +158,9 @@ pub struct ExpansionOut {
 pub struct ExpansionOpts {
     pub for_spawn: bool,
     pub single: bool,
+    /// Set for assignment values so `~` expands after each `:` as well as at
+    /// the start (the `PATH=~/bin:$PATH` idiom).
+    pub is_assignment: bool,
 }
 
 impl Expansion {
@@ -95,7 +170,7 @@ impl Expansion {
         node: *const ast::Atom,
         parent: NodeId,
         io: IO,
-        _opts: ExpansionOpts,
+        opts: ExpansionOpts,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(StateKind::Expansion, parent, shell),
@@ -111,6 +186,8 @@ impl Expansion {
             out: ExpansionOut::default(),
             current_out: Vec::new(),
             meta_offsets: Vec::new(),
+            tilde_offsets: Vec::new(),
+            is_assignment: opts.is_assignment,
             child_script: None,
             cmd_subst_quoted: false,
             has_quoted_empty: false,
@@ -180,6 +257,13 @@ impl Expansion {
                     ast::Atom::Simple(s) => s,
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
+                // A non-leading `~` in an assignment value (after a `:`) is
+                // resolved after the walk once its prefix text is assembled.
+                if me.is_assignment && matches!(simple, ast::SimpleAtom::Tilde) {
+                    me.tilde_offsets.push(me.current_out.len() as u32);
+                    me.word_idx += 1;
+                    continue;
+                }
                 let shell = me.base.shell();
                 let is_cmd_subst = Self::expand_simple_no_io(
                     shell,
@@ -230,32 +314,59 @@ impl Expansion {
 
             // All sub-atoms expanded — post-process leading tilde then finish.
             if leading_tilde {
-                let home = me.base.shell().get_homedir();
                 let len_before = me.current_out.len();
                 match me.current_out.first() {
                     Some(b'/') | Some(b'\\') => {
+                        let home = me.base.shell().get_homedir();
                         me.current_out.splice(0..0, home.slice().iter().copied());
+                        home.deref();
                     }
-                    Some(_) => me.current_out.insert(0, b'~'),
                     // `~""` expands to $HOME,
                     // but `~$unset` expands to nothing (word is dropped).
                     None if me.has_quoted_empty => {
+                        let home = me.base.shell().get_homedir();
                         me.current_out.extend_from_slice(home.slice());
+                        home.deref();
                     }
                     None => {}
-                }
-                // The first two arms prepend; shift the recorded brace
-                // metacharacter offsets so they keep pointing at the same
-                // bytes. The `extend_from_slice` arm only runs when
-                // `current_out` (and therefore `meta_offsets`) is
-                // empty, so the shift is a no-op there.
-                let prepended = (me.current_out.len() - len_before) as u32;
-                if prepended != 0 {
-                    for off in &mut me.meta_offsets {
-                        *off += prepended;
+                    // `~name`, `~+`, `~-`, or `~:…`: resolve the prefix up to the
+                    // first `/`, `\`, or `:`. On failure the `~` is left literal.
+                    Some(_) => {
+                        let prefix_len = me
+                            .current_out
+                            .iter()
+                            .position(|&b| matches!(b, b'/' | b'\\' | b':'))
+                            .unwrap_or(me.current_out.len());
+                        let resolved = Self::resolve_tilde_prefix(
+                            me.base.shell(),
+                            &me.current_out[..prefix_len],
+                        );
+                        match resolved {
+                            Some(dir) => {
+                                me.current_out.splice(0..prefix_len, dir.iter().copied());
+                            }
+                            None => me.current_out.insert(0, b'~'),
+                        }
                     }
                 }
-                home.deref();
+                // Every arm edits the front of `current_out`; shift the recorded
+                // brace/glob and inner-tilde offsets by the net size change so
+                // they keep pointing at the same bytes.
+                let delta = me.current_out.len() as isize - len_before as isize;
+                if delta != 0 {
+                    for off in me
+                        .meta_offsets
+                        .iter_mut()
+                        .chain(me.tilde_offsets.iter_mut())
+                    {
+                        *off = (*off as isize + delta) as u32;
+                    }
+                }
+            }
+            // Resolve non-leading `~` atoms recorded during the walk (assignment
+            // values, where `~` expands after each `:`).
+            if !me.tilde_offsets.is_empty() {
+                Self::resolve_inner_tildes(me);
             }
             // Brace expansion
             // first, then glob, else flush as a single word.
@@ -526,6 +637,67 @@ impl Expansion {
             ast::SimpleAtom::CmdSubst(_) => return true,
         }
         false
+    }
+
+    /// Resolve a tilde prefix (the bytes between `~` and the first `/`, `\`, or
+    /// `:`) to a directory. `""` → `$HOME`, `+` → `$PWD`, `-` → `$OLDPWD`, and
+    /// any other name → that user's home directory. Returns `None` when the
+    /// prefix cannot be resolved (unknown user, unset `$OLDPWD`), so the caller
+    /// keeps the `~` literal, matching bash.
+    fn resolve_tilde_prefix(shell: &ShellExecEnv, prefix: &[u8]) -> Option<Vec<u8>> {
+        match prefix {
+            b"" => {
+                let home = shell.get_homedir();
+                let v = home.slice().to_vec();
+                home.deref();
+                Some(v)
+            }
+            b"+" => {
+                let cwd = shell.cwd();
+                (!cwd.is_empty()).then(|| cwd.to_vec())
+            }
+            b"-" => {
+                let prev = shell.prev_cwd();
+                (!prev.is_empty()).then(|| prev.to_vec())
+            }
+            name => lookup_user_home(name),
+        }
+    }
+
+    /// Resolve the non-leading `~` atoms recorded in `tilde_offsets` (assignment
+    /// values expand a `~` after each `:`). Offsets are processed in the order
+    /// recorded, with a running delta so each splice keeps later offsets valid.
+    fn resolve_inner_tildes(me: &mut Expansion) {
+        let offsets = core::mem::take(&mut me.tilde_offsets);
+        let mut running: isize = 0;
+        for raw in offsets {
+            let at = (raw as isize + running) as usize;
+            if at > me.current_out.len() {
+                continue;
+            }
+            let prefix_len = me.current_out[at..]
+                .iter()
+                .position(|&b| matches!(b, b'/' | b'\\' | b':'))
+                .unwrap_or(me.current_out.len() - at);
+            let resolved =
+                Self::resolve_tilde_prefix(me.base.shell(), &me.current_out[at..at + prefix_len]);
+            let len_before = me.current_out.len();
+            match resolved {
+                Some(dir) => {
+                    me.current_out.splice(at..at + prefix_len, dir.iter().copied());
+                }
+                None => me.current_out.insert(at, b'~'),
+            }
+            let delta = me.current_out.len() as isize - len_before as isize;
+            running += delta;
+            if delta != 0 {
+                for off in &mut me.meta_offsets {
+                    if (*off as usize) >= at {
+                        *off = (*off as isize + delta) as u32;
+                    }
+                }
+            }
+        }
     }
 
     /// Flush `current_out` into `out`

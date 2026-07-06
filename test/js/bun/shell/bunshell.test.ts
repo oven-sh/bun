@@ -541,6 +541,54 @@ describe("bunshell", () => {
         .stdout("a b~bak\n")
         .runAsTest("backup-suffix idiom after interpolated value");
     });
+
+    // In an assignment value a `~` expands at the start and after every
+    // unquoted `:` (e.g. the `PATH=~/bin:$PATH` idiom), not only at the start
+    // of a command word.
+    describe("in assignment values", async () => {
+      const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
+      TestBuilder.command`A=~; echo $A`.env(homeEnv).stdout("/home/test\n").runAsTest("bare tilde");
+      TestBuilder.command`A=~/sub; echo $A`.env(homeEnv).stdout("/home/test/sub\n").runAsTest("tilde path");
+      TestBuilder.command`A=x:~; echo $A`.env(homeEnv).stdout("x:/home/test\n").runAsTest("tilde after colon");
+      TestBuilder.command`A=~/b:~/c; echo $A`
+        .env(homeEnv)
+        .stdout("/home/test/b:/home/test/c\n")
+        .runAsTest("multiple colon-separated tildes");
+      TestBuilder.command`MYPATH=~/bin:/usr/bin; echo $MYPATH`
+        .env(homeEnv)
+        .stdout("/home/test/bin:/usr/bin\n")
+        .runAsTest("PATH idiom");
+      // A `~` that is neither at the start nor right after a `:` stays literal.
+      TestBuilder.command`A=a~/b; echo $A`.env(homeEnv).stdout("a~/b\n").runAsTest("tilde mid-value stays literal");
+    });
+
+    // `~+` / `~-` and `~user` resolve the prefix between `~` and the first
+    // `/` or `:`. `~user` needs getpwnam, which only exists on POSIX.
+    describe("prefixes", async () => {
+      TestBuilder.command`echo ~+ && pwd`
+        .stdout(out => {
+          const [tildePlus, pwd] = out.split("\n");
+          expect(tildePlus).toBe(pwd);
+        })
+        .runAsTest("~+ is $PWD");
+
+      if (isPosix) {
+        TestBuilder.command`echo ~root`
+          .stdout(out => {
+            expect(out).not.toContain("~");
+            expect(out.startsWith("/")).toBe(true);
+          })
+          .runAsTest("~user resolves to the user home directory");
+
+        TestBuilder.command`cd / && cd /tmp && echo ~-`.stdout("/\n").runAsTest("~- is $OLDPWD");
+
+        const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
+        TestBuilder.command`echo ~:x`.env(homeEnv).stdout("/home/test:x\n").runAsTest("colon terminates tilde prefix");
+        TestBuilder.command`echo ~no-such-user-zz`
+          .stdout("~no-such-user-zz\n")
+          .runAsTest("unknown user stays literal");
+      }
+    });
   });
 
   // Ported from GNU bash "quote.tests"

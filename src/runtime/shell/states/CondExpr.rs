@@ -77,6 +77,7 @@ impl CondExpr {
                         ExpansionOpts {
                             for_spawn: false,
                             single: true,
+                            is_assignment: false,
                         },
                     );
                     return Expansion::start(interp, child);

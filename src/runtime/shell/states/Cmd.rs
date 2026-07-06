@@ -265,6 +265,7 @@ impl Cmd {
                                 ExpansionOpts {
                                     for_spawn: false,
                                     single: true,
+                                    is_assignment: false,
                                 },
                             );
                             return Expansion::start(interp, child);
@@ -293,6 +294,7 @@ impl Cmd {
                         ExpansionOpts {
                             for_spawn: true,
                             single: false,
+                            is_assignment: false,
                         },
                     );
                     return Expansion::start(interp, child);

@@ -253,8 +253,11 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             JSC::throwException(globalObject, scope, vm.ensureTerminationException());
             return {};
         }
-        // `globalObject` is the NodeVM global when there is one, non-null otherwise.
-        vm.drainMicrotasksForGlobalObject(globalObject);
+        // Despite the name this *clears* the queue, so it must stay scoped to the
+        // terminated context's global. `nodeVmGlobalObject` is null when there is
+        // no context, which means there is nothing to clear -- passing the caller's
+        // `globalObject` instead would discard the main thread's microtasks.
+        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {

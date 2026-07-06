@@ -965,6 +965,33 @@ test("Loader is not defined in vm context", () => {
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
 });
 
+// `drainMicrotasksForGlobalObject` *clears* rather than drains, so a terminated
+// module must only clear its own context's global. Passing the caller's global
+// discarded the main thread's pending microtasks and wedged the process.
+test("a terminated context-less module does not discard the main microtask queue", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("while (true) {}");
+    await m.link(() => {});
+
+    const { promise, resolve } = Promise.withResolvers();
+    const chain = promise.then(() => "survived");
+    resolve(); // the continuation is now parked in the main microtask queue
+
+    const guard = setTimeout(() => { console.log("HUNG"); process.exit(3); }, 8000);
+    await m.evaluate({ timeout: 100 }).then(() => console.log("NO_THROW"), e => console.log("threw=" + e.code));
+    console.log("chain=" + (await chain));
+    clearTimeout(guard);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  capture(stderr);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["threw=ERR_SCRIPT_EXECUTION_TIMEOUT", "chain=survived"],
+    exitCode: 0,
+  });
+});
+
 // Re-raising an enclosing scope's termination must not hand the VM's singleton
 // TerminationException to the module: storing it and re-throwing it once the
 // request is cleared trips `VM::setException`'s

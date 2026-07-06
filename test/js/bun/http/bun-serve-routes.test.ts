@@ -1,6 +1,8 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 describe("path parameters", () => {
   let server: Server;
@@ -991,4 +993,138 @@ it("routes absolute-form request targets by path and derives request.url from th
     expect(rawUrl.pathname).toBe("/");
     expect(rawUrl.search).toBe(new URL(target).search);
   }
+});
+
+// A WebSocket handshake is a GET, so every route in the table answers it the same way it
+// answers any other GET. Only paths the table does not serve reach `fetch` + `upgrade()`.
+describe("websocket upgrade precedence", () => {
+  /** Sends a well-formed RFC 6455 handshake, resolves with the complete raw response. */
+  function handshake(port: number, path: string): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(port, "127.0.0.1");
+    let raw = "";
+    let done = false;
+    socket.on("error", reject);
+    socket.on("close", () => {
+      if (!done) reject(new Error(`socket closed before the response completed: ${JSON.stringify(raw)}`));
+    });
+    socket.on("data", chunk => {
+      raw += chunk.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = raw.slice(0, headerEnd);
+      // A 101 carries no body; anything else is framed by Content-Length.
+      const contentLength = head.startsWith("HTTP/1.1 101")
+        ? 0
+        : Number(/\r\ncontent-length: *(\d+)/i.exec(head)?.[1] ?? -1);
+      if (raw.length - headerEnd - 4 < contentLength) return;
+      done = true;
+      socket.destroy();
+      resolve(raw);
+    });
+    socket.on("connect", () => {
+      socket.write(
+        `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n` +
+          `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      );
+    });
+    return promise;
+  }
+
+  let server: Server;
+  let upgraded: string[];
+  let firstUpgrade: PromiseWithResolvers<string>;
+
+  beforeAll(() => {
+    const dir = tempDirWithFiles("serve-routes-ws", { "file.txt": "file-body" });
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        "/static": new Response("static-body"),
+        "/file": new Response(Bun.file(join(dir, "file.txt"))),
+        "/nested/*": new Response("wildcard-body"),
+        "/post-only": { POST: new Response("post-body") },
+        "/handler": () => new Response("handler-body"),
+      },
+      fetch(req, server) {
+        if (server.upgrade(req, { data: { path: new URL(req.url).pathname } })) return;
+        return new Response("fetch-fallback");
+      },
+      websocket: {
+        open(ws) {
+          const { path } = ws.data as { path: string };
+          upgraded.push(path);
+          firstUpgrade.resolve(path);
+          ws.close();
+        },
+        message() {},
+      },
+    });
+    server.unref();
+  });
+
+  beforeEach(() => {
+    upgraded = [];
+    firstUpgrade = Promise.withResolvers<string>();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it.each([
+    ["a static Response route", "/static", "static-body"],
+    ["a Bun.file route", "/file", "file-body"],
+    ["a nested wildcard static route", "/nested/anything", "wildcard-body"],
+    ["a function route", "/handler", "handler-body"],
+  ])("answers a handshake on %s with the route's response", async (_label, path, body) => {
+    expect(await (await fetch(new URL(path, server.url))).text()).toBe(body);
+
+    const response = await handshake(server.port, path);
+    expect(response.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(body);
+    expect(upgraded).toEqual([]);
+  });
+
+  it("upgrades a handshake on a path the route table does not serve", async () => {
+    const response = await handshake(server.port, "/unrouted");
+    expect(response.split("\r\n")[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(await firstUpgrade.promise).toBe("/unrouted");
+  });
+
+  it("upgrades a handshake on a static route that does not serve GET", async () => {
+    expect(await (await fetch(new URL("/post-only", server.url))).text()).toBe("fetch-fallback");
+
+    const response = await handshake(server.port, "/post-only");
+    expect(response.split("\r\n")[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(await firstUpgrade.promise).toBe("/post-only");
+  });
+
+  // `"/*"` is the pattern the upgrade fallback itself registers, and uWS keeps the last
+  // registration for a method and pattern, so `fetch` still owns handshakes there.
+  it("upgrades a handshake when a static route is bound to the catch-all pattern", async () => {
+    await using catchAll = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/*": new Response("catch-all-body") },
+      fetch(req, server) {
+        if (server.upgrade(req, { data: { path: new URL(req.url).pathname } })) return;
+        return new Response("fetch-fallback");
+      },
+      websocket: {
+        open(ws) {
+          firstUpgrade.resolve((ws.data as { path: string }).path);
+          ws.close();
+        },
+        message() {},
+      },
+    });
+
+    expect(await (await fetch(new URL("/anything", catchAll.url))).text()).toBe("catch-all-body");
+
+    const response = await handshake(catchAll.port, "/anything");
+    expect(response.split("\r\n")[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(await firstUpgrade.promise).toBe("/anything");
+  });
 });

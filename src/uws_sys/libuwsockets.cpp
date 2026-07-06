@@ -89,6 +89,33 @@ extern "C"
     }
   }
 
+  void uws_app_get_high_priority(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
+  {
+    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      if (handler == nullptr)
+      {
+        uwsApp->getHighPriority(pattern, nullptr);
+        return;
+      }
+      uwsApp->getHighPriority(pattern, [handler, user_data](auto *res, auto *req)
+                              { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      if (handler == nullptr)
+      {
+        uwsApp->getHighPriority(pattern, nullptr);
+        return;
+      }
+      uwsApp->getHighPriority(pattern, [handler, user_data](auto *res, auto *req)
+                              { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
+    }
+  }
+
   void uws_app_post(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string_view pattern = std::string_view(pattern_ptr, pattern_len);

@@ -606,6 +606,15 @@ public:
         return std::move(*this);
     }
 
+    /* A GET handler in the same priority tier as ws() routes. The router sorts high-priority
+     * nodes first, so without this a wildcard ws() route shadows every exact path it overlaps. */
+    TemplatedApp &&getHighPriority(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+        if (httpContext) {
+            httpContext->onHttp("GET", pattern, std::move(handler), true);
+        }
+        return std::move(*this);
+    }
+
     TemplatedApp &&post(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("POST", pattern, std::move(handler));

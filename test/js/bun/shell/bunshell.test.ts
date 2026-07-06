@@ -569,6 +569,12 @@ describe("bunshell", () => {
       // Quoted tilde values never expand.
       TestBuilder.command`A="~"; echo $A`.env(homeEnv).stdout("~\n").runAsTest("double-quoted tilde stays literal");
       TestBuilder.command`A='~/x'; echo $A`.env(homeEnv).stdout("~/x\n").runAsTest("single-quoted tilde stays literal");
+      // A `~` from an interpolated value is data, not shell syntax: `$`
+      // backslash-escapes it, so it stays literal.
+      TestBuilder.command`${{ raw: "A=x" }}${":~"}${{ raw: "; echo $A" }}`
+        .env(homeEnv)
+        .stdout("x:~\n")
+        .runAsTest("interpolated tilde in an assignment value stays literal");
 
       // Non-bare prefixes after a `:` (exercises the inner-tilde resolver).
       TestBuilder.command`A=x:~+; echo $A && pwd`
@@ -611,6 +617,12 @@ describe("bunshell", () => {
         })
         .runAsTest("~+ is $PWD");
 
+      // `:` terminates the prefix and an unknown user stays literal on every
+      // platform (unknown `~user` is always literal; Windows has no getpwnam).
+      const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
+      TestBuilder.command`echo ~:x`.env(homeEnv).stdout("/home/test:x\n").runAsTest("colon terminates tilde prefix");
+      TestBuilder.command`echo ~no-such-user-zz`.stdout("~no-such-user-zz\n").runAsTest("unknown user stays literal");
+
       if (isPosix) {
         TestBuilder.command`echo ~root`
           .stdout(out => {
@@ -620,10 +632,6 @@ describe("bunshell", () => {
           .runAsTest("~user resolves to the user home directory");
 
         TestBuilder.command`cd / && cd /tmp && echo ~-`.stdout("/\n").runAsTest("~- is $OLDPWD");
-
-        const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
-        TestBuilder.command`echo ~:x`.env(homeEnv).stdout("/home/test:x\n").runAsTest("colon terminates tilde prefix");
-        TestBuilder.command`echo ~no-such-user-zz`.stdout("~no-such-user-zz\n").runAsTest("unknown user stays literal");
       }
     });
   });

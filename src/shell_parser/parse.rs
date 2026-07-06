@@ -1676,7 +1676,7 @@ impl<'bump> Parser<'bump> {
                             // into `Tilde` atoms. Quoted text never reaches here,
                             // so it correctly stays literal.
                             let txt_value = &txt[eq_idx as usize + 1..];
-                            let left = self.split_value_tildes(txt_value);
+                            let left = self.split_value_tildes(txt_value, txtrng.start + eq_idx + 1);
                             if self.delimits(self.peek()) {
                                 let _ = self.expect_delimit();
                                 left
@@ -1712,8 +1712,10 @@ impl<'bump> Parser<'bump> {
     /// `Tilde` atoms. A `~` is a tilde-expansion point at the start of the
     /// value and immediately after a `:` (the `PATH=~/bin:$PATH` idiom). The
     /// prefix following each `~` (`+`, `-`, or a user name) is resolved later
-    /// during expansion.
-    fn split_value_tildes(&self, bytes: &'bump [u8]) -> ast::Atom<'bump> {
+    /// during expansion. `base` is the strpool offset of `bytes[0]`, used to
+    /// skip `~`/`:` bytes that came from an interpolated value (data, not shell
+    /// syntax), so `A=x${":"}~` keeps its literal `~`.
+    fn split_value_tildes(&self, bytes: &'bump [u8], base: u32) -> ast::Atom<'bump> {
         use ast::SimpleAtom as SA;
         let mut out: bun_alloc::ArenaVec<'bump, SA<'bump>> =
             bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
@@ -1723,7 +1725,8 @@ impl<'bump> Parser<'bump> {
         let mut i = 0usize;
         while i < bytes.len() {
             let b = bytes[i];
-            if at_point && b == b'~' {
+            let interpolated = self.is_interpolated_position(base + i as u32);
+            if at_point && b == b'~' && !interpolated {
                 if i > seg_start {
                     out.push(SA::Text(&bytes[seg_start..i]));
                 }
@@ -1733,7 +1736,7 @@ impl<'bump> Parser<'bump> {
                 seg_start = i;
                 continue;
             }
-            at_point = b == b':';
+            at_point = b == b':' && !interpolated;
             i += 1;
         }
         if bytes.len() > seg_start {

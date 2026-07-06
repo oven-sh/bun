@@ -351,24 +351,24 @@ impl Expansion {
                     // so a `~` followed by `$var`/`$(...)`/quoting stays literal.
                     // On any resolution failure the `~` is left literal too.
                     Some(_) => {
-                        let lit = match atom {
+                        // The leading `~`'s prefix is bounded to the literal
+                        // `Text` atom that follows it (`current_out` starts with
+                        // that atom's bytes); a non-`Text` follower keeps `~`
+                        // literal.
+                        let plen = match atom {
                             ast::Atom::Compound(c) => match c.atoms.get(1) {
-                                Some(ast::SimpleAtom::Text(t)) => Some(*t),
+                                Some(ast::SimpleAtom::Text(t)) => Some(
+                                    t.iter()
+                                        .position(|&b| matches!(b, b'/' | b'\\' | b':'))
+                                        .unwrap_or(t.len()),
+                                ),
                                 _ => None,
                             },
                             ast::Atom::Simple(_) => None,
                         };
-                        let resolved = lit.and_then(|t| {
-                            let plen = t
-                                .iter()
-                                .position(|&b| matches!(b, b'/' | b'\\' | b':'))
-                                .unwrap_or(t.len());
-                            Self::resolve_tilde_prefix(me.base.shell(), &t[..plen])
-                                .map(|d| (plen, d))
-                        });
-                        match resolved {
-                            Some((plen, dir)) => {
-                                me.current_out.splice(0..plen, dir.iter().copied());
+                        match plen {
+                            Some(plen) => {
+                                Self::apply_tilde_at(me, 0, plen);
                             }
                             None => me.current_out.insert(0, b'~'),
                         }
@@ -689,6 +689,22 @@ impl Expansion {
         }
     }
 
+    /// Resolve the tilde prefix `current_out[at..at + prefix_len]` in place:
+    /// splice the resolved directory over it, or keep a literal `~` on failure.
+    /// Returns the net byte-length change of `current_out`.
+    fn apply_tilde_at(me: &mut Expansion, at: usize, prefix_len: usize) -> isize {
+        let resolved =
+            Self::resolve_tilde_prefix(me.base.shell(), &me.current_out[at..at + prefix_len]);
+        let len_before = me.current_out.len();
+        match resolved {
+            Some(dir) => {
+                me.current_out.splice(at..at + prefix_len, dir.iter().copied());
+            }
+            None => me.current_out.insert(at, b'~'),
+        }
+        me.current_out.len() as isize - len_before as isize
+    }
+
     /// Resolve the non-leading `~` atoms recorded in `tilde_offsets` (assignment
     /// values expand a `~` after each `:`). Offsets are processed in the order
     /// recorded, with a running delta so each splice keeps later offsets valid.
@@ -704,17 +720,7 @@ impl Expansion {
                 .iter()
                 .position(|&b| matches!(b, b'/' | b'\\' | b':'))
                 .unwrap_or(me.current_out.len() - at);
-            let resolved =
-                Self::resolve_tilde_prefix(me.base.shell(), &me.current_out[at..at + prefix_len]);
-            let len_before = me.current_out.len();
-            match resolved {
-                Some(dir) => {
-                    me.current_out
-                        .splice(at..at + prefix_len, dir.iter().copied());
-                }
-                None => me.current_out.insert(at, b'~'),
-            }
-            let delta = me.current_out.len() as isize - len_before as isize;
+            let delta = Self::apply_tilde_at(me, at, prefix_len);
             running += delta;
             if delta != 0 {
                 for off in &mut me.meta_offsets {

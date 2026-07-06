@@ -2983,7 +2983,7 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// Windows uses `GetFileAttributesW`; posix is plain `access`.
+    /// Windows queries file attributes by name; posix is plain `access`.
     pub fn exists_z(path: &ZStr) -> bool {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
@@ -4163,8 +4163,8 @@ mod windows_impl {
         r
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
-        // GetFileAttributesW, then if
-        // `(mode & W_OK) != 0` AND the file is read-only AND it is NOT a
+        // Attribute query (`queryFileAttributes`, no reparse following), then
+        // if `(mode & W_OK) != 0` AND the file is read-only AND it is NOT a
         // directory, return `.err = EPERM`.
         const W_OK: i32 = 2;
         // Longer than any path NT can address — reject up front instead of
@@ -4182,10 +4182,8 @@ mod windows_impl {
         }
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
-        let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
-        if attrs == w::INVALID_FILE_ATTRIBUTES {
-            return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
-        }
+        let attrs = super::query_file_attributes(wpath)
+            .map_err(|errno| Error::new(errno, Tag::access).with_path(path.as_bytes()))?;
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (mode & W_OK) != 0 && is_readonly && !is_directory {
@@ -4273,7 +4271,7 @@ mod windows_impl {
         Ok(())
     }
     pub fn exists_z(path: &ZStr) -> bool {
-        // GetFileAttributesW != INVALID.
+        // Attribute query succeeds (`access(path, F_OK)`).
         access(path, 0).is_ok()
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
@@ -7023,21 +7021,103 @@ pub struct WindowsFileAttributes {
     pub raw: u32,
 }
 
+/// Cached `GetFileInformationByName` — absent on Windows < 11 23H2 (the
+/// api-set module or export is missing; same probe libuv uses in
+/// `src/win/winapi.c`) and when
+/// `BUN_FEATURE_FLAG_DISABLE_GET_FILE_INFORMATION_BY_NAME` is set.
+#[cfg(windows)]
+fn get_file_information_by_name() -> Option<bun_windows_sys::externs::GetFileInformationByNameFn> {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_GET_FILE_INFORMATION_BY_NAME
+        .get()
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    crate::dlsym_with_handle!(
+        bun_windows_sys::externs::GetFileInformationByNameFn,
+        "GetFileInformationByName",
+        dlopen(
+            bun_core::zstr!("api-ms-win-core-file-l2-1-4.dll"),
+            RTLD::LAZY
+        )
+    )
+}
+
+/// By-name arm of [`query_file_attributes`]. `None` is inconclusive — the API
+/// is unavailable, the path is not volume-backed (DOS devices like `NUL` fail
+/// with `INVALID_PARAMETER`), or the failure is not a plain miss — and the
+/// caller must re-query with `GetFileAttributesW`, whose exact semantics
+/// (e.g. `NUL` succeeding, `SHARING_VIOLATION` on locked system files) are
+/// the contract.
+#[cfg(windows)]
+fn query_file_attributes_by_name(wpath: &bun_core::WStr) -> Option<core::result::Result<u32, E>> {
+    use bun_windows_sys::externs as w;
+    let get_info = get_file_information_by_name()?;
+    let mut info: w::FILE_STAT_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; `wpath` is NUL-terminated UTF-16 and `info` is sized for
+    // the FileStatBasicByNameInfo class.
+    let rc = unsafe {
+        get_info(
+            wpath.as_ptr(),
+            w::FILE_INFO_BY_NAME_CLASS::FileStatBasicByNameInfo,
+            core::ptr::from_mut(&mut info).cast::<c_void>(),
+            core::mem::size_of::<w::FILE_STAT_BASIC_INFORMATION>() as u32,
+        )
+    };
+    if rc == 0 {
+        let err = windows::Win32Error::get();
+        return match err {
+            // Only the plain miss codes (both → ENOENT) are trusted without a
+            // second syscall — they cover the resolver's hot miss probes.
+            windows::Win32Error::FILE_NOT_FOUND | windows::Win32Error::PATH_NOT_FOUND => {
+                Some(Err(err.to_e()))
+            }
+            _ => None,
+        };
+    }
+    match info.DeviceType {
+        w::FILE_DEVICE_CD_ROM
+        | w::FILE_DEVICE_CD_ROM_FILE_SYSTEM
+        | w::FILE_DEVICE_DISK
+        | w::FILE_DEVICE_DISK_FILE_SYSTEM
+        | w::FILE_DEVICE_NETWORK_FILE_SYSTEM
+        | w::FILE_DEVICE_VIRTUAL_DISK
+        | w::FILE_DEVICE_DVD => Some(Ok(info.FileAttributes)),
+        _ => None,
+    }
+}
+
+/// `dwFileAttributes` for `wpath` —
+/// `GetFileInformationByName(FileStatBasicByNameInfo)` where available (the
+/// by-name query class skips the query-open filter-driver tax, ~5x cheaper
+/// than `GetFileAttributesW` with Defender active), `GetFileAttributesW`
+/// otherwise. Reparse points are NOT followed (matching `GetFileAttributesW`);
+/// `Err` is the errno `GetLastError` maps to, identical on both arms.
+#[cfg(windows)]
+fn query_file_attributes(wpath: &bun_core::WStr) -> core::result::Result<u32, E> {
+    use bun_windows_sys::externs as w;
+    if let Some(definitive) = query_file_attributes_by_name(wpath) {
+        return definitive;
+    }
+    // Win32 API does file path normalization, so we do not need the valid path assertion here.
+    // SAFETY: `wpath` is NUL-terminated UTF-16.
+    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
+    if dword == windows::INVALID_FILE_ATTRIBUTES {
+        return Err(windows::get_last_errno());
+    }
+    Ok(dword)
+}
+
 /// `getFileAttributes`. Accepts a UTF-8 path (the
-/// resolver only ever calls it with one); the wide-path arm is the
-/// `GetFileAttributesW` body inlined. Returns `None` on
-/// `INVALID_FILE_ATTRIBUTES`.
+/// resolver only ever calls it with one); routes through
+/// [`query_file_attributes`]. Returns `None` when the query fails
+/// (`INVALID_FILE_ATTRIBUTES` class).
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
-    // Win32 API does file path normalization, so we do not need the valid path assertion here.
-    // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
-    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
-    if dword == windows::INVALID_FILE_ATTRIBUTES {
-        return None;
-    }
+    let dword = query_file_attributes(wpath).ok()?;
     Some(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -7056,13 +7136,11 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
-        // `getFileAttributes(path)`; if `file_only` reject dirs;
+        // Attribute query (no reparse following); if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
-        // SAFETY: path is NUL-terminated UTF-16.
-        let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
-        if attrs == windows::INVALID_FILE_ATTRIBUTES {
+        let Ok(attrs) = query_file_attributes(path) else {
             return false;
-        }
+        };
         if file_only && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
             return false;
         }
@@ -8925,7 +9003,7 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
 }
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
-/// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
+/// `access(path, F_OK)` (POSIX) / an attribute query by name (Windows).
 pub fn exists(path: &[u8]) -> bool {
     let mut buf = bun_paths::PathBuffer::default();
     if path.len() >= buf.0.len() {

@@ -198,6 +198,10 @@ pub mod feature_flag {
     // EACCES/EFAULT when the syscall returns; this covers environments where
     // it faults instead.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2, "BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2", {});
+    // Disable the Windows GetFileInformationByName (Win11 23H2+) fast path
+    // for existence/attribute probes; forces the GetFileAttributesW fallback
+    // every pre-23H2 system takes.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_GET_FILE_INFORMATION_BY_NAME, "BUN_FEATURE_FLAG_DISABLE_GET_FILE_INFORMATION_BY_NAME", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX, "BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", {});
     // Disable streaming tarball extraction in `bun install`. When disabled,
     // the whole .tgz is buffered in memory before being decompressed and

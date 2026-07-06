@@ -7,7 +7,10 @@ declare module "bun" {
     connectionTimeout?: number;
 
     /**
-     * Idle timeout in milliseconds
+     * How long an established connection may sit without traffic, in
+     * milliseconds. Reset by every command sent and every reply received. When
+     * it elapses the connection is closed, `onclose` is called, and the next
+     * command opens a new connection.
      * @default 0 (no timeout)
      */
     idleTimeout?: number;

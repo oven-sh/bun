@@ -1127,6 +1127,18 @@ impl JSValkeyClient {
         }
     }
 
+    /// Re-arm the timeout after socket activity.
+    ///
+    /// Only does something once the handshake completed: while connecting, the
+    /// connect deadline must not be pushed out by traffic. Cancels the
+    /// connect-phase timer when `idleTimeout` is 0.
+    fn reset_idle_timeout(&self) {
+        if self.client.get().status != valkey::Status::Connected {
+            return;
+        }
+        self.reset_connection_timeout();
+    }
+
     pub fn disable_connection_timeout(&self) {
         if self.timer.get().state == Timer::State::ACTIVE {
             self.remove_timer(&self.timer);
@@ -1170,8 +1182,14 @@ impl JSValkeyClient {
                 .expect("unreachable");
                 let len = start - cur.len();
                 let msg = &buf[..len];
+                // Dropping an idle connection is deliberate, so auto-reconnect
+                // must not immediately re-establish it. The socket reopens on
+                // the next command, like a freshly constructed client.
+                self.client_mut().flags.is_manually_closed = true;
+                self.client_mut().flags.needs_to_open_socket = true;
                 let _ = self.client_fail(msg, protocol::RedisError::IdleTimeout);
                 // TODO: properly propagate exception upwards
+                self.client_mut().close();
             }
             valkey::Status::Disconnected | valkey::Status::Connecting => {
                 use std::io::Write;
@@ -1679,6 +1697,11 @@ impl JSValkeyClient {
     ) -> Result<*mut JSPromise, bun_core::Error> {
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
+            // A new socket drops the previous connection's sticky state, the
+            // same way `do_connect` does. Without this the first command after
+            // an idle-timeout close rejects against the old connection.
+            self.client_mut().flags.is_manually_closed = false;
+            self.client_mut().flags.failed = false;
 
             if let Err(err) = self.connect() {
                 self.client_mut().flags.needs_to_open_socket = true;
@@ -1698,7 +1721,9 @@ impl JSValkeyClient {
 
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
-        self.client_mut().send(global_this, command)
+        let promise = self.client_mut().send(global_this, command);
+        self.reset_idle_timeout();
+        promise
     }
 
     // Getter for memory cost - useful for diagnostics
@@ -2020,12 +2045,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.ref_();
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
+        // Status goes first: `on_close` runs JS (`onclose`, rejected promises),
+        // and those must not observe `.connected === true` on a dead socket.
+        this.client_mut().status = valkey::Status::Disconnected;
         let this_ptr = this.as_ctx_ptr();
         let _defer = scopeguard::guard(this_ptr, |p| {
             // SAFETY: `p` was `this.as_ctx_ptr()`; the `ref_()` taken above
             // keeps `*p` live until this guard's `deref` releases it.
             unsafe {
-                (*p).client_mut().status = valkey::Status::Disconnected;
                 (*p).update_poll_ref();
                 JSValkeyClient::deref(p);
             }
@@ -2050,13 +2077,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
     ) -> JsTerminatedResult<()> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
+        // See `on_close`: JS runs before this returns and must see the status.
+        this.client_mut().status = valkey::Status::Disconnected;
         this.ref_();
         let this_ptr = this.as_ctx_ptr();
         let _defer = scopeguard::guard(this_ptr, |p| {
             // SAFETY: `p` was `this.as_ctx_ptr()`; the `ref_()` taken above
             // keeps `*p` live until this guard's `deref` releases it.
             unsafe {
-                (*p).client_mut().status = valkey::Status::Disconnected;
                 (*p).update_poll_ref();
                 JSValkeyClient::deref(p);
             }
@@ -2079,6 +2107,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.ref_();
         let _d = deref_guard(this);
         let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
+        // A completed handshake lands here too: this is what swaps the
+        // connect-phase timer for the idle timer.
+        this.reset_idle_timeout();
         this.update_poll_ref();
     }
 

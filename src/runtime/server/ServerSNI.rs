@@ -11,8 +11,8 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
-use std::collections::HashMap;
 
+use bun_collections::HashMap;
 use bun_jsc::{JSValue, JsClass as _};
 use bun_uws_sys as uws_sys;
 
@@ -52,7 +52,7 @@ pub(crate) fn suspend(socket: *mut uws_sys::us_socket_t, token: u64) -> bool {
     // Ownership of the box moves into the SSL's suspension state; `owner_free`
     // reclaims it (and drops the registry entry) when the SSL is freed — or
     // synchronously, right here, when the handshake can no longer be parked.
-    let owner = Box::into_raw(Box::new(token)).cast::<c_void>();
+    let owner = bun_core::heap::into_raw(Box::new(token)).cast::<c_void>();
     uws_sys::us_socket_t::opaque_mut(socket).sni_attach_resume(owner, owner_free);
     SUSPENDED.with(|map| map.borrow().contains_key(&token))
 }
@@ -65,8 +65,8 @@ extern "C" fn owner_free(owner: *mut c_void) {
         return;
     }
     // SAFETY: `owner` is the box `suspend()` handed to `sni_attach_resume`,
-    // returned here exactly once.
-    let token = unsafe { Box::from_raw(owner.cast::<u64>()) };
+    // returned here exactly once; `take` reclaims and frees it.
+    let token = *unsafe { bun_core::heap::take(owner.cast::<u64>()) };
     SUSPENDED.with(|map| map.borrow_mut().remove(&token));
 }
 

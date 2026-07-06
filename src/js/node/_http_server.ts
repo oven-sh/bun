@@ -539,13 +539,16 @@ Server.prototype.listen = function () {
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
+      // node reports the pre-listen query, not the bound address: null/4 when
+      // no host was given (never the wildcard the socket bound to), and the
+      // path with port/addressType -1 for pipe servers.
+      const boundHost = host && isObjectAddress ? address : null;
       const message = {
         act: "listening",
-        port: (isObjectAddress && address.port) || port,
+        port: socketPath ? -1 : (isObjectAddress && address.port) || port,
         data: null,
-        address: (isObjectAddress ? address.address : null) ?? socketPath ?? host ?? null,
-        // node reports addressType -1 for pipe servers.
-        addressType: socketPath ? -1 : isObjectAddress && address.family === "IPv6" ? 6 : 4,
+        address: socketPath ?? (boundHost && boundHost.address) ?? null,
+        addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
       sendHelper(message, null);
     });

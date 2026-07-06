@@ -470,3 +470,89 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
+
+// The worker binds one server per target, in order, and the primary collects the
+// 'listening' payloads off the ordered IPC channel in that same order.
+// https://nodejs.org/api/cluster.html#event-listening-1
+const listeningPayloadFixture = `
+const cluster = require("node:cluster");
+
+const targets = JSON.parse(process.env.TARGETS);
+
+if (cluster.isPrimary) {
+  const payloads = [];
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const worker = cluster.fork();
+
+  cluster.on("listening", (listeningWorker, address) => {
+    if (listeningWorker !== worker) {
+      reject(new Error("'listening' came from an unexpected worker"));
+      return;
+    }
+    payloads.push({ address: address.address, addressType: address.addressType, port: address.port });
+    if (payloads.length === targets.length) resolve();
+  });
+  worker.on("error", reject);
+  worker.on("exit", (code, signal) => {
+    reject(new Error("worker exited before it finished listening (" + code + ", " + signal + ")"));
+  });
+
+  promise.then(
+    () => {
+      console.log(JSON.stringify(payloads));
+      worker.kill();
+      process.exit(0);
+    },
+    error => {
+      console.error(error);
+      process.exit(1);
+    },
+  );
+} else {
+  const { createServer } = require("node:" + process.env.MODULE);
+
+  (async () => {
+    for (const target of targets) {
+      const server = createServer(() => {});
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        // A listen() with no host must reach the primary as address: null, addressType: 4.
+        if (target.path) server.listen(target.path, resolve);
+        else if (target.host === null) server.listen(0, resolve);
+        else server.listen(0, target.host, resolve);
+      });
+    }
+  })().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+`;
+
+test.each(["net", "http"])("cluster 'listening' reports the address a %s server bound", moduleName => {
+  const dir = tempDirWithFiles("cluster-listening", { "fixture.js": listeningPayloadFixture });
+  const targets: ({ host: string | null } | { path: string })[] = [{ host: "127.0.0.1" }, { host: null }];
+  if (isIPv6()) targets.push({ host: "::1" });
+  // node reports pipe servers as address: <path>, addressType: -1, port: -1.
+  // Kept posix-only, like the file's other pipe-server coverage.
+  if (!isWindows) targets.push({ path: joinP(dir, `${moduleName}.sock`) });
+
+  const { stdout } = bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName, TARGETS: JSON.stringify(targets) });
+  const payloads = JSON.parse(stdout);
+
+  expect(payloads).toEqual(
+    targets.map(target =>
+      "path" in target
+        ? { address: target.path, addressType: -1, port: -1 }
+        : {
+            address: target.host,
+            addressType: target.host?.includes(":") ? 6 : 4,
+            port: expect.any(Number),
+          },
+    ),
+  );
+  // The reported port for a TCP listen(0) is the real bound port, never the requested 0.
+  for (const [i, target] of targets.entries()) {
+    if (!("path" in target)) expect(payloads[i].port).toBeWithin(1, 65536);
+  }
+});

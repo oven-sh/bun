@@ -5232,11 +5232,18 @@ describe("fs.close on stdio descriptors", () => {
   });
 });
 
-describe("appendFile honors the flag option", () => {
+describe.concurrent("appendFile honors the flag option", () => {
   it("appendFileSync { flag: 'wx' } fails with EEXIST on an existing file and does not touch it", () => {
     using dir = tempDir("append-wx", { "f": "0123456789" });
     const file = path.join(String(dir), "f");
     expect(() => fs.appendFileSync(file, "XX", { flag: "wx" })).toThrow(expect.objectContaining({ code: "EEXIST" }));
+    expect(readFileSync(file, "utf8")).toBe("0123456789");
+  });
+
+  it("appendFileSync { flag: 'ax' } fails with EEXIST on an existing file and does not touch it", () => {
+    using dir = tempDir("append-ax", { "f": "0123456789" });
+    const file = path.join(String(dir), "f");
+    expect(() => fs.appendFileSync(file, "XX", { flag: "ax" })).toThrow(expect.objectContaining({ code: "EEXIST" }));
     expect(readFileSync(file, "utf8")).toBe("0123456789");
   });
 

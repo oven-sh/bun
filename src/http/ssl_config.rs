@@ -215,9 +215,8 @@ impl SSLConfig {
         ctx_opts.client_renegotiation_limit = self.client_renegotiation_limit;
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
         // `protos` stays unset on purpose: an ALPN list only belongs on the CTX
-        // for a server that selects from it. Clients apply theirs per-SSL, and
-        // sockets accepting with a per-connection selector take it off the
-        // config first. Bun.serve sets it itself when it builds these options.
+        // for a server that selects from it. Clients apply theirs per-SSL;
+        // Bun.listen takes it off the config first, and Bun.serve sets it here.
 
         ctx_opts
     }

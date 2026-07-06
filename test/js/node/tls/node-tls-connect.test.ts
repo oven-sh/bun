@@ -385,9 +385,8 @@ for (const { name, connect } of tests) {
           expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
           expect(socket.isSessionReused()).toBe(false);
 
-          // BoringSSL does not support these methods for >= TLSv1.3
-          expect(socket.getFinished()).toBeUndefined();
-          expect(socket.getPeerFinished()).toBeUndefined();
+          expect(socket.getFinished()).toBeInstanceOf(Buffer);
+          expect(socket.getPeerFinished()).toBeInstanceOf(Buffer);
         } finally {
           socket.end();
         }
@@ -717,6 +716,73 @@ it("a write before 'secureConnect' still reports the handshake's own failure", a
   const [error] = await once(client, "error");
   expect(error.code).toBe("ERR_SSL_NO_SUPPORTED_VERSIONS_ENABLED");
   expect(secureConnect).toBe(false);
+});
+
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("getFinished()/getPeerFinished() on %s", version => {
+  it("hands back this side's and the peer's Finished message, cross-matching", async () => {
+    // BoringSSL keeps the Finished messages only for the renegotiation_info
+    // extension, which TLS 1.3 dropped, so its SSL_get_finished() reports
+    // nothing there (see patches/boringssl/tls13-finished.patch).
+    const sampled = Promise.withResolvers<{ finished?: Buffer; peerFinished?: Buffer }>();
+    const server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, socket => {
+      // A TLS 1.3 server can report the handshake done before the client's
+      // Finished lands, so sample on the first byte the client sends: that
+      // byte cannot arrive before the Finished it follows.
+      socket.once("data", () => {
+        sampled.resolve({ finished: socket.getFinished(), peerFinished: socket.getPeerFinished() });
+        socket.end();
+      });
+      socket.on("error", sampled.reject);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const client = tlsConnect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      minVersion: version,
+      maxVersion: version,
+    });
+    client.on("error", sampled.reject);
+    try {
+      // Nothing has been exchanged yet, so there is no Finished message.
+      expect(client.getFinished()).toBeUndefined();
+      expect(client.getPeerFinished()).toBeUndefined();
+
+      await once(client, "secureConnect");
+      const clientFinished = client.getFinished();
+      const clientPeerFinished = client.getPeerFinished();
+      client.write("ping");
+      const serverSide = await sampled.promise;
+
+      // TLS 1.2's verify_data is always 12 bytes; TLS 1.3's Finished is an
+      // HMAC over the transcript, one hash long.
+      const expectedLength = version === "TLSv1.2" ? 12 : client.getCipher().standardName.endsWith("SHA384") ? 48 : 32;
+      expect({
+        protocol: client.getProtocol(),
+        client: clientFinished?.length,
+        clientPeer: clientPeerFinished?.length,
+        server: serverSide.finished?.length,
+        serverPeer: serverSide.peerFinished?.length,
+      }).toEqual({
+        protocol: version,
+        client: expectedLength,
+        clientPeer: expectedLength,
+        server: expectedLength,
+        serverPeer: expectedLength,
+      });
+
+      // Each side's own Finished is the one the other side received.
+      expect(clientFinished!.toString("hex")).toBe(serverSide.peerFinished!.toString("hex"));
+      expect(clientPeerFinished!.toString("hex")).toBe(serverSide.finished!.toString("hex"));
+      expect(clientFinished!.toString("hex")).not.toBe(clientPeerFinished!.toString("hex"));
+    } finally {
+      client.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
 });
 
 it("https.request reports an impossible version window as a TLS error, not a certificate error", async () => {

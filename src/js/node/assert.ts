@@ -96,18 +96,18 @@ const NO_EXCEPTION_SENTINEL = {};
 
 function innerFail(obj) {
   const objMessage = obj.message;
-  if (objMessage instanceof Error) throw objMessage;
+  if (Error.isError(objMessage)) throw objMessage;
 
   throw new AssertionError(obj);
 }
 
 function fail(message?: string | Error): never {
-  const internalMessage = arguments.length === 0;
+  if (Error.isError(message)) throw message;
+
+  const internalMessage = message === undefined;
   if (internalMessage) {
     message = "Failed";
   }
-
-  if (message instanceof Error) throw message;
 
   const errArgs = {
     actual: undefined,
@@ -118,9 +118,7 @@ function fail(message?: string | Error): never {
   };
   if (AssertionError === undefined) loadAssertionError();
   const err = new AssertionError(errArgs);
-  if (internalMessage) {
-    err.generatedMessage = true;
-  }
+  err.generatedMessage = internalMessage;
   throw err;
 }
 

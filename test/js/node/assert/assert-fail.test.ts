@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
+import vm from "node:vm";
 
 // node v26 removed the end-of-life DEP0094 multi-argument behaviour of
 // assert.fail: only the first argument is used (as the message, or thrown if
@@ -28,6 +29,26 @@ describe("assert.fail", () => {
       expected: undefined,
       operator: "fail",
       generatedMessage: true,
+    });
+  });
+
+  it("with an explicit undefined message uses the default generated message", () => {
+    expect(capture(() => assert.fail(undefined))).toEqual({
+      message: "Failed",
+      actual: undefined,
+      expected: undefined,
+      operator: "fail",
+      generatedMessage: true,
+    });
+  });
+
+  it("keeps generatedMessage false for an explicit empty-string message", () => {
+    expect(capture(() => assert.fail(""))).toEqual({
+      message: "",
+      actual: undefined,
+      expected: undefined,
+      operator: "fail",
+      generatedMessage: false,
     });
   });
 
@@ -67,7 +88,24 @@ describe("assert.fail", () => {
 
   it("throws the first argument when it is an Error", () => {
     const err = new Error("custom");
-    expect(() => assert.fail(err)).toThrow(err);
+    try {
+      assert.fail(err);
+    } catch (e) {
+      expect(e).toBe(err);
+      return;
+    }
+    throw new Error("assert.fail did not throw");
+  });
+
+  it("throws a cross-realm Error instance directly", () => {
+    const err = vm.runInNewContext("new Error('cross-realm')");
+    try {
+      assert.fail(err);
+    } catch (e) {
+      expect(e).toBe(err);
+      return;
+    }
+    throw new Error("assert.fail did not throw");
   });
 
   it("does not emit a DEP0094 deprecation warning for multi-argument calls", async () => {
@@ -76,7 +114,7 @@ describe("assert.fail", () => {
         bunExe(),
         "-e",
         `const assert = require("node:assert");
-         process.on("warning", w => { console.error("WARNING", w.name, w.code); process.exit(2); });
+         process.on("warning", w => { console.error("ROBOBUN_PROCESS_WARNING", w.name, w.code); process.exit(2); });
          try { assert.fail(1, 2); } catch {}
          setImmediate(() => process.exit(0));`,
       ],
@@ -86,7 +124,7 @@ describe("assert.fail", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("DEP0094");
-    expect(stderr).not.toContain("WARNING");
+    expect(stderr).not.toContain("ROBOBUN_PROCESS_WARNING");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   });

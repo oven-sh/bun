@@ -192,9 +192,11 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     let mut common_prefixes: Vec<&[u8]> = Vec::new();
 
     // we dont use trailing ">" as it may finish with xmlns=...
-    if let Some(delete_result_pos) = strings::index_of(xml, b"<ListBucketResult") {
-        let mut i: usize = 0;
-        while i < xml[delete_result_pos..].len() {
+    if let Some(list_result_pos) = strings::index_of(xml, b"<ListBucketResult") {
+        // Start at the root element: the prolog (declaration, comments) holds no
+        // element content, and scanning it would shorten the window by its length.
+        let mut i: usize = list_result_pos;
+        while i < xml.len() {
             if xml[i] != b'<' {
                 i += 1;
                 continue;

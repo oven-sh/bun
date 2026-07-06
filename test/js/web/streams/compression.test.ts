@@ -219,6 +219,52 @@ describe("CompressionStream and DecompressionStream", () => {
     });
   });
 
+  describe("truncated input", () => {
+    const formats = ["gzip", "deflate", "deflate-raw", "brotli", "zstd"] as const;
+    type Format = (typeof formats)[number];
+
+    async function compress(format: Format, bytes: Uint8Array) {
+      return new Uint8Array(
+        await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream(format))).arrayBuffer(),
+      );
+    }
+
+    function decompress(format: Format, bytes: Uint8Array) {
+      return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format))).arrayBuffer();
+    }
+
+    async function decompressResult(format: Format, bytes: Uint8Array) {
+      return await decompress(format, bytes).then(
+        value => ({ resolvedByteLength: value.byteLength }),
+        (err: any) => ({ code: err.code, causeMessage: err.cause?.message, causeErrno: err.cause?.errno }),
+      );
+    }
+
+    test.each(formats)("%s errors the readable when the input ends mid-stream", async format => {
+      const data = Buffer.alloc(6000, "hello world ");
+      const full = await compress(format, data);
+      expect(full.byteLength).toBeGreaterThan(10);
+
+      // The intact frame still round-trips, so the rejection below is the
+      // truncation and not the fixture.
+      expect(Buffer.from(await decompress(format, full))).toEqual(data);
+
+      expect(await decompressResult(format, full.subarray(0, full.byteLength - 10))).toEqual({
+        code: "Z_BUF_ERROR",
+        causeMessage: "unexpected end of file",
+        causeErrno: -5,
+      });
+    });
+
+    test.each(formats)("%s errors the readable when there is no input at all", async format => {
+      expect(await decompressResult(format, new Uint8Array(0))).toEqual({
+        code: "Z_BUF_ERROR",
+        causeMessage: "unexpected end of file",
+        causeErrno: -5,
+      });
+    });
+  });
+
   describe("all formats", () => {
     test("works with all compression formats", async () => {
       const formats: Array<"gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd"> = [

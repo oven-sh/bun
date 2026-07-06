@@ -281,6 +281,9 @@ mod _impl {
         pub output: c::ZSTD_outBuffer,
         pub pledged_src_size: u64,
         pub remaining: u64,
+        /// ZSTD_DECOMPRESS: the frame last fed to the decoder decoded and
+        /// flushed completely. Latched in `do_work`, read by `get_error_info`.
+        pub frame_ended: bool,
     }
 
     impl Default for Context {
@@ -301,12 +304,14 @@ mod _impl {
                 },
                 pledged_src_size: u64::MAX,
                 remaining: 0,
+                frame_ended: false,
             }
         }
     }
 
     impl Context {
         pub fn init(&mut self, pledged_src_size: u64) -> Error {
+            self.frame_ended = false;
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
@@ -442,14 +447,23 @@ mod _impl {
                         self.flush as c_uint,
                     )
                 },
-                // SAFETY: state is a valid DCtx.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_decompressStream(
-                        self.state_ptr().cast(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                    )
-                },
+                NodeMode::ZSTD_DECOMPRESS => {
+                    // SAFETY: state is a valid DCtx.
+                    let hint = unsafe {
+                        c::ZSTD_decompressStream(
+                            self.state_ptr().cast(),
+                            &raw mut self.output,
+                            &raw mut self.input,
+                        )
+                    };
+                    // 0 means the frame decoded and flushed completely. A
+                    // zero-length input always asks for more, and the finishing
+                    // flush writes one, so it must not clear an ended frame.
+                    if c::ZSTD_isError(hint) == 0 && (hint == 0 || self.input.size != 0) {
+                        self.frame_ended = hint == 0;
+                    }
+                    hint
+                }
                 _ => unreachable!(),
             } as u64;
         }
@@ -463,7 +477,22 @@ mod _impl {
             // Compute result, then clear `remaining`, then return.
             let err = c::ZSTD_getErrorCode(self.remaining as usize);
             let result = if err == 0 {
-                Error::OK
+                // A frame that never ended is truncated, and zstd reports that
+                // only by withholding the 0 return. Decide at the finishing
+                // flush, once the decoder stops asking for more output room.
+                if self.mode == NodeMode::ZSTD_DECOMPRESS
+                    && self.flush == c::ZSTD_e_end as c_int
+                    && self.output.pos < self.output.size
+                    && !self.frame_ended
+                {
+                    Error::init(
+                        c"unexpected end of file".as_ptr(),
+                        bun_zlib::ReturnCode::BufError as c_int,
+                        c"Z_BUF_ERROR".as_ptr(),
+                    )
+                } else {
+                    Error::OK
+                }
             } else {
                 Error {
                     err: err as c_int,

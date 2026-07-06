@@ -497,7 +497,9 @@ describe("__Secure- and __Host- name prefixes", () => {
   });
 
   test("__Host- requires secure", () => {
-    expect(() => new Bun.Cookie("__Host-a", "1")).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(() => new Bun.Cookie("__Host-a", "1")).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires secure: true',
+    );
     expect(new Bun.Cookie("__Host-a", "1", { secure: true }).toString()).toBe(
       "__Host-a=1; Path=/; Secure; SameSite=Lax",
     );
@@ -520,7 +522,9 @@ describe("__Secure- and __Host- name prefixes", () => {
   });
 
   test("the prefix is matched case-insensitively, like browsers do", () => {
-    expect(() => new Bun.Cookie("__host-a", "1")).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(() => new Bun.Cookie("__host-a", "1")).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires secure: true',
+    );
     expect(() => new Bun.Cookie("__SECURE-a", "1")).toThrow(
       'Invalid cookie name: "__Secure-" prefix requires secure: true',
     );
@@ -557,12 +561,16 @@ describe("__Secure- and __Host- name prefixes", () => {
   test("the setters cannot mutate a prefixed cookie into a state browsers ignore", () => {
     const cookie = new Bun.Cookie("__Host-a", "1", { secure: true });
     expect(() => (cookie.secure = false)).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
-    expect(() => (cookie.domain = "example.com")).toThrow('Invalid cookie name: "__Host-" prefix does not allow a domain');
+    expect(() => (cookie.domain = "example.com")).toThrow(
+      'Invalid cookie name: "__Host-" prefix does not allow a domain',
+    );
     expect(() => (cookie.path = "/admin")).toThrow('Invalid cookie name: "__Host-" prefix requires path: "/"');
     expect(cookie.toString()).toBe("__Host-a=1; Path=/; Secure; SameSite=Lax");
 
     const secureCookie = new Bun.Cookie("__Secure-a", "1", { secure: true });
-    expect(() => (secureCookie.secure = false)).toThrow('Invalid cookie name: "__Secure-" prefix requires secure: true');
+    expect(() => (secureCookie.secure = false)).toThrow(
+      'Invalid cookie name: "__Secure-" prefix requires secure: true',
+    );
     // __Secure- constrains nothing but the secure flag.
     secureCookie.domain = "example.com";
     secureCookie.path = "/admin";

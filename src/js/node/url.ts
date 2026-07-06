@@ -529,8 +529,9 @@ Url.prototype.format = function format() {
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || slashedProtocol[protocol]) {
-    if (this.slashes || host) {
+  const thisSlashes = this.slashes;
+  if (thisSlashes || slashedProtocol[protocol]) {
+    if (thisSlashes || host) {
       if (pathname && pathname.charAt(0) !== "/") {
         pathname = "/" + pathname;
       }

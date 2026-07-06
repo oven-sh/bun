@@ -313,6 +313,12 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
+/// `process.setSourceMapsEnabled()`.
+// HOST_EXPORT(Bun__VM__setSourceMapsEnabled, c)
+pub fn set_source_maps_enabled(vm: &mut VirtualMachine, enabled: bool) {
+    vm.source_maps_enabled = enabled;
+}
+
 #[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
 pub fn Bun__setSyntheticAllocationLimitForTesting(
     global: &JSGlobalObject,

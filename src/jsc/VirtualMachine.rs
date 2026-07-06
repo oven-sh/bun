@@ -229,6 +229,10 @@ pub struct VirtualMachine {
     /// `source_mappings`.
     pub saved_source_map_table: crate::saved_source_map::HashTable,
     pub source_mappings: SavedSourceMap,
+    /// `process.setSourceMapsEnabled()`. Gates `module.findSourceMap()`, which
+    /// Node leaves disabled by default. Bun's own stack remapping never reads
+    /// this: it always uses `source_mappings`.
+    pub source_maps_enabled: bool,
 
     // BACKREF — `&'a mut Arena` in spirit; caller-owned (web_worker) and
     // outlives the VM.

@@ -209,6 +209,25 @@ describe("Bun.serve() cookies", () => {
       ]
     `);
   });
+  test("set cookie to an empty value", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([["test", ""]]),
+    });
+    expect(res.status).toBe(200);
+    // The handler's view of the cookie must match the Set-Cookie header the client receives.
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      {
+        "test": "",
+      }
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "test=; Path=/; SameSite=Lax",
+      ]
+    `);
+  });
   test("request with cookies", async () => {
     const res = await fetch(server.url + "/tester", {
       method: "POST",

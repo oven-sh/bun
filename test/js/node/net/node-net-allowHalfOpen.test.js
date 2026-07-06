@@ -1,6 +1,8 @@
-import { expect, test } from "bun:test";
-import { nodeExe, tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { nodeExe, tempDirWithFiles, tmpdirSync } from "harness";
+import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 
 async function nodeRun(callback, clients = 1) {
   const cwd = tempDirWithFiles("server", {
@@ -112,4 +114,42 @@ test("allowHalfOpen: false should work on client-side", async () => {
       .map(s => s.trim())
       .filter(s => s),
   ).toEqual(["Hello, World", "Received FIN"]);
+});
+
+// Replies on the tick after the peer's FIN, which only lands if the accepted
+// socket really stayed half-open: a listener that auto-closes on EOF has already
+// torn the socket down by the time the `end` listener's setImmediate runs.
+function replyAfterFin(reply) {
+  return conn => conn.on("end", () => setImmediate(() => conn.end(reply)));
+}
+
+function halfCloseThenRead(options) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const client = net.connect(options);
+  let received = "";
+  client.on("connect", () => client.end());
+  client.on("data", chunk => (received += chunk));
+  client.on("close", () => resolve(received));
+  client.on("error", reject);
+  return promise;
+}
+
+describe("allowHalfOpen: true on the server side", () => {
+  test.each([
+    ["tcp", () => ({ port: 0, host: "127.0.0.1" })],
+    ["unix", () => ({ path: join(tmpdirSync(), "half-open.sock") })],
+  ])("keeps an accepted %s socket writable after the peer's FIN", async (_name, makeListenOptions) => {
+    const server = net.createServer({ allowHalfOpen: true }, replyAfterFin("REPLY-AFTER-FIN"));
+    server.listen(makeListenOptions());
+    await once(server, "listening");
+
+    try {
+      const address = server.address();
+      const connectOptions =
+        typeof address === "string" ? { path: address } : { port: address.port, host: address.address };
+      expect(await halfCloseThenRead(connectOptions)).toBe("REPLY-AFTER-FIN");
+    } finally {
+      server.close();
+    }
+  });
 });

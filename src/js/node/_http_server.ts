@@ -695,12 +695,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           const requestCount = (socket._requestCount || 0) + 1;
           socket._requestCount = requestCount;
           http_res._maxRequestsPerSocket = server.maxRequestsPerSocket;
-          // At (or beyond) the limit the response advertises Connection:
-          // close, like Node.js - including the over-limit 503 dropRequest
-          // answer, which would otherwise claim keep-alive right before the
-          // socket is destroyed. Closing the socket here instead would race
-          // already-pipelined requests, which still need to be dispatched so
-          // they can be answered with 503 via dropRequest.
+          // At (or beyond) the limit the response advertises Connection: close,
+          // like Node.js - including the over-limit 503 dropRequest answer,
+          // which would otherwise claim keep-alive.
           http_res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= requestCount;
           if (server.maxRequestsPerSocket < requestCount) {
             reachedRequestsLimit = true;
@@ -759,10 +756,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (reachedRequestsLimit) {
+          // Like Node.js's parserOnIncoming: every request past the limit gets
+          // its own 'dropRequest' + 503, and the connection is not torn down -
+          // destroying it drops the requests pipelined behind this one.
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
           http_res.end();
-          socket.destroy();
         } else if (is_upgrade) {
           // Hand the raw socket over to the 'upgrade' listener with any bytes
           // that arrived after the request head, like Node.js. The connection

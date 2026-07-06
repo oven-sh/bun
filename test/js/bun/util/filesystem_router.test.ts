@@ -231,6 +231,89 @@ it("should support catch-all routes", () => {
   }
 });
 
+// Pattern.match_ reuses one scratch param list across every candidate route and used
+// to clear it on only some of its failure paths, so params pushed while probing a
+// route that lost still reached the route that won.
+const probedRouteFixtures = [
+  {
+    // The loser's pattern ran out while path segments remained.
+    files: ["[user]/settings.tsx", "help/[...usertopic].tsx"],
+    pathname: "/help/settings/a",
+    name: "/help/[...usertopic]",
+    params: { usertopic: "settings/a" },
+  },
+  {
+    // Same, and both routes name their param the same thing.
+    files: ["[topic]/settings.tsx", "help/[...topic].tsx"],
+    pathname: "/help/settings/a",
+    name: "/help/[...topic]",
+    params: { topic: "settings/a" },
+  },
+  {
+    // The loser reached its catch-all with nothing left to consume.
+    files: ["[c]/b/[...rest].tsx", "[c]/[...d].tsx"],
+    pathname: "/x/b",
+    name: "/[c]/[...d]",
+    params: { c: "x", d: "b" },
+  },
+];
+
+it.each(probedRouteFixtures)(
+  "does not leak params from a probed route into $name",
+  ({ files, pathname, name, params }) => {
+    const { dir } = make(files);
+
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    const match = router.match(pathname)!;
+    expect({ name: match.name, params: match.params }).toEqual({ name, params });
+  },
+);
+
+it("does not crash reading .params when a probed route's param name is absent from the match", async () => {
+  // A leaked param name that the winning route's name does not contain resolves to a
+  // zero-length property key, which JSC's Identifier::fromString dereferences as null.
+  // Run in a subprocess so the crash is an exit code rather than a dead test runner.
+  using dir = tempDir("fsr-param-leak-crash", {
+    "pattern-ran-out/[user]/settings.tsx": "export default 1;",
+    "pattern-ran-out/help/[...topic].tsx": "export default 1;",
+    "empty-catch-all/[a]/b/[...rest].tsx": "export default 1;",
+    "empty-catch-all/[c]/[...d].tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    import path from "path";
+    const out = {};
+    for (const [subdir, pathname] of [["pattern-ran-out", "/help/settings/a"], ["empty-catch-all", "/x/b"]]) {
+      const router = new Bun.FileSystemRouter({
+        dir: path.join(${JSON.stringify(String(dir))}, subdir),
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      const match = router.match(pathname);
+      out[subdir] = match ? { name: match.name, params: match.params } : null;
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "pattern-ran-out": { name: "/help/[...topic]", params: { topic: "settings/a" } },
+    "empty-catch-all": { name: "/[c]/[...d]", params: { c: "x", d: "b" } },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("should support index routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);

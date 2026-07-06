@@ -4152,8 +4152,12 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.trim()).toBe(`{"read":"4141","length":2}`);
-      expect(exitCode).toBe(0);
+      // Surface stderr so an abort diagnostic shows up in the diff if the assert regresses.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `{"read":"4141","length":2}`,
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
   });
 

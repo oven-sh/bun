@@ -2138,10 +2138,9 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
 
-    ASSERT(offset <= byteLength);
-    ASSERT(length <= byteLength);
-    ASSERT(offset + length <= byteLength);
-
+    // Callers snapshot byteLength before coercing their arguments, and the user JS
+    // those coercions can run may shrink a resizable buffer underneath us, so
+    // `offset` and `length` are clamped here rather than asserted.
     if (offset >= byteLength) {
         offset = byteLength;
     }
@@ -2157,18 +2156,30 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
     return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding);
 }
 
-// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L208-L233
-bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, size_t& out, ASCIILiteral errorMessage)
+// Mirrors v8::Value::IntegerValue(): NaN becomes 0 and anything outside the
+// int64 range saturates instead of wrapping to the cvttsd2si sentinel.
+static ALWAYS_INLINE int64_t toIntegerValue(double number)
+{
+    if (std::isnan(number)) return 0;
+    if (number >= static_cast<double>(std::numeric_limits<int64_t>::max())) return std::numeric_limits<int64_t>::max();
+    if (number <= static_cast<double>(std::numeric_limits<int64_t>::min())) return std::numeric_limits<int64_t>::min();
+    return truncateDoubleToInt64(number);
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_internals.h#L208-L233
+// `out` keeps its incoming value when `value` is undefined: that is the default.
+bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, size_t& out)
 {
     if (value.isUndefined()) {
         return true;
     }
 
-    int64_t index = truncateDoubleToInt64(value.toNumber(globalObject));
+    double number = value.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
+    int64_t index = toIntegerValue(number);
     if (index < 0) {
-        throwNodeRangeError(globalObject, scope, errorMessage);
+        throwNodeRangeError(globalObject, scope, "Index out of range"_s);
         return false;
     }
 
@@ -2328,7 +2339,9 @@ lstart:
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, offset, length, encoding);
 }
 
-// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L544
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L544
+// These are node's raw bindings, not the `toString()` wrapper: an empty range
+// short-circuits before the range check, so `buf.hexSlice(pastEnd)` is "".
 template<BufferEncodingType encoding>
 static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
@@ -2352,19 +2365,20 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     size_t start = 0;
     size_t end = length;
 
-    if (!parseArrayIndex(scope, lexicalGlobalObject, startValue, start, "start must be a positive integer"_s)) [[unlikely]] {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, startValue, start)) [[unlikely]] {
         return {};
     }
 
-    if (!parseArrayIndex(scope, lexicalGlobalObject, endValue, end, "end must be a positive integer"_s)) [[unlikely]] {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, endValue, end)) [[unlikely]] {
         return {};
     }
 
-    if (end < start)
-        end = start;
+    if (start >= end) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    }
 
-    if (!(end <= length)) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "end out of range"_s);
+    if (end > length) {
+        throwNodeRangeError(lexicalGlobalObject, scope, "Index out of range"_s);
         return {};
     }
 
@@ -2395,7 +2409,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
 //     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
 // }
 
-// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L711
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
+// Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
+// the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
 template<BufferEncodingType encoding>
 static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)
 {
@@ -2447,7 +2463,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
     // Calculate max_length
     size_t maxLength;
     if (lengthWasUndefined) {
-        maxLength = byteLength - safeOffset;
+        // The wrapper's default is `length = buf.byteLength - offset`, which is NaN
+        // when offset is NaN; the native call then truncates that NaN to 0.
+        maxLength = offsetWasNaN ? 0 : byteLength - safeOffset;
     } else {
         // Node.js JS wrapper checks: if (length < 0 || length > this.byteLength - offset)
         // When offset is NaN, (byteLength - offset) is NaN, so (length > NaN) is false.
@@ -2490,6 +2508,61 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
     }
 
     RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, text, offsetValue, lengthValue));
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L711-L741
+// base64/base64url/hex/ucs2 are still node's raw binding: an out-of-range `length`
+// clamps to the space left instead of throwing, and a negative offset or length
+// is ERR_OUT_OF_RANGE rather than ERR_BUFFER_OUT_OF_BOUNDS.
+template<BufferEncodingType encoding>
+static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+        return {};
+    }
+
+    JSString* text = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    size_t offset = 0;
+    if (!parseArrayIndex(scope, lexicalGlobalObject, callFrame->argument(1), offset)) [[unlikely]] {
+        return {};
+    }
+
+    // The coercions above can run arbitrary JS, which may detach or resize the view.
+    if (castedThis->isDetached()) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+        return {};
+    }
+    size_t byteLength = castedThis->byteLength();
+
+    if (offset > byteLength) {
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    }
+
+    size_t maxLength = byteLength - offset;
+    if (!parseArrayIndex(scope, lexicalGlobalObject, callFrame->argument(2), maxLength)) [[unlikely]] {
+        return {};
+    }
+
+    if (castedThis->isDetached()) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+        return {};
+    }
+    byteLength = castedThis->byteLength();
+
+    const size_t remaining = offset < byteLength ? byteLength - offset : 0;
+    maxLength = std::min(remaining, maxLength);
+    if (maxLength == 0) {
+        return JSC::JSValue::encode(JSC::jsNumber(0));
+    }
+
+    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, text, offset, maxLength, encoding));
 }
 
 static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
@@ -2849,7 +2922,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_write, (JSGlobalObject * lexi
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf16leWrite, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunctionWriteWithEncoding<WebCore::BufferEncodingType::utf16le>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_StringWriteWithEncoding<WebCore::BufferEncodingType::utf16le>(lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf8Write, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2869,17 +2942,17 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_asciiWrite, (JSGlobalObject *
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_base64Write, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunctionWriteWithEncoding<WebCore::BufferEncodingType::base64>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_StringWriteWithEncoding<WebCore::BufferEncodingType::base64>(lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_base64urlWrite, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunctionWriteWithEncoding<WebCore::BufferEncodingType::base64url>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_StringWriteWithEncoding<WebCore::BufferEncodingType::base64url>(lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_hexWrite, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunctionWriteWithEncoding<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_StringWriteWithEncoding<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf8Slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

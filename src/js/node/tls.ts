@@ -5,7 +5,13 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const {
+  defaultProtocolVersions,
+  resolveProtocolVersionRange,
+  throwOnInvalidTLSArray,
+  validateProtocolVersions,
+  validateSecureProtocol,
+} = require("internal/tls");
 const {
   validateString,
   validateNumber,
@@ -302,56 +308,8 @@ function validateCiphers(ciphers: string, name: string = "options") {
   }
 }
 
-const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
-
 // Subset of Node's configSecureContext() validations:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
-// Valid OpenSSL/BoringSSL secureProtocol method names (legacy API). Built lazily
-// so the Set is only allocated when a secureProtocol option is actually used.
-let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
-function getSecureProtocolMethods() {
-  if (!_SECURE_PROTOCOL_METHODS) {
-    _SECURE_PROTOCOL_METHODS = new Set([
-      "TLS_method",
-      "TLS_client_method",
-      "TLS_server_method",
-      "SSLv23_method",
-      "SSLv23_client_method",
-      "SSLv23_server_method",
-      "TLSv1_method",
-      "TLSv1_client_method",
-      "TLSv1_server_method",
-      "TLSv1_1_method",
-      "TLSv1_1_client_method",
-      "TLSv1_1_server_method",
-      "TLSv1_2_method",
-      "TLSv1_2_client_method",
-      "TLSv1_2_server_method",
-    ]);
-  }
-  return _SECURE_PROTOCOL_METHODS;
-}
-// Matches Node: SSLv2/SSLv3 methods are disabled, anything unrecognized is an
-// unknown method.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L100
-function invalidProtocolMethod(message) {
-  // Node throws all secureProtocol failures (SSLv2/SSLv3 disabled + unknown
-  // method) via THROW_ERR_TLS_INVALID_PROTOCOL_METHOD: a TypeError carrying the
-  // ERR_TLS_INVALID_PROTOCOL_METHOD code, varying only the message.
-  const error = new TypeError(message);
-  error.code = "ERR_TLS_INVALID_PROTOCOL_METHOD";
-  return error;
-}
-function validateSecureProtocol(secureProtocol) {
-  if (secureProtocol === undefined || secureProtocol === null) return;
-  validateString(secureProtocol, "options.secureProtocol");
-  if (secureProtocol.startsWith("SSLv2_")) throw invalidProtocolMethod("SSLv2 methods disabled");
-  if (secureProtocol.startsWith("SSLv3_")) throw invalidProtocolMethod("SSLv3 methods disabled");
-  if (!getSecureProtocolMethods().has(secureProtocol)) {
-    throw invalidProtocolMethod(`Unknown method: ${secureProtocol}`);
-  }
-}
-
 function validateSecureContextOptions(options) {
   const {
     ciphers,
@@ -385,10 +343,7 @@ function validateSecureContextOptions(options) {
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   }
-  if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(minVersion), "minimum");
-  if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(maxVersion), "maximum");
+  validateProtocolVersions(minVersion, maxVersion);
   if (ticketKeys !== undefined && ticketKeys !== null) {
     validateBuffer(ticketKeys, "options.ticketKeys");
     const ticketKeysByteLength = ticketKeys.byteLength;
@@ -616,57 +571,6 @@ function checkServerIdentity(hostname, cert) {
 // that used to live in this file.
 const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
 
-// Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
-// boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
-// accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
-// crossing into native so `{ key: false }` etc. doesn't throw
-// ERR_INVALID_ARG_TYPE from the bindgen layer.
-// BoringSSL TLS1_x_VERSION constants (from openssl/tls1.h). The native context
-// applies these via SSL_CTX_set_min/max_proto_version.
-const TLS1_VERSION = 0x0301;
-const TLS1_1_VERSION = 0x0302;
-const TLS1_2_VERSION = 0x0303;
-const TLS1_3_VERSION = 0x0304;
-function tlsStringToProtocolVersion(v) {
-  switch (v) {
-    case "TLSv1":
-      return TLS1_VERSION;
-    case "TLSv1.1":
-      return TLS1_1_VERSION;
-    case "TLSv1.2":
-      return TLS1_2_VERSION;
-    case "TLSv1.3":
-      return TLS1_3_VERSION;
-    default:
-      return 0;
-  }
-}
-// Node's legacy secureProtocol string pins both bounds to a single version
-// (e.g. 'TLSv1_2_method'); 'TLS_method'/'SSLv23_method' leave the range open.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L120
-function secureProtocolToVersionRange(secureProtocol) {
-  if (typeof secureProtocol !== "string") return null;
-  if (
-    secureProtocol === "TLSv1_method" ||
-    secureProtocol === "TLSv1_client_method" ||
-    secureProtocol === "TLSv1_server_method"
-  )
-    return [TLS1_VERSION, TLS1_VERSION];
-  if (
-    secureProtocol === "TLSv1_1_method" ||
-    secureProtocol === "TLSv1_1_client_method" ||
-    secureProtocol === "TLSv1_1_server_method"
-  )
-    return [TLS1_1_VERSION, TLS1_1_VERSION];
-  if (
-    secureProtocol === "TLSv1_2_method" ||
-    secureProtocol === "TLSv1_2_client_method" ||
-    secureProtocol === "TLSv1_2_server_method"
-  )
-    return [TLS1_2_VERSION, TLS1_2_VERSION];
-  return null;
-}
-
 /**
  * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert/ca and fold
  * them into the regular options so every downstream consumer (the native
@@ -727,6 +631,11 @@ function newNativeSecureContext(options, cached = true) {
     options = { ...options, ALPNProtocols: normalized.ALPNProtocols };
   }
   if (options) {
+    // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
+    // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
+    // accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
+    // crossing into native so `{ key: false }` etc. doesn't throw
+    // ERR_INVALID_ARG_TYPE from the bindgen layer.
     const { key, cert, ca } = options;
     if (!key || !cert || !ca) {
       options = {
@@ -736,26 +645,11 @@ function newNativeSecureContext(options, cached = true) {
         ca: ca || null,
       };
     }
-  }
-  if (options) {
-    // Read each option once. Translate minVersion/maxVersion/secureProtocol to
-    // the integer protocol range the native layer applies, so the bindings
-    // receive numbers, not the user-facing strings. When none are given the
-    // module-level tls.DEFAULT_MIN_VERSION / DEFAULT_MAX_VERSION apply, the
-    // way Node's createSecureContext does.
-    const { minVersion: optMinVersion, maxVersion: optMaxVersion, secureProtocol: optSecureProtocol } = options;
-    {
-      let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(optSecureProtocol);
-      if (range) {
-        minVersion = range[0];
-        maxVersion = range[1];
-      } else {
-        minVersion = tlsStringToProtocolVersion(optMinVersion ?? DEFAULT_MIN_VERSION);
-        maxVersion = tlsStringToProtocolVersion(optMaxVersion ?? DEFAULT_MAX_VERSION);
-      }
-      options = { ...options, minVersion, maxVersion };
-    }
+    // The bindings take the protocol range as numbers, not user-facing strings.
+    options = {
+      ...options,
+      ...resolveProtocolVersionRange(options.minVersion, options.maxVersion, options.secureProtocol),
+    };
   }
   const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
   if (pfxExtraCAs) {
@@ -1447,22 +1341,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
         ciphers: this.ciphers,
-        // Translate minVersion/maxVersion/secureProtocol to the integer
-        // protocol range the native layer applies (secureProtocol wins, like
-        // Node's SecureContext::Init). When none are given the module-level
-        // tls.DEFAULT_MIN_VERSION / DEFAULT_MAX_VERSION apply.
-        ...(() => {
-          let minVersion, maxVersion;
-          const range = secureProtocolToVersionRange(this.secureProtocol);
-          if (range) {
-            minVersion = range[0];
-            maxVersion = range[1];
-          } else {
-            minVersion = tlsStringToProtocolVersion(this.minVersion ?? DEFAULT_MIN_VERSION);
-            maxVersion = tlsStringToProtocolVersion(this.maxVersion ?? DEFAULT_MAX_VERSION);
-          }
-          return { minVersion, maxVersion };
-        })(),
+        ...resolveProtocolVersionRange(this.minVersion, this.maxVersion, this.secureProtocol),
       },
       TLSSocket,
     ];
@@ -1482,24 +1361,6 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 const DEFAULT_ECDH_CURVE = "auto";
-// https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
-let DEFAULT_MIN_VERSION = "TLSv1.2",
-  DEFAULT_MAX_VERSION = "TLSv1.3";
-
-// Node seeds the protocol-version defaults from its --tls-min-vX.Y /
-// --tls-max-vX.Y CLI flags; the equivalent flags reach us through
-// process.execArgv. The lowest requested minimum and the highest requested
-// maximum win when several are passed, matching node_options precedence.
-{
-  const execArgv = process.execArgv;
-  const hasFlag = (flag: string) => execArgv.includes(flag);
-  if (hasFlag("--tls-min-v1.0")) DEFAULT_MIN_VERSION = "TLSv1";
-  else if (hasFlag("--tls-min-v1.1")) DEFAULT_MIN_VERSION = "TLSv1.1";
-  else if (hasFlag("--tls-min-v1.2")) DEFAULT_MIN_VERSION = "TLSv1.2";
-  else if (hasFlag("--tls-min-v1.3")) DEFAULT_MIN_VERSION = "TLSv1.3";
-  if (hasFlag("--tls-max-v1.3")) DEFAULT_MAX_VERSION = "TLSv1.3";
-  else if (hasFlag("--tls-max-v1.2")) DEFAULT_MAX_VERSION = "TLSv1.2";
-}
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);
@@ -1804,20 +1665,20 @@ export default {
     setTLSDefaultCiphers(value);
   },
   DEFAULT_ECDH_CURVE,
-  // Accessors so `tls.DEFAULT_MAX_VERSION = 'TLSv1.2'` reaches the
-  // module-level variables that context construction reads (Node mutates the
-  // exports object the same way).
+  // Accessors so `tls.DEFAULT_MAX_VERSION = 'TLSv1.2'` reaches the state that
+  // every context construction reads (Node mutates the exports object the same
+  // way).
   get DEFAULT_MAX_VERSION() {
-    return DEFAULT_MAX_VERSION;
+    return defaultProtocolVersions.max;
   },
   set DEFAULT_MAX_VERSION(value) {
-    DEFAULT_MAX_VERSION = value;
+    defaultProtocolVersions.max = value;
   },
   get DEFAULT_MIN_VERSION() {
-    return DEFAULT_MIN_VERSION;
+    return defaultProtocolVersions.min;
   },
   set DEFAULT_MIN_VERSION(value) {
-    DEFAULT_MIN_VERSION = value;
+    defaultProtocolVersions.min = value;
   },
   getCiphers,
   setDefaultCACertificates,

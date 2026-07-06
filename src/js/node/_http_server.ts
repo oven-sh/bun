@@ -19,7 +19,12 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const {
+  resolveProtocolVersionRange,
+  throwOnInvalidTLSArray,
+  validateProtocolVersions,
+  validateSecureProtocol,
+} = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -303,6 +308,13 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
+      // Node's https.Server runs its options through tls.createSecureContext(),
+      // so the protocol-version bounds have to reach Bun.serve()'s TLS context
+      // as well, as the integer range the native layer applies.
+      const { minVersion, maxVersion, secureProtocol } = options;
+      validateSecureProtocol(secureProtocol);
+      validateProtocolVersions(minVersion, maxVersion);
+
       this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,
@@ -312,6 +324,7 @@ function Server(options, callback): void {
         secureOptions,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
+        ...resolveProtocolVersionRange(minVersion, maxVersion, secureProtocol),
       });
     } else {
       this[tlsSymbol] = null;

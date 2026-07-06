@@ -28,6 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
+import { connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -1327,6 +1328,70 @@ describe("node https server", async () => {
     } finally {
       done();
     }
+  });
+
+  // Resolves to the protocol the client negotiated, or the error code the
+  // handshake failed with.
+  async function negotiate(serverOptions: object, clientOptions: object) {
+    const server = createHttpsServer({ ...httpsOptions, ...serverOptions }, (req, res) => res.end("served"));
+    try {
+      const url = await listen(server, "https");
+      const { promise, resolve } = Promise.withResolvers<{ protocol?: string | null; code?: string }>();
+      const socket = tlsConnect(
+        { port: Number(url.port), host: "127.0.0.1", rejectUnauthorized: false, ...clientOptions },
+        () => resolve({ protocol: socket.getProtocol() }),
+      );
+      socket.on("error", err => resolve({ code: (err as NodeJS.ErrnoException).code }));
+      const result = await promise;
+      socket.destroy();
+      await once(socket, "close");
+      return result;
+    } finally {
+      server.close();
+    }
+  }
+
+  it("enforces minVersion against a client that caps below it", async () => {
+    expect(await negotiate({ minVersion: "TLSv1.3", maxVersion: "TLSv1.3" }, { maxVersion: "TLSv1.2" })).toEqual({
+      code: "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+    });
+  });
+
+  it("still serves a client that can reach the pinned minVersion", async () => {
+    expect(await negotiate({ minVersion: "TLSv1.3", maxVersion: "TLSv1.3" }, {})).toEqual({ protocol: "TLSv1.3" });
+  });
+
+  it("enforces maxVersion against a client that floors above it", async () => {
+    expect(await negotiate({ maxVersion: "TLSv1.2" }, { minVersion: "TLSv1.3" })).toEqual({
+      code: "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+    });
+  });
+
+  it("caps an unconstrained client at maxVersion", async () => {
+    expect(await negotiate({ maxVersion: "TLSv1.2" }, {})).toEqual({ protocol: "TLSv1.2" });
+  });
+
+  it("pins both bounds from the legacy secureProtocol option", async () => {
+    expect(await negotiate({ secureProtocol: "TLSv1_2_method" }, {})).toEqual({ protocol: "TLSv1.2" });
+    expect(await negotiate({ secureProtocol: "TLSv1_2_method" }, { minVersion: "TLSv1.3" })).toEqual({
+      code: "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+    });
+  });
+
+  it("negotiates TLSv1.3 by default", async () => {
+    expect(await negotiate({}, {})).toEqual({ protocol: "TLSv1.3" });
+  });
+
+  it("rejects invalid protocol version options", () => {
+    expect(() => createHttpsServer({ ...httpsOptions, minVersion: "TLSv9" })).toThrow(
+      "TLSv9 is not a valid minimum TLS protocol version",
+    );
+    expect(() => createHttpsServer({ ...httpsOptions, maxVersion: "TLSv9" })).toThrow(
+      "TLSv9 is not a valid maximum TLS protocol version",
+    );
+    expect(() => createHttpsServer({ ...httpsOptions, secureProtocol: "TLSv9_method" })).toThrow(
+      "Unknown method: TLSv9_method",
+    );
   });
 });
 

@@ -17,6 +17,7 @@ namespace Bun {
 class NodeVMGlobalObject;
 class NodeVMContextOptions;
 class CompileFunctionOptions;
+class NodeVMModule;
 
 namespace NodeVM {
 
@@ -35,6 +36,9 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue,
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
+// node:vm's JS `Module` wrapper keeps its NodeVMModule under a symbol created in
+// configureNodeVM, so native code can recognize a real module like vm.ts's isModule().
+NodeVMModule* getModuleFromWrapper(JSC::JSGlobalObject* globalObject, JSValue value);
 
 } // namespace NodeVM
 

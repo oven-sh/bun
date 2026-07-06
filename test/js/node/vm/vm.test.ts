@@ -8,6 +8,8 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1006,6 +1008,94 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
     requests: [\"./dep.js\"]"
   `);
   expect(exitCode).toBe(0);
+});
+
+describe("importModuleDynamically", () => {
+  type Hook = (value: any) => any;
+  const hookShapes: [string, Hook][] = [
+    ["sync", value => () => value],
+    ["async", value => async () => value],
+  ];
+  const nonModules: [string, any][] = [
+    ["a number", 123],
+    ["undefined", undefined],
+    ["null", null],
+    ["a plain object", {}],
+    ["an object with a namespace property", { namespace: { v: 1 } }],
+  ];
+
+  async function evaluatedModule(value: unknown) {
+    const mod = new SyntheticModule(["v"], function (this: SyntheticModule) {
+      this.setExport("v", value);
+    });
+    await mod.link(() => {});
+    await mod.evaluate();
+    return mod;
+  }
+
+  async function erroredModule(message: string) {
+    const mod = new SourceTextModule(`throw new Error(${JSON.stringify(message)});`);
+    await mod.link(() => {});
+    await mod.evaluate().catch(() => {});
+    expect(mod.status).toBe("errored");
+    return mod;
+  }
+
+  // An async hook is the normal shape, since building a vm.Module means awaiting
+  // link()/evaluate(). Its return value must be awaited before it is used.
+  test("vm.Script resolves import() with the namespace of a module returned by an async hook", async () => {
+    const script = new Script("import('x')", { importModuleDynamically: async () => evaluatedModule(42) });
+    const namespace = await script.runInThisContext();
+    expect(namespace.v).toBe(42);
+    expect(Object.prototype.toString.call(namespace)).toBe("[object Module]");
+  });
+
+  test("vm.Script resolves import() with the namespace of a module returned by a sync hook", async () => {
+    const mod = await evaluatedModule(7);
+    const script = new Script("import('x')", { importModuleDynamically: () => mod });
+    expect((await script.runInThisContext()).v).toBe(7);
+  });
+
+  test("vm.compileFunction resolves import() with the namespace of a module returned by an async hook", async () => {
+    const fn = compileFunction("return import('x')", [], {
+      importModuleDynamically: async () => evaluatedModule(3),
+    });
+    expect((await fn()).v).toBe(3);
+  });
+
+  test("vm.SourceTextModule resolves import() with the namespace of a module returned by an async hook", async () => {
+    const mod = new SourceTextModule("export const result = import('x');", {
+      importModuleDynamically: async () => evaluatedModule(9),
+    });
+    await mod.link(() => {});
+    await mod.evaluate();
+    expect((await (mod.namespace as any).result).v).toBe(9);
+  });
+
+  test("vm.Script passes a module namespace object returned by the hook straight through", async () => {
+    const mod = await evaluatedModule(1);
+    const script = new Script("import('x')", { importModuleDynamically: async () => mod.namespace });
+    expect(await script.runInThisContext()).toBe(mod.namespace);
+  });
+
+  describe.each(hookShapes)("with a %s hook", (_label, makeHook) => {
+    test.each(nonModules)(
+      "vm.Script rejects ERR_VM_MODULE_NOT_MODULE when the hook returns %s",
+      async (_name, value) => {
+        const script = new Script("import('x')", { importModuleDynamically: makeHook(value) });
+        await expect(script.runInThisContext()).rejects.toMatchObject({
+          code: "ERR_VM_MODULE_NOT_MODULE",
+          message: "Provided module is not an instance of Module",
+        });
+      },
+    );
+
+    test("vm.Script rejects with the module's own error when the hook returns an errored module", async () => {
+      const mod = await erroredModule("boom");
+      const script = new Script("import('x')", { importModuleDynamically: makeHook(mod) });
+      await expect(script.runInThisContext()).rejects.toThrow("boom");
+    });
+  });
 });
 
 test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {

@@ -601,10 +601,14 @@ describe("root-anchored localhost names", () => {
     await new Promise(resolve => server.bind(0, "127.0.0.1", resolve));
     dns.setServers(["127.0.0.1:" + server.address().port]);
 
-    const result = { queries };
-    for (const name of ["localhost", "localhost.", "sub.localhost.", "LOCALHOST."]) {
-      const all = await dns.promises.lookup(name, { all: true });
-      result[name] = all.map(entry => entry.address).sort();
+    const addresses = all => all.map(entry => entry.address).sort();
+    const loopback = addresses(await dns.promises.lookup("localhost", { all: true }));
+
+    const result = { queries, loopback };
+    for (const name of ["localhost.", "LOCALHOST.", "sub.localhost", "sub.localhost."]) {
+      result[name] = await dns.promises
+        .lookup(name, { all: true })
+        .then(addresses, err => "error " + err.code);
     }
     server.close();
     console.log(JSON.stringify(result));
@@ -624,14 +628,15 @@ describe("root-anchored localhost names", () => {
     }
 
     const result = JSON.parse(stdout);
-    const loopback = result["localhost"];
-    expect(loopback).not.toEqual([]);
-    expect(loopback.filter(address => address === "127.0.0.1" || address === "::1")).toEqual(loopback);
+    expect(result.loopback).not.toEqual([]);
+    expect(result.loopback.filter(address => address === "127.0.0.1" || address === "::1")).toEqual(result.loopback);
 
     // A trailing dot only suppresses search-list expansion; it names the same host.
-    expect(result["localhost."]).toEqual(loopback);
-    expect(result["sub.localhost."]).toEqual(loopback);
-    expect(result["LOCALHOST."]).toEqual(loopback);
+    expect(result["localhost."]).toEqual(result.loopback);
+    expect(result["LOCALHOST."]).toEqual(result.loopback);
+    // How "sub.localhost" itself resolves is the platform resolver's call; all the
+    // trailing dot may do is not change the answer.
+    expect(result["sub.localhost."]).toEqual(result["sub.localhost"]);
     expect(result.queries).toEqual([]);
     expect(exitCode).toBe(0);
   });

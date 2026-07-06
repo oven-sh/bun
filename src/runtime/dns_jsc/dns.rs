@@ -533,11 +533,14 @@ pub(super) fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBa
     if strings::eql_case_insensitive_ascii_check_length(unanchored, b"localhost")
         || ends_with_caseless(unanchored, b".localhost")
     {
-        // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
         if *backend == GetAddrInfoBackend::CAres {
+            // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
             *backend = GetAddrInfoBackend::System;
+            return b"localhost";
         }
-        return b"localhost";
+        // getaddrinfo() resolves these itself. Hand it the real subdomain so a
+        // hosts-file entry for it still wins; only the root dot comes off.
+        return unanchored;
     }
 
     if *backend == GetAddrInfoBackend::CAres

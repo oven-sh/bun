@@ -1213,11 +1213,9 @@ fn session_ticket(session: &ffi::SSL_SESSION) -> Option<&[u8]> {
     Some(unsafe { bun_core::ffi::slice(ticket, length) })
 }
 
-/// A NewSessionTicket arrived: its ticket replaces whatever this connection was
-/// holding, mirroring the session swap OpenSSL does in the same spot. Takes the
-/// serialized session uSockets parked, which is the only form the dispatch
-/// carries. A session without a ticket (the server side caches those) leaves the
-/// previous one in place, as OpenSSL does for an empty TLS 1.2 ticket.
+/// A NewSessionTicket arrived: its ticket replaces the one this connection held,
+/// as OpenSSL's session swap does. The dispatch only carries the serialized
+/// session; one without a ticket leaves the previous one in place.
 pub(super) fn remember_new_session_ticket(this: &This, serialized_session: &[u8]) {
     let mut tmp: *const u8 = serialized_session.as_ptr();
     // SAFETY: tmp/serialized_session.len() describe the readable i2d_SSL_SESSION output parked by uSockets.

@@ -537,9 +537,14 @@ describe("bunshell", () => {
       TestBuilder.command`echo \~/x`.stdout("~/x\n").runAsTest("escaped tilde with path stays literal");
       TestBuilder.command`echo \~nobody`.stdout("~nobody\n").runAsTest("escaped tilde prefix stays literal");
       TestBuilder.command`echo x\~`.stdout("x~\n").runAsTest("mid-word tilde never expands");
+      // A `~` after the escaped one is no longer at word start, so it is literal too.
+      TestBuilder.command`echo \~~`.stdout("~~\n").runAsTest("escaped then bare tilde stays literal");
+      TestBuilder.command`echo \~~/x`.stdout("~~/x\n").runAsTest("escaped then bare tilde with path stays literal");
       // controls: quoting already suppresses expansion correctly.
       TestBuilder.command`echo '~'`.stdout("~\n").runAsTest("single quotes suppress");
       TestBuilder.command`echo "~"`.stdout("~\n").runAsTest("double quotes suppress");
+      // A tilde only expands at the start of a word, never after another atom.
+      TestBuilder.command`echo "x"~`.stdout("x~\n").runAsTest("tilde after quoted atom stays literal");
     });
 
     describe("interpolated values", async () => {

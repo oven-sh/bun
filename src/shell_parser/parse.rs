@@ -1811,7 +1811,11 @@ impl<'bump> Parser<'bump> {
                     | Token::Text(txtrng) => {
                         let _ = self.advance();
                         let mut txt = self.text(txtrng);
-                        if peeked.tag() == TokenTag::Text && !txt.is_empty() && txt[0] == b'~' {
+                        if peeked.tag() == TokenTag::Text
+                            && atoms.is_empty()
+                            && !txt.is_empty()
+                            && txt[0] == b'~'
+                        {
                             txt = &txt[1..];
                             atoms.push(ast::SimpleAtom::Tilde);
                             if !txt.is_empty() {
@@ -3134,15 +3138,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
                 continue;
             }
-            // A backslash-escaped leading `~` is quoted, so tilde expansion
-            // must not apply. Flush just that byte as a quoted-text token so
-            // the parser does not read it as a home-directory reference,
-            // matching how `'~'` and `"~"` are handled.
-            else if escaped
-                && char == u32::from(b'~')
+            // A backslash-escaped leading `~` is quoted, so tilde expansion must
+            // not apply. Flush it as a quoted-text token (like `'~'`/`"~"`) so the
+            // parser does not treat it as a home-directory reference.
+            else if char == u32::from(b'~')
                 && self.chars.state == CharState::Normal
                 && self.j == self.word_start
             {
+                debug_assert!(input.escaped);
                 let start = self.word_start;
                 self.append_char_to_str_pool(char)?;
                 self.tokens

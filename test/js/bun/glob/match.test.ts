@@ -360,6 +360,27 @@ describe("Glob.match", () => {
     expect(glob.match("{")).toBeFalse();
   });
 
+  test("many brace groups along one match path", () => {
+    // Sequential and per-segment brace groups accumulate one stack frame each
+    // along the matching path, so more than a handful used to silently stop
+    // matching. None of these hit nesting; they are flat groups in a row.
+    for (const n of [10, 11, 12, 32, 64]) {
+      const flat = Array.from({ length: n }, () => "{a,b}").join(""); // n sequential 2-way groups
+      const aRun = Buffer.alloc(n, "a").toString();
+      expect(new Glob(flat).match(aRun)).toBeTrue();
+
+      const perSegment = Array.from({ length: n }, () => "{a,b}").join("/");
+      const path = Array.from({ length: n }, () => "a").join("/");
+      expect(new Glob(perSegment).match(path)).toBeTrue();
+    }
+
+    // Realistic monorepo pattern: one brace per directory level plus a leaf.
+    const real =
+      "{packages,apps}/{a,b}/{src,lib}/{x,y}/{u,v}/{p,q}/{c,d}/{e,f}/{g,h}/{i,j}/*.{ts,tsx}";
+    expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.ts")).toBeTrue();
+    expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.go")).toBeFalse();
+  });
+
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
   // pattern matching algorithm wants to deal with single chars, for example
   // using the `[...]` syntax, it tries to match each char in the brackets. With

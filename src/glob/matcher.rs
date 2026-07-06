@@ -22,20 +22,24 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use bun_collections::BoundedArray;
+use bun_collections::SmallList;
 use bun_core::strings;
 
-/// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
-/// that is created for handling braces
-/// One such stack buffer is created recursively for each pair of braces
-/// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
-/// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
+/// Records the branch committed for one open brace along the current match
+/// path, so re-entering the same `{` (during wildcard backtracking) resumes
+/// that branch. One entry per brace group entered, popped when its tail is
+/// fully explored.
 #[derive(Copy, Clone)]
 struct Brace {
     open_brace_idx: u32,
     branch_idx: u32,
 }
-type BraceStack = BoundedArray<Brace, 10>;
+
+/// Sequential and nested brace groups both accumulate one entry per group
+/// along a match path, so the depth is bounded by the pattern's brace count,
+/// not a fixed constant. Stays inline for the common case and spills to the
+/// heap for deeper patterns; `BRACE_BRANCH_BUDGET` bounds total work.
+type BraceStack = SmallList<Brace, 10>;
 
 /// Upper bound on brace-branch alternatives explored per `match` call. Sequential
 /// brace groups multiply (`{a,b}{c,d}` = 4 alternatives), so without a cap an
@@ -67,7 +71,7 @@ struct State {
     wildcard: Wildcard,
     globstar: Wildcard,
 
-    brace_depth: u8,
+    brace_depth: u32,
 }
 
 impl State {
@@ -104,7 +108,7 @@ struct Wildcard {
     // Using u32 rather than usize for these results in 10% faster performance.
     glob_index: u32,
     path_index: u32,
-    brace_depth: u8,
+    brace_depth: u32,
 }
 
 /// This function checks returns a boolean value if the pathname `path` matches
@@ -355,7 +359,7 @@ fn glob_match_impl(
                             }
                         }
                         b'{' => {
-                            for brace in brace_stack.as_slice() {
+                            for brace in brace_stack.slice() {
                                 if brace.open_brace_idx == state.glob_index {
                                     state.glob_index = brace.branch_idx;
                                     state.brace_depth += 1;
@@ -519,18 +523,15 @@ fn match_brace_branch(
     }
     *brace_budget -= 1;
 
-    // exceeded brace depth
-    let Ok(()) = brace_stack.push(Brace {
+    brace_stack.append(Brace {
         open_brace_idx: open_brace_index,
         branch_idx: branch_index,
-    }) else {
-        return false;
-    };
+    });
 
     // Clone state
     let mut branch_state = *state;
     branch_state.glob_index = branch_index;
-    branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
+    branch_state.brace_depth = brace_stack.len();
 
     let matched = glob_match_impl(
         &mut branch_state,

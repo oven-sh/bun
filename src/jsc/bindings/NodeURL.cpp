@@ -4,11 +4,12 @@
 
 namespace Bun {
 
-static constexpr int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+// The errors UTS #46 reports that the WHATWG URL Standard ignores, by turning
+// off CheckHyphens and VerifyDnsLength. ICU has no option for either.
+static constexpr int allowedIDNAErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
 static constexpr size_t hostnameBufferLength = 2048;
 
-// UTS #46 ToASCII, with the relaxations the WHATWG URL Standard applies
-// (CheckHyphens and VerifyDnsLength disabled). Returns a null string on failure.
+// UTS #46 ToASCII. Returns a null string when the domain is not valid.
 static WTF::String nameToASCII(const WTF::String& input)
 {
     if (input.isEmpty())
@@ -24,7 +25,7 @@ static WTF::String nameToASCII(const WTF::String& input)
     const auto span = domain.span16();
     int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted)
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedIDNAErrors) && numCharactersConverted)
         return WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) });
     return {};
 }
@@ -152,8 +153,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 
     domain.convertTo16Bit();
 
-    constexpr static int allowedNameToUnicodeErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
-
     auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
     char16_t hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
@@ -163,7 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 
     int32_t numCharactersConverted = uidna_nameToUnicode(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedIDNAErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
     return JSC::JSValue::encode(jsEmptyString(vm));

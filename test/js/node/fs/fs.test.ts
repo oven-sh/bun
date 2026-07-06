@@ -5236,9 +5236,7 @@ describe("appendFile honors the flag option", () => {
   it("appendFileSync { flag: 'wx' } fails with EEXIST on an existing file and does not touch it", () => {
     using dir = tempDir("append-wx", { "f": "0123456789" });
     const file = path.join(String(dir), "f");
-    expect(() => fs.appendFileSync(file, "XX", { flag: "wx" })).toThrow(
-      expect.objectContaining({ code: "EEXIST" }),
-    );
+    expect(() => fs.appendFileSync(file, "XX", { flag: "wx" })).toThrow(expect.objectContaining({ code: "EEXIST" }));
     expect(readFileSync(file, "utf8")).toBe("0123456789");
   });
 
@@ -5252,9 +5250,7 @@ describe("appendFile honors the flag option", () => {
   it("appendFileSync { flag: 'r+' } fails with ENOENT on a missing file and does not create it", () => {
     using dir = tempDir("append-rplus", {});
     const file = path.join(String(dir), "missing");
-    expect(() => fs.appendFileSync(file, "XX", { flag: "r+" })).toThrow(
-      expect.objectContaining({ code: "ENOENT" }),
-    );
+    expect(() => fs.appendFileSync(file, "XX", { flag: "r+" })).toThrow(expect.objectContaining({ code: "ENOENT" }));
     expect(existsSync(file)).toBe(false);
   });
 

@@ -2148,6 +2148,10 @@ impl ShellExecEnv {
                 // shadowing it with a shell-local entry.
                 if let Some(existing) = self.export_env.get(label) {
                     existing.deref();
+                    // Drop any shell-local entry so it can't shadow the exported
+                    // value: `$VAR` expansion consults `shell_env` before
+                    // `export_env`.
+                    self.shell_env.remove(label);
                     self.export_env.insert(label, value);
                 } else {
                     self.shell_env.insert(label, value);

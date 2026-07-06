@@ -108,6 +108,14 @@ impl EnvMap {
         Some(val)
     }
 
+    /// Removes `key` if present, dereffing the stored key and value it owned.
+    pub fn remove(&mut self, key: EnvStr) {
+        if let Some((k, v)) = self.map.fetch_swap_remove(&key) {
+            k.deref();
+            v.deref();
+        }
+    }
+
     pub fn clone(&self) -> EnvMap {
         let new = EnvMap {
             map: self.map.clone().expect("OOM"),

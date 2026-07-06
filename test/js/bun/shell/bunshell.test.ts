@@ -1022,6 +1022,15 @@ booga"
       const { stdout } = await $`NEWV=nv; echo shell=$NEWV; ${BUN} -e ${code}`.env(bunEnv);
       expect(stdout.toString()).toBe("shell=nv\n<unset>");
     });
+
+    // A shell-local var that is later exported and then reassigned must not keep
+    // a stale shell-local entry shadowing the exported value: `$VAR` expansion
+    // checks shell_env before export_env.
+    test("bare reassignment after export clears the shell-local shadow", async () => {
+      const code = "process.stdout.write('child=' + (process.env.FOO ?? '<unset>'))";
+      const { stdout } = await $`FOO=a; export FOO=b; FOO=c; echo shell=$FOO; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=c\nchild=c");
+    });
   });
 
   describe("cd & pwd", () => {

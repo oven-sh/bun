@@ -1402,7 +1402,7 @@ impl Request {
                 if global_this.has_exception() {
                     bail!(Err(JsError::Thrown));
                 }
-                match crate::webcore::response::Init::init(global_this, value) {
+                match crate::webcore::response::Init::init_for_request(global_this, value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check

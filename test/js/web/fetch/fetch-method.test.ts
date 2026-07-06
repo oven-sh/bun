@@ -9,10 +9,13 @@ async function requestLine(run: (url: string) => Promise<unknown>): Promise<stri
 
   const server = net.createServer(socket => {
     let buffered = "";
+    // A request body can arrive in a later `data` event than its headers.
+    let responded = false;
     socket.on("error", reject);
     socket.on("data", chunk => {
       buffered += chunk.toString("latin1");
-      if (!buffered.includes("\r\n\r\n")) return;
+      if (responded || !buffered.includes("\r\n\r\n")) return;
+      responded = true;
       resolve(buffered.slice(0, buffered.indexOf("\r\n")));
       socket.end("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
     });
@@ -39,11 +42,14 @@ async function redirectedMethods(status: number, init: RequestInit): Promise<str
 
   const server = net.createServer(socket => {
     let buffered = "";
+    // A request body can arrive in a later `data` event than its headers; answer
+    // each connection exactly once so a split write can't consume the next hop.
+    let responded = false;
     socket.on("error", reject);
     socket.on("data", chunk => {
       buffered += chunk.toString("latin1");
-      if (!buffered.includes("\r\n\r\n")) return;
-      if (methods.length === 2) return; // trailing body bytes of hop 2
+      if (responded || !buffered.includes("\r\n\r\n")) return;
+      responded = true;
       methods.push(buffered.slice(0, buffered.indexOf(" ")));
       if (methods.length === 1) {
         socket.end(`HTTP/1.1 ${status} Redirect\r\nLocation: /hop2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
@@ -186,5 +192,34 @@ describe("new Request() method", () => {
     expect(method({ method: null as never })).toBe("null");
     expect(method({ method: 0 as never })).toBe("0");
     expect(method({ method: false as never })).toBe("false");
+  });
+});
+
+// `ResponseInit` has no `method` member, and `Response` never exposes one: Bun
+// reads it only so `new Request(response)` can inherit a method. Validating it
+// the way `RequestInit` is validated would reject `new Response(body, init)` for
+// a field that does not exist, so the Response entry points stay permissive.
+describe("Response init method is not validated", () => {
+  const init = { method: "CONNECT" } as ResponseInit;
+  test.each([
+    ["new Response", () => new Response("x", init)],
+    ["Response.json", () => Response.json({}, init)],
+    ["Response.redirect", () => Response.redirect("http://example.com/", { ...init, status: 302 })],
+  ])("%s accepts a method new Request() would reject", (_label, build) => {
+    expect(() => new Request("http://example.com/", init as RequestInit)).toThrow(TypeError);
+    expect(build()).toBeInstanceOf(Response);
+  });
+
+  test.each(["", "a b", "TRACE"])("new Response() ignores the unusable method %p", method => {
+    expect(new Response("x", { method } as ResponseInit)).toBeInstanceOf(Response);
+  });
+
+  // The one thing that reads it back: a Response used as a Request's init.
+  test("a usable method is still inherited by new Request(url, response)", () => {
+    const inherited = (method: string) =>
+      new Request("http://example.com/", new Response("x", { method } as ResponseInit)).method;
+    expect(inherited("BREW")).toBe("BREW");
+    expect(inherited("Put")).toBe("PUT");
+    expect(inherited("CONNECT")).toBe("GET");
   });
 });

@@ -1347,7 +1347,27 @@ impl Init {
         })
     }
 
+    /// `new Response(body, init)` / `Response.json` / `Response.redirect`.
+    /// `init["method"]` is a Bun extension there (WebIDL `ResponseInit` has no
+    /// such member, and `Response` never exposes one), so a method this parser
+    /// cannot represent is ignored rather than rejected.
     pub fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
+        Self::parse::<false>(global_this, response_init)
+    }
+
+    /// `new Request(url, init)` reads the same shape, but there `init["method"]`
+    /// is a real `RequestInit` member: an invalid or forbidden token must throw.
+    pub fn init_for_request(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+    ) -> JsResult<Option<Init>> {
+        Self::parse::<true>(global_this, response_init)
+    }
+
+    fn parse<const REQUEST_INIT: bool>(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
             status_code: 200,
             ..Default::default()
@@ -1443,16 +1463,15 @@ impl Init {
             result.status_text = OwnedString::new(status_text.to_bun_string(global_this)?);
         }
 
-        // `fast_get`, not `fast_get_truthy`: `undefined` falls through to the
-        // default, but `""` is an invalid method token and must throw.
+        // `fast_get`, not `fast_get_truthy`: the fetch spec keys on WebIDL
+        // presence, so only `undefined` falls through to the default and `""`
+        // reaches the validator.
         if let Some(method_value) = response_init.fast_get(global_this, BuiltinName::method)? {
-            result.method = match bun_http_jsc::method_jsc::request_method_from_js(
-                global_this,
-                method_value,
-            )? {
-                Ok(method) => method,
-                Err(err) => return Err(global_this.throw_value(err)),
-            };
+            match bun_http_jsc::method_jsc::request_method_from_js(global_this, method_value)? {
+                Ok(method) => result.method = method,
+                Err(err) if REQUEST_INIT => return Err(global_this.throw_value(err)),
+                Err(_) => {}
+            }
         }
 
         Ok(Some(result))

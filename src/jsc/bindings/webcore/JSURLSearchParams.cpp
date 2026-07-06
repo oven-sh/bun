@@ -305,9 +305,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getBody(JSC
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameString = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    const auto name = nameString->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUSVString>>(*lexicalGlobalObject, throwScope, impl.get(name))));
 }
@@ -327,9 +325,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getAllBody(
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameString = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    const auto name = nameString->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLUSVString>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getAll(name))));
 }
@@ -349,9 +345,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameString = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    const auto name = nameString->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String value;

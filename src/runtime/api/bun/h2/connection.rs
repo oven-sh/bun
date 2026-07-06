@@ -160,6 +160,13 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
+    /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
+    /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
+    /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
+    /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
+    fn highest_started_stream_id(&self) -> u32 {
+        0
+    }
     /// Whether the embedder's reader for `stream_id` is currently consuming data. While it is
     /// paused, the stream's receive window is not replenished (mirrors node, where
     /// nghttp2_session_consume_stream is only called while the JS readable is flowing) so the
@@ -1537,8 +1544,12 @@ impl Connection {
         }
         // §5.1: a stream evicted after full close (per-request memory release) is
         // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id this connection has processed has existed.
-        if on_idle && hdr.stream_id <= self.last_stream_id {
+        // below the highest stream id either layer has started has existed; the embedder's
+        // mark covers locally-initiated streams this engine never saw HEADERS for.
+        if on_idle
+            && (hdr.stream_id <= self.last_stream_id
+                || hdr.stream_id <= sink.highest_started_stream_id())
+        {
             return false;
         }
         if on_idle {

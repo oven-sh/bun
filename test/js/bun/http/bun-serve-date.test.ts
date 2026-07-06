@@ -108,4 +108,17 @@ describe("Date header on bodiless responses", () => {
       expectFreshDate(notModified, `${method} 304`);
     }
   });
+
+  // https://github.com/oven-sh/bun/issues/27512
+  test("413 responses carry Date", async () => {
+    using server = Bun.serve({
+      port: 0,
+      maxRequestBodySize: 1,
+      fetch: () => new Response("Hello Bun"),
+    });
+
+    const tooLarge = await drain(server.url.href, { method: "POST", body: "12" });
+    expect(tooLarge.status).toBe(413);
+    expectFreshDate(tooLarge, "413");
+  });
 });

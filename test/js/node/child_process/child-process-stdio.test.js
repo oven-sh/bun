@@ -165,4 +165,75 @@ describe("child.stdin", () => {
       cbCode: "ERR_STREAM_DESTROYED",
     });
   });
+
+  it("fails a write issued after end() with ERR_STREAM_WRITE_AFTER_END", async () => {
+    const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+
+    const echoed = Promise.withResolvers();
+    let data = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", chunk => (data += chunk));
+    child.stdout.on("end", () => echoed.resolve(data));
+    child.stdout.on("error", echoed.reject);
+    child.on("error", echoed.reject);
+
+    // Registered so an unexpected emission fails the assertion below instead of
+    // crashing the test. None is expected: autoDestroy has already run by the
+    // time we write, so errorOrDestroy short-circuits and only the callback
+    // receives the error.
+    const errorEvents = [];
+    child.stdin.on("error", err => errorEvents.push(err.code));
+
+    const finished = Promise.withResolvers();
+    child.stdin.on("finish", finished.resolve);
+    child.stdin.end("kept\n");
+    await finished.promise;
+
+    const writeCb = Promise.withResolvers();
+    const ret = child.stdin.write("dropped\n", err => writeCb.resolve(err));
+
+    expect((await writeCb.promise)?.code).toBe("ERR_STREAM_WRITE_AFTER_END");
+    expect(ret).toBe(false);
+    // The bytes must not reach the child.
+    expect(await echoed.promise).toBe("data: kept\n");
+    expect(errorEvents).toEqual([]);
+  });
+
+  it("emits 'error' for a callback-less write issued after end()", async () => {
+    const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+
+    const errored = Promise.withResolvers();
+    child.stdin.on("error", errored.resolve);
+    child.on("error", errored.reject);
+    child.on("exit", () => errored.reject(new Error("child exited before stdin errored")));
+
+    child.stdin.end("kept\n");
+    const ret = child.stdin.write("dropped\n");
+
+    expect((await errored.promise).code).toBe("ERR_STREAM_WRITE_AFTER_END");
+    expect(ret).toBe(false);
+    child.kill();
+  });
+
+  it("fails a write issued after destroy() with ERR_STREAM_DESTROYED", async () => {
+    const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+
+    child.stdin.destroy();
+
+    const writeCb = Promise.withResolvers();
+    const ret = child.stdin.write("dropped\n", err => writeCb.resolve(err));
+
+    expect((await writeCb.promise)?.code).toBe("ERR_STREAM_DESTROYED");
+    expect(ret).toBe(false);
+    child.kill();
+  });
 });

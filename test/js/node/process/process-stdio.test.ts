@@ -125,6 +125,40 @@ describe.concurrent("process-stdio", () => {
     expect(stdout?.toString()).toBe(`hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`);
   });
 
+  test("process.stdout - write after end()", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.stdout.on("error", e => process.stderr.write("error-event:" + e.code + "\\n"));
+          process.stdout.write("kept\\n");
+          process.stdout.end();
+          const ret = process.stdout.write("dropped\\n", err => {
+            process.stderr.write("cb:" + (err && err.code) + "\\n");
+          });
+          process.stderr.write("ret:" + ret + "\\n");
+        `,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: null,
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The chunk written after end() is dropped, and the failure is reported
+    // through the write callback and an 'error' event, like node.
+    expect(stdout).toBe("kept\n");
+    expect(stderr.split("\n").filter(Boolean)).toEqual([
+      "ret:false",
+      "cb:ERR_STREAM_WRITE_AFTER_END",
+      "error-event:ERR_STREAM_WRITE_AFTER_END",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("process.stdout - write a lot (string)", () => {
     const { stdout } = spawnSync({
       cmd: [bunExe(), path.join(import.meta.dir, "stdio-test-instance-a-lot.js")],

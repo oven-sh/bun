@@ -6421,13 +6421,21 @@ pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys:
             bun_sys::open(path.slice_z(&mut path_buf), flags, 0)?
         }
     };
-    let fd = scopeguard::guard(fd, |fd| fd.close());
 
     // POSIX `pread` ignores the file offset. Windows `dup` shares the file
-    // pointer and `pread` (ReadFile + OVERLAPPED) advances it, so save and
-    // restore it to leave a caller reading the same fd afterward unaffected.
+    // pointer and `pread` (ReadFile + OVERLAPPED) advances it, so capture the
+    // offset now and restore it in the close guard (which runs on every exit,
+    // including a mid-read error) to leave a caller reading the same fd after.
     #[cfg(windows)]
-    let saved_offset = bun_sys::lseek(*fd, 0, libc::SEEK_CUR).ok();
+    let saved_offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR).ok();
+
+    let fd = scopeguard::guard(fd, move |fd| {
+        #[cfg(windows)]
+        if let Some(offset) = saved_offset {
+            let _ = bun_sys::set_file_offset(fd, offset as u64);
+        }
+        fd.close();
+    });
 
     let len = usize::try_from(size).expect("int cast");
     let mut bytes = Vec::<u8>::new();
@@ -6445,11 +6453,6 @@ pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys:
             Err(err) if err.get_errno() == bun_sys::E::EINTR => continue,
             Err(err) => return Err(err),
         }
-    }
-
-    #[cfg(windows)]
-    if let Some(offset) = saved_offset {
-        let _ = bun_sys::set_file_offset(*fd, offset as u64);
     }
 
     bytes.truncate(read);

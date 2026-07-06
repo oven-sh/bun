@@ -36,9 +36,7 @@ describe("zstd pledgedSrcSize", () => {
   it("accepts 4 GiB and larger", () => {
     expect(frameContentSize(zlib.zstdCompressSync(input, flushOnly(2 ** 32)))).toBe(4294967296n);
     expect(frameContentSize(zlib.zstdCompressSync(input, flushOnly(2 ** 33 + 1)))).toBe(8589934593n);
-    expect(frameContentSize(zlib.zstdCompressSync(input, flushOnly(Number.MAX_SAFE_INTEGER)))).toBe(
-      9007199254740991n,
-    );
+    expect(frameContentSize(zlib.zstdCompressSync(input, flushOnly(Number.MAX_SAFE_INTEGER)))).toBe(9007199254740991n);
   });
 
   it("accepts 4 GiB and larger when compressing asynchronously", async () => {

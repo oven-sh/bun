@@ -43,11 +43,17 @@ function takeCommands(state: { buf: Buffer }): string[][] {
 }
 
 /**
- * A RESP3 server just real enough to handshake and answer GET, so these tests
- * run without a redis/valkey server. `answerHello: false` accepts the socket
- * but never completes the handshake.
+ * A RESP3 server just real enough to handshake, answer GET, and reply `+OK` to
+ * anything else, so these tests run without a redis/valkey server.
+ *
+ * - `answerHello: false` accepts the socket but never completes the handshake.
+ * - `endFirstConnectionAfterMs` makes the server hang up on its first client,
+ *   the way a server enforcing its own idle timeout would.
  */
-function startMockRedis({ answerHello = true }: { answerHello?: boolean } = {}) {
+function startMockRedis({
+  answerHello = true,
+  endFirstConnectionAfterMs = 0,
+}: { answerHello?: boolean; endFirstConnectionAfterMs?: number } = {}) {
   const state = { hellos: 0 };
   const listener = Bun.listen<{ buf: Buffer }>({
     hostname: "127.0.0.1",
@@ -65,6 +71,11 @@ function startMockRedis({ answerHello = true }: { answerHello?: boolean } = {}) 
             case "HELLO":
               state.hellos++;
               if (answerHello) socket.write(HELLO_REPLY);
+              // Scripted server behaviour, not a wait: the hangup has to land
+              // at a known point relative to the client's idle deadline.
+              if (endFirstConnectionAfterMs > 0 && state.hellos === 1) {
+                setTimeout(() => socket.end(), endFirstConnectionAfterMs);
+              }
               break;
             case "GET":
               socket.write(bulk("v"));
@@ -154,6 +165,58 @@ describe("RedisClient timeouts", () => {
     }
   });
 
+  // A command that cannot be auto-pipelined takes the write-immediately path in
+  // enqueue() unless connection_ready() is false, so reopening must not leave
+  // the closed connection's `is_authenticated` behind: the bytes would be
+  // written to a socket that has not opened yet, dropped by on_open, and the
+  // promise orphaned in the in-flight queue.
+  for (const [name, options, run] of [
+    ["a non-pipelineable command", {}, (c: RedisClient) => c.send("INFO", [])],
+    ["enableAutoPipelining: false", { enableAutoPipelining: false }, (c: RedisClient) => c.send("INFO", [])],
+  ] as const) {
+    test(`${name} reopens the connection after an idle-timeout close`, async () => {
+      const server = startMockRedis();
+      const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { idleTimeout: 300, ...options });
+      const { promise: closed, resolve } = Promise.withResolvers<Error>();
+      client.onclose = resolve;
+
+      try {
+        await client.connect();
+        await closed;
+
+        expect(await run(client)).toBe("OK");
+        // And the in-flight queue is still aligned: this reply is the GET's.
+        expect(await client.get("key")).toBe("v");
+        expect(server.hellos).toBe(2);
+      } finally {
+        client.close();
+        server.stop();
+      }
+    });
+  }
+
+  test("a server-initiated close does not leave the idle timer armed", async () => {
+    // Deadlines, all in the same timer heap so their order is fixed: the server
+    // hangs up at 270ms, the idle timer would fire at 300ms, auto-reconnect runs
+    // at 270+50ms. A timer left armed by the close fires inside that window,
+    // against a disconnected client, and rejects the offline queue.
+    const server = startMockRedis({ endFirstConnectionAfterMs: 270 });
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { idleTimeout: 300 });
+
+    try {
+      await client.connect();
+      while (client.connected) await Bun.sleep(1);
+
+      // Queued while disconnected: it must ride out the reconnect, not be
+      // rejected by the dead connection's timer.
+      expect(await client.get("key")).toBe("v");
+      expect({ connected: client.connected, hellos: server.hellos }).toEqual({ connected: true, hellos: 2 });
+    } finally {
+      client.close();
+      server.stop();
+    }
+  });
+
   test("connectionTimeout still fires when the handshake never completes", async () => {
     const server = startMockRedis({ answerHello: false });
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, {
@@ -170,6 +233,32 @@ describe("RedisClient timeouts", () => {
         code: "ERR_REDIS_CONNECTION_CLOSED",
         connected: false,
       });
+    } finally {
+      client.close();
+      server.stop();
+    }
+  });
+});
+
+describe("RedisClient reconnect state", () => {
+  // Closing leaves the client marked authenticated, so a command issued before
+  // the reopened socket came up took enqueue()'s write-immediately path: on_open
+  // dropped the bytes, the promise stayed in the in-flight queue, and every
+  // later reply was paired with the wrong command.
+  test("a command racing an un-awaited connect() gets its own reply", async () => {
+    const server = startMockRedis();
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`);
+
+    try {
+      await client.connect();
+      expect(await client.get("key")).toBe("v");
+
+      client.close();
+      client.connect(); // deliberately not awaited: the socket is still opening
+
+      expect(await client.send("INFO", [])).toBe("OK");
+      expect(await client.get("key")).toBe("v");
+      expect(server.hellos).toBe(2);
     } finally {
       client.close();
       server.stop();

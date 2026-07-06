@@ -1297,6 +1297,17 @@ impl ValkeyClient {
         Ok(())
     }
 
+    /// Drop the state belonging to the previous connection, before a new socket
+    /// is opened. `on_open` resets the same flags once that socket is up, but
+    /// commands sent in the window before it opens consult `connection_ready()`
+    /// and must not be routed as if the closed connection were still live.
+    pub fn reset_for_new_connection(&mut self) {
+        self.flags.is_manually_closed = false;
+        self.flags.failed = false;
+        self.flags.is_authenticated = false;
+        self.flags.is_selecting_db_internal = false;
+    }
+
     /// Test whether we are ready to run "normal" RESP commands, such as
     /// get/set, pub/sub, etc.
     fn connection_ready(&self) -> bool {

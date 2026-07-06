@@ -1402,6 +1402,11 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client needs to reconnect
     pub fn on_valkey_reconnect(&self) {
+        // The closed connection's deadline must not outlive it: left armed, it
+        // fires during the reconnect delay and is read as a connection timeout.
+        // `connect()` arms a fresh one for the new attempt.
+        self.disable_connection_timeout();
+
         // Schedule reconnection using our safe timer methods
         if self.reconnect_timer.get().state == Timer::State::ACTIVE {
             self.remove_timer(&self.reconnect_timer);
@@ -1426,6 +1431,9 @@ impl JSValkeyClient {
     // Callback for when Valkey client closes
     pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
+
+        // The connection is gone; so is its deadline. See `on_valkey_reconnect`.
+        self.disable_connection_timeout();
 
         let self_ptr = self.as_ctx_ptr();
         let _defer = scopeguard::guard(self_ptr, |p| {
@@ -1583,6 +1591,7 @@ impl JSValkeyClient {
 
     fn connect(&self) -> Result<(), bun_core::Error> {
         self.client_mut().flags.needs_to_open_socket = false;
+        self.client_mut().reset_for_new_connection();
 
         self.ref_();
         let _d = deref_guard(self);
@@ -1697,11 +1706,6 @@ impl JSValkeyClient {
     ) -> Result<*mut JSPromise, bun_core::Error> {
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
-            // A new socket drops the previous connection's sticky state, the
-            // same way `do_connect` does. Without this the first command after
-            // an idle-timeout close rejects against the old connection.
-            self.client_mut().flags.is_manually_closed = false;
-            self.client_mut().flags.failed = false;
 
             if let Err(err) = self.connect() {
                 self.client_mut().flags.needs_to_open_socket = true;

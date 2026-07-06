@@ -1611,6 +1611,10 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
+                        // Printed as "!import.meta.main"
+                        ExprData::EImportMetaMain(left) if left.inverted => {
+                            v.left_level = Level::Call;
+                        }
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
                         }
@@ -2996,6 +3000,10 @@ pub(crate) mod __gated_printer {
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3007,10 +3015,18 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
+
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
 
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
@@ -3022,9 +3038,9 @@ pub(crate) mod __gated_printer {
                         }
 
                         if data.inverted {
-                            self.print_whitespacer(ws!(b".main != "));
+                            self.print_whitespacer(ws!(b".main !== "));
                         } else {
-                            self.print_whitespacer(ws!(b".main == "));
+                            self.print_whitespacer(ws!(b".main === "));
                         }
 
                         if self.options.target == bun_ast::Target::Node {
@@ -3039,6 +3055,10 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {
                             self.print(b"module");
+                        }
+
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

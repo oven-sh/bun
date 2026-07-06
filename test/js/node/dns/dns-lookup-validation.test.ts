@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dnsPromises from "node:dns/promises";
+import * as util from "node:util";
 
 // Both entry points validate synchronously, so a thrown error and a rejected
 // promise are the same failure. Returns the resolved value when there is none.
@@ -45,13 +46,26 @@ describe("dns.lookup option validation", () => {
   });
 
   it("dns.lookup (callback) keeps accepting the IPv4/IPv6 family spellings, like Node.js", async () => {
+    // localhost always has a 127.0.0.1 entry, so this reaches the resolver with AF_INET.
     expect(await callbackError({ family: "IPv4" })).toMatchObject({ address: expect.any(String), family: 4 });
-    expect(await callbackError({ family: "IPv6" })).toMatchObject({ address: expect.any(String), family: 6 });
+    // An IP literal short-circuits before the resolver, so no "::1 localhost" entry is needed.
+    expect(await callbackError({ family: "IPv6" }, "::1")).toEqual({ address: "::1", family: 6 });
     // Only those two spellings.
     expect(await callbackError({ family: "ipv4" })).toMatchObject({
       code: "ERR_INVALID_ARG_VALUE",
       message: "The property 'options.family' must be one of: 0, 4, 6. Received 'ipv4'",
     });
+  });
+
+  it("util.promisify(dns.lookup) wraps the callback implementation, like Node.js", async () => {
+    expect(dns.lookup[util.promisify.custom]).toBeUndefined();
+    const lookup = util.promisify(dns.lookup);
+
+    // ...so it accepts the family spellings that dns.promises.lookup rejects.
+    expect(await lookup("localhost", { family: "IPv4" })).toMatchObject({ address: expect.any(String), family: 4 });
+    // A single callback value stays itself rather than becoming { address, family }.
+    expect(await lookup("localhost", { all: true })).toBeArray();
+    expect(await lookup("127.0.0.1")).toEqual({ address: "127.0.0.1", family: 4 });
   });
 
   it.each([
@@ -97,7 +111,8 @@ describe("dns.lookup option validation", () => {
 });
 
 describe("dns.lookup of a hostname longer than 255 characters", () => {
-  const hostname = Buffer.alloc(256, "l").toString();
+  const MAX_HOSTNAME_LENGTH = 255;
+  const hostname = Buffer.alloc(MAX_HOSTNAME_LENGTH + 1, "l").toString();
 
   // getaddrinfo cannot encode it, so Node.js reports EINVAL instead of the
   // ENOTFOUND a missing (but encodable) hostname gets.
@@ -131,9 +146,17 @@ describe("dns.lookup of a hostname longer than 255 characters", () => {
     expect(sync).toBe(false);
   });
 
+  it("a hostname whose IDNA encoding still fits reaches the resolver", async () => {
+    // 128 astral code points: 256 UTF-16 code units, but only 135 bytes of IDNA
+    // ASCII ("xn--971h" + 127 deltas), which getaddrinfo encodes happily.
+    const surrogates = "\u{1D54F}".repeat(128);
+    expect(surrogates.length).toBeGreaterThan(MAX_HOSTNAME_LENGTH);
+    expect((await promisesError(undefined, surrogates))?.code).not.toBe("EINVAL");
+  });
+
   it("a 255 character hostname still reaches the resolver", async () => {
     // It cannot exist, so this only asserts that it was not rejected as EINVAL.
-    const shorter = Buffer.alloc(255, "l").toString();
+    const shorter = Buffer.alloc(MAX_HOSTNAME_LENGTH, "l").toString();
     const error = await new Promise<any>(resolve => dns.lookup(shorter, resolve));
     expect(error?.code).not.toBe("EINVAL");
   });

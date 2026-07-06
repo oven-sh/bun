@@ -10,6 +10,7 @@ const {
   validateNumber,
   validateOneOf,
 } = require("internal/validators");
+const { defineCustomPromisifyArgs } = require("internal/promisify");
 
 const errorCodes = {
   NODATA: "ENODATA",
@@ -42,10 +43,9 @@ const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 const validOrders = ["verbatim", "ipv4first", "ipv6first"];
-// getaddrinfo encodes the hostname into a 256 byte buffer (IDNA ASCII + NUL)
-// before resolving, so a longer name fails with EINVAL before any query.
 const MAX_HOSTNAME_LENGTH = 255;
 const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+const nonAsciiRE = /[^\x00-\x7f]/;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
@@ -272,6 +272,13 @@ function validateLookupOptions(options, allowFamilyStrings) {
   validateOrderOption(options);
 }
 
+// getaddrinfo encodes the hostname into a 256 byte buffer (IDNA ASCII + NUL)
+// before resolving, so a longer name fails with EINVAL before any query. Only
+// an ASCII hostname is its own encoding; the rest are left to the resolver.
+function hostnameIsTooLong(hostname) {
+  return hostname.length > MAX_HOSTNAME_LENGTH && !nonAsciiRE.test(hostname);
+}
+
 function hostnameTooLongError(hostname) {
   const err = new Error(`getaddrinfo EINVAL ${hostname}`);
   err.errno = UV_EINVAL;
@@ -323,7 +330,7 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  if (hostname.length > MAX_HOSTNAME_LENGTH) {
+  if (hostnameIsTooLong(hostname)) {
     process.nextTick(callback, hostnameTooLongError(hostname));
     return;
   }
@@ -785,7 +792,7 @@ const promises = {
       return Promise.$resolve(options.all ? [obj] : obj);
     }
 
-    if (hostname.length > MAX_HOSTNAME_LENGTH) {
+    if (hostnameIsTooLong(hostname)) {
       return Promise.$reject(hostnameTooLongError(hostname));
     }
 
@@ -986,9 +993,12 @@ const promises = {
   setServers,
 };
 
+// Node.js promisifies the callback `lookup` rather than pointing at
+// `dnsPromises.lookup`, which rejects the "IPv4"/"IPv6" spellings of `family`.
+defineCustomPromisifyArgs(lookup, ["address", "family"]);
+
 // Compatibility with util.promisify(dns[method])
 for (const [method, pMethod] of [
-  [lookup, promises.lookup],
   [lookupService, promises.lookupService],
   [resolve, promises.resolve],
   [reverse, promises.reverse],

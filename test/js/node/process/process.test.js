@@ -627,7 +627,6 @@ describe.concurrent(() => {
       expect(stderr).not.toInclude("panic");
       expect(exitCode).toBe(0);
     });
-
   });
 
   describe("process.onExit", () => {

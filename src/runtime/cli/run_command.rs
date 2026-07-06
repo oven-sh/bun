@@ -2747,10 +2747,14 @@ impl RunCommand {
             let fs = unsafe { &mut *this_transpiler.fs };
             let top_level_dir = fs.top_level_dir;
             let path = env_loader.get(b"PATH").unwrap_or(b"");
-            let mut path_for_which = path;
+            // Copy PATH to an owned vec so the OHOS fallback can use it
+            // without borrowing env_loader (which is mutably borrowed by
+            // run_binary_without_bunx_path below).
+            let full_path = path.to_vec();
+            let mut path_for_which = &full_path[..];
             if bin_dirs_only {
-                if original_path.len() < path.len() {
-                    path_for_which = &path[..path.len() - (original_path.len() + 1)];
+                if original_path.len() < full_path.len() {
+                    path_for_which = &full_path[..full_path.len() - (original_path.len() + 1)];
                 } else {
                     path_for_which = b"";
                 }
@@ -2786,7 +2790,7 @@ impl RunCommand {
             if !found && bin_dirs_only {
                 let mut path_buf = PathBuffer::uninit();
                 if let Some(destination) =
-                    which(&mut path_buf, path, top_level_dir, target_name)
+                    which(&mut path_buf, &full_path, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;

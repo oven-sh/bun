@@ -308,4 +308,56 @@ describe("an already-expired timer runs before the first poll and check phases",
       await worker.terminate();
     }
   });
+
+  test("inside a test file, same as under `bun run`", async () => {
+    using dir = tempDir("timers-phase-order-test", {
+      "order.test.js": `
+        const { test, expect } = require("bun:test");
+        const order = [];
+        setTimeout(() => order.push("timeout"), 1);
+        setImmediate(() => order.push("immediate"));
+        ${blockPastTheDeadline}
+        test("the expired timer ran first", () => {
+          console.log("order=" + JSON.stringify(order));
+          expect(order).toEqual(["timeout", "immediate"]);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "order.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain(`order=${JSON.stringify(["timeout", "immediate"])}`);
+    expect(exitCode).toBe(0);
+  });
+
+  // An entry point that throws never reaches the loop: Node reports the uncaught
+  // exception and exits without running the timers phase.
+  test("but not when the entry point throws", async () => {
+    using dir = tempDir("timers-phase-order-throw", {
+      "index.js": `
+        setTimeout(() => console.log("timer fired"), 1);
+        ${blockPastTheDeadline}
+        throw new Error("boom");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
 });

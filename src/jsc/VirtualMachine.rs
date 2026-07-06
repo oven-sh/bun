@@ -2412,7 +2412,7 @@ impl VirtualMachine {
         if self.is_watcher_enabled() {
             // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
-            self.run_entry_point_body();
+            self.run_entry_point_body(self.pending_internal_promise.unwrap_or(promise));
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -2436,7 +2436,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.run_entry_point_body();
+            self.run_entry_point_body(promise);
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -2451,8 +2451,19 @@ impl VirtualMachine {
     /// queue in the same tick, running an I/O completion or port message the
     /// body queued ahead of a timer that expired while it ran. `uv_run` opens
     /// with `uv__run_timers`, so Node dispatches that timer before either.
-    fn run_entry_point_body(&mut self) {
-        let _ = self.event_loop_mut().drain_microtasks();
+    ///
+    /// `evaluation` is the module's evaluation promise. A body that throws
+    /// rejects it, and Node reports the uncaught exception without entering the
+    /// loop at all, so there is no timers phase to run.
+    fn run_entry_point_body(&mut self, evaluation: *mut JSInternalPromise) {
+        if self.event_loop_mut().drain_microtasks().is_err() {
+            return;
+        }
+        // SAFETY: `evaluation` is a live JSC heap cell returned by
+        // `reload_entry_point*` and kept alive by the module loader.
+        if crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected {
+            return;
+        }
         self.event_loop_mut().drain_expired_timers();
     }
 
@@ -4588,7 +4599,7 @@ impl VirtualMachine {
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
-        self.run_entry_point_body();
+        self.run_entry_point_body(promise);
         self.event_loop_mut()
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -4609,6 +4620,7 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body(self.pending_internal_promise.unwrap_or(promise));
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -4632,6 +4644,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body(promise);
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 

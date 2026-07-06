@@ -240,7 +240,12 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
       terminal,
     });
 
-    await ready;
+    await Promise.race([
+      ready,
+      proc.exited.then(code => {
+        throw new Error(`child exited (${code}) before writing READY`);
+      }),
+    ]);
     terminal.close();
 
     const exitCode = await proc.exited;

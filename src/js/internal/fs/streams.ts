@@ -672,17 +672,20 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
+      // Two-arg then(): a throw from the fulfillment handler must not be mistaken
+      // for a write failure.
+      maybePromise.then(
+        () => {
           this.emit("drain"); // Emit drain event
           cb(null);
-        })
-        .catch(err => {
+        },
+        err => {
           // This path bypasses Writable's machinery, so it has to do what
           // onwriteError does: report to the callback and error the stream.
           cb(err);
           this.destroy(err);
-        });
+        },
+      );
       return false; // Indicate backpressure
     } else {
       cb(null);

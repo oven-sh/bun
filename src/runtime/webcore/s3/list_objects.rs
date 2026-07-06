@@ -193,8 +193,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 
     // we dont use trailing ">" as it may finish with xmlns=...
     if let Some(list_result_pos) = strings::index_of(xml, b"<ListBucketResult") {
-        // Start at the root element: the prolog (declaration, comments) holds no
-        // element content, and scanning it would shorten the window by its length.
+        // Start at the root element: the prolog holds no element content, and a
+        // comment in it may contain look-alike tags.
         let mut i: usize = list_result_pos;
         while i < xml.len() {
             if xml[i] != b'<' {

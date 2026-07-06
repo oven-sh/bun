@@ -278,6 +278,25 @@ describe.concurrent("Valkey: subscriber reconnect", () => {
     }
   });
 
+  test("does not replay a SUBSCRIBE the offline queue is already holding", async () => {
+    using server = startRespServer();
+
+    // No explicit connect(): subscribe() opens the socket and queues the command,
+    // so the handler map is populated before the handshake finishes. Replaying it
+    // here would put SUBSCRIBE on the wire twice, once from the replay and once
+    // from the queue.
+    const subscriber = new RedisClient(server.url, { autoReconnect: true, maxRetries: 10 });
+
+    try {
+      await subscriber.subscribe("news", () => {});
+      expect(await subscriber.ping()).toBe("PONG");
+
+      expect(commandLines(server.connections[0])).toEqual(["HELLO 3", "SUBSCRIBE news", "PING"]);
+    } finally {
+      await closeSubscriber(subscriber);
+    }
+  });
+
   test("an error reply to the replay settles the in-flight command instead of eating its reply slot", async () => {
     using server = startRespServer({ refuseSubscribeFromConnection: 1 });
 

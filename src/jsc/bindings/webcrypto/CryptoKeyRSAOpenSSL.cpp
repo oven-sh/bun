@@ -172,6 +172,11 @@ size_t CryptoKeyRSA::keySizeInBits() const
     return getRSAModulusLength(rsa);
 }
 
+// BoringSSL's RSA_generate_key_ex rounds the requested size down to a multiple of
+// 128 bits (crypto/fipsmodule/rsa/rsa_impl.cc), so sizes outside this granularity
+// cannot be generated.
+static constexpr unsigned rsaKeyGenerationGranularityInBits = 128;
+
 // Convert the exponent vector to a 32-bit value, if possible.
 static std::optional<uint32_t> exponentVectorToUInt32(const Vector<uint8_t>& exponent)
 {
@@ -198,12 +203,20 @@ void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgor
         return;
     }
 
+    // The generated modulus has to be exactly modulusLength bits, otherwise the caller
+    // would silently get a weaker key than it asked for.
+    if (modulusLength % rsaKeyGenerationGranularityInBits) {
+        failureCallback();
+        return;
+    }
+
     auto exponent = convertToBigNumber(publicExponent);
     auto privateRSA = RSAPtr(RSA_new());
     if (!exponent || RSA_generate_key_ex(privateRSA.get(), modulusLength, exponent.get(), nullptr) <= 0) {
         failureCallback();
         return;
     }
+    ASSERT(RSA_bits(privateRSA.get()) == modulusLength);
 
     auto publicRSA = RSAPtr(RSAPublicKey_dup(privateRSA.get()));
     if (!publicRSA) {

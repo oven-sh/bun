@@ -918,9 +918,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Wrote(chunk_len);
             }
             WriteResult::Done(amt) => {
+                // `amt` drains the whole buffer (older chunks first); report
+                // only the portion that belongs to this chunk, like `Wrote`.
+                let old_buffered = self.outgoing.size().saturating_sub(chunk_len);
                 self.outgoing.reset();
                 self.parent_on_write(amt, WriteStatus::EndOfFile);
+                return WriteResult::Done(amt.saturating_sub(old_buffered));
             }
+            // `Pending` returns a promise whose resolution value is accounted
+            // for separately (see `FileSink::bytes_accepted`), so it is left as
+            // the drained count here.
             WriteResult::Pending(amt) => {
                 self.outgoing.wrote(amt);
                 self.parent_on_write(amt, WriteStatus::Pending);

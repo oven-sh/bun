@@ -300,6 +300,12 @@ private:
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
+            /* A just-routed request is in-flight, never idle. The onData
+             * prologue already cleared isIdle, but a prior request's teardown
+             * earlier in this same segment (markDone(), or a draining request
+             * body finishing) may have set it true again, so closeIdleConnections()
+             * must not see this new request as idle. */
+            httpResponseData->isIdle = false;
 
             /* Mark this response as connectionClose if ancient or connection: close */
             if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {

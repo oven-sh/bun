@@ -470,7 +470,11 @@ Server.prototype.listen = function () {
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ ...otherTLS });
+        // Bun-only: listen({ tls }) replaces the constructor's bag, so apply the
+        // same sessionTimeout handling here (validate synchronously; null means
+        // "not provided", which the native parser only reads as undefined).
+        validateSessionTimeout(otherTLS.sessionTimeout);
+        tls = normalizeServerTls({ ...otherTLS, sessionTimeout: otherTLS.sessionTimeout ?? undefined });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])

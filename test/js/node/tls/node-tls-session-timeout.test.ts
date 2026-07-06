@@ -4,6 +4,7 @@
 import { expect, test } from "bun:test";
 import { tls as COMMON_CERT } from "harness";
 import { once } from "node:events";
+import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import tls, { connect, createServer } from "node:tls";
@@ -136,4 +137,35 @@ test.each([
   const options = { ...COMMON_CERT, sessionTimeout } as unknown as Options;
   expect(() => createServer(options)).toThrow(expect.objectContaining({ code }));
   expect(() => https.createServer(options)).toThrow(expect.objectContaining({ code }));
+});
+
+// Bun-only: http.createServer().listen({ tls }) builds a fresh TLS bag that
+// replaces the constructor's, so it has to run the same validation. The value
+// is rejected synchronously by listen() before the native layer is reached.
+test.each([
+  [-1, "ERR_OUT_OF_RANGE"],
+  [1.5, "ERR_OUT_OF_RANGE"],
+  ["300", "ERR_INVALID_ARG_TYPE"],
+] as const)("http.createServer().listen({ tls }) rejects sessionTimeout %p", (sessionTimeout, code) => {
+  const server = http.createServer(() => {});
+  try {
+    expect(() => server.listen({ port: 0, tls: { ...COMMON_CERT, sessionTimeout } } as never)).toThrow(
+      expect.objectContaining({ code }),
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test("http.createServer().listen({ tls: { sessionTimeout: null } }) is accepted", async () => {
+  const server = http.createServer((_, res) => res.end());
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  server.on("error", reject);
+  server.listen({ port: 0, tls: { ...COMMON_CERT, sessionTimeout: null } } as never, resolve);
+  try {
+    await promise;
+  } finally {
+    server.close();
+  }
+  await once(server, "close");
 });

@@ -1,7 +1,7 @@
 import { RedisClient } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import net from "net";
-import { ConnectionType, createClient, ctx, isEnabled, testKey } from "../test-utils";
+import { ConnectionType, createClient, ctx, isEnabled, readRespCommands, testKey } from "../test-utils";
 
 /**
  * Test suite for RESP protocol handling, focusing on edge cases
@@ -416,50 +416,6 @@ describe("Valkey: RESP3 attributes", () => {
   // One-entry attribute map, the shape Redis/Valkey use for key-popularity hints.
   const ATTRIBUTE = `|1${CRLF}${bulk("key-popularity")}:42${CRLF}`;
 
-  /** Pull every complete `*N` command frame out of `state.buffer`. */
-  function readCommands(state: { buffer: Buffer }): string[][] {
-    const commands: string[][] = [];
-    for (;;) {
-      const text = state.buffer.toString("latin1");
-      if (text[0] !== "*") break;
-      const headerEnd = text.indexOf(CRLF);
-      if (headerEnd === -1) break;
-      const argCount = parseInt(text.slice(1, headerEnd), 10);
-      if (!Number.isInteger(argCount) || argCount < 0) break;
-      let pos = headerEnd + 2;
-      const args: string[] = [];
-      let complete = true;
-      for (let i = 0; i < argCount; i++) {
-        if (text[pos] !== "$") {
-          complete = false;
-          break;
-        }
-        const lenEnd = text.indexOf(CRLF, pos);
-        if (lenEnd === -1) {
-          complete = false;
-          break;
-        }
-        const len = parseInt(text.slice(pos + 1, lenEnd), 10);
-        if (!Number.isInteger(len) || len < 0) {
-          complete = false;
-          break;
-        }
-        const dataStart = lenEnd + 2;
-        const dataEnd = dataStart + len;
-        if (text.length < dataEnd + 2) {
-          complete = false;
-          break;
-        }
-        args.push(text.slice(dataStart, dataEnd));
-        pos = dataEnd + 2;
-      }
-      if (!complete) break;
-      commands.push(args);
-      state.buffer = state.buffer.subarray(pos);
-    }
-    return commands;
-  }
-
   /**
    * Run `body` against a client wired to a scripted RESP3 server. `reply` gets
    * the upper-cased command name and its arguments and returns the raw bytes to
@@ -478,7 +434,7 @@ describe("Valkey: RESP3 attributes", () => {
       const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
         state.buffer = Buffer.concat([state.buffer, chunk]);
-        for (const args of readCommands(state)) {
+        for (const args of readRespCommands(state)) {
           const name = (args[0] ?? "").toUpperCase();
           socket.write(reply(name, args.slice(1)) ?? (name === "HELLO" ? HELLO_REPLY : `+OK${CRLF}`));
         }

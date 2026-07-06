@@ -1,7 +1,7 @@
 import { RedisClient } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import net from "net";
-import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
+import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled, readRespCommands } from "../test-utils";
 
 /**
  * Test suite for connection failures, reconnection, and error handling
@@ -338,49 +338,6 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
 });
 
 describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
-  function readCommands(state: { buffer: Buffer }): string[][] {
-    const commands: string[][] = [];
-    while (true) {
-      const text = state.buffer.toString("latin1");
-      if (text[0] !== "*") break;
-      const headerEnd = text.indexOf("\r\n");
-      if (headerEnd === -1) break;
-      const argCount = parseInt(text.slice(1, headerEnd), 10);
-      if (!Number.isInteger(argCount) || argCount < 0) break;
-      let pos = headerEnd + 2;
-      const args: string[] = [];
-      let complete = true;
-      for (let i = 0; i < argCount; i++) {
-        if (text[pos] !== "$") {
-          complete = false;
-          break;
-        }
-        const lenEnd = text.indexOf("\r\n", pos);
-        if (lenEnd === -1) {
-          complete = false;
-          break;
-        }
-        const len = parseInt(text.slice(pos + 1, lenEnd), 10);
-        if (!Number.isInteger(len) || len < 0) {
-          complete = false;
-          break;
-        }
-        const dataStart = lenEnd + 2;
-        const dataEnd = dataStart + len;
-        if (text.length < dataEnd + 2) {
-          complete = false;
-          break;
-        }
-        args.push(text.slice(dataStart, dataEnd));
-        pos = dataEnd + 2;
-      }
-      if (!complete) break;
-      commands.push(args);
-      state.buffer = state.buffer.subarray(pos);
-    }
-    return commands;
-  }
-
   test("rejects commands that were in flight when the connection dropped instead of pairing them with replies from the next connection", async () => {
     const sockets: net.Socket[] = [];
     let connections = 0;
@@ -393,7 +350,7 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
       const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
         state.buffer = Buffer.concat([state.buffer, chunk]);
-        for (const args of readCommands(state)) {
+        for (const args of readRespCommands(state)) {
           const name = (args[0] ?? "").toUpperCase();
           if (name === "HELLO") {
             socket.write("+OK\r\n");

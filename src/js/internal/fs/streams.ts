@@ -611,6 +611,9 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
+// Unlike writeFast() this needs no ordering against the sink's backpressure promise:
+// Writable only calls _write() once the previous one has called back, so at most one
+// completion is ever outstanding here.
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {

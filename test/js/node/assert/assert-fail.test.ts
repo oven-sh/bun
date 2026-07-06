@@ -1,6 +1,6 @@
-import assert from "node:assert";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import assert from "node:assert";
 
 // node v26 removed the end-of-life DEP0094 multi-argument behaviour of
 // assert.fail: only the first argument is used (as the message, or thrown if

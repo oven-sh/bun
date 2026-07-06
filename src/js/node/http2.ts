@@ -5599,6 +5599,10 @@ function connectionListenerHTTP1(server, socket, options) {
     if (req && !req._dumped) req.push(chunk);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
+    // A chunked body's trailers are flushed through kOnHeaders too; drop them
+    // so they can't bleed into the next request on a keep-alive connection.
+    pendingHeaders = [];
+    pendingUrl = "";
     if (req) {
       req.complete = true;
       req.push(null);

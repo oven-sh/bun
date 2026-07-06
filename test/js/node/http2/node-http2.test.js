@@ -3207,10 +3207,10 @@ it("http2 allowHTTP1 fallback delivers every request header when there are more 
     const socket = tls.connect(
       { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
       () => {
-        // 45 request headers total (host, cookie, authorization, connection +
-        // 40 x-c*, plus the request line). The native parser flushes full
-        // 31-pair blocks through a separate callback, so anything over 31
-        // headers exercises the flush path the fallback used to drop.
+        // 44 request headers (host, cookie, authorization, connection +
+        // 40 x-c*). The native parser flushes each full 32-slot header block
+        // through a separate callback, so anything over 31 headers exercises
+        // the flush path the fallback used to drop.
         let request =
           "GET / HTTP/1.1\r\nHost: example.test\r\nCookie: sid=abc123\r\nAuthorization: Bearer token-xyz\r\nConnection: close\r\n";
         for (let i = 0; i < 40; i++) request += `x-c${i}: value-${i}\r\n`;
@@ -3231,6 +3231,50 @@ it("http2 allowHTTP1 fallback delivers every request header when there are more 
       last: "value-39",
       count: 44,
     });
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 allowHTTP1 fallback does not leak a chunked request's trailers into the next keep-alive request", async () => {
+  const seen = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    req.resume();
+    req.on("end", () => {
+      seen.push({ path: req.url, trailer: req.headers["x-trailer"] });
+      res.end(req.url);
+    });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => {
+        // Request 1: a chunked body with a trailing header, keep-alive.
+        socket.write(
+          "POST /a HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" +
+            "5\r\nhello\r\n0\r\nX-Trailer: secret\r\n\r\n",
+        );
+      },
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).includes("\r\n\r\n")) {
+        sentSecond = true;
+        // Request 2 on the same connection must not inherit request 1's trailer.
+        socket.write("GET /b HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    await promise;
+    expect(seen).toEqual([
+      { path: "/a", trailer: undefined },
+      { path: "/b", trailer: undefined },
+    ]);
   } finally {
     server.close();
   }

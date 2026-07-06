@@ -366,6 +366,95 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   expectNonEnumerableStack(materialized);
 });
 
+function expectTypeError(fn, message) {
+  let caught;
+  try {
+    fn();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(TypeError);
+  expect(caught.message).toBe(message);
+}
+
+const NOT_EXTENSIBLE = "Cannot define property stack, object is not extensible";
+const NOT_CONFIGURABLE = "Cannot redefine property: stack";
+
+test("Error.captureStackTrace cannot add stack to a non-extensible object", () => {
+  const frozen = Object.freeze({});
+  expectTypeError(() => Error.captureStackTrace(frozen), NOT_EXTENSIBLE);
+  expect(Object.isFrozen(frozen)).toBe(true);
+  expect(Object.getOwnPropertyNames(frozen)).toEqual([]);
+
+  const sealed = Object.seal({ a: 1 });
+  expectTypeError(() => Error.captureStackTrace(sealed), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(sealed)).toEqual(["a"]);
+
+  const nonExtensible = Object.preventExtensions({});
+  expectTypeError(() => Error.captureStackTrace(nonExtensible), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(nonExtensible)).toEqual([]);
+
+  // an already-present "stack" doesn't make a non-extensible object writable again
+  const withStack = Object.preventExtensions({ stack: "original" });
+  expectTypeError(() => Error.captureStackTrace(withStack), NOT_EXTENSIBLE);
+  expect(withStack.stack).toBe("original");
+
+  const frozenError = Object.freeze(new Error("frozen"));
+  expectTypeError(() => Error.captureStackTrace(frozenError), NOT_EXTENSIBLE);
+  expect(Object.isFrozen(frozenError)).toBe(true);
+
+  const nonExtensibleError = Object.preventExtensions(new Error("non-extensible"));
+  expectTypeError(() => Error.captureStackTrace(nonExtensibleError), NOT_EXTENSIBLE);
+  expect(Object.isExtensible(nonExtensibleError)).toBe(false);
+});
+
+test("Error.captureStackTrace cannot overwrite a non-configurable stack", () => {
+  for (const writable of [true, false]) {
+    const object = {};
+    Object.defineProperty(object, "stack", { value: "original", writable, configurable: false });
+    expectTypeError(() => Error.captureStackTrace(object), NOT_CONFIGURABLE);
+    expect(object.stack).toBe("original");
+    expect(Object.getOwnPropertyDescriptor(object, "stack")).toEqual({
+      value: "original",
+      writable,
+      enumerable: false,
+      configurable: false,
+    });
+
+    const error = new Error("locked");
+    Object.defineProperty(error, "stack", { value: "original", writable, configurable: false });
+    expectTypeError(() => Error.captureStackTrace(error), NOT_CONFIGURABLE);
+    expect(error.stack).toBe("original");
+  }
+});
+
+test("Error.captureStackTrace still works on ordinary targets", () => {
+  function captureStackTraceHere(target) {
+    Error.captureStackTrace(target);
+  }
+
+  const object = {};
+  captureStackTraceHere(object);
+  expect(object.stack).toContain("at captureStackTraceHere");
+
+  // a configurable "stack" is replaced, not rejected
+  const replaceable = {};
+  Object.defineProperty(replaceable, "stack", { value: "original", writable: false, configurable: true });
+  captureStackTraceHere(replaceable);
+  expect(replaceable.stack).toContain("at captureStackTraceHere");
+
+  // an error whose stack was already materialized
+  const materialized = new Error("materialized");
+  expect(materialized.stack).toBeString();
+  captureStackTraceHere(materialized);
+  expect(materialized.stack).toContain("at captureStackTraceHere");
+
+  // an error whose stack is still lazy
+  const lazy = new Error("lazy");
+  captureStackTraceHere(lazy);
+  expect(lazy.stack).toContain("at captureStackTraceHere");
+});
+
 test("prepare stack trace call sites", () => {
   function f1() {
     f2();

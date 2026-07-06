@@ -190,12 +190,14 @@ describe("WebSocket", () => {
     }
   });
   describe("close()", () => {
+    // No code means no body on the close frame, which RFC 6455 §7.1.5 reports as
+    // 1005 "no status received" on both ends. Matches npm `ws`.
     test("(no arguments)", (ws, done) => {
       ws.on("open", () => {
         ws.close();
       });
       ws.on("close", (code: number, reason: string, wasClean: boolean) => {
-        expect(code).toBe(1000);
+        expect(code).toBe(1005);
         expect(reason).toBeString();
         expect(wasClean).toBeTrue();
         done();

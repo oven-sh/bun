@@ -365,6 +365,66 @@ describe("the loader runs once per specifier", () => {
     expect([calls, required.value]).toEqual([1, 1]);
   });
 
+  // require() unwraps `default` when the object loader sets __esModule. That unwrap has to
+  // survive the registry reuse above, so it must not depend on import() ordering.
+  it("require() after import() unwraps the __esModule default", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-esmodule-import-first", () => {
+          calls++;
+          return { exports: { __esModule: true, default: "world" }, loader: "object" };
+        });
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("load-once-esmodule-import-first");
+    expect([calls, imported.default]).toEqual([1, "world"]);
+
+    expect([require("load-once-esmodule-import-first"), calls]).toEqual(["world", 1]);
+  });
+
+  it("require() before import() unwraps the __esModule default", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-esmodule-require-first", () => {
+          calls++;
+          return { exports: { __esModule: true, default: "world" }, loader: "object" };
+        });
+      },
+    });
+
+    expect([require("load-once-esmodule-require-first"), calls]).toEqual(["world", 1]);
+
+    // @ts-expect-error
+    const imported = await import("load-once-esmodule-require-first");
+    expect(imported.default).toBe("world");
+  });
+
+  it("a namespaced onLoad object loader unwraps the __esModule default after import()", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.onResolve({ filter: /.*/, namespace: "load-once-esm-ns" }, ({ path }) => ({
+          path,
+          namespace: "load-once-esm-ns",
+        }));
+        builder.onLoad({ filter: /.*/, namespace: "load-once-esm-ns" }, () => {
+          calls++;
+          return { exports: { __esModule: true, default: "world" }, loader: "object" };
+        });
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("load-once-esm-ns:hello");
+    expect([calls, imported.default]).toEqual([1, "world"]);
+
+    expect([require("load-once-esm-ns:hello"), calls]).toEqual(["world", 1]);
+  });
+
   it("require() of an async virtual module succeeds once import() has loaded it", async () => {
     Bun.plugin({
       setup(builder) {

@@ -37,6 +37,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "IsolatedModuleCache.h"
+#include "isBuiltinModule.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -668,9 +669,14 @@ JSValue fetchCommonJSModule(
         return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
     }();
 
-    // mock.module() is exempt: it patches the registry entry when it is installed, and
-    // require() relies on running it here so a mocked builtin still beats the real one.
-    const bool shouldRunVirtualModule = !alreadyLoadedAsESM || globalObject->onLoadPlugins.hasModuleMock(specifierWtfString);
+    // Two exemptions, both because this lookup runs ahead of the builtin one under
+    // `bun test`. Mocks: mock.module() is how a builtin gets shadowed, and it patches
+    // whatever registry entry existed at install time, which carries no "module.exports"
+    // binding for require() to unwrap. Builtins: keep require() of one on the branch it
+    // already takes, rather than having a registered plugin decide that.
+    const bool shouldRunVirtualModule = !alreadyLoadedAsESM
+        || globalObject->onLoadPlugins.hasModuleMock(specifierWtfString)
+        || Bun::isBuiltinModule(specifierWtfString);
 
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.

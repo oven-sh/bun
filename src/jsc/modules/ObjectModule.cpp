@@ -21,6 +21,11 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
+        const JSC::Identifier moduleDotExports = JSC::Identifier::fromString(vm, "module.exports"_s);
+        bool hasESModuleMarker = false;
+        bool hasModuleDotExports = false;
+        JSValue defaultValue;
+
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
             exportNames.append(entry);
 
@@ -31,6 +36,22 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                 value = jsUndefined();
             }
             exportValues.append(value);
+
+            if (entry == vm.propertyNames->__esModule)
+                hasESModuleMarker = value.toBoolean(globalObject);
+            else if (entry == vm.propertyNames->defaultKeyword)
+                defaultValue = value;
+            else if (entry == moduleDotExports)
+                hasModuleDotExports = true;
+        }
+
+        // require() of this module unwraps `default` when __esModule is set (see the
+        // commonJSModule branch of handleVirtualModuleResult). Publish it under the
+        // name the CJS bridge reads so require() agrees whether or not import() ran
+        // first and already populated the module registry.
+        if (hasESModuleMarker && !hasModuleDotExports && defaultValue && !defaultValue.isUndefined()) {
+            exportNames.append(moduleDotExports);
+            exportValues.append(defaultValue);
         }
     };
 }

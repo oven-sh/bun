@@ -583,11 +583,9 @@ impl Stdio {
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
-        // `Bun.file(path).slice(a, b)` narrows the Blob to `[offset, offset + size)`.
-        // The fast path below hands the child the fd/path behind the Blob, and an fd
-        // carries no end bound, so the child would read the whole file. Read the
-        // range up front and pipe exactly those bytes instead. stdout/stderr take a
-        // Blob as a write target, where the range means nothing.
+        // A sliced `Bun.file()` addresses `[offset, offset + size)`, but the fd/path
+        // fast path below carries no end bound, so read the range up front and pipe
+        // those bytes. stdout/stderr are write targets, where the range is moot.
         if i != 1 && i != 2 {
             if let Some((offset, size)) = webcore::blob::file_view_range(&blob) {
                 if i != 0 {

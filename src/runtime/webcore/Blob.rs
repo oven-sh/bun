@@ -6408,8 +6408,8 @@ pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys:
         .as_file();
 
     let mut path_buf = bun_paths::PathBuffer::uninit();
-    // `pread` leaves the seek position alone, so the store's own fd would do;
-    // dup it anyway so one guard closes whichever fd we end up with.
+    // dup the caller's fd (rather than read through it) so one guard closes
+    // whichever fd we open here without touching the caller's.
     let fd = match &file.pathlike {
         PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd)?,
         PathOrFileDescriptor::Path(path) => {
@@ -6422,6 +6422,12 @@ pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys:
         }
     };
     let fd = scopeguard::guard(fd, |fd| fd.close());
+
+    // POSIX `pread` ignores the file offset. Windows `dup` shares the file
+    // pointer and `pread` (ReadFile + OVERLAPPED) advances it, so save and
+    // restore it to leave a caller reading the same fd afterward unaffected.
+    #[cfg(windows)]
+    let saved_offset = bun_sys::lseek(*fd, 0, libc::SEEK_CUR).ok();
 
     let len = usize::try_from(size).expect("int cast");
     let mut bytes = Vec::<u8>::new();
@@ -6440,6 +6446,12 @@ pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys:
             Err(err) => return Err(err),
         }
     }
+
+    #[cfg(windows)]
+    if let Some(offset) = saved_offset {
+        let _ = bun_sys::set_file_offset(*fd, offset as u64);
+    }
+
     bytes.truncate(read);
     Ok(bytes)
 }

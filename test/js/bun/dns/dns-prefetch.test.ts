@@ -118,7 +118,9 @@ describe("dns.prefetch", () => {
   });
 });
 
-describe("DNS cache stats", () => {
+// Each test spawns its own isolated Bun subprocess, so the process-global DNS
+// counters are never shared between them — safe to run concurrently.
+describe.concurrent("DNS cache stats", () => {
   // `cacheHitsCompleted + cacheHitsInflight + cacheMisses === totalCount` is the
   // only thing that makes the counters reconcilable. Prefetching an already
   // cached host used to bump `totalCount` and return without counting the hit.
@@ -149,7 +151,8 @@ describe("DNS cache stats", () => {
 // `node:tls` and the `node:http` client both connect through `node:net`, so the
 // cache that `fetch()`/`Bun.connect` use has to be reachable from there too —
 // otherwise `dns.prefetch()` is a no-op for every database/HTTP driver on npm.
-describe("node:net DNS cache", () => {
+// Each `it` spawns its own isolated subprocess, so they run concurrently.
+describe.concurrent("node:net DNS cache", () => {
   it("resolves node:net and node:http through the shared cache", async () => {
     const { result, stderr, exitCode } = await runCacheFixture(`
       const net = require("node:net");
@@ -257,6 +260,41 @@ describe("node:net DNS cache", () => {
     `);
     expect({ result, stderr, exitCode }).toEqual({
       result: { calls: 1, totalCount: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The cache is keyed on hostname alone and always resolves with AF_UNSPEC +
+  // default hints, so a connect that asks for anything else must bypass it and
+  // go through dns.lookup (which doesn't touch the getaddrinfo cache counters).
+  it.each([
+    ["an explicit family", `{ port, host: "localhost", family: 4 }`],
+    [
+      "non-default hints",
+      `{ port, host: "localhost", hints: require("node:dns").ADDRCONFIG | require("node:dns").V4MAPPED }`,
+    ],
+  ])("bypasses the cache for %s", async (_label, connectOptions) => {
+    const { result, stderr, exitCode } = await runCacheFixture(`
+      const net = require("node:net");
+      const server = net.createServer(socket => socket.end());
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+
+      const before = Bun.dns.getCacheStats();
+      await new Promise((resolve, reject) => {
+        const socket = net.connect(${connectOptions}, () => socket.end());
+        socket.on("close", resolve);
+        socket.on("error", reject);
+      });
+      const after = Bun.dns.getCacheStats();
+      server.close();
+
+      // The cache was never consulted, so every counter is frozen.
+      console.log(JSON.stringify({ totalCount: after.totalCount - before.totalCount }));
+    `);
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { totalCount: 0 },
       stderr: "",
       exitCode: 0,
     });

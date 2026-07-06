@@ -87,6 +87,17 @@ pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
     str.eql_utf8(global.bun_vm().as_mut().main())
 }
 
+/// Called for every CommonJS module the ES module loader instantiates, just
+/// before its body runs.
+// HOST_EXPORT(Bun__VM__noteCommonJSModuleLoaded, c)
+pub fn note_common_js_module_loaded(global: &JSGlobalObject, specifier: &BunString) {
+    // JSGlobalObject::bun_vm contract.
+    let vm = global.bun_vm().as_mut();
+    if specifier.eql_utf8(vm.main()) {
+        vm.main_is_commonjs = true;
+    }
+}
+
 /// When IPC environment variables are passed, the socket is not immediately opened,
 /// but rather we wait for process.on('message') or process.send() to be called, THEN
 /// we open the socket. This is to avoid missing messages at the start of the program.

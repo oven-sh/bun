@@ -908,15 +908,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSC::JSValue::encode(jsUndefined());
 }
 
+extern "C" bool Bun__hasUncaughtExceptionCaptureCallback(Zig::GlobalObject* globalObject)
+{
+    JSValue cb = globalObject->processObject()->getUncaughtExceptionCaptureCallback();
+    return !cb.isEmpty() && cb.isCell();
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    JSValue cb = zigGlobal->processObject()->getUncaughtExceptionCaptureCallback();
-    if (cb.isEmpty() || !cb.isCell()) {
-        return JSValue::encode(jsBoolean(false));
-    }
-
-    return JSValue::encode(jsBoolean(true));
+    return JSValue::encode(jsBoolean(Bun__hasUncaughtExceptionCaptureCallback(defaultGlobalObject(globalObject))));
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);

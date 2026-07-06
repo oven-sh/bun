@@ -158,6 +158,9 @@ pub struct VirtualMachine {
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
+    /// Whether the entry module was instantiated as CommonJS. Set by the module
+    /// loader, reset by `set_main`.
+    pub main_is_commonjs: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -366,6 +369,7 @@ unsafe extern "C" {
         promise: JSValue,
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
+    safe fn Bun__hasUncaughtExceptionCaptureCallback(global: &JSGlobalObject) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
@@ -1375,6 +1379,13 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// The `is_rejection` to report a failed entry-point evaluation with. Node
+    /// throws a CommonJS entry's error straight out of `Module._load`, and
+    /// skips its `fromPromise` funnel when a capture callback is installed.
+    pub fn entry_point_error_is_rejection(&self) -> bool {
+        !self.main_is_commonjs && !Bun__hasUncaughtExceptionCaptureCallback(self.global())
+    }
+
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
@@ -2222,6 +2233,7 @@ impl VirtualMachine {
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
         self.main = bun_ptr::RawSlice::new(path);
+        self.main_is_commonjs = false;
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until

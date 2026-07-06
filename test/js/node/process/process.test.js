@@ -896,6 +896,99 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  describe("origin reported for an entry point that throws at the top level", () => {
+    const listeners = [
+      `process.on("uncaughtExceptionMonitor", (err, origin) => console.log("monitor " + origin));`,
+      `process.on("uncaughtException", (err, origin) => console.log("handler " + origin));`,
+    ].join("\n");
+
+    async function run(files, ...args) {
+      using dir = tempDir("uncaught-exception-origin", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    // A CommonJS entry point throws synchronously out of the require, so node
+    // reports 'uncaughtException'. Bun evaluates it through a module promise,
+    // which used to surface as 'unhandledRejection'.
+    it("is 'uncaughtException' for a CommonJS entry point", async () => {
+      const { stdout, exitCode } = await run({ "entry.cjs": `${listeners}\nthrow new Error("boom");` }, "entry.cjs");
+      expect(stdout).toEqual(["monitor uncaughtException", "handler uncaughtException"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("is 'uncaughtException' for a .js entry point in a CommonJS package", async () => {
+      const { stdout, exitCode } = await run(
+        {
+          "package.json": JSON.stringify({ name: "cjs-pkg", type: "commonjs" }),
+          "entry.js": `${listeners}\nthrow new Error("boom");`,
+        },
+        "entry.js",
+      );
+      expect(stdout).toEqual(["monitor uncaughtException", "handler uncaughtException"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // `require` makes this eval a CommonJS module; without a CommonJS marker
+    // Bun evaluates ambiguous source as ESM, and reports it that way.
+    it("is 'uncaughtException' for a CommonJS -e script", async () => {
+      const { stdout, exitCode } = await run({}, "-e", `require("node:path");\n${listeners}\nthrow new Error("boom");`);
+      expect(stdout).toEqual(["monitor uncaughtException", "handler uncaughtException"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // An ES module's failure genuinely is a module-evaluation promise
+    // rejection, and node attributes it that way.
+    it("is 'unhandledRejection' for an ES module entry point", async () => {
+      const { stdout, exitCode } = await run({ "entry.mjs": `${listeners}\nthrow new Error("boom");` }, "entry.mjs");
+      expect(stdout).toEqual(["monitor unhandledRejection", "handler unhandledRejection"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // node's ESM entry funnel skips its `fromPromise` flag entirely when a
+    // capture callback is installed.
+    it("is 'uncaughtException' for an ES module entry point with a capture callback", async () => {
+      const { stdout, exitCode } = await run(
+        {
+          "entry.mjs": [
+            `process.on("uncaughtExceptionMonitor", (err, origin) => console.log("monitor " + origin));`,
+            `process.setUncaughtExceptionCaptureCallback(() => process.exit(0));`,
+            `throw new Error("boom");`,
+          ].join("\n"),
+        },
+        "entry.mjs",
+      );
+      expect(stdout).toEqual(["monitor uncaughtException"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("is 'uncaughtException' for a CommonJS worker entry point", async () => {
+      const { stdout, exitCode } = await run(
+        {
+          "entry.cjs": [
+            `const { Worker } = require("node:worker_threads");`,
+            `new Worker(require("node:path").join(__dirname, "worker.cjs"));`,
+          ].join("\n"),
+          "worker.cjs": [
+            listeners,
+            `process.on("uncaughtException", () => process.exit(0));`,
+            `throw new Error("boom");`,
+          ].join("\n"),
+        },
+        "entry.cjs",
+      );
+      expect(stdout).toEqual(["monitor uncaughtException", "handler uncaughtException"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
     expect(await proc.exited).toBe(42);

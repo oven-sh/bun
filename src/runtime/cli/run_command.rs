@@ -1510,8 +1510,9 @@ impl Run {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
                     let global = vm.global;
+                    let is_rejection = vm.entry_point_error_is_rejection();
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 

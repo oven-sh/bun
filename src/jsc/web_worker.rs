@@ -1097,10 +1097,11 @@ impl WebWorker {
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
             if (*promise).status() == jsc::js_promise::Status::Rejected {
+                let is_rejection = vm.entry_point_error_is_rejection();
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    true,
+                    is_rejection,
                 );
                 if !handled {
                     vm.as_mut().exit_handler.exit_code = 1;

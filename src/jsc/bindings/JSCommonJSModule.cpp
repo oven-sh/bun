@@ -84,6 +84,7 @@
 #include "WebCoreJSBuiltins.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
+extern "C" void Bun__VM__noteCommonJSModuleLoaded(JSC::JSGlobalObject* global, const BunString*);
 
 namespace Bun {
 using namespace JSC;
@@ -1543,6 +1544,12 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
+
+                // Record the format before the body runs: a CommonJS module that
+                // throws here is evicted from the require cache and never gets a
+                // module record, so afterwards nothing tells it apart from ESM.
+                auto keyString = Bun::toString(moduleKey.string());
+                Bun__VM__noteCommonJSModuleLoaded(globalObject, &keyString);
 
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);

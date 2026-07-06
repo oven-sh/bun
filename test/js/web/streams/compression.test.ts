@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
@@ -262,6 +263,30 @@ describe("CompressionStream and DecompressionStream", () => {
         causeMessage: "unexpected end of file",
         causeErrno: -5,
       });
+    });
+
+    test("a zstd frame decoding to many output chunks is not mistaken for a truncated one", async () => {
+      // The finishing flush is re-driven once per 16 KiB of output, so a frame
+      // larger than one chunk is the case the check must not trip on.
+      const data = Buffer.alloc(1 << 20, "hello world ");
+      const full = await compress("zstd", data);
+      expect(Buffer.from(await decompress("zstd", full))).toEqual(data);
+    });
+
+    test("the zstd end-of-stream check is scoped to DecompressionStream", async () => {
+      // node:zlib's zstd decoder accepts a frame that ends mid-stream, and bun
+      // matches it; only DecompressionStream asks for the check.
+      const data = Buffer.alloc(6000, "hello world ");
+      const full = zlib.zstdCompressSync(data);
+      const truncated = full.subarray(0, full.length - 10);
+
+      expect(zlib.zstdDecompressSync(truncated)).toBeInstanceOf(Buffer);
+      expect(zlib.zstdDecompressSync(Buffer.alloc(0))).toEqual(Buffer.alloc(0));
+
+      // ...which is the same knob DecompressionStream turns on.
+      expect(() => zlib.zstdDecompressSync(truncated, { finishFlush: zlib.constants.ZSTD_e_end })).toThrow(
+        expect.objectContaining({ message: "unexpected end of file", code: "Z_BUF_ERROR" }),
+      );
     });
   });
 

@@ -1,8 +1,8 @@
 import assert from "node:assert";
 import { once } from "node:events";
 import fs from "node:fs";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
 import tls from "node:tls";

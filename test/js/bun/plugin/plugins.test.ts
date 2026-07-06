@@ -722,3 +722,170 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+describe.concurrent("onResolve failures", () => {
+  // Prints `{ ...result, unhandled }` once the event loop is drained, so an
+  // unhandled rejection queued by the plugin has already been reported.
+  const reporter = `
+    const unhandled = [];
+    let result = null;
+    process.on("unhandledRejection", error => unhandled.push(error?.message ?? String(error)));
+    process.on("exit", () => console.log(JSON.stringify({ ...result, unhandled })));
+  `;
+
+  async function report(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", reporter + source],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    try {
+      return { report: JSON.parse(stdout), exitCode };
+    } catch {
+      throw new Error(`expected JSON on stdout, got:\n${stdout}\n--- stderr ---\n${stderr}`);
+    }
+  }
+
+  it("rejects the import with the error an async onResolve threw", async () => {
+    expect(
+      await report(`
+        Bun.plugin({
+          name: "rejecting resolver",
+          setup(builder) {
+            builder.onResolve({ filter: /^boom$/, namespace: "asyncthrow" }, async () => {
+              throw new Error("config missing");
+            });
+          },
+        });
+        const error = await import("asyncthrow:boom").catch(error => error);
+        result = { name: error.name, message: error.message };
+      `),
+    ).toEqual({
+      report: { name: "Error", message: "config missing", unhandled: [] },
+      exitCode: 0,
+    });
+  });
+
+  it("rejects the import with a non-Error thrown by an async onResolve", async () => {
+    expect(
+      await report(`
+        Bun.plugin({
+          name: "rejecting resolver",
+          setup(builder) {
+            builder.onResolve({ filter: /^boom$/, namespace: "asyncthrowstring" }, async () => {
+              throw "config missing";
+            });
+          },
+        });
+        const error = await import("asyncthrowstring:boom").catch(error => error);
+        result = { thrown: error };
+      `),
+    ).toEqual({
+      report: { thrown: "config missing", unhandled: [] },
+      exitCode: 0,
+    });
+  });
+
+  it("throws the error an async onResolve threw out of require()", async () => {
+    expect(
+      await report(`
+        Bun.plugin({
+          name: "rejecting resolver",
+          setup(builder) {
+            builder.onResolve({ filter: /^boom$/, namespace: "asyncthrowrequire" }, async () => {
+              throw new Error("config missing");
+            });
+          },
+        });
+        try {
+          require("asyncthrowrequire:boom");
+          result = { name: "(nothing was thrown)", message: "(nothing was thrown)" };
+        } catch (error) {
+          result = { name: error.name, message: error.message };
+        }
+      `),
+    ).toEqual({
+      report: { name: "Error", message: "config missing", unhandled: [] },
+      exitCode: 0,
+    });
+  });
+
+  it("throws the error a sync onResolve threw", async () => {
+    expect(
+      await report(`
+        Bun.plugin({
+          name: "throwing resolver",
+          setup(builder) {
+            builder.onResolve({ filter: /^boom$/, namespace: "syncthrow" }, () => {
+              throw new Error("config missing");
+            });
+          },
+        });
+        const error = await import("syncthrow:boom").catch(error => error);
+        result = { name: error.name, message: error.message };
+      `),
+    ).toEqual({
+      report: { name: "Error", message: "config missing", unhandled: [] },
+      exitCode: 0,
+    });
+  });
+
+  it("fails the entry point when onResolve throws while resolving it", async () => {
+    using dir = tempDir("plugin-entry-throw", {
+      "plugin.js": `
+        Bun.plugin({
+          name: "throwing resolver",
+          setup(builder) {
+            builder.onResolve({ filter: /entry\\.js$/ }, () => {
+              throw new Error("config missing");
+            });
+          },
+        });
+      `,
+      "entry.js": `console.log("the entry point ran");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.js", "./entry.js"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("config missing");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  it("does not leak the rejection of an onResolve promise that settles too late", async () => {
+    expect(
+      await report(`
+        Bun.plugin({
+          name: "pending resolver",
+          setup(builder) {
+            builder.onResolve({ filter: /^boom$/, namespace: "pendingthrow" }, async () => {
+              await Bun.sleep(1);
+              throw new Error("config missing");
+            });
+          },
+        });
+        const error = await import("pendingthrow:boom").catch(error => error);
+        result = { name: error.name, message: error.message };
+      `),
+    ).toEqual({
+      report: {
+        name: "TypeError",
+        message: "onResolve() doesn't support pending promises yet",
+        unhandled: [],
+      },
+      exitCode: 0,
+    });
+  });
+});

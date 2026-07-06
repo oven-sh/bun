@@ -3380,7 +3380,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     ErrorableString res;
-    res.success = false;
+    memset(&res, 0, sizeof(res));
 
     BunString keyZ;
     if (key.isString()) {
@@ -3436,26 +3436,29 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 
     BunString queryString = { BunStringTag::Empty, nullptr };
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();
     referrerZ.deref();
 
-    if (res.success) {
-        if (!queryString.isEmpty()) {
-            auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
-            res.result.value.deref();
-            queryString.deref();
-            return result;
-        }
-
-        auto result = Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
-        res.result.value.deref();
-        return result;
-    } else {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // A throwing onResolve plugin leaves the exception pending and never writes
+    // `res`, so `res.result.err` is only readable when nothing is pending.
+    if (!res.success && !scope.exception()) [[unlikely]] {
         throwException(scope, res.result.err, globalObject);
-        return globalObject->vm().propertyNames->emptyIdentifier;
     }
+    RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+    if (!queryString.isEmpty()) {
+        auto result = JSC::Identifier::fromString(vm, makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+        res.result.value.deref();
+        queryString.deref();
+        return result;
+    }
+
+    auto result = Identifier::fromString(vm, res.result.value.toWTFString(BunString::ZeroCopy));
+    res.result.value.deref();
+    return result;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,

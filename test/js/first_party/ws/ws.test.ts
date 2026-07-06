@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -485,7 +485,9 @@ async function listen(): Promise<URL> {
   const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const { promise, resolve, reject } = Promise.withResolvers();
   const server = spawn({
-    cmd: [bunExe(), pathname],
+    // Node runs the echo server, as in websocket-client.test.ts: these tests
+    // cover the client, and a debug build spends the 1s budget just booting.
+    cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
     stdout: "inherit",

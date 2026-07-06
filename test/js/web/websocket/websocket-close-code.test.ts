@@ -312,4 +312,13 @@ describe.concurrent("WebSocket client and server-sent close frames", () => {
       closeEvent: { code: 1000, reason: "bye" },
     });
   });
+
+  // An explicitly passed reason counts as present even when it is empty, so the
+  // frame keeps its body. Only an omitted reason leaves the payload out.
+  it('close(undefined, "") sends 1000 with an empty reason', async () => {
+    expect(await closeAndReadFrame(ws => ws.close(undefined, ""))).toEqual({
+      frame: { opcode: 0x8, payloadLength: 2, code: 1000, reason: "" },
+      closeEvent: { code: 1000, reason: "" },
+    });
+  });
 });

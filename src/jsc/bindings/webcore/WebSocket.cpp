@@ -995,9 +995,10 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
             return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
     }
     // https://websockets.spec.whatwg.org/#dom-websocket-close step 3: with neither
-    // a code nor a reason, the Close message must not have a body. A reason still
-    // needs one, since the wire format puts the status code in front of it.
-    int code = optionalCode ? optionalCode.value() : static_cast<int>(reason.isEmpty() ? closeCodeNotSpecified : 1000);
+    // a code nor a reason present, the Close message must not have a body. A reason
+    // still needs one, since the wire format puts the status code in front of it.
+    // An empty reason is still present; only an absent one is a null String.
+    int code = optionalCode ? optionalCode.value() : static_cast<int>(reason.isNull() ? closeCodeNotSpecified : 1000);
 
     if (m_state == CLOSING || m_state == CLOSED)
         return {};

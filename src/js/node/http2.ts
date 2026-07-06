@@ -5580,8 +5580,9 @@ function connectionListenerHTTP1(server, socket, options) {
 
     // Mirror node's HTTP/1 parserOnIncoming Expect handling so RFC-following
     // uploaders that wait for a 100 Continue don't stall on the fallback path.
+    // Per RFC 7231 5.1.1 the expectation is ignored below HTTP/1.1.
     const expectHeader = headers.expect;
-    if (expectHeader !== undefined) {
+    if (expectHeader !== undefined && versionMajor === 1 && versionMinor === 1) {
       if (continueExpression.test(expectHeader)) {
         if (server.listenerCount("checkContinue") > 0) {
           server.emit("checkContinue", req, res);

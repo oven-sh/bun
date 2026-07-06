@@ -3291,3 +3291,36 @@ it("http2 allowHTTP1 fallback answers an unsupported expectation with 417 and no
     server.close();
   }
 });
+
+it("http2 allowHTTP1 fallback ignores Expect: 100-continue on an HTTP/1.0 request", async () => {
+  const events = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });
+  server.on("checkContinue", () => events.push("checkContinue"));
+  server.on("request", (req, res) => {
+    events.push("request:hv=" + req.httpVersion);
+    req.on("data", () => {});
+    req.on("end", () => res.end("done"));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "127.0.0.1", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => {
+        // HTTP/1.0 request line: per RFC 7231 5.1.1 the 100-continue
+        // expectation must be ignored and no 100 written.
+        socket.write("POST /x HTTP/1.0\r\nHost: localhost\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello");
+      },
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    const raw = await promise;
+    expect(raw).not.toContain("100 Continue");
+    expect(raw.slice(raw.lastIndexOf("\r\n\r\n") + 4)).toBe("done");
+    expect(events).toEqual(["request:hv=1.0"]);
+  } finally {
+    server.close();
+  }
+});

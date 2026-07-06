@@ -1,6 +1,8 @@
 #pragma once
 // clang-format off
 
+#include <JavaScriptCore/DeferTermination.h>
+
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
@@ -92,8 +94,12 @@ FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-// definition of the C++ wrapper to call the Rust function
+// definition of the C++ wrapper to call the Rust function.
+// Lazy property builder: exceptions must not propagate into reifyStaticProperty,
+// which performs no exception check. A TerminationException cannot be cleared,
+// so defer it across the getter.
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
+    JSC::DeferTerminationForAWhile deferTermination(vm); \
     return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
 } \
 

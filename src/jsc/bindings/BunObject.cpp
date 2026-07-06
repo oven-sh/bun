@@ -317,6 +317,10 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
 
 static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 {
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check. A
+    // TerminationException cannot be cleared, so defer it across the require.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
@@ -329,6 +333,10 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
 {
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check. A
+    // TerminationException cannot be cleared, so defer it across the require.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);

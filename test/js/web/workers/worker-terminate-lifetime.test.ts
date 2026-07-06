@@ -82,17 +82,30 @@ test(
   timeout,
 );
 
-// Regression: `process.nextTick`, `process.mainModule`, `process.stdin` and
-// `Bun.$` are lazily built by JSC's reifyStaticProperty, which performs no
-// exception check. A terminate() that landed while a builder was entering JS
-// left a TerminationException pending (tryClearException() cannot clear one),
-// and the caller's `EXCEPTION_ASSERT(!scope.exception() || !hasSlot)` aborted.
+// Regression: these properties are lazily built by JSC's reifyStaticProperty,
+// which performs no exception check. A terminate() that landed while a builder
+// was entering JS left a TerminationException pending (tryClearException()
+// cannot clear one), so the builder either tripped the caller's
+// `EXCEPTION_ASSERT(!scope.exception() || !hasSlot)` or handed the empty
+// JSValue to putDirect (a null JSCell deref).
 //
 // Each worker blocks in Bun.sleepSync so terminate() is requested while the
 // thread sits in native code with no JS safepoint ahead of the property read;
 // the builder then runs with the termination trap armed. A blocking call is
 // the point of the test, not a wait for a condition.
-const lazyProperties = ["process.nextTick", "process.mainModule", "process.stdin", "Bun.$"];
+//
+// One entry per builder shape: a process.* TopExceptionScope builder, a JS
+// property get, an internal-module require, a JSC::call, and a Rust-backed
+// getter behind the shared wrapper macro.
+const lazyProperties = [
+  "process.nextTick",
+  "process.mainModule",
+  "process.stdin",
+  "Bun.$",
+  "Bun.sql",
+  "Bun.SQL",
+  "Bun.argv",
+];
 const blockMs = slow ? 600 : 200;
 
 test(

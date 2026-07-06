@@ -3736,19 +3736,23 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn disable_renegotiation(
         this: &Self,
-        g: &JSGlobalObject,
-        f: &CallFrame,
+        _g: &JSGlobalObject,
+        _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::disable_renegotiation(Self::as_tls(this), g, f)
+            tls_socket_functions::disable_renegotiation(this.socket.get().ssl())
         } else {
             Ok(JSValue::UNDEFINED)
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn is_session_reused(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn is_session_reused(
+        this: &Self,
+        _g: &JSGlobalObject,
+        _f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::is_session_reused(Self::as_tls(this), g, f)
+            tls_socket_functions::is_session_reused(this.socket.get().ssl())
         } else {
             Ok(JSValue::FALSE)
         }
@@ -3770,9 +3774,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_tls_ticket(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_tls_ticket(this: &Self, g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_ticket(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_ticket(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3786,9 +3790,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_session(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_session(this: &Self, g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_session(Self::as_tls(this), g, f)
+            tls_socket_functions::get_session(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3796,7 +3800,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_alpn_protocol(this: &Self, g: &JSGlobalObject) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_alpn_protocol(Self::as_tls(this), g)
+            tls_socket_functions::get_alpn_protocol(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::FALSE)
         }
@@ -3816,7 +3820,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::export_keying_material(Self::as_tls(this), g, f)
+            tls_socket_functions::export_keying_material(this.socket.get().ssl(), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3825,18 +3829,22 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn get_ephemeral_key_info(
         this: &Self,
         g: &JSGlobalObject,
-        f: &CallFrame,
+        _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_ephemeral_key_info(Self::as_tls(this), g, f)
+            tls_socket_functions::get_ephemeral_key_info(
+                this.socket.get().ssl(),
+                Self::as_tls(this).is_server(),
+                g,
+            )
         } else {
             Ok(JSValue::NULL)
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_cipher(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_cipher(this: &Self, g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_cipher(Self::as_tls(this), g, f)
+            tls_socket_functions::get_cipher(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3845,10 +3853,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn get_tls_peer_finished_message(
         this: &Self,
         g: &JSGlobalObject,
-        f: &CallFrame,
+        _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_peer_finished_message(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_peer_finished_message(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3857,26 +3865,30 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn get_tls_finished_message(
         this: &Self,
         g: &JSGlobalObject,
-        f: &CallFrame,
+        _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_finished_message(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_finished_message(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_shared_sigalgs(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_shared_sigalgs(
+        this: &Self,
+        g: &JSGlobalObject,
+        _f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_shared_sigalgs(Self::as_tls(this), g, f)
+            tls_socket_functions::get_shared_sigalgs(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_tls_version(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_tls_version(this: &Self, g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_version(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_version(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::NULL)
         }
@@ -3888,7 +3900,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::set_max_send_fragment(Self::as_tls(this), g, f)
+            tls_socket_functions::set_max_send_fragment(this.socket.get().ssl(), g, f)
         } else {
             Ok(JSValue::FALSE)
         }
@@ -3900,15 +3912,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_peer_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_peer_certificate(
+                this.socket.get().ssl(),
+                Self::as_tls(this).is_server(),
+                g,
+                f,
+            )
         } else {
             Ok(JSValue::NULL)
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_certificate(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_certificate(this: &Self, g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_certificate(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3917,10 +3934,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn get_peer_x509_certificate(
         this: &Self,
         g: &JSGlobalObject,
-        f: &CallFrame,
+        _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_peer_x509_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_peer_x509_certificate(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3929,18 +3946,18 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn get_x509_certificate(
         this: &Self,
         g: &JSGlobalObject,
-        f: &CallFrame,
+        _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_x509_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_x509_certificate(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub fn get_servername(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_servername(this: &Self, g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_servername(Self::as_tls(this), g, f)
+            tls_socket_functions::get_servername(this.socket.get().ssl(), g)
         } else {
             Ok(JSValue::UNDEFINED)
         }

@@ -19,7 +19,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { installTLSSocketMethods, kTLSSocketFacade, throwOnInvalidTLSArray } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -606,7 +606,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
         setIsNextIncomingMessageHTTPS(isHTTPS);
         if (!socket) {
-          socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
+          socket = createServerSocket(server, socketHandle, tls);
         }
 
         const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
@@ -708,7 +708,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (isSocketNew && !reachedRequestsLimit) {
-          server.emit("connection", socket);
+          emitNewConnection(server, socket, tls);
         }
 
         socket[kRequest] = http_req;
@@ -909,7 +909,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.requireHostHeader,
       true,
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
-      onServerClientError.bind(this),
+      onServerClientError.bind(this, tls),
     );
 
     if (this?._unref) {
@@ -971,7 +971,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
   HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
 }
-function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
+function onServerClientError(tls, _ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   let err;
   switch (errorCode) {
@@ -1006,9 +1006,9 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   // kTrackedConnections. Reuse it, and only announce genuinely new
   // connections - the existing duplex already had its 'connection' event.
   const existingDuplex = (socket as any).duplex;
-  const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
+  const nodeSocket = existingDuplex ?? createServerSocket(self, socket, tls);
   if (!existingDuplex) {
-    self.emit("connection", nodeSocket);
+    emitNewConnection(self, nodeSocket, tls);
   }
   self.emit("clientError", err, nodeSocket);
   if (nodeSocket.listenerCount("error") > 0) {
@@ -1364,6 +1364,68 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this[kHandle]?.response;
   }
 } as unknown as typeof import("node:net").Socket;
+
+// The accepted socket of an https.Server. Node hands the request handler a
+// tls.TLSSocket; Bun's connection is a uWS handle, so this wraps the same
+// surface around it: the TLS readers in internal/tls all go through `_handle`,
+// which the native JSNodeHTTPServerSocket implements on top of the BoringSSL
+// readers tls.TLSSocket already uses. The handshake has always completed by the
+// time the first request arrives, so the negotiated identity is read once in the
+// constructor, the way Node's onServerSocketSecure assigns it.
+const NodeHTTPServerTLSSocket = class Socket extends NodeHTTPServerSocket {
+  isServer = true;
+  alpnProtocol: string | false = false;
+  servername: string | false = false;
+  authorized = false;
+  authorizationError: string | null = null;
+  _requestCert: boolean;
+  _rejectUnauthorized: boolean;
+
+  constructor(server: Server, handle, requestCert: boolean, rejectUnauthorized: boolean) {
+    super(server, handle, true);
+    this._requestCert = requestCert;
+    this._rejectUnauthorized = rejectUnauthorized;
+    // Both report `false` when nothing was negotiated, like Node's server-side
+    // TLSSocket.
+    this.alpnProtocol = handle.getALPNProtocol();
+    this.servername = handle.getServername() ?? false;
+    // Node only inspects the peer certificate when it asked for one: without
+    // requestCert, `authorized` stays false and `authorizationError` stays null
+    // even though the client presented nothing.
+    if (requestCert) {
+      const verifyError = handle.getVerifyError();
+      if (verifyError) {
+        this.authorizationError = verifyError.code || verifyError.message;
+      } else {
+        this.authorized = true;
+      }
+    }
+  }
+
+  // The TLS readers all dereference `_handle`; route them at the native handle,
+  // which the base class nulls once the connection closes, so a closed socket
+  // answers the way a detached tls.TLSSocket does.
+  get _handle() {
+    return this[kHandle];
+  }
+} as unknown as typeof import("node:tls").TLSSocket;
+
+Object.defineProperty(NodeHTTPServerTLSSocket, "name", { value: "TLSSocket" });
+NodeHTTPServerTLSSocket.prototype[kTLSSocketFacade] = true;
+installTLSSocketMethods(NodeHTTPServerTLSSocket.prototype);
+
+function createServerSocket(server: Server, handle, tls) {
+  if (!tls) return new NodeHTTPServerSocket(server, handle, false);
+  return new NodeHTTPServerTLSSocket(server, handle, !!tls.requestCert, !!tls.rejectUnauthorized);
+}
+
+// `connection` fires for every accepted socket; a TLS server additionally fires
+// `secureConnection` with the same socket, which is where Node surfaces the
+// negotiated identity.
+function emitNewConnection(server: Server, socket, tls) {
+  server.emit("connection", socket);
+  if (tls) server.emit("secureConnection", socket);
+}
 
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;

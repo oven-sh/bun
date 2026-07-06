@@ -10,6 +10,29 @@
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
+extern "C" void* us_socket_get_native_handle(us_socket_t* s);
+
+// Implemented in Rust (runtime/socket/tls_socket_functions.rs) on top of the
+// same BoringSSL readers `tls.TLSSocket` uses. `ssl` is the live `SSL*`.
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getPeerCertificate(JSC::JSGlobalObject*, void* ssl, JSC::CallFrame*);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getCertificate(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getPeerX509Certificate(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getX509Certificate(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getCipher(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getTLSVersion(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getSession(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getTLSTicket(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getSharedSigalgs(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getTLSFinishedMessage(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getTLSPeerFinishedMessage(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getEphemeralKeyInfo(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getServername(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getALPNProtocol(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__getVerifyError(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__isSessionReused(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__disableRenegotiation(JSC::JSGlobalObject*, void* ssl);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__exportKeyingMaterial(JSC::JSGlobalObject*, void* ssl, JSC::CallFrame*);
+extern "C" EncodedJSValue Bun__NodeHTTPServerSocket__setMaxSendFragment(JSC::JSGlobalObject*, void* ssl, JSC::CallFrame*);
 
 namespace Bun {
 
@@ -41,6 +64,55 @@ JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSC::JSGlobalObject * globalObject, JSC::E
     return false;
 }
 
+// The live `SSL*` of an accepted HTTPS connection, or nullptr for plain HTTP
+// and for a socket that is gone. uSockets frees the `SSL` only after on_close
+// runs, and `JSNodeHTTPServerSocket::onClose` nulls `socket` there, so a
+// non-null result is always a live handle. The Rust readers take the null and
+// answer exactly as they do for a detached `tls.TLSSocket`.
+static void* nodeHTTPServerSocketSSL(JSC::JSValue thisValue)
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(thisValue);
+    if (!thisObject || !thisObject->is_ssl || thisObject->isClosed()) [[unlikely]] {
+        return nullptr;
+    }
+    return us_socket_get_native_handle(thisObject->socket);
+}
+
+#define BUN_DEFINE_NODE_HTTP_TLS_READER(name)                                                                               \
+    JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocket##name, (JSGlobalObject * globalObject, CallFrame* callFrame))    \
+    {                                                                                                                       \
+        return Bun__NodeHTTPServerSocket__##name(globalObject, nodeHTTPServerSocketSSL(callFrame->thisValue()));             \
+    }
+
+#define BUN_DEFINE_NODE_HTTP_TLS_READER_WITH_ARGS(name)                                                                     \
+    JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocket##name, (JSGlobalObject * globalObject, CallFrame* callFrame))    \
+    {                                                                                                                       \
+        return Bun__NodeHTTPServerSocket__##name(globalObject, nodeHTTPServerSocketSSL(callFrame->thisValue()), callFrame);  \
+    }
+
+BUN_DEFINE_NODE_HTTP_TLS_READER(getCertificate)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getPeerX509Certificate)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getX509Certificate)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getCipher)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getTLSVersion)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getSession)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getTLSTicket)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getSharedSigalgs)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getTLSFinishedMessage)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getTLSPeerFinishedMessage)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getEphemeralKeyInfo)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getServername)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getALPNProtocol)
+BUN_DEFINE_NODE_HTTP_TLS_READER(getVerifyError)
+BUN_DEFINE_NODE_HTTP_TLS_READER(isSessionReused)
+BUN_DEFINE_NODE_HTTP_TLS_READER(disableRenegotiation)
+BUN_DEFINE_NODE_HTTP_TLS_READER_WITH_ARGS(getPeerCertificate)
+BUN_DEFINE_NODE_HTTP_TLS_READER_WITH_ARGS(exportKeyingMaterial)
+BUN_DEFINE_NODE_HTTP_TLS_READER_WITH_ARGS(setMaxSendFragment)
+
+#undef BUN_DEFINE_NODE_HTTP_TLS_READER
+#undef BUN_DEFINE_NODE_HTTP_TLS_READER_WITH_ARGS
+
 const JSC::ClassInfo JSNodeHTTPServerSocketPrototype::s_info = { "NodeHTTPServerSocket"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(JSNodeHTTPServerSocketPrototype) };
 
@@ -59,6 +131,29 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketEnd, 0 } },
     { "upgradeToTunnel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketUpgradeToTunnel, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
+    // TLS readers for an accepted https.Server connection. `node:_http_server`
+    // wires the request socket's `_handle` to this object so the shared
+    // `tls.TLSSocket` method bodies (internal/tls) find the same names they use
+    // on a `Bun.connect` socket.
+    { "getPeerCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetPeerCertificate, 1 } },
+    { "getCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetCertificate, 0 } },
+    { "getPeerX509Certificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetPeerX509Certificate, 0 } },
+    { "getX509Certificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetX509Certificate, 0 } },
+    { "getCipher"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetCipher, 0 } },
+    { "getTLSVersion"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetTLSVersion, 0 } },
+    { "getSession"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetSession, 0 } },
+    { "getTLSTicket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetTLSTicket, 0 } },
+    { "getSharedSigalgs"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetSharedSigalgs, 0 } },
+    { "getTLSFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetTLSFinishedMessage, 0 } },
+    { "getTLSPeerFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetTLSPeerFinishedMessage, 0 } },
+    { "getEphemeralKeyInfo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetEphemeralKeyInfo, 0 } },
+    { "getServername"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetServername, 0 } },
+    { "getALPNProtocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetALPNProtocol, 0 } },
+    { "getVerifyError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketgetVerifyError, 0 } },
+    { "isSessionReused"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketisSessionReused, 0 } },
+    { "disableRenegotiation"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketdisableRenegotiation, 0 } },
+    { "exportKeyingMaterial"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketexportKeyingMaterial, 3 } },
+    { "setMaxSendFragment"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketsetMaxSendFragment, 1 } },
 };
 
 void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)

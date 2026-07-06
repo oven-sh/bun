@@ -5,14 +5,14 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
 const {
-  validateString,
-  validateNumber,
-  validateUint32,
-  validateBuffer,
-  validateFunction,
-} = require("internal/validators");
+  installTLSSocketMethods,
+  kRenegotiationDisabled,
+  kSession,
+  kTLSSocketFacade,
+  throwOnInvalidTLSArray,
+} = require("internal/tls");
+const { validateString, validateNumber, validateBuffer, validateFunction } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -828,17 +828,8 @@ function createSecureContext(options) {
   return new InternalSecureContext(options, false);
 }
 
-// Translate some fields from the handle's C-friendly format into more idiomatic
-// javascript object representations before passing them back to the user.  Can
-// be used on any cert object, but changing the name would be semver-major.
-function translatePeerCertificate(c) {
-  return c;
-}
-
 const ksecureContext = Symbol("ksecureContext");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
-const ksession = Symbol("ksession");
-const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
@@ -850,7 +841,7 @@ function TLSSocket(socket?, options?) {
   this[ksecureContext] = undefined;
   this.ALPNProtocols = undefined;
   this[kcheckServerIdentity] = undefined;
-  this[ksession] = undefined;
+  this[kSession] = undefined;
   this.alpnProtocol = null;
   this._secureEstablished = false;
   this._rejectUnauthorized = rejectUnauthorizedDefault();
@@ -862,7 +853,7 @@ function TLSSocket(socket?, options?) {
   this.servername = undefined;
   this.authorized = false;
   void this.authorizationError;
-  this[krenegotiationDisabled] = undefined;
+  this[kRenegotiationDisabled] = undefined;
   this.encrypted = true;
 
   const isNetSocketOrDuplex = socket instanceof Duplex;
@@ -936,7 +927,7 @@ function TLSSocket(socket?, options?) {
     validateFunction(checkServerIdentityOption, "options.checkServerIdentity");
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
-  this[ksession] = options.session || null;
+  this[kSession] = options.session || null;
 
   // `new tls.TLSSocket(socket, { isServer: true })`: drive the server-side TLS
   // handshake over the provided socket via net.ts's native upgrade path (reaches
@@ -980,99 +971,10 @@ TLSSocket.prototype._final = function _final(callback) {
   return NetSocket.prototype._final.$call(this, callback);
 };
 
-TLSSocket.prototype.getSession = function getSession() {
-  return this._handle?.getSession?.();
-};
-
-TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
-  const info = this._handle?.getEphemeralKeyInfo?.();
-  if (info == null) return info;
-  // Empirically node always surfaces all three keys here (values undefined when
-  // absent): a client socket on a TLS 1.3 ECDHE session observes
-  // Object.keys(...) === ['type','name','size'] under node v26.3.0, so the
-  // reshape below is required for key-set parity with our native return.
-  return { type: info.type, name: info.name, size: info.size };
-};
-
-TLSSocket.prototype.getCipher = function getCipher() {
-  return this._handle?.getCipher?.();
-};
-
-TLSSocket.prototype.getSharedSigalgs = function getSharedSigalgs() {
-  return this._handle?.getSharedSigalgs?.();
-};
-
-TLSSocket.prototype.getProtocol = function getProtocol() {
-  // Node returns the negotiated protocol string, or null once the socket is no
-  // longer connected (e.g. after 'close').
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/_tls_wrap.js#L1455
-  return this._handle?.getTLSVersion?.() ?? null;
-};
-
-TLSSocket.prototype.getFinished = function getFinished() {
-  return this._handle?.getTLSFinishedMessage?.() || undefined;
-};
-
-TLSSocket.prototype.getPeerFinished = function getPeerFinished() {
-  return this._handle?.getTLSPeerFinishedMessage?.() || undefined;
-};
-
-TLSSocket.prototype.isSessionReused = function isSessionReused() {
-  return this._handle?.isSessionReused?.() ?? false;
-};
-
-TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
-  // https://github.com/nodejs/node/blob/v25.2.1/lib/_tls_wrap.js#L878
-  if (options === null || typeof options !== "object") {
-    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-  }
-  if (callback !== undefined) {
-    validateFunction(callback, "callback");
-  }
-
-  if (this.destroyed) {
-    return;
-  }
-
-  if (this[krenegotiationDisabled]) {
-    // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
-    const error = $ERR_TLS_RENEGOTIATION_DISABLED();
-    if (typeof callback === "function") process.nextTick(callback, error);
-    return false;
-  }
-
-  const socket = this._handle;
-  // if the socket is detached we can't renegotiate, nodejs do a noop too (we should not return false or true here)
-  if (!socket) return;
-
-  let requestCert = !!this._requestCert;
-  let rejectUnauthorized = !!this._rejectUnauthorized;
-  const { requestCert: requestCertOption, rejectUnauthorized: rejectUnauthorizedOption } = options;
-  if (requestCertOption !== undefined) requestCert = !!requestCertOption;
-  if (rejectUnauthorizedOption !== undefined) rejectUnauthorized = !!rejectUnauthorizedOption;
-  if (requestCert !== this._requestCert || rejectUnauthorized !== this._rejectUnauthorized) {
-    socket.setVerifyMode?.(requestCert, rejectUnauthorized);
-    this._requestCert = requestCert;
-    this._rejectUnauthorized = rejectUnauthorized;
-  }
-
-  // BoringSSL does not implement TLS renegotiation; Node built against
-  // BoringSSL reports exactly this from renegotiate() regardless of the
-  // protocol version, and so do we.
-  const error = $ERR_TLS_RENEGOTIATION_UNSUPPORTED();
-  if (typeof callback === "function") process.nextTick(callback, error);
-  return false;
-};
-
-TLSSocket.prototype.disableRenegotiation = function disableRenegotiation() {
-  this[krenegotiationDisabled] = true;
-  // disable renegotiation on the socket
-  return this._handle?.disableRenegotiation?.();
-};
-
-TLSSocket.prototype.getTLSTicket = function getTLSTicket() {
-  return this._handle?.getTLSTicket?.();
-};
+// The TLS readers/setters shared with node:_http_server's https request
+// socket: every one reads `this._handle`, which is a Bun.connect socket here
+// and a uWS connection there.
+installTLSSocketMethods(TLSSocket.prototype);
 
 TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   // Serve this connection's identity from the given context (Node calls this
@@ -1082,107 +984,20 @@ TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   this._handle?.setKeyCert?.(ctx.context);
 };
 
-TLSSocket.prototype.exportKeyingMaterial = function exportKeyingMaterial(length, label, context) {
-  // https://github.com/nodejs/node/blob/v25.2.1/lib/internal/tls/wrap.js#L1039
-  validateUint32(length, "length", true);
-  validateString(label, "label");
-  if (context !== undefined) validateBuffer(context, "context");
-
-  if (!this._secureEstablished) {
-    throw $ERR_TLS_INVALID_STATE();
-  }
-
-  if (context) {
-    return this._handle?.exportKeyingMaterial?.(length, label, context);
-  }
-  return this._handle?.exportKeyingMaterial?.(length, label);
-};
-
-TLSSocket.prototype.setMaxSendFragment = function setMaxSendFragment(size) {
-  return this._handle?.setMaxSendFragment?.(size) || false;
-};
-
-TLSSocket.prototype.enableTrace = function enableTrace() {
-  // only for debug purposes so we just mock for now
-};
-
-TLSSocket.prototype.setServername = function setServername(name) {
-  validateString(name, "name");
-  if (this.isServer) {
-    throw $ERR_TLS_SNI_FROM_SERVER();
-  }
-  // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
-  this.servername = name;
-  this._handle?.setServername?.(name);
-};
-
-TLSSocket.prototype.setSession = function setSession(session) {
-  this[ksession] = session;
-  if (typeof session === "string") session = Buffer.from(session, "latin1");
-  return this._handle?.setSession?.(session);
-};
-
-TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {
-  const handle = this._handle;
-  if (handle) {
-    // The native parameter means "abbreviated" - the inverse of Node's
-    // `detailed`. Detailed requests get the whole chain with
-    // issuerCertificate links; everything else gets just the leaf.
-    const cert = arguments.length < 1 ? handle.getPeerCertificate?.() : handle.getPeerCertificate?.(!detailed);
-    if (cert) {
-      return translatePeerCertificate(cert);
-    }
-    return {};
-  }
-  return null;
-};
-
-TLSSocket.prototype.getCertificate = function getCertificate() {
-  // getCertificate is not yet implemented on the native socket
-  const cert = this._handle?.getCertificate?.();
-  if (cert) {
-    // It's not a peer cert, but the formatting is identical.
-    return translatePeerCertificate(cert);
-  }
-};
-
-TLSSocket.prototype.getPeerX509Certificate = function getPeerX509Certificate() {
-  // Build the X509Certificate chain from the detailed peer-certificate
-  // objects, linking each to its issuer the way Node does. The
-  // `issuerCertificate` own property shadows the prototype getter (which is
-  // always undefined for certificates parsed outside a TLS connection).
-  const cert = this.getPeerCertificate(true);
-  if (!cert || !cert.raw) {
-    return this._handle?.getPeerX509Certificate?.();
-  }
-  const { X509Certificate } = require("node:crypto");
-  const seen = new Map();
-  const toX509 = chainCert => {
-    if (!chainCert || !chainCert.raw) return undefined;
-    const cached = seen.get(chainCert);
-    if (cached) return cached;
-    const x509 = new X509Certificate(chainCert.raw);
-    seen.set(chainCert, x509);
-    const issuerCertificate = chainCert.issuerCertificate;
-    if (issuerCertificate && issuerCertificate !== chainCert) {
-      const issuer = toX509(issuerCertificate);
-      if (issuer) {
-        Object.defineProperty(x509, "issuerCertificate", {
-          __proto__: null,
-          value: issuer,
-          configurable: true,
-          enumerable: false,
-        });
-      }
-    }
-    return x509;
-  };
-  return toX509(cert);
-};
-
-TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
-  return this._handle?.getX509Certificate?.();
-};
+// An https.Server request socket is a TLSSocket facade (node:_http_server)
+// that cannot extend this class - its base is the uWS-backed Duplex - so
+// recognise it here the way Node's Writable/Readable recognise duck-typed
+// streams. Subclasses keep ordinary semantics.
+const FunctionPrototypeSymbolHasInstance = Function.prototype[Symbol.hasInstance];
+Object.defineProperty(TLSSocket, Symbol.hasInstance, {
+  __proto__: null,
+  value: function (instance) {
+    if (this === TLSSocket && instance != null && instance[kTLSSocketFacade] === true) return true;
+    return FunctionPrototypeSymbolHasInstance.$call(this, instance);
+  },
+  writable: true,
+  configurable: true,
+});
 
 TLSSocket.prototype[buntls] = function (port, host) {
   const ctx = this[ksecureContext];
@@ -1197,7 +1012,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
-    session: this[ksession],
+    session: this[kSession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
     ciphers: this.ciphers,

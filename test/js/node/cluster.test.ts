@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -184,4 +184,78 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
+});
+
+test("disconnect() before the worker reports online still emits online", async () => {
+  using dir = tempDir("cluster-disconnect-before-online", {
+    "index.js": `
+      const cluster = require("node:cluster");
+
+      if (cluster.isPrimary) {
+        const events = [];
+        const worker = cluster.fork();
+        // Issued before the worker has had a chance to report itself online.
+        worker.disconnect();
+        worker.on("online", () => events.push("worker:online"));
+        cluster.on("online", () => events.push("cluster:online"));
+        worker.on("disconnect", () => events.push("worker:disconnect"));
+        worker.on("exit", () => {
+          events.push("worker:exit");
+          console.log(JSON.stringify(events));
+        });
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ events: stdout.trim(), stderr, exitCode }).toEqual({
+    events: JSON.stringify(["worker:online", "cluster:online", "worker:disconnect", "worker:exit"]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("disconnect() closes the worker's server before the channel goes away", async () => {
+  using dir = tempDir("cluster-disconnect-closes-server", {
+    "index.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("listening", () => worker.disconnect());
+        worker.on("exit", (code, signal) => console.log(JSON.stringify({ code, signal })));
+      } else {
+        let closed = false;
+        net.createServer(() => {}).listen(0, "127.0.0.1").on("close", () => (closed = true));
+        process.on("disconnect", () => {
+          if (!closed) {
+            console.error("server was still open when the channel disconnected");
+            process.exit(1);
+          }
+        });
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ workerExit: stdout.trim(), stderr, exitCode }).toEqual({
+    workerExit: JSON.stringify({ code: 0, signal: null }),
+    stderr: "",
+    exitCode: 0,
+  });
 });

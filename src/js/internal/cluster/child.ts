@@ -95,7 +95,7 @@ cluster._getServer = function (obj, options, cb) {
       shared(reply, { handle, indexesKey, index }, cb);
     } else {
       // Round-robin.
-      rr(reply, { indexesKey, index }, cb);
+      rr(reply, { indexesKey, index, obj }, cb);
     }
   });
 
@@ -143,7 +143,7 @@ function shared(message, { handle, indexesKey, index }, cb) {
 }
 
 // Round-robin. Master distributes handles across workers.
-function rr(message, { indexesKey, index }, cb) {
+function rr(message, { indexesKey, index, obj }, cb) {
   const errno = message.errno;
   if (errno) return cb(errno, null);
 
@@ -202,6 +202,12 @@ function rr(message, { indexesKey, index }, cb) {
   if (message.sockname) {
     handle.getsockname = getsockname; // TCP handles only.
   }
+
+  // Unlike Node, the worker binds its own listen socket, so this handle never
+  // becomes `obj._handle`. Link them so disconnecting closes the server, and
+  // closing the server retires this handle.
+  handle[owner_symbol] = obj;
+  obj.once("close", close);
 
   $assert(handles.has(key) === false);
   handles.set(key, handle);

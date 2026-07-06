@@ -1,21 +1,21 @@
 import { SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
+import { isDockerEnabled } from "harness";
 import * as dockerCompose from "../../docker/index.ts";
 
 // Tests for `prepare: false` (unnamed prepared statements).
 // These verify that parameterized queries work correctly when using unnamed
 // prepared statements, which is critical for PgBouncer compatibility.
 
-describe("PostgreSQL prepare: false", async () => {
-  let container: { port: number; host: string };
-
-  try {
-    const info = await dockerCompose.ensure("postgres_plain");
-    container = { port: info.ports[5432], host: info.host };
-  } catch (e) {
-    test.skip(`Docker not available: ${e}`);
-    return;
-  }
+// Gate on the shared chokepoint so this routes through isDockerEnabled() like
+// the rest of the suite: in CI where Docker is expected it fails loudly rather
+// than silently skipping.
+describe.skipIf(!isDockerEnabled())("PostgreSQL prepare: false", async () => {
+  // Docker availability is gated by skipIf above. Let any ensure() failure
+  // (broken compose config, image pull failure, service startup regression)
+  // surface as a real failure instead of swallowing it into a silent skip.
+  const info = await dockerCompose.ensure("postgres_plain");
+  const container = { port: info.ports[5432], host: info.host };
 
   const options = {
     db: "bun_sql_test",

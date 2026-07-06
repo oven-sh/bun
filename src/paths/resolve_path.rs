@@ -1691,7 +1691,7 @@ pub fn join_abs_string_buf<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a [u8] {
-    _join_abs_string_buf::<false, P>(cwd, buf, parts)
+    _join_abs_string_buf::<false, P, false>(cwd, buf, parts)
 }
 
 /// Like `join_abs_string_buf`, but returns null when the *normalized* result is
@@ -1704,6 +1704,26 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> Option<&'a [u8]> {
+    join_abs_string_buf_checked_impl::<P, false>(cwd, buf, parts)
+}
+
+/// Like `join_abs_string_buf_checked::<Posix>` but normalizes with strict POSIX
+/// separator semantics: `\` stays a literal filename byte instead of acting as
+/// a separator. Use this for real on-disk path resolution (e.g. realpath), not
+/// for module specifiers, which intentionally treat `\` as a separator.
+pub fn join_abs_string_buf_checked_posix<'a>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a [u8]> {
+    join_abs_string_buf_checked_impl::<platform::Posix, true>(cwd, buf, parts)
+}
+
+fn join_abs_string_buf_checked_impl<'a, P: PlatformT, const STRICT_POSIX: bool>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a [u8]> {
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
@@ -1712,14 +1732,14 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
         total += p.len() + 1;
     }
     if total < buf.len() {
-        return Some(join_abs_string_buf::<P>(cwd, buf, parts));
+        return Some(_join_abs_string_buf::<false, P, STRICT_POSIX>(cwd, buf, parts));
     }
 
     // Slow path: allocate a large scratch for the result. The inner
     // join_abs_string_buf will heap-allocate its own temp buffer for the concat
     // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
     let mut scratch = vec![0u8; total];
-    let joined = join_abs_string_buf::<P>(cwd, &mut scratch, parts);
+    let joined = _join_abs_string_buf::<false, P, STRICT_POSIX>(cwd, &mut scratch, parts);
     if joined.len() > buf.len() {
         return None;
     }
@@ -1733,14 +1753,18 @@ pub fn join_abs_string_buf_z<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
+    let r = _join_abs_string_buf::<true, P, false>(cwd, buf, parts);
     // SAFETY: IS_SENTINEL=true wrote NUL at r.len()
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
 // We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
 // at `result.len()` and callers (e.g. `join_abs_string_buf_z`) re-wrap as `ZStr`.
-fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
+// STRICT_POSIX forces the final normalization to split on `/` only, so a
+// backslash stays a literal filename byte (for real on-disk POSIX paths such
+// as realpath). It is only honored on the POSIX branch below; leave it false
+// everywhere else.
+fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT, const STRICT_POSIX: bool>(
     _cwd: &'a [u8],
     buf: &'a mut [u8],
     _parts: &[&[u8]],
@@ -1847,10 +1871,14 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     // which writes into buf[leading_len..]).
     buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
 
-    let result = normalize_string_buf::<false, P, true>(
-        &temp_buf[leading_len..out],
-        &mut buf[leading_len..],
-    );
+    let result = if STRICT_POSIX {
+        normalize_string_posix_buf_t::<u8, false, true>(
+            &temp_buf[leading_len..out],
+            &mut buf[leading_len..],
+        )
+    } else {
+        normalize_string_buf::<false, P, true>(&temp_buf[leading_len..out], &mut buf[leading_len..])
+    };
     let result_len = result.len();
 
     if IS_SENTINEL {
@@ -2024,6 +2052,25 @@ pub(crate) fn normalize_string_loose_buf_t<
         buf,
         T::from_u8(SEP_POSIX),
         is_sep_any_t::<T>,
+    )
+}
+
+// On POSIX `\` is an ordinary filename byte, so unlike the loose normalizer
+// this splits segments on `/` only, leaving backslashes intact.
+pub(crate) fn normalize_string_posix_buf_t<
+    'a,
+    T: PathChar,
+    const ALLOW_ABOVE_ROOT: bool,
+    const PRESERVE_TRAILING_SLASH: bool,
+>(
+    str: &[T],
+    buf: &'a mut [T],
+) -> &'a mut [T] {
+    normalize_string_generic_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
+        str,
+        buf,
+        T::from_u8(SEP_POSIX),
+        is_sep_posix_t::<T>,
     )
 }
 

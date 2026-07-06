@@ -2094,6 +2094,32 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   expect(realpathSync(resolved)).toBe(resolved);
 });
 
+// https://github.com/oven-sh/bun/issues/33403
+// On POSIX a backslash is an ordinary filename byte, so realpath must not
+// rewrite it to '/' (that ENOENTs on a directory that exists).
+it.if(isPosix)("realpath preserves a literal backslash in the path", async () => {
+  using dir = tempDir("fs-realpath-backslash", {});
+  const root = realpathSync(String(dir));
+  const backslashDir = `${root}/back\\slash`;
+  mkdirSync(backslashDir);
+  const file = `${backslashDir}/file.txt`;
+  writeFileSync(file, "x");
+
+  // Every other fs call already sees the backslash byte on disk.
+  expect(existsSync(backslashDir)).toBe(true);
+  expect(lstatSync(backslashDir).isDirectory()).toBe(true);
+
+  const realpathCb = promisify(fs.realpath);
+  const realpathNativeCb = promisify(fs.realpath.native);
+  for (const target of [backslashDir, file]) {
+    expect(realpathSync(target)).toBe(target);
+    expect(realpathSync.native(target)).toBe(target);
+    expect(await realpathCb(target)).toBe(target);
+    expect(await realpathNativeCb(target)).toBe(target);
+    expect(await promises.realpath(target)).toBe(target);
+  }
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {

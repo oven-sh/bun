@@ -1,6 +1,3 @@
-/**
- * All tests in this file should also run in Node.js.
- */
 import { expect, it } from "bun:test";
 import { once } from "node:events";
 import { createServer, IncomingMessage } from "node:http";

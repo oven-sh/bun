@@ -46,6 +46,17 @@ test("https server: req.socket is a TLSSocket exposing the mTLS surface", async 
           hasMethods: ["getPeerCertificate", "getCipher", "getProtocol", "getSession", "exportKeyingMaterial"].every(
             m => typeof s[m] === "function",
           ),
+          // `_handle` must be writable like net.Socket (tunnel/proxy middleware
+          // detaches via `socket._handle = x`); a getter-only accessor throws
+          // here in strict mode.
+          handleWritable: (() => {
+            try {
+              s._handle = s._handle;
+              return true;
+            } catch {
+              return false;
+            }
+          })(),
         }),
       );
     },
@@ -89,6 +100,7 @@ test("https server: req.socket is a TLSSocket exposing the mTLS surface", async 
     protocol: expect.stringMatching(/^TLSv/),
     isSessionReused: false,
     hasMethods: true,
+    handleWritable: true,
   });
   expect(secureConnectionSockets).toEqual(["TLSSocket"]);
 });

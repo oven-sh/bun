@@ -1402,11 +1402,16 @@ const NodeHTTPServerTLSSocket = class Socket extends NodeHTTPServerSocket {
     }
   }
 
-  // The TLS readers all dereference `_handle`; route them at the native handle,
+  // The TLS readers all dereference `_handle`; route it at the native handle,
   // which the base class nulls once the connection closes, so a closed socket
-  // answers the way a detached tls.TLSSocket does.
+  // answers the way a detached tls.TLSSocket does. Writable for parity with
+  // net.Socket, where userland (tunnel/proxy middleware) detaches via
+  // `socket._handle = null`.
   get _handle() {
     return this[kHandle];
+  }
+  set _handle(value) {
+    this[kHandle] = value;
   }
 } as unknown as typeof import("node:tls").TLSSocket;
 

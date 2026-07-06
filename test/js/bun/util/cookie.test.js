@@ -342,7 +342,7 @@ describe("cookie.parse(str)", function () {
     expect(cookie.parse("\tfoo\t=\tbar\t")).toEqual({ foo: "bar" });
   });
 
-  it.failing("should return original value on escape error", function () {
+  it("should return original value on escape error", function () {
     expect(cookie.parse("foo=%1;bar=bar")).toEqual({ foo: "%1", bar: "bar" });
   });
 

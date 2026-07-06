@@ -466,3 +466,75 @@ describe("invalid delete usage", () => {
     }).toThrow("Cookie name is required");
   });
 });
+
+// A Cookie header value is percent-decoded only if the whole value decodes
+// cleanly (node `cookie` semantics). RFC 6265 allows a literal "%" in a
+// cookie value, so a value that was never percent-encoded must round-trip.
+describe("Bun.CookieMap percent-decoding", () => {
+  test("values that do not decode cleanly are kept raw", () => {
+    const cases: Record<string, string> = {
+      // a "%" that never forms a %XX escape
+      "50%": "50%",
+      "%zz": "%zz",
+      "x%": "x%",
+      "%": "%",
+      "%1": "%1",
+      "50%-off": "50%-off",
+      "a%%b": "a%%b",
+      // a syntactically valid %XX whose decoded bytes are not valid UTF-8
+      "a%C3b": "a%C3b",
+      "a%b2c": "a%b2c",
+      "%ED%A0%80": "%ED%A0%80",
+      "%C0%80": "%C0%80",
+      // all-or-nothing: one bad escape keeps the whole value raw
+      "a%25b%zz": "a%25b%zz",
+      "ok%20but%": "ok%20but%",
+      // a value already holding non-ASCII keeps its characters when it is kept raw
+      "café%zz": "café%zz",
+      "café%C3": "café%C3",
+    };
+    const parsed = Object.fromEntries(Object.keys(cases).map(raw => [raw, new Bun.CookieMap(`v=${raw}`).get("v")]));
+    expect(parsed).toEqual(cases);
+  });
+
+  test("values that decode cleanly are percent-decoded", () => {
+    const cases: Record<string, string> = {
+      "%41": "A",
+      "100%25": "100%",
+      "a%20b": "a b",
+      "%E8%AF%BB": "读",
+      "caf%C3%A9": "café",
+      "%F0%9F%8D%AA": "🍪",
+    };
+    const parsed = Object.fromEntries(Object.keys(cases).map(raw => [raw, new Bun.CookieMap(`v=${raw}`).get("v")]));
+    expect(parsed).toEqual(cases);
+  });
+
+  // The decoder copies the bytes between escapes in bulk, so a run longer than
+  // the scalar prefix of the underlying search needs its own coverage.
+  test("long literal runs between escapes are decoded correctly", () => {
+    const run = Buffer.alloc(100, "x").toString();
+    expect(new Bun.CookieMap(`v=${run}%20${run}`).get("v")).toBe(`${run} ${run}`);
+    // a malformed escape after a long run still keeps the whole value raw
+    expect(new Bun.CookieMap(`v=${run}%zz`).get("v")).toBe(`${run}%zz`);
+  });
+
+  test("literal % values in a Cookie header are preserved verbatim", () => {
+    const map = new Bun.CookieMap("a=50%; b=%zz; c=x%");
+    expect(Object.fromEntries(map)).toEqual({ a: "50%", b: "%zz", c: "x%" });
+  });
+
+  test("req.cookies preserves a literal % in values", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => Response.json(req.cookies),
+      },
+    });
+    const res = await fetch(server.url, {
+      headers: { Cookie: "a=50%; b=%zz; c=x%; d=a%20b" },
+    });
+    expect(await res.json()).toEqual({ a: "50%", b: "%zz", c: "x%", d: "a b" });
+    expect(res.status).toBe(200);
+  });
+});

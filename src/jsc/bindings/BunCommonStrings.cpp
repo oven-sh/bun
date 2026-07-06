@@ -157,6 +157,7 @@ enum class CommonStringsForZig : uint8_t {
     binaryTypeArrayBuffer = 10,
     binaryTypeNodeBuffer = 11,
     binaryTypeUint8Array = 12,
+    fetchBasic = 13,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig commonString)
@@ -189,6 +190,8 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig co
         return commonStrings.binaryTypeNodeBufferString(globalObject);
     case CommonStringsForZig::binaryTypeUint8Array:
         return commonStrings.binaryTypeUint8ArrayString(globalObject);
+    case CommonStringsForZig::fetchBasic:
+        return commonStrings.fetchBasicString(globalObject);
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();

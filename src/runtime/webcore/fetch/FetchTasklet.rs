@@ -30,7 +30,7 @@ use crate::api::bun_x509 as X509;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
+use crate::webcore::response::{HeadersRef, ResponseType};
 use crate::webcore::resumable_sink::ResumableFetchSink;
 use crate::webcore::streams::{StreamError, StreamResult};
 use crate::webcore::{
@@ -1731,6 +1731,7 @@ impl FetchTasklet {
             Body::new(self.to_body_value()),
             url,
             redirected,
+            ResponseType::Basic,
         )
     }
 

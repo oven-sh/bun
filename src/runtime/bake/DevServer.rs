@@ -5547,6 +5547,7 @@ impl DevServer {
                     )),
                     BunString::empty(),
                     false,
+                    crate::webcore::ResponseType::Default,
                 );
                 let vm = self.vm();
                 let _exit = vm.enter_event_loop_scope();

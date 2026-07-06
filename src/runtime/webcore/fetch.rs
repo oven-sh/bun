@@ -53,7 +53,7 @@ use std::io::Write as _;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
+use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice, strings};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -72,6 +72,7 @@ use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
+    ResponseType,
 };
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
@@ -224,6 +225,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
         Body::new(BodyValue::Blob(blob)),
         data_url.url.dupe_ref(),
         false,
+        ResponseType::Basic,
     )));
 
     // Ownership of the boxed Response is transferred to the JS GC via
@@ -569,7 +571,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let url_slice = url_str.to_utf8_without_ref();
         // `defer url_slice.deinit()` → Drop.
 
-        let data_url = match DataURL::parse_without_check(url_slice.slice()) {
+        // https://fetch.spec.whatwg.org/#data-urls — the data URL processor runs on
+        // the URL serialized with exclude fragment set to true.
+        let data_url_slice = match strings::index_of_char(url_slice.slice(), b'#') {
+            Some(fragment_start) => &url_slice.slice()[..fragment_start as usize],
+            None => url_slice.slice(),
+        };
+
+        let data_url = match DataURL::parse_without_check(data_url_slice) {
             Ok(d) => d,
             Err(_) => {
                 let err = ctx.create_error_instance(format_args!("failed to fetch the data URL"));
@@ -1408,7 +1417,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             &mut path_buf2[..],
             match url_type {
                 URLType::File => url.path,
-                URLType::Blob => &url.href[b"blob:".len()..],
+                URLType::Blob => &url.href_without_fragment()[b"blob:".len()..],
                 URLType::Remote => unreachable!(),
             },
         ) {
@@ -1547,6 +1556,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
             false,
+            ResponseType::Basic,
         )));
 
         // Ownership of the boxed Response transfers to the JS GC; see
@@ -2097,6 +2107,7 @@ impl<'a> S3StreamWrapper<'a> {
                     Body::new(BodyValue::Empty),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
+                    ResponseType::Basic,
                 ));
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
                 // ownership transfers to JSC.
@@ -2119,6 +2130,7 @@ impl<'a> S3StreamWrapper<'a> {
                     })),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
+                    ResponseType::Basic,
                 ));
 
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;

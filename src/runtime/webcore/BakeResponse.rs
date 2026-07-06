@@ -205,6 +205,7 @@ pub(crate) fn construct_render(
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
         BunString::empty(),
         false,
+        crate::webcore::ResponseType::Default,
     ));
 
     // Ownership of the allocation transfers to the JS wrapper.

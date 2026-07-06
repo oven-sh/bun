@@ -268,7 +268,7 @@ pub use body::{Body, Value as BodyValue};
 
 #[path = "webcore/Response.rs"]
 pub mod response;
-pub use response::Response;
+pub use response::{Response, ResponseType};
 
 #[path = "webcore/Request.rs"]
 pub mod request;

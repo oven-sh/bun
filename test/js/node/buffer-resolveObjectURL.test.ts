@@ -22,6 +22,20 @@ test("buffer.resolveObjectURL", async () => {
   expect(resolveObjectURL(id)).toBeUndefined();
 });
 
+// https://w3c.github.io/FileAPI/#blob-url-resolve — the store is keyed by the url
+// with its fragment excluded.
+test("buffer.resolveObjectURL ignores the fragment", async () => {
+  const blob = new Blob(["hello"]);
+  const id = URL.createObjectURL(blob);
+
+  const resolved = resolveObjectURL(`${id}#frag`)!;
+  expect(resolved).toBeInstanceOf(Blob);
+  expect(await resolved.text()).toStrictEqual("hello");
+
+  URL.revokeObjectURL(`${id}#frag`);
+  expect(resolveObjectURL(id)).toBeUndefined();
+});
+
 test("buffer.resolveObjectURL empty blob", async () => {
   const blob = new Blob();
   const id = URL.createObjectURL(blob);

@@ -6359,11 +6359,10 @@ fn resolve_file_stat(store: &StoreRef) {
     }
 }
 
-/// The `[offset, offset + size)` range a `Bun.file(path).slice(a, b)` addresses,
-/// clamped to the file's real size. `None` when there is no range to honor: the
-/// Blob covers the whole file, or its length can't be resolved (pipes, ttys,
-/// missing files).
-fn file_view_range(blob: &Any) -> Option<(SizeType, SizeType)> {
+/// The `[offset, offset + size)` range a `Bun.file(path).slice(a, b)` narrows its
+/// store to, clamped to the file's real size. `None` when the Blob covers the
+/// whole file or its length can't be resolved (pipes, ttys, missing files).
+pub fn file_view_range(blob: &Any) -> Option<(SizeType, SizeType)> {
     let Any::Blob(blob) = blob else {
         return None;
     };
@@ -6398,23 +6397,16 @@ fn file_view_range(blob: &Any) -> Option<(SizeType, SizeType)> {
     Some((offset, size))
 }
 
-/// Read the byte range a `Bun.file(path).slice(a, b)` narrows its store to.
-///
-/// For callers that would otherwise pass the underlying fd or path on to
-/// someone else (a child process): an fd carries no end bound, so the whole file
-/// would be readable through it. `None` means the Blob addresses the whole file
-/// (or has no resolvable length) and the fd/path can be passed as-is.
-pub fn read_file_view(blob: &Any) -> Option<bun_sys::Maybe<Vec<u8>>> {
-    let (offset, size) = file_view_range(blob)?;
-    Some(read_file_range(blob.store()?.data.as_file(), offset, size))
-}
+/// Read `[offset, offset + size)` of the file behind `blob`, as returned by
+/// [`file_view_range`] (which proves the store is file-backed). A short read,
+/// because the file shrank since it was stat'd, yields fewer bytes.
+pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys::Maybe<Vec<u8>> {
+    let file = blob
+        .store()
+        .expect("file_view_range() implies a file store")
+        .data
+        .as_file();
 
-/// A short read, because the file shrank since it was stat'd, yields fewer bytes.
-fn read_file_range(
-    file: &store::File,
-    offset: SizeType,
-    size: SizeType,
-) -> bun_sys::Maybe<Vec<u8>> {
     let mut path_buf = bun_paths::PathBuffer::uninit();
     // `pread` leaves the seek position alone, so the store's own fd would do;
     // dup it anyway so one guard closes whichever fd we end up with.

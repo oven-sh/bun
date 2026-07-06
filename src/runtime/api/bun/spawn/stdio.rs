@@ -586,10 +586,18 @@ impl Stdio {
         // `Bun.file(path).slice(a, b)` narrows the Blob to `[offset, offset + size)`.
         // The fast path below hands the child the fd/path behind the Blob, and an fd
         // carries no end bound, so the child would read the whole file. Read the
-        // range up front and pipe exactly those bytes instead.
-        if i == 0 {
-            if let Some(result) = webcore::blob::read_file_view(&blob) {
-                let bytes = match result {
+        // range up front and pipe exactly those bytes instead. stdout/stderr take a
+        // Blob as a write target, where the range means nothing.
+        if i != 1 && i != 2 {
+            if let Some((offset, size)) = webcore::blob::file_view_range(&blob) {
+                if i != 0 {
+                    // Same limit as an in-memory Blob here: only stdin has a
+                    // parent-side writer to pump the bytes through.
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "A sliced Bun.file() cannot be used for stdio[{i}] yet"
+                    )));
+                }
+                let bytes = match webcore::blob::read_file_range(&blob, offset, size) {
                     Ok(bytes) => bytes,
                     Err(err) => return Err(err.throw(global)),
                 };

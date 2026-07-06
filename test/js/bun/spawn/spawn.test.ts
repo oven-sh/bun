@@ -1,5 +1,5 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
   bunEnv,
@@ -11,6 +11,7 @@ import {
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -929,6 +930,21 @@ describe("close handling", () => {
       }
     });
 
+    // An extra slot is a read source, so the slice window is meaningful there,
+    // but only stdin has a writer to pump the narrowed bytes through. Reject it
+    // rather than hand the child the whole file.
+    it.skipIf(isWindows)("Bun.file(path).slice() at index >= 3 is rejected", () => {
+      const file = join(tmp, "stdio-extra-bunfile-slice.txt");
+      writeFileSync(file, "from-bun-file");
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", readFd3],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", Bun.file(file).slice(5, 9)],
+        }),
+      ).toThrow("A sliced Bun.file() cannot be used for stdio[3] yet");
+    });
+
     it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
@@ -1256,21 +1272,28 @@ describe("uid/gid", () => {
   });
 });
 
+// Sequential on purpose: every case spawns a `bun` child, and 5 concurrent
+// ASAN children (the `--max-concurrency` default there) overrun the 5s timeout.
 describe("Bun.file().slice() as stdin", () => {
   const contents = "0123456789".repeat(10);
   const pipeStdin = "process.stdin.pipe(process.stdout)";
 
+  let dir: ReturnType<typeof tempDir>;
   let filePath: string;
   let bigPath: string;
   const bigSize = 1024 * 1024;
 
   beforeAll(() => {
-    const dir = tmpdirSync();
-    filePath = join(dir, "slice-stdin.txt");
-    writeFileSync(filePath, contents);
+    dir = tempDir("slice-stdin", {
+      "slice-stdin.txt": contents,
+      "slice-stdin-big.bin": Buffer.concat([Buffer.alloc(bigSize - 8, "A"), Buffer.alloc(8, "B")]),
+    });
+    filePath = join(String(dir), "slice-stdin.txt");
+    bigPath = join(String(dir), "slice-stdin-big.bin");
+  });
 
-    bigPath = join(dir, "slice-stdin-big.bin");
-    writeFileSync(bigPath, Buffer.concat([Buffer.alloc(bigSize - 8, "A"), Buffer.alloc(8, "B")]));
+  afterAll(() => {
+    dir[Symbol.dispose]();
   });
 
   // `.slice()` narrows a Bun.file() Blob to [offset, offset + size). The spawn
@@ -1376,7 +1399,7 @@ describe("Bun.file().slice() as stdin", () => {
   // A file with no resolvable length (missing, pipe, tty) has no window to read,
   // so it keeps taking the fd/path fast path rather than failing the spawn.
   it("a slice of a missing file behaves like the unsliced file", () => {
-    const missing = join(tmpdirSync(), "nope.txt");
+    const missing = join(String(dir), "nope.txt");
     const { stdout, stderr, exitCode } = spawnSync({
       cmd: [bunExe(), "-e", pipeStdin],
       env: bunEnv,
@@ -1386,5 +1409,21 @@ describe("Bun.file().slice() as stdin", () => {
     });
     expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "", exitCode: 0 });
     expect(stderr.toString()).toBe("");
+  });
+
+  // stdout/stderr take a Blob as a write target; the window means nothing there,
+  // so they keep writing to the whole file.
+  it("a slice used as stdout still writes to the file", async () => {
+    const out = join(String(dir), "slice-stdout.txt");
+    writeFileSync(out, "");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('written')"],
+      env: bunEnv,
+      stdout: Bun.file(out).slice(0, 2),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(out, "utf8")).toBe("written");
   });
 });

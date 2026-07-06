@@ -3605,10 +3605,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInFlightModuleFetchSettled, (JSC::JSGlobalObj
 
 JSC::JSPromise* GlobalObject::inFlightModuleFetch(JSC::JSString* fetchKey)
 {
-    JSValue cached = inFlightModuleFetches()->get(this, fetchKey);
-    if (!cached)
-        return nullptr;
-    return dynamicDowncast<JSC::JSPromise>(cached);
+    // A miss (and a pending exception) yields jsUndefined(), never an empty
+    // JSValue, so the downcast is the miss check. Callers check the exception.
+    return dynamicDowncast<JSC::JSPromise>(inFlightModuleFetches()->get(this, fetchKey));
 }
 
 void GlobalObject::trackInFlightModuleFetch(JSC::JSString* fetchKey, JSC::JSPromise* promise)

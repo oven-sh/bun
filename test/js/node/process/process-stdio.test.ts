@@ -158,4 +158,29 @@ describe.concurrent("process-stdio", () => {
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
   });
+
+  test("process.stdout - write after end() errors and is not delivered (piped)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "process-stdout-write-after-end-fixture.mjs")],
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The "C" write after end() must not reach the pipe reader.
+    expect(stdout).toBe("AB");
+
+    const report = JSON.parse(stderr.trim());
+    expect(report).toEqual({
+      writableEnded: true,
+      writable: false,
+      ret: false,
+      cbErr: "ERR_STREAM_WRITE_AFTER_END",
+      ev: ["err:ERR_STREAM_WRITE_AFTER_END"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

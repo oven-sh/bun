@@ -57,7 +57,7 @@ test("Date header is not updated every request", async () => {
 // RFC 9110 6.6.1: an origin server with a clock sends Date in every response.
 // The bodiless ones terminate through a different path than a normal body write,
 // which used to skip it entirely.
-describe("Date header on bodiless responses", () => {
+describe.concurrent("Date header on bodiless responses", () => {
   async function drain(url: string, init?: RequestInit) {
     const res = await fetch(url, init);
     await res.arrayBuffer();

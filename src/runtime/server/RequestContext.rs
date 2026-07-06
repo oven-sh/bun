@@ -2544,8 +2544,10 @@ where
                 } else {
                     resp.write_header_int(b"content-length", size as u64);
                 }
-                this.end_without_body(this.should_close_connection());
+                // Detach before ending: `end_without_body` derefs the context, which at
+                // refcount 1 finalizes it, so `this` must not be touched afterwards.
                 this.blob.detach();
+                this.end_without_body(this.should_close_connection());
             }
 
             Body::Value::Blob(blob) => {

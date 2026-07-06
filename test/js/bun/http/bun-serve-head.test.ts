@@ -6,7 +6,7 @@ import path from "node:path";
 // request as it would have sent had the request been a GET. The representation
 // metadata (Content-Type, Content-Length) is derived from the body that GET
 // would have sent, even though HEAD sends no body bytes.
-describe("HEAD mirrors GET's representation metadata", () => {
+describe.concurrent("HEAD mirrors GET's representation metadata", () => {
   async function metadataOf(url: string, method: string) {
     const res = await fetch(url, { method });
     const body = await res.arrayBuffer();

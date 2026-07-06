@@ -4103,7 +4103,7 @@ function streamSocketClosed(stream: Http2Stream) {
   }
 }
 // A stream whose session was close()d before the socket finished connecting never reached the
-// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
+// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION.
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
   if (typeof stream?.id === "number" && stream.id > lastStreamId) {
     streamRejectedByGoawaySession(stream);

@@ -6,7 +6,20 @@ import path from "path";
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    expect(builtinModules).toHaveLength(76);
+    expect(builtinModules).toHaveLength(78);
+  });
+
+  test("builtinModules agrees with isBuiltin()", () => {
+    expect(builtinModules.filter(name => !isBuiltin(name))).toEqual([]);
+    // "node:test" only resolves with the prefix, so it is listed with the prefix.
+    expect(builtinModules).toContain("node:test");
+    expect(builtinModules).not.toContain("test");
+  });
+
+  test("builtinModules is frozen", () => {
+    expect(Object.isFrozen(builtinModules)).toBe(true);
+    expect(() => builtinModules.push("not-a-builtin")).toThrow(TypeError);
+    expect(builtinModules).not.toContain("not-a-builtin");
   });
 
   test("isBuiltin() works", () => {

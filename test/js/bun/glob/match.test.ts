@@ -375,8 +375,7 @@ describe("Glob.match", () => {
     }
 
     // Realistic monorepo pattern: one brace per directory level plus a leaf.
-    const real =
-      "{packages,apps}/{a,b}/{src,lib}/{x,y}/{u,v}/{p,q}/{c,d}/{e,f}/{g,h}/{i,j}/*.{ts,tsx}";
+    const real = "{packages,apps}/{a,b}/{src,lib}/{x,y}/{u,v}/{p,q}/{c,d}/{e,f}/{g,h}/{i,j}/*.{ts,tsx}";
     expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.ts")).toBeTrue();
     expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.go")).toBeFalse();
   });

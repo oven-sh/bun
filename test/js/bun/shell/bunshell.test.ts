@@ -547,6 +547,24 @@ describe("bunshell", () => {
       TestBuilder.command`echo "x"~`.stdout("x~\n").runAsTest("tilde after quoted atom stays literal");
     });
 
+    describe("with brace expansion", async () => {
+      // Brace expansion runs first, so a `~` at the start of a brace element
+      // (right after `{` or `,`) is still at a word start and expands.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {~,foo}`
+        .stdout("/home/user foo\n")
+        .runAsTest("tilde at start of brace element expands");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {foo,~}`
+        .stdout("foo /home/user\n")
+        .runAsTest("tilde after comma expands");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {~/a,~/b}`
+        .stdout("/home/user/a /home/user/b\n")
+        .runAsTest("tilde brace paths expand");
+      // A `~` not at the start of a brace element stays literal.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {x~,y}`
+        .stdout("x~ y\n")
+        .runAsTest("mid-element tilde stays literal");
+    });
+
     describe("interpolated values", async () => {
       // A `~` that comes from an interpolated value is data, not syntax.
       TestBuilder.command`echo ${"~"}/x`.stdout("~/x\n").runAsTest("interpolated tilde stays literal");

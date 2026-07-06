@@ -1811,8 +1811,14 @@ impl<'bump> Parser<'bump> {
                     | Token::Text(txtrng) => {
                         let _ = self.advance();
                         let mut txt = self.text(txtrng);
+                        // A `~` expands only at the start of a word, which inside a
+                        // brace group is the start of each element: after `{` or `,`.
+                        let tilde_at_word_start = matches!(
+                            atoms.last(),
+                            None | Some(ast::SimpleAtom::BraceBegin | ast::SimpleAtom::Comma)
+                        );
                         if peeked.tag() == TokenTag::Text
-                            && atoms.is_empty()
+                            && tilde_at_word_start
                             && !txt.is_empty()
                             && txt[0] == b'~'
                         {

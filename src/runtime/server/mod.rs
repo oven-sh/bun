@@ -2986,11 +2986,11 @@ mod trampoline {
         // handshake is only registered against it if the handler suspends.
         let token = server_sni::next_token();
 
-        let result = match callback.call(global, this_object, &[js_name, JSValue::from(token as f64)])
-        {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let result =
+            match callback.call(global, this_object, &[js_name, JSValue::from(token as f64)]) {
+                Ok(v) => v,
+                Err(err) => global.take_exception(err),
+            };
 
         let set_abort = |code: c_int| {
             if !abort_handshake.is_null() {

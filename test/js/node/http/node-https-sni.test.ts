@@ -61,9 +61,8 @@ it("https.Server SNICallback selects the certificate per connection", async () =
 
 it("https.Server serves requests through the SNICallback-selected certificate", async () => {
   const altContext = tls.createSecureContext(sniCert);
-  const server = https.createServer(
-    { ...defaultCert, SNICallback: (_name, cb) => cb(null, altContext) },
-    (_req, res) => res.end("hello"),
+  const server = https.createServer({ ...defaultCert, SNICallback: (_name, cb) => cb(null, altContext) }, (_req, res) =>
+    res.end("hello"),
   );
 
   try {
@@ -157,8 +156,9 @@ it("https.Server suspends the handshake for an asynchronous SNICallback", async 
 });
 
 it("https.Server aborts a suspended handshake when the asynchronous SNICallback errors", async () => {
-  const server = https.createServer({ ...defaultCert, SNICallback: (_name, cb) => setImmediate(() => cb(new Error("async sni rejected"))) }, (_req, res) =>
-    res.end("must not happen"),
+  const server = https.createServer(
+    { ...defaultCert, SNICallback: (_name, cb) => setImmediate(() => cb(new Error("async sni rejected"))) },
+    (_req, res) => res.end("must not happen"),
   );
   try {
     const port = await listen(server);

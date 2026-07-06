@@ -44,12 +44,12 @@ describe("array key/cert (multiple identities)", () => {
       await once(server, "listening");
       const { port } = server.address() as AddressInfo;
       try {
-        expect(
-          await servedLeafCN(port, { maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" }),
-        ).toBe(RSA_CN);
-        expect(
-          await servedLeafCN(port, { maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" }),
-        ).toBe(EC_CN);
+        expect(await servedLeafCN(port, { maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" })).toBe(
+          RSA_CN,
+        );
+        expect(await servedLeafCN(port, { maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" })).toBe(
+          EC_CN,
+        );
         // ECDSA outranks RSA in the default signature-algorithm preference, so
         // a TLS 1.3 client gets the EC leaf whichever order the arrays used.
         expect(await servedLeafCN(port, {})).toBe(EC_CN);

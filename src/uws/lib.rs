@@ -415,15 +415,14 @@ pub mod ssl_wrapper {
                     );
                     boring_sys::SSL_set_connect_state(ssl.as_ptr());
                     // Mirror `us_internal_ssl_attach`: a SecureContext is
-                    // mode-neutral, so a `tls.connect()` without
-                    // `ca`/`requestCert` hands us a CTX with VERIFY_NONE and
-                    // no trust store. Clients must always run verification so
-                    // `verify_error` is real for the JS-side
-                    // `rejectUnauthorized` decision; load the shared system
-                    // roots per-SSL so a server using the same CTX never sees
-                    // CertificateRequest. A CTX whose store already holds the
-                    // user's CAs keeps it — swapping in the shared roots would
-                    // throw away the only anchors that can verify the peer.
+                    // mode-neutral, so a CTX built without `requestCert` has
+                    // VERIFY_NONE. Clients must still run verification for
+                    // `verify_error` to be real for the JS-side
+                    // `rejectUnauthorized` decision, and raising the mode
+                    // per-SSL keeps a server sharing the CTX from sending
+                    // CertificateRequest. Install the shared system roots only
+                    // when the CTX holds no CAs of its own — swapping them in
+                    // would throw away the user's `ca`.
                     if boring_sys::SSL_CTX_get_verify_mode(ctx.as_ptr())
                         == boring_sys::SSL_VERIFY_NONE
                     {

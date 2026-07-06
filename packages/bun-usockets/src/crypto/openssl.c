@@ -1239,7 +1239,7 @@ SSL_CTX *us_ssl_ctx_from_options(struct us_bun_socket_context_options_t options,
 
   /* SecureContext is mode-neutral (Node lets one back both tls.connect and
    * tls.createServer), so we can't bake client-vs-server into the CTX. CTX
-   * verify_mode comes purely from options (ca/request_cert/reject_unauthorized)
+   * verify_mode comes purely from options (request_cert/reject_unauthorized)
    * in build_raw — for a server that decides whether CertificateRequest is
    * sent, so we MUST NOT force VERIFY_PEER here. The per-SSL client override
    * (verify mode + trust store) lives in us_internal_ssl_attach. */

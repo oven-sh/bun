@@ -3485,11 +3485,15 @@ it("Expect: 100-Continue matches case-insensitively like Node.js", async () => {
   }
 });
 
-// Pipelines `paths` as a single write and collects bytes until every response
+const pipelinedGet = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+const pipelinedPost = (path: string, body: string) =>
+  `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.length}\r\n\r\n${body}`;
+
+// Writes `requests` as a single segment and collects bytes until every response
 // has arrived. Resolving on "close" too means a server that tears the
 // connection down mid-pipeline yields the truncated bytes (an assertion
 // failure) instead of hanging until the test times out.
-function pipelineRequests(port: number, paths: string[]): Promise<string> {
+function pipelineRequests(port: number, requests: string[]): Promise<string> {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const socket = connect(port, "127.0.0.1");
   let data = "";
@@ -3497,14 +3501,14 @@ function pipelineRequests(port: number, paths: string[]): Promise<string> {
     data += chunk;
     const statusLines = data.split("HTTP/1.1 ").length - 1;
     const headerBlocks = data.split("\r\n\r\n").length - 1;
-    if (statusLines >= paths.length && headerBlocks >= paths.length) {
+    if (statusLines >= requests.length && headerBlocks >= requests.length) {
       socket.destroy();
       resolve(data);
     }
   });
   socket.on("close", () => resolve(data));
   socket.on("error", reject);
-  socket.on("connect", () => socket.write(paths.map(p => `GET ${p} HTTP/1.1\r\nHost: x\r\n\r\n`).join("")));
+  socket.on("connect", () => socket.write(requests.join("")));
   return promise;
 }
 
@@ -3520,7 +3524,7 @@ it("the over-limit 503 advertises Connection: close, not keep-alive", async () =
     const { port } = server.address() as AddressInfo;
 
     // Two pipelined requests: the second exceeds maxRequestsPerSocket.
-    const out = await pipelineRequests(port, ["/a", "/b"]);
+    const out = await pipelineRequests(port, [pipelinedGet("/a"), pipelinedGet("/b")]);
 
     const second = out.slice(out.indexOf("HTTP/1.1 503"));
     expect(second).toContain("HTTP/1.1 503");
@@ -3551,7 +3555,7 @@ it("every pipelined request past maxRequestsPerSocket gets its own 503 and dropR
 
     // Three requests pipelined into one segment: /b and /c are both over the
     // limit of 1, so both must be answered.
-    const out = await pipelineRequests(port, ["/a", "/b", "/c"]);
+    const out = await pipelineRequests(port, [pipelinedGet("/a"), pipelinedGet("/b"), pipelinedGet("/c")]);
 
     expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
     expect(drops.map(({ url, isIncomingMessage }) => ({ url, isIncomingMessage }))).toEqual([
@@ -3561,6 +3565,35 @@ it("every pipelined request past maxRequestsPerSocket gets its own 503 and dropR
     // Both drops report the one connection they arrived on.
     expect(drops[0].socket).toBeDefined();
     expect(drops[1].socket).toBe(drops[0].socket);
+  } finally {
+    server.close();
+  }
+});
+
+it("a dropped request carrying a body does not stall the rest of the pipeline", async () => {
+  // The 503'd request's body still has to come off the wire, otherwise the
+  // parser never reaches the request pipelined behind it.
+  const drops: string[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    res.end("ok");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => drops.push(req.url));
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const body = "hello=world";
+    const out = await pipelineRequests(port, [
+      pipelinedPost("/a", body),
+      pipelinedPost("/b", body),
+      pipelinedPost("/c", body),
+    ]);
+
+    expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(drops).toEqual(["/b", "/c"]);
   } finally {
     server.close();
   }

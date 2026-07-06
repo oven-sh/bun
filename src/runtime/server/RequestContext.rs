@@ -1748,7 +1748,9 @@ where
         let (etag, last_modified) = match self.response_weakref.get() {
             Some(response) => match response.get_init_headers_mut() {
                 Some(headers) => (
-                    headers.fast_get(jsc::HTTPHeaderName::ETag).map(|s| s.to_slice_clone()),
+                    headers
+                        .fast_get(jsc::HTTPHeaderName::ETag)
+                        .map(|s| s.to_slice_clone()),
                     headers
                         .fast_get(jsc::HTTPHeaderName::LastModified)
                         .map(|s| s.to_slice_clone()),
@@ -1757,8 +1759,9 @@ where
             },
             None => (None, None),
         };
-        let last_modified_ms =
-            last_modified.as_ref().and_then(|s| crate::jsc_hooks::parse_http_date(s.slice()));
+        let last_modified_ms = last_modified
+            .as_ref()
+            .and_then(|s| crate::jsc_hooks::parse_http_date(s.slice()));
         RangeRequest::if_range_allows_range(
             &if_range,
             etag.as_ref().map(|s| s.slice()),

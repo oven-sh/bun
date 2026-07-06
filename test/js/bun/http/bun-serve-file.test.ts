@@ -1185,9 +1185,9 @@ describe.concurrent("If-Range", () => {
   });
 
   it.each([
-    ['matching strong ETag → 206', '"etag-A"', 206],
-    ['mismatched ETag → 200', '"some-other-etag"', 200],
-    ['weak ETag never matches → 200', 'W/"etag-A"', 200],
+    ["matching strong ETag → 206", '"etag-A"', 206],
+    ["mismatched ETag → 200", '"some-other-etag"', 200],
+    ["weak ETag never matches → 200", 'W/"etag-A"', 200],
   ])("fetch handler: %s", async (_label, ifRange, expectedStatus) => {
     using dir = tempDir("serve-if-range-handler", { "asset.bin": Buffer.alloc(400, "A") });
     const filePath = join(String(dir), "asset.bin");

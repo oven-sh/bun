@@ -26,7 +26,7 @@
 "use strict";
 
 const { URL, URLSearchParams } = globalThis;
-const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+const [domainToASCII, domainToUnicode, toASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -75,6 +75,14 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
   hostEndingChars = ["/", "?", "#"],
   hostnameMaxLen = 255,
+  /*
+   * Prevents spoofing bugs caused by IDNA toASCII mapping a character into one
+   * that changes how the host is interpreted. ':' spoofs the protocol, '@' the
+   * auth, and '[' / ']' make a non-IPv6 host look like IPv6.
+   */
+  forbiddenHostChars = /[\0\t\n\r #%/:<>?@[\\\]^|]/,
+  // For IPv6, permit '[', ']', and ':'.
+  forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
     __proto__: null,
@@ -110,12 +118,7 @@ function urlParse(
   if ($isObject(url) && url instanceof Url) return url;
 
   var u = new Url();
-  try {
-    u.parse(url, parseQueryString, slashesDenoteHost);
-  } catch (e) {
-    $putByIdDirect(e, "input", url);
-    throw e;
-  }
+  u.parse(url, parseQueryString, slashesDenoteHost);
   return u;
 }
 
@@ -340,14 +343,28 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       this.hostname = this.hostname.toLowerCase();
     }
 
-    /*
-     * IDNA Support: Returns a punycoded representation of "domain".
-     * It only converts parts of the domain name that
-     * have non-ASCII characters, i.e. it doesn't matter if
-     * you call it with a domain that already is ASCII-only.
-     */
-    if (this.hostname) {
-      this.hostname = new URL("http://" + this.hostname).hostname;
+    if (this.hostname !== "") {
+      if (ipv6Hostname) {
+        if (forbiddenHostCharsIpv6.test(this.hostname)) {
+          throw $ERR_INVALID_URL(url);
+        }
+      } else {
+        /*
+         * IDNA Support: Returns a punycoded representation of "domain".
+         * It only converts parts of the domain name that
+         * have non-ASCII characters, i.e. it doesn't matter if
+         * you call it with a domain that already is ASCII-only.
+         */
+        this.hostname = toASCII(this.hostname);
+
+        /*
+         * An empty hostname or a forbidden character can only have been
+         * introduced by toASCII, since getHostname filters them out otherwise.
+         */
+        if (this.hostname === "" || forbiddenHostChars.test(this.hostname)) {
+          throw $ERR_INVALID_URL(url);
+        }
+      }
     }
 
     var p = this.port ? ":" + this.port : "";
@@ -437,7 +454,6 @@ function isIpv6Hostname(hostname: string) {
   );
 }
 
-let warnInvalidPort = true;
 function getHostname(self, rest, hostname: string, url) {
   for (let i = 0; i < hostname.length; ++i) {
     const code = hostname.$charCodeAt(i);
@@ -450,12 +466,8 @@ function getHostname(self, rest, hostname: string, url) {
 
     if (!isValid) {
       // If leftover starts with :, then it represents an invalid port.
-      // But url.parse() is lenient about it for now.
-      // Issue a warning and continue.
-      if (warnInvalidPort && code === Char.COLON) {
-        const detail = `The URL ${url} is invalid. Future versions of Node.js will throw an error.`;
-        process.emitWarning(detail, "DeprecationWarning", "DEP0170");
-        warnInvalidPort = false;
+      if (code === Char.COLON) {
+        throw $ERR_INVALID_ARG_VALUE("url", "Invalid port in url", url);
       }
       self.hostname = hostname.slice(0, i);
       return `/${hostname.slice(i)}${rest}`;

@@ -54,8 +54,9 @@ let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
-  port?: number;
   address: string;
+  // `declare` keeps `port` off the instances that have none, the way Node's errors do.
+  declare port?: number;
 
   constructor(err: number, syscall: string, address: string, port?: number) {
     // TODO(joyeecheung): We have to use the type-checked

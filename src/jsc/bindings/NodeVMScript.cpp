@@ -297,7 +297,10 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         } else if (timeout) {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
         } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
+            // Terminated by an enclosing scope that armed the watcher itself —
+            // the REPL's Ctrl+C, say. Still a SIGINT, so report it as one
+            // rather than asserting on a reachable state.
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         }
         return true;
     }

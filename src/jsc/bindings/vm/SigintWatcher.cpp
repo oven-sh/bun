@@ -119,7 +119,12 @@ void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
     }
 
     WTF::Locker lock(m_globalObjectsMutex);
-    m_globalObjects.appendIfNotContains(globalObject);
+    // Append unconditionally: `unregisterGlobalObject` removes exactly one
+    // entry, so skipping a duplicate would let a nested holder (an inner
+    // `runInThisContext({ breakOnSigint: true })`) unregister the outer
+    // holder's global on the way out. `signalAll` tolerates duplicates —
+    // `notifyNeedTermination` only re-sets an already-set trap bit.
+    m_globalObjects.append(globalObject);
 }
 
 void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)

@@ -1392,7 +1392,10 @@ impl<'a> Repl<'a> {
             if !pending(promise) || Self::sigint_requested(sigint) {
                 return;
             }
-            // SIGINT is delivered without SA_RESTART, so this wakes with EINTR.
+            // Non-blocking while the loop is idle, so the flag above is seen
+            // promptly. With live handles this parks in the poller, which every
+            // path in `us_loop_run_bun_tick` re-enters on EINTR, so a Ctrl+C that
+            // lands after the park waits for whatever wakes the loop next.
             vm.as_mut().auto_tick();
         }
     }

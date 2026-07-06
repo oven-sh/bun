@@ -4831,11 +4831,6 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
-{
-    (*arg0).setExecutionForbidden();
-}
-
 // These may be called concurrently from another thread.
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {

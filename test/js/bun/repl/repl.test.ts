@@ -1022,9 +1022,9 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   test("Ctrl+C during a never-settling await leaves the REPL usable", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       // The executor runs synchronously, so printing from it marks the point
-      // where the REPL starts waiting. The long timer keeps the loop alive, so
-      // the wait parks in the poller exactly like a real pending `await` would.
-      send(`await new Promise(() => { process.stdout.write("WAIT" + "ING\\n"); setTimeout(() => {}, 600000); })\n`);
+      // where the REPL starts waiting. Nothing keeps the loop alive, so the wait
+      // never parks in the poller and the interrupt is picked up immediately.
+      send(`await new Promise(() => { process.stdout.write("WAIT" + "ING\\n"); })\n`);
       await waitFor("WAITING");
       send("\x03"); // Ctrl+C
       await waitFor(/interrupted/);
@@ -1033,6 +1033,36 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       // which silently dropped every microtask from then on.
       send("await Promise.resolve(1234 * 1000)\n");
       await waitFor(/\n\s*1234000\b/);
+    });
+  });
+
+  // The inner script's termination reached `checkForTermination` with neither a
+  // SIGINT flag of its own nor a timeout, which used to abort the process.
+  test("Ctrl+C during a nested vm.runInThisContext does not abort", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // No `\n` escape inside the nested string: the REPL mishandles one there
+      // (pre-existing, reproduces on release bun), and the marker doesn't need it.
+      send(`require('vm').runInThisContext('process.stdout.write("IN"+"NER"); while (true) {}')\n`);
+      await waitFor("INNER");
+      send("\x03"); // Ctrl+C
+      await waitFor(/interrupted/);
+
+      // Reaching a result at all proves the process survived the interrupt.
+      send("111 + 222\n");
+      await waitFor(/\n\s*333\b/);
+    });
+  });
+
+  // The inner `breakOnSigint` holder used to unregister the REPL's own global on
+  // the way out, leaving the rest of the evaluation uninterruptible.
+  test("Ctrl+C still interrupts after a nested breakOnSigint script", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(
+        `require('vm').runInThisContext('1', { breakOnSigint: true }); process.stdout.write("AFT"+"ER\\n"); while (true) {}\n`,
+      );
+      await waitFor("AFTER");
+      send("\x03"); // Ctrl+C
+      await waitFor(/interrupted/);
     });
   });
 

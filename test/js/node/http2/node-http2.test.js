@@ -2759,6 +2759,207 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
   }
 });
 
+it("http2 client.request() rejects connection-specific headers synchronously", async () => {
+  // RFC 9113 Section 8.2.2 forbids connection-specific fields in an HTTP/2 message, and node
+  // rejects them with a synchronous ERR_HTTP2_INVALID_CONNECTION_HEADERS from every site that
+  // encodes a header block. A request that can never succeed must therefore never reach the
+  // wire, otherwise `try { session.request(h) } catch` never fires and retry logic keeps
+  // replaying a permanently-invalid request.
+  const delivered = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    delivered.push(headers);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+
+  // Returns the synchronous error code, or null when a stream was handed back.
+  const responses = [];
+  const tryRequest = headers => {
+    try {
+      const req = client.request(headers, { endStream: true });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      req.on("response", resolve);
+      req.on("error", reject);
+      req.resume();
+      responses.push(promise);
+      return null;
+    } catch (e) {
+      return e.code;
+    }
+  };
+
+  try {
+    const FORBIDDEN = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
+    expect({
+      connection: tryRequest({ ":path": "/", connection: "keep-alive" }),
+      upgrade: tryRequest({ ":path": "/", upgrade: "websocket" }),
+      keepAlive: tryRequest({ ":path": "/", "keep-alive": "timeout=5" }),
+      proxyConnection: tryRequest({ ":path": "/", "proxy-connection": "keep-alive" }),
+      transferEncoding: tryRequest({ ":path": "/", "transfer-encoding": "chunked" }),
+      http2Settings: tryRequest({ ":path": "/", "http2-settings": "AAMAAABkAAQAoAAAAAIAAAAA" }),
+      teGzip: tryRequest({ ":path": "/", te: "gzip" }),
+      teArrayWithGzip: tryRequest({ ":path": "/", te: ["trailers", "gzip"] }),
+      mixedCase: tryRequest({ ":path": "/", Connection: "keep-alive" }),
+      rawHeadersArray: tryRequest([":path", "/", "connection", "keep-alive"]),
+    }).toEqual({
+      connection: FORBIDDEN,
+      upgrade: FORBIDDEN,
+      keepAlive: FORBIDDEN,
+      proxyConnection: FORBIDDEN,
+      transferEncoding: FORBIDDEN,
+      http2Settings: FORBIDDEN,
+      teGzip: FORBIDDEN,
+      teArrayWithGzip: FORBIDDEN,
+      mixedCase: FORBIDDEN,
+      rawHeadersArray: FORBIDDEN,
+    });
+
+    // `te: trailers` is the one connection-specific field HTTP/2 keeps. An undefined value or an
+    // empty array encodes no header at all, so neither is forbidden.
+    expect({
+      te: tryRequest({ ":path": "/", te: "trailers" }),
+      teArray: tryRequest({ ":path": "/", te: ["trailers"] }),
+      emptyArray: tryRequest({ ":path": "/", connection: [] }),
+      rawTe: tryRequest([":path", "/", "te", "trailers"]),
+    }).toEqual({ te: null, teArray: null, emptyArray: null, rawTe: null });
+
+    const statuses = await Promise.all(responses);
+    expect(statuses.map(h => h[":status"])).toEqual([200, 200, 200, 200]);
+    // Nothing forbidden reached the wire. `http2-settings` in particular used to be encoded into
+    // the HEADERS frame, which conforming peers may treat as a protocol error for the session.
+    expect(
+      delivered.map(h => ({
+        te: h.te ?? null,
+        settings: h["http2-settings"] ?? null,
+        connection: h.connection ?? null,
+      })),
+    ).toEqual([
+      { te: "trailers", settings: null, connection: null },
+      { te: "trailers", settings: null, connection: null },
+      { te: null, settings: null, connection: null },
+      { te: "trailers", settings: null, connection: null },
+    ]);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+it("http2 client.request() sends a :status pseudo-header instead of throwing", async () => {
+  // node's kValidPseudoHeaders accepts every spec-defined pseudo-header on an outbound request
+  // block, so a request carrying `:status` is encoded and the peer answers with a stream error.
+  // Bun threw ERR_HTTP2_INVALID_PSEUDOHEADER synchronously, which no node code path does.
+  const delivered = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    delivered.push(headers[":path"]);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    const events = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    const req = client.request({ ":path": "/bad", ":status": "200" }, { endStream: true });
+    req.on("response", h => events.push(`response:${h[":status"]}`));
+    req.on("error", e => events.push(`error:${e.code}`));
+    req.on("close", onClose);
+    req.resume();
+    await closed;
+    expect({ events, rstCode: req.rstCode }).toEqual({
+      events: ["error:ERR_HTTP2_STREAM_ERROR"],
+      rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+    });
+
+    // A pseudo-header the spec does not define is still a synchronous throw.
+    let unknownPseudoHeader;
+    try {
+      client.request({ ":path": "/", ":bogus": "x" }, { endStream: true });
+    } catch (e) {
+      unknownPseudoHeader = e.code;
+    }
+    expect(unknownPseudoHeader).toBe("ERR_HTTP2_INVALID_PSEUDOHEADER");
+
+    // The peer reset the stream rather than the session: the next request still works, and the
+    // malformed one never reached the application.
+    const { promise: responded, resolve: onResponse, reject: onError } = Promise.withResolvers();
+    const ok = client.request({ ":path": "/ok" }, { endStream: true });
+    ok.on("response", onResponse);
+    ok.on("error", onError);
+    ok.resume();
+    expect((await responded)[":status"]).toBe(200);
+    expect(delivered).toEqual(["/ok"]);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+it("http2 respond(), additionalHeaders() and sendTrailers() reject connection-specific headers", async () => {
+  // node validates the same connection-specific set on every outbound header block, not just on
+  // pushStream(). A throwing call leaves the stream untouched, so the next call still succeeds.
+  const codes = {};
+  const capture = (name, fn) => {
+    try {
+      fn();
+      codes[name] = null;
+    } catch (e) {
+      codes[name] = e.code;
+    }
+  };
+
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    capture("additionalHeaders", () => stream.additionalHeaders({ ":status": 103, connection: "keep-alive" }));
+    capture("respond", () => stream.respond({ ":status": 200, "http2-settings": "AAMAAABkAAQAoAAAAAIAAAAA" }));
+    capture("respondTeGzip", () => stream.respond({ ":status": 200, te: "gzip" }));
+    stream.respond({ ":status": 200, te: "trailers" }, { waitForTrailers: true });
+    stream.on("wantTrailers", () => {
+      capture("sendTrailers", () => stream.sendTrailers({ "transfer-encoding": "chunked" }));
+      stream.sendTrailers({ "x-ok": "1" });
+    });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    const { promise: gotTrailers, resolve: onTrailers, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" }, { endStream: true });
+    const informational = [];
+    req.on("headers", h => informational.push(h[":status"]));
+    req.on("trailers", onTrailers);
+    req.on("error", onError);
+    req.resume();
+    const trailers = await gotTrailers;
+
+    const FORBIDDEN = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
+    expect(codes).toEqual({
+      additionalHeaders: FORBIDDEN,
+      respond: FORBIDDEN,
+      respondTeGzip: FORBIDDEN,
+      sendTrailers: FORBIDDEN,
+    });
+    // The rejected additionalHeaders() never sent its informational response, and the rejected
+    // sendTrailers() left the stream able to send real trailers.
+    expect(informational).toEqual([]);
+    expect(trailers["x-ok"]).toBe("1");
+    expect(trailers["transfer-encoding"]).toBeUndefined();
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 client survives session teardown from a socket write while flushing queued DATA frames", async () => {
   // A flow-control-limited DATA frame sits in the native outbound queue until
   // the peer reopens the window. The flush that follows writes to the JS

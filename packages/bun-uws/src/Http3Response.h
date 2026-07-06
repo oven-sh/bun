@@ -210,6 +210,10 @@ private:
     }
 
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
+        /* Every caller writes :status first, so appending here keeps Date after
+         * the pseudo-header. This is the one point each header block ships
+         * through, so the Date lands on every response (RFC 9110 6.6.1). */
+        writeMark();
         const char *base = d->hdrBuf.span().data();
         for (auto &h : d->hdrs) {
             h.name = base + (uintptr_t) h.name;

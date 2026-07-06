@@ -2527,10 +2527,53 @@ where
         // the body decides the framing (or there is neither a body nor a
         // handler-supplied Content-Length / Transfer-Encoding header)
         let body_value = response.get_body_value();
+
+        // S3 blobs learn their size from an async stat, so they keep the body
+        // in place and finish in `do_render_head_response_after_s3_size_resolved`.
+        if let Body::Value::Blob(blob) = &*body_value {
+            if shim::blob_is_s3(blob) {
+                // we need to read the size asynchronously
+                // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
+                this.ref_();
+
+                let crate::webcore::blob::store::Data::S3(s3) =
+                    &blob.store.get().as_ref().unwrap().data
+                else {
+                    unreachable!()
+                };
+                let credentials = s3.get_credentials();
+                let path = s3.path();
+                // `Transpiler::env_mut` is the safe accessor for the
+                // process-singleton dotenv loader (set during init).
+                let proxy_url = global_this
+                    .bun_vm()
+                    .as_mut()
+                    .transpiler
+                    .env_mut()
+                    .get_http_proxy(true, None, None)
+                    .map(|proxy| proxy.href);
+
+                let _ = S3::client::stat(
+                    credentials,
+                    path,
+                    Self::on_s3_size_resolved_thunk,
+                    std::ptr::from_mut::<Self>(this).cast::<c_void>(),
+                    proxy_url,
+                    s3.request_payer,
+                ); // TODO: properly propagate exception upwards
+                return;
+            }
+        }
+
         match body_value {
+            // `render_metadata` derives the implicit Content-Type from
+            // `this.blob`, so HEAD has to own the body the way GET does or it
+            // reports different representation metadata (RFC 9110 §9.3.2).
+            // `end_without_body` may drop the last ref, so the blob is released
+            // by `finalize_without_deinit` rather than here.
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
-                let size = blob.size();
+                this.blob = body_value.use_as_any_blob_allow_non_utf8_string();
+                let size = this.blob.size();
                 this.render_metadata();
 
                 if size == crate::webcore::blob::MAX_SIZE {
@@ -2539,49 +2582,23 @@ where
                     resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
-                blob.detach();
             }
 
-            Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
-                    // we need to read the size asynchronously
-                    // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    this.ref_();
-
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
-                    else {
-                        unreachable!()
-                    };
-                    let credentials = s3.get_credentials();
-                    let path = s3.path();
-                    // `Transpiler::env_mut` is the safe accessor for the
-                    // process-singleton dotenv loader (set during init).
-                    let proxy_url = global_this
-                        .bun_vm()
-                        .as_mut()
-                        .transpiler
-                        .env_mut()
-                        .get_http_proxy(true, None, None)
-                        .map(|proxy| proxy.href);
-
-                    let _ = S3::client::stat(
-                        credentials,
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        std::ptr::from_mut::<Self>(this).cast::<c_void>(),
-                        proxy_url,
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
-                    return;
-                }
+            Body::Value::Blob(_) => {
+                this.blob = body_value.use_as_any_blob_allow_non_utf8_string();
                 this.render_metadata();
 
-                blob.resolve_size();
-                if blob.size.get() == crate::webcore::blob::MAX_SIZE {
+                let size = match &this.blob {
+                    AnyBlob::Blob(blob) => {
+                        blob.resolve_size();
+                        blob.size.get()
+                    }
+                    _ => unreachable!(),
+                };
+                if size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
-                    resp.write_header_int(b"content-length", blob.size.get() as u64);
+                    resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }

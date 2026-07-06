@@ -218,6 +218,12 @@ impl FileRoute {
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();
 
+        // These headers go out raw, so uWS cannot see a user-supplied Date and
+        // would stamp a second one when the response ends.
+        if self.headers.get(b"date").is_some() {
+            resp.mark_wrote_date_header();
+        }
+
         debug_assert_eq!(names.len(), values.len());
         // S008: variant payloads are ZST opaques — safe `*mut → &mut` deref.
         match resp {
@@ -485,7 +491,6 @@ impl FileRoute {
         req.set_yield(false);
 
         this.write_status_code(status_code, resp);
-        resp.write_mark();
         this.write_headers(resp);
 
         // Bodiless statuses end before the range switch so a 304 emits no

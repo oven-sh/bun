@@ -359,6 +359,37 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
+  // RFC 9110 6.6.1: an origin server with a clock MUST send Date on every
+  // 2xx/3xx/4xx response.
+  test("every response carries a Date header", async () => {
+    await withServer(async port => {
+      const requests: Array<[string, string, RequestInit?]> = [
+        ["GET", "/hello"],
+        ["HEAD", "/hello"],
+        ["GET", "/static"],
+        ["HEAD", "/static"],
+        ["GET", "/static", { headers: { "if-none-match": '"v1"' } }],
+        ["GET", "/file-route"],
+        ["GET", "/nope"],
+        ["GET", "/stream"],
+      ];
+
+      const seen = [];
+      for (const [method, path, init] of requests) {
+        const res = await fetchH3(port, path, { ...init, method });
+        await res.arrayBuffer();
+        seen.push({ request: `${method} ${path}`, date: res.headers.get("date") });
+      }
+
+      expect(seen.map(({ request, date }) => ({ request, hasDate: date !== null }))).toEqual(
+        requests.map(([method, path]) => ({ request: `${method} ${path}`, hasDate: true })),
+      );
+      for (const { date } of seen) {
+        expect(Date.parse(date!)).toBeGreaterThan(Date.now() - 60_000);
+      }
+    });
+  });
+
   test("routes: handler with :params", async () => {
     await withServer(async port => {
       const res = await fetchH3(port, "/api/abc%20123");

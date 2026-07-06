@@ -488,6 +488,12 @@ impl StaticRoute {
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();
 
+        // These headers go out raw, so uWS cannot see a user-supplied Date and
+        // would stamp a second one when the response ends.
+        if self.headers.get(b"date").is_some() {
+            resp.mark_wrote_date_header();
+        }
+
         debug_assert_eq!(names.len(), values.len());
         for (name, value) in names.iter().zip(values) {
             resp.write_header(

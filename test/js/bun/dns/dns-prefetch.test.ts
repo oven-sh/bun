@@ -261,4 +261,46 @@ describe("node:net DNS cache", () => {
       exitCode: 0,
     });
   });
+
+  // The docs promise a failed connection evicts the host's cache entry, and the
+  // Bun.connect test at the top of this file guards that. node:net connects to an
+  // address the cache already handed it, so it has to evict by hostname instead of
+  // serving a dead IP on every retry until the 30s TTL.
+  it("evicts the entry after a failed node:net connect", async () => {
+    const { result, stderr, exitCode } = await runCacheFixture(`
+      const net = require("node:net");
+      const listener = net.createServer(socket => socket.end());
+      await new Promise(resolve => listener.listen(0, resolve));
+      const { port } = listener.address();
+      await new Promise(resolve => listener.close(resolve));
+
+      const results = [];
+      for (let i = 0; i < 3; i++) {
+        let code = "none";
+        await new Promise(resolve => {
+          const socket = net.connect(port, "localhost", () => socket.end());
+          socket.on("close", resolve);
+          socket.on("error", e => {
+            code = e.code;
+            resolve();
+          });
+        });
+        const { cacheHitsCompleted, size, errors } = Bun.dns.getCacheStats();
+        results.push({ code, cacheHitsCompleted, size, errors });
+      }
+      console.log(JSON.stringify(results));
+    `);
+    // Each connect fails and evicts (size back to 0, one more eviction in errors),
+    // so the next attempt re-resolves as a fresh miss and is never served a dead
+    // address from the cache (cacheHitsCompleted stays 0).
+    expect({ result, stderr, exitCode }).toEqual({
+      result: [
+        { code: "ECONNREFUSED", cacheHitsCompleted: 0, size: 0, errors: 1 },
+        { code: "ECONNREFUSED", cacheHitsCompleted: 0, size: 0, errors: 2 },
+        { code: "ECONNREFUSED", cacheHitsCompleted: 0, size: 0, errors: 3 },
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

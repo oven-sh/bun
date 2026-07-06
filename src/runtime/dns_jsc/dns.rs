@@ -3391,6 +3391,71 @@ pub mod internal {
         Ok(promise)
     }
 
+    /// Drop `host`'s cache entry the way a refused connect does on the usockets
+    /// path, where `us_connecting_socket_close` ends with
+    /// `Bun__addrinfo_freeRequest(req, error == ECONNREFUSED)`: the addresses may
+    /// be stale, so the next lookup has to re-resolve.
+    ///
+    /// A `cached_lookup` consumer connects to an address the cache already handed
+    /// it, so it holds no `addrinfo_request` by the time the connect fails and has
+    /// to invalidate by hostname instead. An entry somebody else still references
+    /// stays allocated but is skipped by `GlobalCache::get` from here on; its last
+    /// holder frees it in `freeaddrinfo`.
+    pub(crate) fn invalidate(host: Option<&ZStr>) {
+        // `RequestKeyOwned::matches` compares the hostname's hash and bytes only,
+        // so the port is not part of the lookup.
+        let key = RequestKey::init(host, 0);
+        let mut guard = global_cache().lock();
+        // One failed connection, counted whether or not an entry is still around
+        // to drop, the same way `freeaddrinfo` counts it.
+        DNS_CACHE_ERRORS.fetch_add(1, Ordering::Relaxed);
+
+        let mut timestamp_to_store: u32 = 0;
+        let Some(entry) = guard.get(&key, &mut timestamp_to_store) else {
+            return;
+        };
+
+        bun_output::scoped_log!(
+            dns,
+            "invalidate({})",
+            bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+        );
+
+        // SAFETY: `entry` is a live cache slot; `valid`/`refcount` are only mutated
+        // under `global_cache().lock()`, which is held here.
+        unsafe {
+            (*entry).valid = false;
+            if (*entry).refcount == 0 {
+                guard.remove(entry);
+                Request::deinit(entry);
+            }
+        }
+    }
+
+    /// `node:net`'s counterpart to the usockets connect path's cache eviction.
+    #[host_fn]
+    pub(crate) fn invalidate_cached_lookup(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+
+        if arguments.len() < 1 {
+            return Err(global_this.throw_not_enough_arguments("invalidate", 1, arguments.len()));
+        }
+
+        if !arguments[0].is_string() {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
+            );
+        }
+        let hostname_slice = arguments[0].to_slice(global_this)?;
+        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
+
+        invalidate(Some(hostname_z.as_zstr()));
+        Ok(JSValue::UNDEFINED)
+    }
+
     extern "C" fn us_getaddrinfo(
         loop_: *mut Loop,
         _host: *const c_char,
@@ -6309,4 +6374,8 @@ export_host_fn!(
 export_host_fn!(
     internal::cached_lookup,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_cachedLookup"
+);
+export_host_fn!(
+    internal::invalidate_cached_lookup,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_invalidateCachedLookup"
 );

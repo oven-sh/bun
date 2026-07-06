@@ -297,6 +297,7 @@ export function getJS2NativeRust() {
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_cachedLookup",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_invalidateCachedLookup",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");

@@ -207,23 +207,26 @@ impl SSLConfigFromJs for SSLConfig {
             result.requires_custom_request_ctx = true;
         }
 
+        // Validate what the caller actually passed. `protos` is stored as a C
+        // string, so reading it back would silently stop at the first NUL.
         let protocols: *const c_char = match &generated.alpn_protocols {
             jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
             jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                zbox_into_raw(&val.get().to_owned_slice_z())
+                let owned = val.get().to_owned_slice_z();
+                validate_alpn_protocols(global, owned.as_bytes())?;
+                zbox_into_raw(&owned)
             }
             jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
                 // owned by the GenVal for the duration of `generated`.
                 let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
+                validate_alpn_protocols(global, buffer.byte_slice())?;
                 dupe_z(buffer.byte_slice())
             }
         };
         if !protocols.is_null() {
-            // Assign before validating so `result`'s Drop frees `protocols` on `?`.
             result.protos = protocols;
             result.requires_custom_request_ctx = true;
-            validate_alpn_protocols(global, result.protos_bytes().unwrap_or_default())?;
         }
         if let Some(ciphers) = generated.ciphers.get() {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
@@ -277,17 +280,21 @@ pub fn resolve_reject_unauthorized(
 /// ALPN wire format: a series of 1-byte length-prefixed, non-empty names. An
 /// empty list is valid and opts out of ALPN. A malformed list would otherwise
 /// refuse every client that offers ALPN, with no diagnostic but the alert.
+///
+/// A NUL inside a name is legal ALPN but unrepresentable in the C string this
+/// is stored as, so it is rejected here rather than silently truncated.
 fn validate_alpn_protocols(global: &JSGlobalObject, wire: &[u8]) -> JsResult<()> {
     let mut i = 0usize;
     while i < wire.len() {
         let len = wire[i] as usize;
-        if len == 0 || i + 1 + len > wire.len() {
+        let end = i + 1 + len;
+        if len == 0 || end > wire.len() || wire[i + 1..end].contains(&0) {
             return Err(global.throw_invalid_arguments(format_args!(
-                "TLSOptions.ALPNProtocols is not in ALPN wire format. Expected a series of \
-                 1-byte length-prefixed protocol names, like \"\\x08http/1.1\" for [\"http/1.1\"]",
+                "TLSOptions.ALPNProtocols is not a valid ALPN protocol list. Expected a series \
+                 of 1-byte length-prefixed names, like \"\\x08http/1.1\" for [\"http/1.1\"]",
             )));
         }
-        i += 1 + len;
+        i = end;
     }
     Ok(())
 }

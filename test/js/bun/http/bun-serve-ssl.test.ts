@@ -220,9 +220,12 @@ describe("Bun.serve ALPN", () => {
     ["a length byte running past the end", Buffer.from([0xff])],
     ["a name shorter than its length byte", Buffer.from([0x02, 0x68])],
     ["a trailing length byte with no name", Buffer.from("\x02h2\x08", "binary")],
-  ])("rejects ALPNProtocols that is not wire format: %s", (_label, ALPNProtocols) => {
+    ["a zero-length name", Buffer.from([0x00])],
+    // Legal ALPN, but it cannot survive the C string `protos` is stored as.
+    ["a name containing a NUL", Buffer.from([0x03, 0x61, 0x00, 0x62])],
+  ])("rejects ALPNProtocols that is not a valid list: %s", (_label, ALPNProtocols) => {
     expect(() => serve({ ...COMMON_CERT, ALPNProtocols })).toThrow(
-      /TLSOptions\.ALPNProtocols is not in ALPN wire format/,
+      /TLSOptions\.ALPNProtocols is not a valid ALPN protocol list/,
     );
   });
 

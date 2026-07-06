@@ -126,7 +126,9 @@ describe("process.stdin", () => {
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stdout.on("error", done);
     child.on("error", done);
-    child.on("exit", code => {
+    // 'close' rather than 'exit': the stdio streams may still be draining when
+    // the child terminates.
+    child.on("close", code => {
       try {
         expect(Buffer.concat(chunks).toString("hex")).toBe("48490a414243");
         expect(code).toBe(0);

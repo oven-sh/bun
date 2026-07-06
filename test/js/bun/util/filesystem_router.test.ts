@@ -236,42 +236,69 @@ it("should support catch-all routes", () => {
 // route that lost still reached the route that won.
 const probedRouteFixtures = [
   {
-    // The loser's pattern ran out while path segments remained.
+    label: "a losing pattern that ran out with path segments left over",
     files: ["[user]/settings.tsx", "help/[...usertopic].tsx"],
     pathname: "/help/settings/a",
     name: "/help/[...usertopic]",
     params: { usertopic: "settings/a" },
   },
   {
-    // Same, and both routes name their param the same thing.
+    label: "a losing route that names its param like the winner's",
     files: ["[topic]/settings.tsx", "help/[...topic].tsx"],
     pathname: "/help/settings/a",
     name: "/help/[...topic]",
     params: { topic: "settings/a" },
   },
   {
-    // The loser reached its catch-all with nothing left to consume.
+    label: "a losing route whose catch-all had nothing left to consume",
     files: ["[c]/b/[...rest].tsx", "[c]/[...d].tsx"],
     pathname: "/x/b",
     name: "/[c]/[...d]",
     params: { c: "x", d: "b" },
   },
+  {
+    // https://github.com/oven-sh/bun/issues/12206
+    label: "sibling routes under a shared dynamic segment",
+    files: [
+      "admin/[businessId]/index.tsx",
+      "admin/[businessId]/providers/index.tsx",
+      "admin/[businessId]/providers/create.tsx",
+      "admin/[businessId]/providers/[providerId]/edit.tsx",
+      "admin/[businessId]/providers/[providerId]/delete.tsx",
+    ],
+    pathname: "/admin/6679fbe17b41431a977163fd/providers/create",
+    name: "/admin/[businessId]/providers/create",
+    params: { businessId: "6679fbe17b41431a977163fd" },
+  },
+  {
+    // https://github.com/oven-sh/bun/issues/15554
+    label: "a dynamic leaf next to its own index route",
+    files: ["[a]/index.ts", "[a]/test/index.ts", "[a]/test/[b].ts"],
+    pathname: "/1/test/2",
+    name: "/[a]/test/[b]",
+    params: { a: "1", b: "2" },
+  },
+  {
+    // https://github.com/oven-sh/bun/issues/15554
+    label: "a dynamic leaf that is itself an index route",
+    files: ["[a]/index.ts", "[a]/test/index.ts", "[a]/test/[b]/index.ts"],
+    pathname: "/1/test/2",
+    name: "/[a]/test/[b]",
+    params: { a: "1", b: "2" },
+  },
 ];
 
-it.each(probedRouteFixtures)(
-  "does not leak params from a probed route into $name",
-  ({ files, pathname, name, params }) => {
-    const { dir } = make(files);
+it.each(probedRouteFixtures)("does not leak params from $label", ({ files, pathname, name, params }) => {
+  const { dir } = make(files);
 
-    const router = new Bun.FileSystemRouter({
-      dir,
-      style: "nextjs",
-    });
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
 
-    const match = router.match(pathname)!;
-    expect({ name: match.name, params: match.params }).toEqual({ name, params });
-  },
-);
+  const match = router.match(pathname)!;
+  expect({ name: match.name, params: match.params }).toEqual({ name, params });
+});
 
 it("does not crash reading .params when a probed route's param name is absent from the match", async () => {
   // A leaked param name that the winning route's name does not contain resolves to a

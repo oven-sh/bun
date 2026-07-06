@@ -895,7 +895,9 @@ booga"
         })
         .runAsTest("before &&");
 
-      test("copies the whole tree with `cp -r src/** dst/`", async () => {
+      // `-R` rather than `-r`: on POSIX `cp` spawns the system binary, which takes
+      // either, but on Windows it is a builtin that only accepts `-R`.
+      test("copies the whole tree with `cp -R src/** dst/`", async () => {
         const dir = tempDirWithFiles("glob-double-asterisk-cp", {
           "src/a.txt": "a",
           "src/nested/b.txt": "b",
@@ -903,7 +905,7 @@ booga"
         });
         const dst = join(dir, "dst").replaceAll("\\", "/");
 
-        const { stderr, exitCode } = await $`cp -r src/** ${dst}/`.cwd(dir).quiet().nothrow();
+        const { stderr, exitCode } = await $`cp -R src/** ${dst}/`.cwd(dir).quiet().nothrow();
         expect(stderr.toString()).toBe("");
         expect(exitCode).toBe(0);
 

@@ -603,10 +603,15 @@ impl<'a> RouteLoader<'a> {
 
         // /index.js
         if route.full_hash == INDEX_ROUTE_HASH {
-            let new_route = Box::new(route);
-            // SAFETY: Box contents have stable address; never removed from all_routes until consumed by load_all
-            self.index = Some(NonNull::from(&*new_route));
-            self.all_routes.push(new_route);
+            // Park the `Box` first, then derive `index` from it, and from a
+            // `&mut`: moving a `Box` retags it, so a pointer taken before the
+            // move is a stale sibling of the one `all_routes` owns, and a `&*`
+            // downgrade would freeze the tag.
+            self.all_routes.push(Box::new(route));
+            let parked = self.all_routes.last_mut().expect("just pushed");
+            // Box contents have a stable address; never removed from
+            // `all_routes` until consumed by `load_all`.
+            self.index = Some(NonNull::from(&mut **parked));
             return;
         }
 

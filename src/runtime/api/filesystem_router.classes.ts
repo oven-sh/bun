@@ -28,6 +28,10 @@ export default [
         getter: "getStyle",
         cache: true,
       },
+      assetPrefix: {
+        getter: "getAssetPrefix",
+        cache: true,
+      },
     },
     klass: {},
   }),

@@ -314,6 +314,40 @@ it("assetPrefix, src, and origin", async () => {
   }
 });
 
+it("assetPrefix is readable from the router", () => {
+  const { dir } = make(["index.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(router), "assetPrefix");
+  expect(typeof descriptor?.get).toBe("function");
+  expect(descriptor?.set).toBeUndefined();
+  expect(Object.hasOwn(router, "assetPrefix")).toBe(false);
+
+  expect(router.assetPrefix).toBe("/_next/static/");
+
+  // the prefix the router reports is the one it applies to `src`
+  expect(router.match("/")!.src).toBe(`${router.origin}${router.assetPrefix}index.tsx`);
+
+  router.reload();
+  expect(router.assetPrefix).toBe("/_next/static/");
+});
+
+it("assetPrefix is an empty string when unset", () => {
+  const { dir } = make(["index.tsx"]);
+
+  for (const assetPrefix of [undefined, ""]) {
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs", assetPrefix });
+    expect(router.assetPrefix).toBe("");
+    expect(router.match("/")!.src).toBe("index.tsx");
+  }
+});
+
 it(".query works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);

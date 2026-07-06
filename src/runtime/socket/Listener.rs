@@ -282,32 +282,43 @@ impl Listener {
                         // Surface coded syscall failures the way node:net
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
-                        let name = e.name();
-                        if let Ok(se) = <bun_sys::SystemErrno as core::str::FromStr>::from_str(name)
-                        {
-                            let err = jsc::SystemError {
-                                // Negated errno per fill_system_error_common.
-                                errno: -(se as c_int),
-                                code: bun_core::String::static_(name),
-                                message: bun_core::String::clone_utf8(
-                                    format!(
-                                        "listen {}: {}",
-                                        name,
-                                        bstr::BStr::new(&pipe_buf[..pipe_len])
-                                    )
-                                    .as_bytes(),
-                                ),
-                                syscall: bun_core::String::static_("listen"),
-                                fd: -1,
-                                path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
-                                hostname: bun_core::String::empty(),
-                                dest: bun_core::String::empty(),
-                            };
-                            return Err(global.throw_value(err.to_error_instance(global)));
+                        if let ListenPipeError::Sys(sys_err) = &e {
+                            // get_error_code_tag_name does not reject EUNKNOWN /
+                            // UV_EAI_* (>=3000); neither is a node-style code, so
+                            // route those through the generic error below.
+                            if let Some((name, se)) = sys_err.get_error_code_tag_name() {
+                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
+                                    let err = jsc::SystemError {
+                                        // Negated errno per fill_system_error_common.
+                                        errno: -(se as c_int),
+                                        code: bun_core::String::static_(name),
+                                        message: bun_core::String::clone_utf8(
+                                            format!(
+                                                "listen {}: {}",
+                                                name,
+                                                bstr::BStr::new(&pipe_buf[..pipe_len])
+                                            )
+                                            .as_bytes(),
+                                        ),
+                                        syscall: bun_core::String::static_("listen"),
+                                        fd: -1,
+                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
+                                        hostname: bun_core::String::empty(),
+                                        dest: bun_core::String::empty(),
+                                    };
+                                    return Err(global.throw_value(err.to_error_instance(global)));
+                                }
+                            }
                         }
+                        let detail = match &e {
+                            ListenPipeError::Other(err) => err.name(),
+                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
+                            ListenPipeError::Sys(_) => "UNKNOWN",
+                        };
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "Failed to listen at {}",
-                            bstr::BStr::new(&pipe_buf[..pipe_len])
+                            "Failed to listen at {}: {}",
+                            bstr::BStr::new(&pipe_buf[..pipe_len]),
+                            detail
                         )));
                     }
                 }
@@ -1711,6 +1722,15 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
+/// `Sys` keeps the structured uv error so the JS error carries its real
+/// code/errno; `Other` covers the non-syscall setup failures, whose payload
+/// names the failure in the caller's generic invalid-arguments message.
+#[cfg(windows)]
+pub(crate) enum ListenPipeError {
+    Sys(bun_sys::Error),
+    Other(bun_core::Error),
+}
+
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
@@ -1791,7 +1811,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
-    ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
+    ) -> Result<*mut WindowsNamedPipeListeningContext, ListenPipeError> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
@@ -1825,13 +1845,13 @@ impl WindowsNamedPipeListeningContext {
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
                 Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
-                None => return Err(bun_core::err!("InvalidOptions")),
+                None => return Err(ListenPipeError::Other(bun_core::err!("InvalidOptions"))),
             }
         }
 
         let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
-            return Err(bun_core::err!("FailedToInitPipe"));
+            return Err(ListenPipeError::Other(bun_core::err!("FailedToInitPipe")));
         }
         cleanup.1 = true;
 
@@ -1861,10 +1881,11 @@ impl WindowsNamedPipeListeningContext {
             // EACCES (pipe namespace denied) need different caller
             // handling, and a generic bind failure hides that.
             use bun_sys::ReturnCodeExt as _;
-            if let Some(err) = listen_rc.to_error(bun_sys::Tag::listen) {
-                return Err(err.into());
-            }
-            return Err(bun_core::err!("FailedToBindPipe"));
+            return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
+                Some(err) => ListenPipeError::Sys(err),
+                // Unreachable in practice: the uv→errno mapping is total.
+                None => ListenPipeError::Other(bun_core::err!("FailedToBindPipe")),
+            });
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {

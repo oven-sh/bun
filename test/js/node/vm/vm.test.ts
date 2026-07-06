@@ -1160,6 +1160,41 @@ describe("importModuleDynamically", () => {
     const script = new Script("import('x')", { importModuleDynamically: () => Subclass.resolve(mod) as any });
     expect((await script.runInThisContext()).v).toBe(22);
   });
+
+  // The module is recognized through a symbol hanging off the main global, so a
+  // script whose import() runs inside a vm context still has to find it.
+  describe("across realms", () => {
+    test("a script in a vm context resolves import() with a main-realm module's namespace", async () => {
+      const context = createContext({}) as any;
+      const mod = await evaluatedModule(1);
+      const script = new Script("globalThis.imported = import('x')", {
+        importModuleDynamically: async () => mod,
+      });
+      script.runInContext(context);
+      const namespace = await context.imported;
+      expect(namespace).toBe(mod.namespace);
+      expect(namespace.v).toBe(1);
+    });
+
+    test("a script in a vm context rejects with a main-realm module's own error", async () => {
+      const context = createContext({}) as any;
+      const mod = await erroredModule("cross-realm boom");
+      const script = new Script("globalThis.imported = import('x')", {
+        importModuleDynamically: () => mod,
+      });
+      script.runInContext(context);
+      await expect(context.imported).rejects.toThrow("cross-realm boom");
+    });
+
+    test("a script in a vm context rejects ERR_VM_MODULE_NOT_MODULE for a non-module", async () => {
+      const context = createContext({}) as any;
+      const script = new Script("globalThis.imported = import('x')", {
+        importModuleDynamically: async () => 123,
+      });
+      script.runInContext(context);
+      await expect(context.imported).rejects.toMatchObject({ code: "ERR_VM_MODULE_NOT_MODULE" });
+    });
+  });
 });
 
 test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {

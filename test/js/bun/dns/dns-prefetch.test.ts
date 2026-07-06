@@ -118,9 +118,7 @@ describe("dns.prefetch", () => {
   });
 });
 
-// Each test spawns its own isolated Bun subprocess, so the process-global DNS
-// counters are never shared between them — safe to run concurrently.
-describe.concurrent("DNS cache stats", () => {
+describe("DNS cache stats", () => {
   // `cacheHitsCompleted + cacheHitsInflight + cacheMisses === totalCount` is the
   // only thing that makes the counters reconcilable. Prefetching an already
   // cached host used to bump `totalCount` and return without counting the hit.
@@ -151,8 +149,14 @@ describe.concurrent("DNS cache stats", () => {
 // `node:tls` and the `node:http` client both connect through `node:net`, so the
 // cache that `fetch()`/`Bun.connect` use has to be reachable from there too —
 // otherwise `dns.prefetch()` is a no-op for every database/HTTP driver on npm.
-// Each `it` spawns its own isolated subprocess, so they run concurrently.
-describe.concurrent("node:net DNS cache", () => {
+// Kept sequential: each `it` spawns a full Bun subprocess that resolves DNS and
+// connects, so running them concurrently contends for CPU and makes the slowest
+// one exceed the per-test timeout under the debug+ASAN build.
+describe("node:net DNS cache", () => {
+  // The spawned fixture boots a full Bun (~3.5s under debug+ASAN) and then does
+  // two server setups plus a DNS resolution, a node:net connect, and a node:http
+  // round-trip, which pushes it past the 5s default per-test timeout on that
+  // build. Give it headroom; the CI runner already uses a larger timeout.
   it("resolves node:net and node:http through the shared cache", async () => {
     const { result, stderr, exitCode } = await runCacheFixture(`
       const net = require("node:net");
@@ -227,7 +231,7 @@ describe.concurrent("node:net DNS cache", () => {
       stderr: "",
       exitCode: 0,
     });
-  });
+  }, 30_000);
 
   it("leaves a user-supplied options.lookup in charge", async () => {
     const { result, stderr, exitCode } = await runCacheFixture(`

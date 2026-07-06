@@ -1079,13 +1079,20 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     auto* sandbox = thisObject->m_sandbox.get();
 
     VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = slot.thisValue();
     bool isContextualStore = thisValue != JSValue(globalObject);
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(thisValue); proxy && proxy->target() == globalObject) {
         isContextualStore = false;
     }
-    bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
-    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Ask the global object itself, skipping this class' sandbox interception, so
+    // that "declared" means a `var`/function binding or a builtin rather than a
+    // property the sandbox happens to carry.
+    PropertySlot globalSlot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnGlobalObject = thisObject->JSC::JSGlobalObject::getOwnPropertySlot(thisObject, globalObject, propertyName, globalSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
     bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);
@@ -1097,7 +1104,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
-    if (!isDeclared && value.isSymbol()) {
+    if (!isDeclared && propertyName.isSymbol()) {
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
@@ -1114,6 +1121,13 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
+        return true;
+    }
+
+    // The sandbox is the only store for a property the global object never
+    // declared, so a host-side `delete sandbox[key]` removes it from the context
+    // too. Mirroring it onto the global object here would leave a copy behind.
+    if (!isDeclaredOnGlobalObject) {
         return true;
     }
 

@@ -633,7 +633,7 @@ impl NetworkTask {
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
         // `notify`, neither of which is safe/meaningful to drop.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
-            http::Method::GET,
+            http::Method::GET.into(),
             url,
             header_builder.entries,
             headers_buf,
@@ -866,7 +866,7 @@ impl NetworkTask {
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
         // `notify`, neither of which is safe/meaningful to drop.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
-            http::Method::GET,
+            http::Method::GET.into(),
             url,
             header_builder.entries,
             header_buf,

@@ -121,7 +121,7 @@ pub(crate) fn view(
     let header_buf: &[u8] = headers.content.written_slice();
     let http_proxy = manager.http_proxy(&url);
     let mut req = http::AsyncHTTP::init_sync(
-        http::Method::GET,
+        http::Method::GET.into(),
         url,
         headers.entries,
         header_buf,

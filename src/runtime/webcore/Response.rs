@@ -13,7 +13,7 @@ use bun_core::Output;
 use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
 };
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, MethodBuf};
 
 use super::blob::Internal as InternalBlob;
 use super::body::{Body, BodyMixin, Value as BodyValue};
@@ -288,7 +288,7 @@ impl Response {
 
     /// Takes ownership (+1) of `status_text`.
     #[inline]
-    pub fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
+    pub fn set_init(&self, method: MethodBuf, status_code: u16, status_text: BunString) {
         self.init.with_mut(|init| {
             init.method = method;
             init.status_code = status_code;
@@ -374,8 +374,8 @@ impl Response {
     }
 
     #[inline]
-    pub fn get_method(&self) -> Method {
-        self.init.get().method
+    pub fn get_method(&self) -> MethodBuf {
+        self.init.get().method.clone()
     }
 
     pub fn estimated_size(this: &Response) -> usize {
@@ -1316,7 +1316,7 @@ pub struct Init {
     pub headers: Option<HeadersRef>,
     pub status_code: u16,
     pub status_text: OwnedString,
-    pub method: Method,
+    pub method: MethodBuf,
 }
 
 impl Default for Init {
@@ -1325,7 +1325,7 @@ impl Default for Init {
             headers: None,
             status_code: 0,
             status_text: OwnedString::new(BunString::empty()),
-            method: Method::GET,
+            method: MethodBuf::default(),
         }
     }
 }
@@ -1343,7 +1343,7 @@ impl Init {
             headers,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
-            method: self.method,
+            method: self.method.clone(),
         })
     }
 
@@ -1377,7 +1377,7 @@ impl Init {
                     result.headers = headers.clone_this(global_this)?;
                 }
 
-                result.method = req.method;
+                result.method = req.method.clone();
                 return Ok(Some(result));
             }
 
@@ -1446,9 +1446,13 @@ impl Init {
         if let Some(method_value) =
             response_init.fast_get_truthy(global_this, BuiltinName::method)?
         {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
-                result.method = method;
-            }
+            result.method = match bun_http_jsc::method_jsc::request_method_from_js(
+                global_this,
+                method_value,
+            )? {
+                Ok(method) => method,
+                Err(err) => return Err(global_this.throw_value(err)),
+            };
         }
 
         Ok(Some(result))

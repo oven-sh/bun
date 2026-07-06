@@ -23,11 +23,11 @@ use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
-use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::method_jsc::MethodRefJsc as _;
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::MethodBuf;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
@@ -98,7 +98,7 @@ pub struct Request {
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
-    pub method: Method,
+    pub method: MethodBuf,
     pub flags: Flags,
     pub request_context: AnyRequestContext,
     pub weak_ptr_data: WeakPtrData,
@@ -431,7 +431,7 @@ impl Request {
         url: BunString,
         headers: Option<HeadersRef>,
         body: BodyHiveHandle,
-        method: Method,
+        method: MethodBuf,
     ) -> Request {
         Request {
             url: OwnedStringCell::new(url),
@@ -598,7 +598,7 @@ impl Request {
             )?;
 
             // Wire-form token (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
-            writer.write_str(self.method.as_str())?;
+            writer.write_str(self.method.as_ref().as_str())?;
             writer.write_str("\"")?;
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
@@ -772,8 +772,8 @@ impl Request {
         js_signal
     }
 
-    pub fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.method.to_js(global_this)
+    pub fn get_method(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        self.method.as_ref().to_js(global_this)
     }
 
     pub fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -1072,7 +1072,7 @@ impl Request {
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
-            method: Method::GET,
+            method: MethodBuf::default(),
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -1185,7 +1185,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Method) {
-                        req.method = request.method;
+                        req.method = request.method.clone();
                         fields.insert(Fields::Method);
                     }
 
@@ -1434,7 +1434,7 @@ impl Request {
                                 });
                         if method_check {
                             if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
+                                req.method = response_init.method.clone();
                                 fields.insert(Fields::Method);
                             }
                         }
@@ -1616,7 +1616,8 @@ impl Request {
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
         // `url` was bitwise-copied above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // sentinel; `method` is the callers' `MethodBuf::default()` seed, which
+        // owns nothing; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {
@@ -1628,7 +1629,7 @@ impl Request {
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
-                    method: self.method,
+                    method: self.method.clone(),
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
                     weak_ptr_data: WeakPtrData::EMPTY,
@@ -1661,7 +1662,7 @@ impl Request {
                 BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
             }),
             js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
+            method: MethodBuf::default(),
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -1718,7 +1719,7 @@ impl InternalJSEventCallback {
 
 impl Request {
     pub fn init(
-        method: Method,
+        method: MethodBuf,
         request_context: AnyRequestContext,
         https: bool,
         signal: Option<AbortSignalRef>,

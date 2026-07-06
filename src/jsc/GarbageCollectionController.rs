@@ -29,6 +29,8 @@
 use core::ffi::c_int;
 
 #[cfg(not(windows))]
+use bun_core::{Timespec, TimespecMockMode};
+#[cfg(not(windows))]
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
 
@@ -104,9 +106,9 @@ impl GarbageCollectionController {
     /// Remove `t` from the heap if linked, set its deadline to `now + ms`, and
     /// insert. JS-thread only.
     ///
-    /// The deadline follows the mocked clock because `All::next` compares
-    /// against it: pinning it to real time would make every drain under a
-    /// fast-forwarded `jest.useFakeTimers()` clock re-fire immediately.
+    /// Real time, never the mocked clock: GC pacing is ours, not the test's.
+    /// `jest.useFakeTimers()` starts its clock at zero, so a mocked deadline
+    /// would let `advanceTimersByTime()` drive collection. Same as `WTFTimer`.
     fn arm(vm: *mut VirtualMachine, t: *mut EventLoopTimer, ms: i32) {
         // SAFETY: `t` is one of the two embedded nodes of the per-VM controller,
         // address-stable for the VM lifetime; JS-thread only. `timer_remove` /
@@ -115,7 +117,7 @@ impl GarbageCollectionController {
             if (*t).state == TimerState::ACTIVE {
                 VirtualMachine::timer_remove(vm, t);
             }
-            (*t).next = bun_core::Timespec::now_allow_mocked_time().add_ms(i64::from(ms));
+            (*t).next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(ms));
             VirtualMachine::timer_insert(vm, t);
         }
     }

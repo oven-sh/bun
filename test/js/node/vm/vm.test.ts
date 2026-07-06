@@ -1096,6 +1096,70 @@ describe("importModuleDynamically", () => {
       await expect(script.runInThisContext()).rejects.toThrow("boom");
     });
   });
+
+  // The validation reads status/error/namespace off the wrapper, so each of those
+  // getters can run user code and throw. Every one must surface as a rejection.
+  describe("adversarial getters on the returned module", () => {
+    function poison(mod: object, property: string, get: () => unknown) {
+      Object.defineProperty(mod, property, { get, configurable: true });
+      return mod;
+    }
+
+    test("a throwing status getter rejects with that error", async () => {
+      const mod = poison(await evaluatedModule(1), "status", () => {
+        throw new Error("status boom");
+      });
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      await expect(script.runInThisContext()).rejects.toThrow("status boom");
+    });
+
+    test("a throwing error getter on an errored module rejects with that error", async () => {
+      const mod = poison(await evaluatedModule(1), "status", () => "errored");
+      poison(mod, "error", () => {
+        throw new Error("error boom");
+      });
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      await expect(script.runInThisContext()).rejects.toThrow("error boom");
+    });
+
+    test("a throwing namespace getter rejects with that error", async () => {
+      const mod = poison(await evaluatedModule(1), "namespace", () => {
+        throw new Error("namespace boom");
+      });
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      await expect(script.runInThisContext()).rejects.toThrow("namespace boom");
+    });
+
+    test("a non-string status is compared, never coerced", async () => {
+      const mod = await evaluatedModule(5);
+      poison(mod, "status", () => ({
+        toString() {
+          throw new Error("status was coerced");
+        },
+      }));
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      expect((await script.runInThisContext()).v).toBe(5);
+    });
+  });
+
+  test("vm.Script awaits a thenable returned by the hook", async () => {
+    const mod = await evaluatedModule(11);
+    const script = new Script("import('x')", {
+      importModuleDynamically: () => ({ then: (resolve: (m: unknown) => void) => resolve(mod) }) as any,
+    });
+    expect((await script.runInThisContext()).v).toBe(11);
+  });
+
+  test("vm.Script handles a promise subclass with a tampered Symbol.species", async () => {
+    const mod = await evaluatedModule(22);
+    class Subclass extends Promise<unknown> {
+      static get [Symbol.species]() {
+        return Promise;
+      }
+    }
+    const script = new Script("import('x')", { importModuleDynamically: () => Subclass.resolve(mod) as any });
+    expect((await script.runInThisContext()).v).toBe(22);
+  });
 });
 
 test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {

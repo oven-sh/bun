@@ -2412,6 +2412,7 @@ impl VirtualMachine {
         if self.is_watcher_enabled() {
             // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -2435,10 +2436,24 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
+            self.run_entry_point_body();
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
+    }
+
+    /// Run the entry point's synchronous body, then the timers phase.
+    ///
+    /// Module evaluation runs on the microtask queue, so draining microtasks
+    /// reaches the first `await` (or the end of a synchronous entry point).
+    /// Leaving that to the `tick()` in the wait loop would dispatch the *task*
+    /// queue in the same tick, running an I/O completion or port message the
+    /// body queued ahead of a timer that expired while it ran. `uv_run` opens
+    /// with `uv__run_timers`, so Node dispatches that timer before either.
+    fn run_entry_point_body(&mut self) {
+        let _ = self.event_loop_mut().drain_microtasks();
+        self.event_loop_mut().drain_expired_timers();
     }
 
     /// Drain pending tasks/microtasks if the event loop is not currently
@@ -4573,6 +4588,7 @@ impl VirtualMachine {
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
+        self.run_entry_point_body();
         self.event_loop_mut()
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {

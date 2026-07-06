@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -244,4 +244,68 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
+});
+
+describe("an already-expired timer runs before the first poll and check phases", () => {
+  // Block well past the 1ms deadline so the timer is unambiguously expired by
+  // the time the event loop is entered. libuv opens every `uv_run` iteration
+  // with the timers phase, so the timer runs before anything queued next to it.
+  const blockPastTheDeadline = `const start = Date.now(); while (Date.now() - start < 10) {}`;
+
+  test.each([
+    [
+      "setImmediate",
+      `setTimeout(() => order.push("timeout"), 1);
+       setImmediate(() => order.push("immediate"));`,
+      ["timeout", "immediate"],
+    ],
+    [
+      "a MessagePort self-delivery",
+      `const { port1, port2 } = new MessageChannel();
+       port1.onmessage = () => { order.push("message"); port1.close(); port2.close(); };
+       port2.postMessage(1);
+       setTimeout(() => order.push("timeout"), 1);`,
+      ["timeout", "message"],
+    ],
+    [
+      "completed fs I/O",
+      `require("fs").readFile(__filename, () => order.push("readFile"));
+       setTimeout(() => order.push("timeout"), 1);`,
+      ["timeout", "readFile"],
+    ],
+  ])("before %s", async (_name, scheduled, expected) => {
+    using dir = tempDir("timers-phase-order", {
+      "index.js": `
+        const order = [];
+        process.on("exit", () => console.log(JSON.stringify(order)));
+        ${scheduled}
+        ${blockPastTheDeadline}
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe(JSON.stringify(expected));
+    expect(exitCode).toBe(0);
+  });
+
+  test("inside a worker", async () => {
+    const worker = new Worker(new URL("timers-phase-order-worker-fixture.js", import.meta.url).href);
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = reject;
+
+    try {
+      expect(await promise).toEqual(["timeout", "immediate"]);
+    } finally {
+      await worker.terminate();
+    }
+  });
 });

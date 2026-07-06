@@ -894,6 +894,24 @@ pub(crate) unsafe fn __bun_run_wtf_timer(
     unsafe { crate::timer::WTFTimer::run(real, vm) }
 }
 
+/// `__bun_drain_expired_timers` body: run the timers phase over this thread's
+/// `timer::All`. No-op before `init_runtime_state` (bun_jsc unit tests).
+///
+/// # Safety
+/// `vm` is the live per-thread VM and stays live across the JS callbacks
+/// `drain_timers` fires.
+#[unsafe(no_mangle)]
+pub(crate) unsafe fn __bun_drain_expired_timers(vm: *mut bun_jsc::virtual_machine::VirtualMachine) {
+    let all = crate::jsc_hooks::timer_all();
+    if all.is_null() {
+        return;
+    }
+    // SAFETY: `all` is the live per-thread `All`; `drain_timers` forms
+    // short-lived `&mut` only around heap pop/peek, so no `&mut All` is held
+    // across `fire()` (which re-enters `All` via `runtime_state()`).
+    unsafe { (*all).drain_timers(vm.cast::<()>()) };
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // EventLoopTimer dispatch
 // ════════════════════════════════════════════════════════════════════════════

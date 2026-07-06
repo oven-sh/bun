@@ -443,6 +443,9 @@ pub const VOLUME_NAME_GUID: DWORD = 0x1;
 pub const VOLUME_NAME_NT: DWORD = 0x2;
 pub const VOLUME_NAME_NONE: DWORD = 0x4;
 
+/// CompareStringOrdinal equality result.
+pub const CSTR_EQUAL: c_int = 2;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum VolumeName {
     #[default]
@@ -1724,6 +1727,14 @@ unsafe extern "system" {
         cchFilePath: DWORD,
         dwFlags: DWORD,
     ) -> DWORD;
+
+    pub fn CompareStringOrdinal(
+        lpString1: *const u16,
+        cchCount1: c_int,
+        lpString2: *const u16,
+        cchCount2: c_int,
+        bIgnoreCase: BOOL,
+    ) -> c_int;
 
     pub fn DeleteFileW(lpFileName: *const u16) -> BOOL;
 

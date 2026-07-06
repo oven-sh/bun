@@ -1183,12 +1183,8 @@ describe("inbound flow control (RFC 9113 §6.9)", () => {
     try {
       c.sendPreface();
       c.sendEmptySettings();
-      // HPACK static-table request block (RFC 7541 appendix A): `:method POST` (3), `:path /` (4),
-      // `:scheme http` (6) as indexed fields, plus `:authority` (name index 1) as a
-      // literal-without-indexing with a 9-octet non-Huffman value.
-      const request = Buffer.concat([Buffer.from([0x83, 0x84, 0x86, 0x01, 0x09]), Buffer.from("localhost")]);
       // END_HEADERS only, no END_STREAM: the request body is still incoming and is never sent.
-      c.sendFrame(FrameType.HEADERS, 0x4, 1, request);
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
 
       const headers = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       const endStream = await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);

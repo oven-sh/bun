@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import fs from "fs";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -291,6 +292,65 @@ describe.concurrent("process-stdio", () => {
       });
       expect(stdout.length).toBe(N);
       expect(await proc.exited).toBe(0);
+    });
+
+    // The point of cork(): the burst reaches the fd as one write(2), the way
+    // node's stdio coalesces it into a single writev(2). /proc/self/io's syscw
+    // counter is the only way to observe it, so this one is Linux-only.
+    //
+    // stdout is a regular file rather than a pipe on purpose. A pipe that fills
+    // up makes the sink buffer and coalesce writes on its own, which would sink
+    // both numbers below and leave the test asserting nothing; a file never
+    // applies backpressure, so every sink write is exactly one write(2).
+    test.skipIf(!isLinux)("uncork() flushes a corked burst in a single write syscall", async () => {
+      const chunks = 1000;
+      using dir = tempDir("stdout-cork-syscalls", {});
+      const outPath = path.join(String(dir), "stdout.bin");
+      const outFd = fs.openSync(outPath, "w");
+
+      try {
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const fs = require("fs");
+              const syscw = () => Number(/syscw:\\s*(\\d+)/.exec(fs.readFileSync("/proc/self/io", "utf8"))[1]);
+              const chunk = Buffer.alloc(64, 0x41);
+              process.stdout.write(chunk); // settle any startup writes
+
+              const before = syscw();
+              process.stdout.cork();
+              for (let i = 0; i < ${chunks}; i++) process.stdout.write(chunk);
+              const corkedLength = process.stdout.writableLength;
+              process.stdout.uncork();
+              const corked = syscw() - before;
+
+              const uncorkedBefore = syscw();
+              for (let i = 0; i < ${chunks}; i++) process.stdout.write(chunk);
+              const uncorked = syscw() - uncorkedBefore;
+
+              process.stderr.write("@@" + JSON.stringify({ corkedLength, corked, uncorked }) + "@@");
+            `,
+          ],
+          stdout: outFd,
+          stderr: "pipe",
+          env: bunEnv,
+        });
+
+        const [, json] = await markerReader(proc.stderr)(/@@(.*)@@/);
+        const { corkedLength, corked, uncorked } = JSON.parse(json);
+
+        expect(corkedLength).toBe(chunks * 64);
+        // One write(2) for the whole burst; a per-chunk flush would be `chunks`.
+        expect(corked).toBeLessThan(10);
+        // The control: uncorked writes have to hit the fd one at a time.
+        expect(uncorked).toBe(chunks);
+        expect(await proc.exited).toBe(0);
+        expect(fs.statSync(outPath).size).toBe(64 * (1 + chunks * 2));
+      } finally {
+        fs.closeSync(outFd);
+      }
     });
   });
 

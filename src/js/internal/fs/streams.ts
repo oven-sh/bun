@@ -470,7 +470,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fastPath) {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
-    this._writev = undefined;
+    this._writev = underscoreWritevFast;
     // The FileSink encodes strings straight into its own buffer, so skip the
     // Buffer.from() round-trip. node's process.stdout/stderr (net.Socket) also
     // run with decodeStrings: false.
@@ -627,6 +627,22 @@ function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any)
   } else {
     cb(null);
   }
+}
+
+// `_writev` for the same streams. A corked burst (and a backlog drained after
+// backpressure) reaches the sink as one write, and so one write(2), which is
+// what cork() is for: node's stdio over a pipe coalesces the same burst into a
+// single writev(2).
+function underscoreWritevFast(this: FSStream, data: any, cb: any) {
+  const len = data.length;
+  const chunks = new Array(len);
+
+  for (let i = 0; i < len; i++) {
+    const { chunk, encoding } = data[i];
+    chunks[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+  }
+
+  return underscoreWriteFast.$call(this, len === 1 ? chunks[0] : Buffer.concat(chunks), "buffer", cb);
 }
 
 writeStreamPrototype._writev = function (data, cb) {

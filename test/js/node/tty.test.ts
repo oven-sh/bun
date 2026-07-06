@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -190,5 +191,77 @@ describe("WriteStream.prototype.getColorDepth", () => {
 
   it("empty", () => {
     expect(WriteStream.prototype.getColorDepth.call(undefined, {})).toBe(isWindows ? 24 : 1);
+  });
+});
+
+// When the pty master goes away (ssh drop, terminal emulator killed) writes to
+// the slave fail with EIO. Node reports that to the write callback *and* errors
+// the stream, which is the only signal a CLI gets that its terminal is gone.
+describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
+  const fixture = `
+    const { writeFileSync } = require("node:fs");
+    const events = [];
+    process.on("exit", () => writeFileSync(process.env.RESULT_FILE, JSON.stringify(events)));
+
+    // Outlive the SIGHUP the kernel sends when the master closes, like a
+    // nohup'd daemon, so the failing write is actually reached.
+    process.on("SIGHUP", () => {});
+
+    if (!process.env.NO_ERROR_LISTENER) {
+      process.stdout.on("error", err => events.push("error:" + err.code));
+    }
+
+    // Once stdin hits EOF the pty is hung up, so the next write to it is
+    // guaranteed to fail. No polling, no timers.
+    process.stdin.on("end", () => {
+      process.stdout.write("after hangup\\n", err => {
+        if (err) events.push("cb:" + err.code);
+      });
+    });
+    process.stdin.resume();
+
+    process.stdout.write("READY\\n");
+  `;
+
+  async function runUntilHangup(env: Record<string, string | undefined>) {
+    using dir = tempDir("stdout-hangup", { "fixture.js": fixture });
+    const resultFile = join(String(dir), "result.json");
+
+    const { promise: ready, resolve } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      data(_terminal, chunk) {
+        if (Buffer.from(chunk).toString().includes("READY")) resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "fixture.js")],
+      env: { ...bunEnv, ...env, RESULT_FILE: resultFile },
+      terminal,
+    });
+
+    await ready;
+    terminal.close();
+
+    const exitCode = await proc.exited;
+    const events = await Bun.file(resultFile)
+      .json()
+      .catch(() => null);
+    return { events, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("emits 'error' on the stream, not only to the write callback", async () => {
+    expect(await runUntilHangup({})).toEqual({
+      events: ["cb:EIO", "error:EIO"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("an unhandled write error terminates the process", async () => {
+    const { events, exitCode, signalCode } = await runUntilHangup({ NO_ERROR_LISTENER: "1" });
+    expect(events).toEqual(["cb:EIO"]);
+    expect(signalCode).toBe(null);
+    expect(exitCode).toBe(1);
   });
 });

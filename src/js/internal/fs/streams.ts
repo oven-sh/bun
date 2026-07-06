@@ -664,8 +664,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = encoding;
     encoding = undefined;
   }
-  const hasCallback = typeof cb === "function";
-  if (!hasCallback) {
+  if (typeof cb !== "function") {
     cb = streamNoop;
   }
 
@@ -679,14 +678,10 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           cb(null);
         })
         .catch(err => {
-          // Always call the callback with the error
+          // This path bypasses Writable's machinery, so it has to do what
+          // onwriteError does: report to the callback and error the stream.
           cb(err);
-          // If no callback was provided, emit the error on the stream
-          // This matches Node.js behavior where unhandled write errors
-          // are emitted as 'error' events on the stream
-          if (!hasCallback) {
-            this.destroy(err);
-          }
+          this.destroy(err);
         });
       return false; // Indicate backpressure
     } else {

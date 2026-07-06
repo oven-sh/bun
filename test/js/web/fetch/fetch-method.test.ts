@@ -30,6 +30,42 @@ async function requestLine(run: (url: string) => Promise<unknown>): Promise<stri
 
 const wireMethod = (method: string) => requestLine(url => fetch(url, { method })).then(line => line.split(" ")[0]);
 
+// Redirects once, then answers 200. Returns the method of every request line the
+// server saw, so a custom method's token can be watched across hops: it borrows
+// FetchTasklet-owned storage that the HTTP thread reads again on the second hop.
+async function redirectedMethods(status: number, init: RequestInit): Promise<string[]> {
+  const methods: string[] = [];
+  const { promise: finished, resolve, reject } = Promise.withResolvers<void>();
+
+  const server = net.createServer(socket => {
+    let buffered = "";
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      buffered += chunk.toString("latin1");
+      if (!buffered.includes("\r\n\r\n")) return;
+      if (methods.length === 2) return; // trailing body bytes of hop 2
+      methods.push(buffered.slice(0, buffered.indexOf(" ")));
+      if (methods.length === 1) {
+        socket.end(`HTTP/1.1 ${status} Redirect\r\nLocation: /hop2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+      } else {
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        resolve();
+      }
+    });
+  });
+  server.on("error", reject);
+
+  try {
+    await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`, init);
+    expect(await res.text()).toBe("ok");
+    await finished;
+    return methods;
+  } finally {
+    server.close();
+  }
+}
+
 describe("fetch() method", () => {
   // https://fetch.spec.whatwg.org/#concept-method-normalize — only these six
   // are case-normalized, and only to uppercase.
@@ -78,6 +114,23 @@ describe("fetch() method", () => {
   test("a Request's method survives being passed to fetch()", async () => {
     const line = await requestLine(url => fetch(new Request(url, { method: "Propfind" })));
     expect(line).toBe("Propfind / HTTP/1.1");
+  });
+
+  // A custom method's wire bytes are borrowed from the FetchTasklet, and a
+  // redirect re-reads them on the HTTP thread for the next hop.
+  test("a custom method survives a 302 redirect", async () => {
+    expect(await redirectedMethods(302, { method: "BREW" })).toEqual(["BREW", "BREW"]);
+  });
+
+  test("a custom method with a body survives a 307 redirect", async () => {
+    expect(await redirectedMethods(307, { method: "Propfind", body: "x" })).toEqual(["Propfind", "Propfind"]);
+  });
+
+  // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11: 303 rewrites
+  // anything that is not GET or HEAD, 301/302 rewrite only POST.
+  test("303 rewrites a custom method to GET, 302 does not", async () => {
+    expect(await redirectedMethods(303, { method: "BREW" })).toEqual(["BREW", "GET"]);
+    expect(await redirectedMethods(302, { method: "POST", body: "x" })).toEqual(["POST", "GET"]);
   });
 
   test.each(["", "GET POST", "GET\n", "foo bar", "GET/1", "@GET", "GET\u00ff"])(

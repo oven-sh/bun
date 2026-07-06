@@ -1969,11 +1969,11 @@ impl FetchTasklet {
             .as_deref()
             // SAFETY: see block note above — same `FetchTasklet` owner.
             .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
-        // SAFETY: see `Interned::assume` note above — same `FetchTasklet` owner;
-        // `method` is declared after `http`, so the token outlives the `AsyncHTTP`.
         let method: MethodRef<'static> = match fetch_tasklet.method.as_ref() {
             MethodRef::Known(known) => MethodRef::Known(known),
             MethodRef::Custom(token) => {
+                // SAFETY: see `Interned::assume` note above — same `FetchTasklet` owner;
+                // `method` is declared after `http`, so the token outlives the `AsyncHTTP`.
                 MethodRef::Custom(unsafe { bun_ptr::Interned::assume(token) }.as_bytes())
             }
         };

@@ -32,6 +32,70 @@ using namespace WebCore;
 
 namespace Bun {
 
+// The first line of a stack trace, following V8's ErrorUtils::ToString: an undefined
+// `name` means "Error", an undefined `message` means the empty string, and both are
+// read off the object itself when it is not an ErrorInstance.
+static void getErrorNameAndMessage(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, WTF::String& name, WTF::String& message)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
+        name = instance->sanitizedNameString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        message = instance->sanitizedMessageString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        return;
+    }
+
+    // Reading these two properties can run user code. Only a mutator can reach here with a
+    // non-ErrorInstance target: the GC's finalizer path formats with a null errorObject, and
+    // materializeErrorInfoIfNeeded always passes an ErrorInstance, which returned above.
+    ASSERT(vm.heap.worldIsRunning());
+
+    name = "Error"_s;
+
+    JSValue nameValue = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, );
+    if (nameValue && !nameValue.isUndefined()) {
+        name = nameValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    JSValue messageValue = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, );
+    if (messageValue && !messageValue.isUndefined()) {
+        message = messageValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+static void appendErrorNameAndMessage(WTF::StringBuilder& sb, const WTF::String& name, const WTF::String& message)
+{
+    if (!name.isEmpty()) {
+        sb.append(name);
+        if (!message.isEmpty()) {
+            sb.append(": "_s);
+            sb.append(message);
+        }
+    } else if (!message.isEmpty()) {
+        sb.append(message);
+    }
+}
+
+// StackFrame holds cells the GC does not scan from the vector itself. Anything that
+// allocates or calls into JS before the frames are formatted can collect them.
+static bool protectStackFrameCells(JSC::MarkedArgumentBuffer& protectedFrameCells, WTF::Vector<JSC::StackFrame>& stackTrace)
+{
+    protectedFrameCells.ensureCapacity(stackTrace.size() * 2);
+    for (auto& frame : stackTrace) {
+        if (auto* callee = frame.callee())
+            protectedFrameCells.append(callee);
+        if (auto* codeBlock = frame.codeBlock())
+            protectedFrameCells.append(codeBlock);
+    }
+    return !protectedFrameCells.hasOverflowed();
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -41,22 +105,11 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
     WTF::StringBuilder sb;
 
-    auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
+    WTF::String name;
+    WTF::String message;
+    getErrorNameAndMessage(vm, lexicalGlobalObject, errorObject, name, message);
     RETURN_IF_EXCEPTION(scope, {});
-    if (errorMessage) {
-        auto* str = errorMessage.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (str->length() > 0) {
-            auto value = str->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            sb.append("Error: "_s);
-            sb.append(value.data);
-        } else {
-            sb.append("Error"_s);
-        }
-    } else {
-        sb.append("Error"_s);
-    }
+    appendErrorNameAndMessage(sb, name, message);
 
     for (size_t i = 0; i < framesCount; i++) {
         sb.append("\n    at "_s);
@@ -152,15 +205,7 @@ WTF::String formatStackTrace(
 {
     WTF::StringBuilder sb;
 
-    if (!name.isEmpty()) {
-        sb.append(name);
-        if (!message.isEmpty()) {
-            sb.append(": "_s);
-            sb.append(message);
-        }
-    } else if (!message.isEmpty()) {
-        sb.append(message);
-    }
+    appendErrorNameAndMessage(sb, name, message);
 
     // FIXME: why can size == 6 and capacity == 0?
     // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
@@ -409,16 +454,13 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String message;
 
     if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
-            }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer,
+        // but only ever with a null errorInstance, so getErrorNameAndMessage is unreachable there.
+        if (!lexicalGlobalObject) {
+            lexicalGlobalObject = errorInstance->globalObject();
         }
+        getErrorNameAndMessage(vm, lexicalGlobalObject, errorInstance, name, message);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!globalObject) [[unlikely]] {
@@ -726,14 +768,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     } else {
         auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
         JSC::MarkedArgumentBuffer protectedFrameCells;
-        protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
-        for (auto& frame : *ownedStackTrace) {
-            if (auto* callee = frame.callee())
-                protectedFrameCells.append(callee);
-            if (auto* codeBlock = frame.codeBlock())
-                protectedFrameCells.append(codeBlock);
-        }
-        if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+        if (!protectStackFrameCells(protectedFrameCells, *ownedStackTrace)) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -785,6 +820,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
             // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
             // Eagerly compute and set the .stack property instead.
+            JSC::MarkedArgumentBuffer protectedFrameCells;
+            if (!protectStackFrameCells(protectedFrameCells, stackTrace)) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
             OrdinalNumber line;
             OrdinalNumber column;
             String sourceURL;
@@ -806,6 +846,12 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
+        // Formatting reads `name` and `message` off the target, which can run a getter.
+        JSC::MarkedArgumentBuffer protectedFrameCells;
+        if (!protectStackFrameCells(protectedFrameCells, stackTrace)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
         OrdinalNumber line;
         OrdinalNumber column;
         String sourceURL;

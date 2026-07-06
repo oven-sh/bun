@@ -79,7 +79,7 @@ assert.throws(() => {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /^The (property 'options.family' must be one of: 0, 4, 6|argument 'family' must be one of 0, 4 or 6)\. Received:? 20$/
+    message: /^The property 'options\.family' must be one of: 0, 4, 6\. Received 20$/
   };
   const options = {
     hints: 0,

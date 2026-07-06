@@ -8,6 +8,7 @@ const {
   validateString,
   validateBoolean,
   validateNumber,
+  validateOneOf,
 } = require("internal/validators");
 
 const errorCodes = {
@@ -40,6 +41,11 @@ const errorCodes = {
 const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
+const validOrders = ["verbatim", "ipv4first", "ipv6first"];
+// getaddrinfo encodes the hostname into a 256 byte buffer (IDNA ASCII + NUL)
+// before resolving, so a longer name fails with EINVAL before any query.
+const MAX_HOSTNAME_LENGTH = 255;
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
@@ -87,7 +93,7 @@ function defaultResultOrder() {
 }
 
 function setDefaultResultOrder(order) {
-  validateOrder(order);
+  validateOrder(order, "dnsOrder");
   defaultResultOrder.value = order;
 }
 
@@ -143,65 +149,66 @@ function setServersOn(servers, object) {
 }
 
 function validateFlagsOption(options) {
-  if (options.flags === undefined) {
+  const flags = options.flags;
+  if (flags == null) {
     return;
   }
 
-  const flags = options.flags;
-  validateNumber(flags);
+  validateNumber(flags, "options.hints");
 
   if ((flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
     throw $ERR_INVALID_ARG_VALUE("hints", flags, "is invalid");
   }
 }
 
-function validateFamily(family) {
-  if (family !== 6 && family !== 4 && family !== 0) {
-    throw $ERR_INVALID_ARG_VALUE("family", family, "must be one of 0, 4 or 6");
+function validateFamily(family, name) {
+  if (family !== 0 && family !== 4 && family !== 6) {
+    throw $ERR_INVALID_ARG_VALUE(name, family, "must be one of: 0, 4, 6");
   }
 }
 
-function validateFamilyOption(options) {
-  if (options.family != null) {
-    switch (options.family) {
-      case "IPv4":
-        options.family = 4;
-        break;
-      case "IPv6":
-        options.family = 6;
-        break;
-      default:
-        validateFamily(options.family);
-        break;
+// The callback `dns.lookup` also accepts the "IPv4"/"IPv6" spellings of
+// `family`, while `dns.promises.lookup` rejects them.
+function validateFamilyOption(options, allowFamilyStrings) {
+  const family = options.family;
+  if (family == null) {
+    return;
+  }
+
+  if (allowFamilyStrings) {
+    if (family === "IPv4") {
+      options.family = 4;
+      return;
+    }
+    if (family === "IPv6") {
+      options.family = 6;
+      return;
     }
   }
+
+  validateFamily(family, "options.family");
 }
 
 function validateAllOption(options) {
   const all = options.all;
-  if (all !== undefined) {
-    validateBoolean(all);
+  if (all != null) {
+    validateBoolean(all, "options.all");
   }
 }
 
 function validateVerbatimOption(options) {
   const verbatim = options.verbatim;
-  if (verbatim !== undefined) {
-    validateBoolean(verbatim);
+  if (verbatim != null) {
+    validateBoolean(verbatim, "options.verbatim");
   }
 }
 
-function validateOrder(order) {
-  if (!["ipv4first", "ipv6first", "verbatim"].includes(order)) {
-    throw $ERR_INVALID_ARG_VALUE("order", order, "is invalid");
-  }
+function validateOrder(order, name) {
+  validateOneOf(order, name, validOrders);
 }
 
 function validateOrderOption(options) {
-  const order = options.order;
-  if (order !== undefined) {
-    validateOrder(order);
-  }
+  validateOrder(options.order, "options.order");
 }
 
 function validateResolve(hostname, callback) {
@@ -241,7 +248,7 @@ function translateLookupOptions(options) {
 
   let { family, order, verbatim, hints: flags, all } = options;
 
-  if (order === undefined && typeof verbatim === "boolean") {
+  if (order == null && typeof verbatim === "boolean") {
     order = verbatim ? "verbatim" : "ipv4first";
   }
 
@@ -249,19 +256,29 @@ function translateLookupOptions(options) {
 
   return {
     family,
-    flags,
+    // Bun.dns.lookup rejects a null `flags`, node treats a null `hints` as unset.
+    flags: flags ?? undefined,
     all,
     order,
     verbatim,
   };
 }
 
-function validateLookupOptions(options) {
+function validateLookupOptions(options, allowFamilyStrings) {
   validateFlagsOption(options);
-  validateFamilyOption(options);
+  validateFamilyOption(options, allowFamilyStrings);
   validateAllOption(options);
   validateVerbatimOption(options);
   validateOrderOption(options);
+}
+
+function hostnameTooLongError(hostname) {
+  const err = new Error(`getaddrinfo EINVAL ${hostname}`);
+  err.errno = UV_EINVAL;
+  err.code = "EINVAL";
+  err.syscall = "getaddrinfo";
+  err.hostname = hostname;
+  return err;
 }
 
 function lookup(hostname, options, callback) {
@@ -274,7 +291,7 @@ function lookup(hostname, options, callback) {
     options = { family: 0 };
   } else if (typeof options === "number") {
     validateFunction(callback, "callback");
-    validateFamily(options);
+    validateFamily(options, "family");
     options = { family: options };
   } else if (options !== undefined && typeof options !== "object") {
     validateFunction(arguments.length === 2 ? options : callback, "callback");
@@ -284,7 +301,7 @@ function lookup(hostname, options, callback) {
   validateFunction(callback, "callback");
 
   options = translateLookupOptions(options);
-  validateLookupOptions(options);
+  validateLookupOptions(options, true);
 
   if (!hostname) {
     invalidHostname(hostname);
@@ -303,6 +320,11 @@ function lookup(hostname, options, callback) {
     } else {
       process.nextTick(callback, null, hostname, family);
     }
+    return;
+  }
+
+  if (hostname.length > MAX_HOSTNAME_LENGTH) {
+    process.nextTick(callback, hostnameTooLongError(hostname));
     return;
   }
 
@@ -736,14 +758,14 @@ const promises = {
     }
 
     if (typeof options === "number") {
-      validateFamily(options);
+      validateFamily(options, "family");
       options = { family: options };
     } else if (options !== undefined && typeof options !== "object") {
       throw $ERR_INVALID_ARG_TYPE("options", ["integer", "object"], options);
     }
 
     options = translateLookupOptions(options);
-    validateLookupOptions(options);
+    validateLookupOptions(options, false);
 
     if (!hostname) {
       invalidHostname(hostname);
@@ -761,6 +783,10 @@ const promises = {
     if (family) {
       const obj = { address: hostname, family };
       return Promise.$resolve(options.all ? [obj] : obj);
+    }
+
+    if (hostname.length > MAX_HOSTNAME_LENGTH) {
+      return Promise.$reject(hostnameTooLongError(hostname));
     }
 
     if (options.all) {

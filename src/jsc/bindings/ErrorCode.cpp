@@ -1036,11 +1036,16 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 // for validateOneOf
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
 {
-    WTF::StringBuilder builder;
-    builder.append("The argument '"_s);
-    JSValueToStringSafe(globalObject, builder, name);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    auto* jsNameString = name.toString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto nameView = jsNameString->view(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    builder.append(nameView->contains('.') ? "property"_s : "argument"_s);
+    builder.append(" '"_s);
+    builder.append(nameView);
     builder.append("' "_s);
     builder.append(reason);
     unsigned length = oneOf->length();

@@ -687,9 +687,7 @@ bar\n`,
     TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}post`
       .stdout("prempost\n")
       .runAsTest("text before and after backtick");
-    TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}`
-      .stdout("prem\n")
-      .runAsTest("text before backtick");
+    TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}`.stdout("prem\n").runAsTest("text before backtick");
     TestBuilder.command`echo "a${BACKTICK}echo m${BACKTICK}b"`
       .stdout("amb\n")
       .runAsTest("backtick inside double quotes");

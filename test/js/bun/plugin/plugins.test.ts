@@ -625,7 +625,7 @@ it("recursion throws stack overflow at entry point", () => {
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
 });
 
-it("onResolve can redirect a specifier to a real file in the file namespace", async () => {
+it.concurrent("onResolve can redirect a specifier to a real file in the file namespace", async () => {
   using dir = tempDir("plugin-onresolve-file-namespace", {
     "real.js": `export const value = "redirected";`,
     "entry.js": `
@@ -693,7 +693,7 @@ it("onResolve can redirect a specifier to a real file in the file namespace", as
   expect(exitCode).toBe(0);
 });
 
-it("a no-op onResolve that returns args.path unchanged is transparent", async () => {
+it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
   using dir = tempDir("plugin-onresolve-no-op", {
     "preload.js": `
       Bun.plugin({

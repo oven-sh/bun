@@ -1,6 +1,6 @@
-import { BlockList, isIPv6 } from "node:net";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { BlockList, isIPv6 } from "node:net";
 
 // Node's documented round-trip API (v22+): toJSON returns the rules array and
 // JSON.stringify(blockList) emits it; fromJSON rebuilds rules from that array

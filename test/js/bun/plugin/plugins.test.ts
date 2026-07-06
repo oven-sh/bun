@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -502,6 +502,39 @@ describe("the loader runs once per specifier", () => {
 
     // The ESM registry holds it now, so require() returns it rather than throwing.
     expect(require("load-once-async").value).toBe("async");
+  });
+
+  // `export *` re-exports every name but "default", so a wrapper around an __esModule
+  // object module inherits its "module.exports" binding and require() of the wrapper
+  // unwraps to the same value. A user-authored `export { X as "module.exports" }` already
+  // propagates that way, so this keeps the two spellings consistent.
+  it("export * from an __esModule object module carries the CJS unwrap", async () => {
+    using dir = tempDir("plugin-star-export", {
+      "preload.ts": `
+        import { plugin } from "bun";
+        plugin({
+          setup(b) {
+            b.module("star-virt", () => ({
+              exports: { __esModule: true, default: "X", helper: 1 },
+              loader: "object",
+            }));
+          },
+        });
+      `,
+      "wrapper.mjs": `export * from "star-virt";\nexport const extra = 2;`,
+      "app.cjs": `console.log(JSON.stringify(require("./wrapper.mjs")));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "./app.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(`"X"`);
+    expect(exitCode).toBe(0);
   });
 
   // `bun test` lets plugins shadow builtins, which reorders the virtual module

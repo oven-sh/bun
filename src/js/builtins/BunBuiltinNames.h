@@ -197,6 +197,7 @@ using namespace JSC;
     macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
+    macro(webStreamClosedPromise) \
     macro(writable) \
     macro(writableType) \
     macro(write) \

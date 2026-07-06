@@ -109,6 +109,11 @@ declare function $peekPromiseSettledValue<V>(promise: Promise<V>): V | undefined
  * tracker. Equivalent to JSC's `JSPromise::markAsHandled()`.
  */
 declare function $pokePromiseAsHandled(promise: Promise<any>): void;
+/**
+ * A promise that settles when a WHATWG ReadableStream/WritableStream reaches a terminal state.
+ * Does not lock the stream. Throws when given anything else.
+ */
+declare function $webStreamClosedPromise(stream: ReadableStream | WritableStream): Promise<void>;
 declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,

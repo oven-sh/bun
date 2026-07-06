@@ -1050,6 +1050,60 @@ describe("contextified sandbox is the store for guest-created globals", () => {
     expect(runInContext("typeof Object", sandbox)).toBe("number");
   });
 
+  test("Object.defineProperty on the context's global writes only to the sandbox", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext(
+      "Object.defineProperty(globalThis, 'a', { value: 1, writable: true, enumerable: true, configurable: true });",
+      sandbox,
+    );
+
+    expect(sandbox.a).toBe(1);
+    expect(delete sandbox.a).toBe(true);
+    expect(runInContext("typeof a", sandbox)).toBe("undefined");
+    expect(runInContext("Object.getOwnPropertyDescriptor(globalThis, 'a')", sandbox)).toBeUndefined();
+  });
+
+  // A `var` leaves a non-configurable binding on the context's global object, so
+  // redefining it has to land on the sandbox or the global rejects the descriptor.
+  test("Object.defineProperty does not collide with a var binding on the global", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext(
+      "var v = 1; Object.defineProperty(globalThis, 'v', { value: 2, writable: true, enumerable: true, configurable: true });",
+      sandbox,
+    );
+
+    expect(sandbox.v).toBe(2);
+    expect(runInContext("globalThis.v", sandbox)).toBe(2);
+    expect(delete sandbox.v).toBe(true);
+    expect(runInContext("globalThis.v", sandbox)).toBe(1);
+  });
+
+  test("Object.defineProperty over a builtin leaves the global's copy intact", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext(
+      "Object.defineProperty(globalThis, 'Object', { value: 5, writable: true, enumerable: true, configurable: true });",
+      sandbox,
+    );
+
+    expect(sandbox.Object).toBe(5);
+    expect(delete sandbox.Object).toBe(true);
+    expect(runInContext("typeof Object", sandbox)).toBe("function");
+  });
+
+  test("an accessor the guest defines is not flattened onto the global", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("Object.defineProperty(globalThis, 'g', { get() { return 7; }, configurable: true });", sandbox);
+
+    expect(typeof Object.getOwnPropertyDescriptor(sandbox, "g")?.get).toBe("function");
+    expect(runInContext("g", sandbox)).toBe(7);
+    expect(delete sandbox.g).toBe(true);
+    expect(runInContext("typeof g", sandbox)).toBe("undefined");
+  });
+
   test("a sandbox accessor still receives the guest's assignment", () => {
     let written;
     const sandbox: any = {};

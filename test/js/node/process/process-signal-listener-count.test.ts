@@ -2,6 +2,18 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { Worker } from "node:worker_threads";
 
+async function runScript(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
 // When multiple listeners are registered for the same signal, removing one
 // listener must NOT uninstall the underlying OS signal handler while other
 // listeners remain.
@@ -41,14 +53,7 @@ test.skipIf(isWindows)("removing one of multiple signal listeners keeps the hand
     console.log("done");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runScript(script);
 
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
@@ -82,21 +87,14 @@ test.skipIf(isWindows)("removing all signal listeners uninstalls the handler (de
     process.kill(process.pid, "SIGUSR2");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, exitCode, signalCode } = await runScript(script);
 
   expect(stdout).toBe("");
   // Default SIGUSR2 behavior is to terminate the process with a signal.
   // If the handler was correctly uninstalled, the process dies via signal (not exit code 42).
   expect(exitCode).not.toBe(42);
   expect(exitCode).not.toBe(0);
-  expect(proc.signalCode).not.toBeNull();
+  expect(signalCode).not.toBeNull();
 });
 
 // Re-adding a listener after all were removed should reinstall the handler.
@@ -119,14 +117,7 @@ test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the h
     console.log("done");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runScript(script);
 
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
@@ -173,14 +164,7 @@ test.skipIf(isWindows)("listening for SIGKILL or SIGSTOP throws EINVAL and regis
     console.log(JSON.stringify(result));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runScript(script);
 
   // EINVAL is 22 on every platform Bun builds for; libuv reports it negated.
   const einval = {
@@ -224,17 +208,10 @@ test.skipIf(isWindows)("a Symbol whose description is a signal name installs no 
     process.kill(process.pid, "SIGUSR2");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode, signalCode } = await runScript(script);
 
   expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
-  expect(proc.signalCode).toBe("SIGUSR2");
+  expect(signalCode).toBe("SIGUSR2");
   expect(exitCode).not.toBe(42);
 });
 

@@ -1451,6 +1451,12 @@ static bool onWillAddListenerImpl(EventEmitter& eventEmitter, const Identifier& 
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+    // Comparing an Identifier against a string literal compares characters, so
+    // Symbol("memoryPressure") would match below. None of these events, which
+    // are all keyed by their own Identifier, can ever be named by a Symbol.
+    if (eventName.isSymbol())
+        return;
+
     if (Bun__isMainThreadVM()) {
         if (eventName == "memoryPressure") {
             auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();

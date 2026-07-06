@@ -4,6 +4,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/HashSet.h>
 #include "helpers.h"
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -78,6 +79,13 @@ public:
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
+
+        // Module keys whose onLoad failed. The entry JSC caches for them must be
+        // dropped before the next import: see dropFailedPluginModuleEntry().
+        WTF::HashSet<String> failedModuleKeys = {};
+
+        void didFailToLoad(const String& moduleKey) { failedModuleKeys.add(moduleKey); }
+        bool takeLoadFailure(const String& moduleKey) { return failedModuleKeys.remove(moduleKey); }
 
         ~OnLoad()
         {

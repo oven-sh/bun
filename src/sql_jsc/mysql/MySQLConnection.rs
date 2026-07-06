@@ -872,16 +872,6 @@ impl MySQLConnection {
                             return Err(AnyMySQLError::UnexpectedPacket);
                         }
                     }
-                } else if first_byte == PacketType::LOCAL_INFILE.0 {
-                    // Handle LOCAL INFILE request
-                    let mut infile = LocalInfileRequest {
-                        packet_size: header_length,
-                        ..Default::default()
-                    };
-                    infile.decode_internal(reader)?;
-
-                    // We don't support LOCAL INFILE for security reasons
-                    return Err(AnyMySQLError::LocalInfileNotSupported);
                 } else {
                     bun_core::scoped_log!(
                         MySQLConnection,
@@ -1358,6 +1348,32 @@ impl MySQLConnection {
         let _request_guard = request.ref_guard();
         // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
         let request: &JSMySQLQuery = request.get();
+
+        if self
+            .flags
+            .contains(ConnectionFlags::AWAITING_LOCAL_INFILE_RESULT)
+        {
+            // The server's answer to the empty file sent in place of the one it asked for.
+            // It is an OK packet whenever the server accepts that empty file, so the query
+            // is failed here rather than reported as a successful load of zero rows.
+            // `process_packets` skips the payload.
+            self.flags
+                .remove(ConnectionFlags::AWAITING_LOCAL_INFILE_RESULT);
+            if let Some(statement) = request.get_statement() {
+                statement.reset();
+            }
+            self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
+            self.queue.mark_as_ready_for_query();
+            self.queue.mark_current_request_as_finished(request);
+            self.js_connection_ref().on_error_with_message(
+                request,
+                b"LOAD DATA LOCAL INFILE is not supported",
+                AnyMySQLError::LocalInfileNotSupported,
+            );
+            let _ = self.flush_queue();
+            return Ok(());
+        }
+
         let mut ok = OKPacket {
             header: 0,
             affected_rows: 0,
@@ -1415,6 +1431,28 @@ impl MySQLConnection {
                             ok.last_insert_id,
                             ok.affected_rows,
                         );
+                        return Ok(());
+                    }
+
+                    if packet_type == PacketType::LOCAL_INFILE {
+                        // The server wants us to upload a local file (LOAD DATA LOCAL INFILE).
+                        // We never negotiate CLIENT_LOCAL_FILES, so only a server that ignores
+                        // the capability flags gets here. 0xFB is not a valid column count
+                        // either (251 columns encode as `0xfc 0xfb 0x00`), so reading it as a
+                        // result-set header leaves the query waiting for columns that never
+                        // arrive. End the file transfer with the empty packet the protocol
+                        // requires and fail the query once the server's reply comes back.
+                        let mut infile = LocalInfileRequest {
+                            packet_size: header_length,
+                            ..Default::default()
+                        };
+                        infile.decode_internal(reader)?;
+
+                        let mut packet = self.writer().start(self.sequence_id)?;
+                        packet.end()?;
+                        self.flush_data();
+                        self.flags
+                            .insert(ConnectionFlags::AWAITING_LOCAL_INFILE_RESULT);
                         return Ok(());
                     }
 

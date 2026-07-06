@@ -281,6 +281,13 @@ export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
   return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x01]), data]));
 }
 
+// MySQL Protocol::LOCAL INFILE Request — page_protocol_com_query_response_local_infile_request.html:
+//   Int<1>(0xfb) String<EOF>(filename). Sent in place of a result set when the server wants the
+//   client to upload a file; the client answers with the file's contents, then an empty packet.
+export function mysqlLocalInfileRequest(seq: number, filename: string): Buffer {
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0xfb]), Buffer.from(filename, "utf-8")]));
+}
+
 // caching_sha2_password fast_auth_success marker carried in an AuthMoreData payload —
 // page_caching_sha2_authentication_exchanges.html (its sibling, 0x04, is perform_full_authentication).
 export const MYSQL_FAST_AUTH_SUCCESS = 0x03;

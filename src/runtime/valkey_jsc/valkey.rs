@@ -1103,6 +1103,14 @@ impl ValkeyClient {
         let mut should_consume_promise_pair = true;
         let mut pair_maybe: Option<command::PromisePair> = None;
 
+        if self.resubscribe_pending > 0 && matches!(value, RESPValue::Error(_)) {
+            // The replayed SUBSCRIBE was refused (an ACL change during the outage,
+            // say). It owns no promise pair, so this error must not eat one, and no
+            // confirmation is coming for any of its channels.
+            self.resubscribe_pending = 0;
+            should_consume_promise_pair = false;
+        }
+
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if let RESPValue::Push(push) = value {
             match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {

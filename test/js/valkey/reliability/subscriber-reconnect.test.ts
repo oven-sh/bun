@@ -64,7 +64,12 @@ function parseCommands(buffer: Buffer): { commands: string[][]; rest: Buffer } {
   return { commands, rest: buffer.subarray(offset) };
 }
 
-function startRespServer() {
+type ServerOptions = {
+  /** Refuse SUBSCRIBE with -NOPERM on every connection from this index onwards. */
+  refuseSubscribeFromConnection?: number;
+};
+
+function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOptions = {}) {
   const connections: Connection[] = [];
   const waiters: { count: number; resolve: () => void }[] = [];
 
@@ -100,6 +105,11 @@ function startRespServer() {
               break;
 
             case "SUBSCRIBE":
+              // Redis rejects the whole command once, with no per-channel confirmations.
+              if (connections.indexOf(state.connection) >= refuseSubscribeFromConnection) {
+                socket.write(`-NOPERM this user has no permissions to access one of the channels${CRLF}`);
+                break;
+              }
               for (const channel of command.slice(1)) {
                 state.connection.channels.add(channel);
                 socket.write(
@@ -252,6 +262,28 @@ describe("Valkey: subscriber reconnect", () => {
       expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "PING"]);
     } finally {
       client.close();
+    }
+  });
+
+  test("an error reply to the replay settles the in-flight command instead of eating its reply slot", async () => {
+    using server = startRespServer({ refuseSubscribeFromConnection: 1 });
+
+    const subscriber = new RedisClient(server.url, { autoReconnect: true, maxRetries: 10 });
+
+    try {
+      await subscriber.connect();
+      await subscriber.subscribe("news", () => {});
+
+      server.connections[0].socket!.end();
+      await server.waitForConnections(2);
+
+      // The replayed SUBSCRIBE carries no promise, so its -NOPERM must not consume
+      // the pair PING parked in the in-flight queue behind it. It used to, and the
+      // pair was then dropped unsettled, hanging this await forever.
+      await expect(subscriber.ping()).rejects.toThrow(/NOPERM/);
+      expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "SUBSCRIBE news", "PING"]);
+    } finally {
+      subscriber.close();
     }
   });
 

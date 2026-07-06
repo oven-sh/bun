@@ -337,65 +337,6 @@ mod elf {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
-    /// `Elf64_Phdr::p_type` value for loadable segments; `libc` doesn't
-    /// expose `PT_LOAD` for FreeBSD.
-    const PT_LOAD: u32 = 1;
-
-    /// State for the `dl_iterate_phdr` callback: find the `PT_LOAD` segment
-    /// of the main executable containing `addr` and record its end address.
-    struct PhdrQuery {
-        addr: u64,
-        segment_end: Option<u64>,
-    }
-
-    unsafe extern "C" fn phdr_callback(
-        info: *mut libc::dl_phdr_info,
-        _size: libc::size_t,
-        data: *mut libc::c_void,
-    ) -> libc::c_int {
-        // SAFETY: `data` is the `PhdrQuery` passed to `dl_iterate_phdr` below.
-        let query = unsafe { &mut *data.cast::<PhdrQuery>() };
-        // SAFETY: libc passes a valid `dl_phdr_info` for the current object.
-        let info = unsafe { &*info };
-        for i in 0..info.dlpi_phnum {
-            // SAFETY: `dlpi_phdr` points to `dlpi_phnum` program headers.
-            let phdr = unsafe { &*info.dlpi_phdr.add(i as usize) };
-            if phdr.p_type != PT_LOAD {
-                continue;
-            }
-            let seg_start = (info.dlpi_addr as u64).wrapping_add(phdr.p_vaddr as u64);
-            let Some(seg_end) = seg_start.checked_add(phdr.p_memsz as u64) else {
-                continue;
-            };
-            if query.addr >= seg_start && query.addr < seg_end {
-                query.segment_end = Some(seg_end);
-                // Stop iterating: mapped segments are disjoint, so no other
-                // object can also contain `addr`. In practice this returns on
-                // the first object — the main executable, which glibc, musl,
-                // and FreeBSD all visit first.
-                return 1;
-            }
-        }
-        0
-    }
-
-    /// Returns the end address of the `PT_LOAD` segment containing `addr`,
-    /// or `None` when `addr` is not mapped by one. Mapped segments are
-    /// disjoint, so a hit can only come from the object that actually maps
-    /// `addr` — for the standalone payload, the main executable.
-    fn containing_load_segment_end(addr: u64) -> Option<u64> {
-        let mut query = PhdrQuery {
-            addr,
-            segment_end: None,
-        };
-        // SAFETY: the callback only dereferences pointers libc hands it plus
-        // the `PhdrQuery` that outlives the call.
-        unsafe {
-            libc::dl_iterate_phdr(Some(phdr_callback), (&raw mut query).cast());
-        }
-        query.segment_end
-    }
-
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
     /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
     /// `&[u8]` here would freeze it to read-only and make the later
@@ -413,19 +354,20 @@ mod elf {
         }
         // BUN_COMPILED.size holds the virtual address of the appended data.
         // Format at target: [u64 payload_len][payload bytes]
+        let vaddr = usize::try_from(vaddr).ok()?;
         // Both the vaddr and the length prefix it points at are untrusted
         // (truncated download, AV rewriting, post-build tampering), so check
         // against the program headers that the whole range is mapped by the
         // PT_LOAD the compile-time writer extended — otherwise the reads
         // below would fault before startup can fall back gracefully.
-        let Some(segment_end) = containing_load_segment_end(vaddr) else {
+        let header_size = size_of::<u64>();
+        let payload_capacity = bun_sys::elf::find_loaded_module(vaddr)
+            .and_then(|module| module.segment_end.checked_sub(vaddr))
+            .and_then(|available| available.checked_sub(header_size));
+        let Some(payload_capacity) = payload_capacity else {
             bun_core::debug_warn!("bun standalone module graph vaddr is not mapped");
             return None;
         };
-        if segment_end - vaddr < 8 {
-            bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-            return None;
-        }
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
         let target = vaddr as *mut u8;
@@ -435,13 +377,13 @@ mod elf {
         if payload_len < 8 {
             return None;
         }
-        if payload_len > segment_end - vaddr - 8 {
+        if payload_len > payload_capacity as u64 {
             bun_core::debug_warn!("bun standalone module graph length exceeds its segment");
             return None;
         }
         // SAFETY: payload_len bytes follow the 8-byte header at `target`,
         // all inside the containing PT_LOAD (checked above).
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        Some((unsafe { target.add(header_size) }, payload_len as usize))
     }
 }
 

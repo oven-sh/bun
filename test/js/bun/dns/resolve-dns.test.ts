@@ -214,6 +214,57 @@ describe("dns", () => {
     30_000,
   );
 
+  describe("IPv4 literal normalization (inet_aton semantics)", () => {
+    // Legacy dotted forms (octal, hex, dword, and the 1-3 field shorthands)
+    // must resolve to the same canonical address node/glibc/curl produce, on
+    // every backend. The default c-ares backend previously read leading-zero
+    // octets as decimal and rejected the hex/dword/shorthand forms, so the same
+    // string resolved to a different host than node and than Bun's own libc
+    // backend. Numeric literals resolve without touching the network.
+    const canonical: Array<[string, string]> = [
+      ["0177.0.0.1", "127.0.0.1"],
+      ["127.0.0.010", "127.0.0.8"],
+      ["012.0.0.1", "10.0.0.1"],
+      ["0x7f000001", "127.0.0.1"],
+      ["0x7f.1", "127.0.0.1"],
+      ["2130706433", "127.0.0.1"],
+      ["127.1", "127.0.0.1"],
+      ["1.2.3", "1.2.0.3"],
+      ["010.0x10.0.1", "8.16.0.1"],
+    ];
+
+    describe.each(backends)("[backend: %s]", backend => {
+      test.each(canonical)("%s resolves to %s", async (input, expected) => {
+        // @ts-expect-error -- backend is a valid option
+        const result = await dns.lookup(input, { backend, family: 4 });
+        expect(result[0].address).toBe(expected);
+        expect(result[0].family).toBe(4);
+      });
+    });
+
+    test("every backend resolves the same literal to the same host", async () => {
+      const input = "010.1.2.3";
+      const addresses = await Promise.all(
+        // @ts-expect-error -- backend is a valid option
+        backends.map(backend => dns.lookup(input, { backend, family: 4 }).then(r => r[0].address)),
+      );
+      expect(addresses).toEqual(["8.1.2.3", "8.1.2.3", "8.1.2.3"]);
+    });
+
+    // A numeric literal that inet_aton rejects must not fall through to the
+    // c-ares backend, whose lenient decimal reading would dial a different host
+    // (e.g. "08.0.0.1" as 8.0.0.1). Reject it instead of silently diverging.
+    test.each(["08.0.0.1", "09.1.1.1", "256.1.1.1", "1.2.3.4.5"])(
+      "rejects malformed numeric literal %s",
+      async input => {
+        // @ts-expect-error -- backend is a valid option
+        await expect(dns.lookup(input, { backend: "c-ares", family: 4 })).rejects.toMatchObject({
+          code: "DNS_ENOTFOUND",
+        });
+      },
+    );
+  });
+
   test("lookup with non-object second argument should not crash", async () => {
     // Non-object cell values (like strings) passed as options should be ignored, not crash.
     // @ts-expect-error

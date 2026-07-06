@@ -287,6 +287,10 @@ public:
     JSC::JSPromise* inFlightModuleFetch(JSC::JSString* fetchKey);
     void trackInFlightModuleFetch(JSC::JSString* fetchKey, JSC::JSPromise*);
     void clearInFlightModuleFetches();
+    // Part of the fetch key, retired by clearInFlightModuleFetches(). A fetch left
+    // in flight across a reload settles into a reaction that removes its own key,
+    // which by then must no longer name a live entry.
+    unsigned inFlightModuleFetchGeneration = 0;
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 

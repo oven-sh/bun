@@ -3585,10 +3585,11 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 
 // Mirrors the module registry key: (specifier, fetch type, host-defined import
 // type). Length-prefixed so no triple can alias another's flattened key. Coarser
-// keying would share one JSSourceCode across two registry entries.
-static String inFlightModuleFetchKey(const String& moduleKey, ScriptFetchParameters::Type type, const String& typeAttribute)
+// keying would share one JSSourceCode across two registry entries. The generation
+// scopes the key to one clearInFlightModuleFetches() epoch.
+static String inFlightModuleFetchKey(unsigned generation, const String& moduleKey, ScriptFetchParameters::Type type, const String& typeAttribute)
 {
-    return makeString(static_cast<unsigned>(type), ':', typeAttribute.length(), ':', typeAttribute, moduleKey);
+    return makeString(generation, ':', static_cast<unsigned>(type), ':', typeAttribute.length(), ':', typeAttribute, moduleKey);
 }
 
 // Passed as both the fulfill and the reject handler, with the flattened fetch
@@ -3625,6 +3626,10 @@ void GlobalObject::trackInFlightModuleFetch(JSC::JSString* fetchKey, JSC::JSProm
 
 void GlobalObject::clearInFlightModuleFetches()
 {
+    // Clearing the map cannot detach the settle reactions already attached to the
+    // promises it held. Retire the generation so a pre-clear fetch that settles
+    // later removes its own (now absent) key instead of a newer fetch's entry.
+    inFlightModuleFetchGeneration++;
     if (!m_inFlightModuleFetches.isInitialized())
         return;
     inFlightModuleFetches()->clear(this);
@@ -3696,7 +3701,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // concurrent dynamic imports of one specifier run the loader exactly once.
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
     auto fetchType = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
-    JSString* fetchKey = jsString(vm, inFlightModuleFetchKey(moduleKey, fetchType, typeAttributeString));
+    JSString* fetchKey = jsString(vm, inFlightModuleFetchKey(zigGlobalObject->inFlightModuleFetchGeneration, moduleKey, fetchType, typeAttributeString));
     JSC::JSPromise* inFlight = zigGlobalObject->inFlightModuleFetch(fetchKey);
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     if (inFlight)

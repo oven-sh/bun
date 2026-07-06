@@ -51,7 +51,9 @@ void SigintWatcher::install()
     sigaddset(&action.sa_mask, SIGINT);
     action.sa_flags = 0;
 
-    sigaction(SIGINT, &action, nullptr);
+    // Save what we displace. `ref()` only reaches install() on the 0 -> 1
+    // transition, so this cannot capture our own handler.
+    sigaction(SIGINT, &action, &m_previousAction);
 #endif
 
     if (m_installed.exchange(true)) {
@@ -90,13 +92,10 @@ void SigintWatcher::uninstall()
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        struct sigaction action;
-        memset(&action, 0, sizeof(struct sigaction));
-        action.sa_handler = Bun__onPosixSignal;
-        sigemptyset(&action.sa_mask);
-        sigaddset(&action.sa_mask, SIGINT);
-        action.sa_flags = SA_RESTART;
-        sigaction(SIGINT, &action, nullptr);
+        // Put back exactly what install() displaced. Hardcoding Bun__onPosixSignal
+        // here would swallow SIGINT for a process that never registered a
+        // listener, clobbering the startup handler that restores the terminal.
+        sigaction(SIGINT, &m_previousAction, nullptr);
 #endif
 
         m_semaphore.signal();
@@ -119,11 +118,9 @@ void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
     }
 
     WTF::Locker lock(m_globalObjectsMutex);
-    // Append unconditionally: `unregisterGlobalObject` removes exactly one
-    // entry, so skipping a duplicate would let a nested holder (an inner
-    // `runInThisContext({ breakOnSigint: true })`) unregister the outer
-    // holder's global on the way out. `signalAll` tolerates duplicates —
-    // `notifyNeedTermination` only re-sets an already-set trap bit.
+    // Append unconditionally so a nested holder unregisters only its own entry.
+    // `signalAll` tolerates duplicates: `notifyNeedTermination` just re-sets an
+    // already-set trap bit.
     m_globalObjects.append(globalObject);
 }
 
@@ -151,7 +148,10 @@ void SigintWatcher::registerReceiver(SigintReceiver* module)
     }
 
     WTF::Locker lock(m_receiversMutex);
-    m_receivers.appendIfNotContains(module);
+    // Append unconditionally, for the same reason as registerGlobalObject:
+    // `unregisterReceiver` removes one entry. `setSigintReceived` is an
+    // idempotent atomic store, so duplicates are harmless to `signalAll`.
+    m_receivers.append(module);
 }
 
 void SigintWatcher::unregisterReceiver(SigintReceiver* module)

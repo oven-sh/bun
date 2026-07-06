@@ -245,23 +245,16 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        // Neither this module's own SIGINT nor its own timeout: an enclosing
-        // scope asked for the termination — an outer `timeout`, or the REPL's
-        // Ctrl+C watcher. Only that scope can classify it, so re-raise and let
-        // it report.
-        //
-        // Returning here instead of falling through to VM_RETURN_IF_EXCEPTION is
-        // load-bearing: that macro would store the VM's singleton
-        // TerminationException on the module, and re-throwing it once the request
-        // is cleared trips `VM::setException`'s
-        // `!isTerminationException(e) || hasTerminationRequest()` assertion.
-        // `reconcileEvaluationState` settles the status instead, wrapping the
-        // error *value* in a fresh Exception that is safe to re-throw.
+        // An enclosing scope asked for the termination; only it can classify it.
+        // Returning rather than falling through is load-bearing: VM_RETURN_IF_EXCEPTION
+        // would store the singleton TerminationException, whose later re-throw trips
+        // `VM::setException`. `reconcileEvaluationState` settles the status safely.
         if (!getSigintReceived() && timeout == 0) {
             JSC::throwException(globalObject, scope, vm.ensureTerminationException());
             return {};
         }
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
+        // `globalObject` is the NodeVM global when there is one, non-null otherwise.
+        vm.drainMicrotasksForGlobalObject(globalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {

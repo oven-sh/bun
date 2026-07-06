@@ -286,10 +286,9 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
     if (!vm.hasTerminationRequest())
         return false;
 
-    // Neither this script's own SIGINT nor its own timeout: an enclosing scope
-    // asked for the termination — an outer `timeout`, or the REPL's Ctrl+C
-    // watcher. Only that scope can classify it, so re-raise and let its own
-    // `checkForTermination` (or `Bun__REPL__evaluate`) report it.
+    // Neither this script's own SIGINT nor its own timeout, so an enclosing scope
+    // asked for the termination. Only that scope can classify it: re-raise and let
+    // its `checkForTermination` (or `Bun__REPL__evaluate`) report.
     if (!script->getSigintReceived() && !timeout) {
         JSC::throwException(globalObject, scope, vm.ensureTerminationException());
         return true;

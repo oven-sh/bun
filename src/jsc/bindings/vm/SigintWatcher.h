@@ -106,6 +106,10 @@ private:
     WTF::Vector<JSC::JSGlobalObject*> m_globalObjects;
     WTF::Vector<SigintReceiver*> m_receivers;
     uint32_t m_refCount = 0;
+#if !OS(WINDOWS)
+    // The disposition install() displaced, so uninstall() can put it back.
+    struct sigaction m_previousAction {};
+#endif
 
     bool signalAll();
 };

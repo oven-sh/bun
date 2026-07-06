@@ -1335,6 +1335,8 @@ impl<'a> Repl<'a> {
         let mut outcome = if !exception.is_undefined() && !exception.is_null() {
             EvalOutcome::Error(exception)
         } else if let Some(promise) = result.as_promise() {
+            // The wait ticks the VM, which can collect; keep the promise rooted.
+            let _rooted = result.protected();
             // Mark as handled BEFORE waiting to prevent unhandled rejection output
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.wait_for_promise_interruptible(promise, sigint.as_ref());
@@ -1392,10 +1394,14 @@ impl<'a> Repl<'a> {
             if !pending(promise) || Self::sigint_requested(sigint) {
                 return;
             }
-            // Non-blocking while the loop is idle, so the flag above is seen
-            // promptly. With live handles this parks in the poller, which every
-            // path in `us_loop_run_bun_tick` re-enters on EINTR, so a Ctrl+C that
-            // lands after the park waits for whatever wakes the loop next.
+            // With no live handles `auto_tick` never blocks, so nothing can settle
+            // the promise and looping would just burn a core.
+            if !vm.is_event_loop_alive() {
+                return;
+            }
+            // Parks in the poller. Every path in `us_loop_run_bun_tick` re-enters
+            // it on EINTR, so a Ctrl+C landing after the park is only seen once
+            // something else wakes the loop.
             vm.as_mut().auto_tick();
         }
     }
@@ -1636,6 +1642,7 @@ impl<'a> Repl<'a> {
         match self.evaluate_transformed(&transformed_code) {
             EvalOutcome::Error(error) => {
                 self.set_last_error(error);
+                global.to_js_value().put(global, b"_error", error);
                 self.print_js_error(error);
             }
             EvalOutcome::Pending => {}
@@ -1648,6 +1655,7 @@ impl<'a> Repl<'a> {
                 if let Err(err) = self.copy_value_to_clipboard(value) {
                     let exc = global.take_exception(err);
                     self.set_last_error(exc);
+                    global.to_js_value().put(global, b"_error", exc);
                     self.print_js_error(exc);
                 }
             }

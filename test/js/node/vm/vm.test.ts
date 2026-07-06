@@ -997,11 +997,12 @@ test("a module terminated by an enclosing scope ends up errored without aborting
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Before the assertion: a native abort makes stderr the useful diagnostic.
+  capture(stderr);
   expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
     stdout: ["outer=ERR_SCRIPT_EXECUTION_TIMEOUT", "status=errored", "error=readable", "reeval=ok"],
     exitCode: 0,
   });
-  capture(stderr);
 });
 
 test("node:vm native Module prototype methods reject non-module receivers", async () => {

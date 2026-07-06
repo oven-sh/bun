@@ -999,6 +999,23 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  // Arming the SIGINT watcher around every evaluation must put the previous
+  // disposition back, or an external SIGINT is swallowed from then on and the
+  // startup handler that restores the terminal never runs.
+  test("an external SIGINT at the prompt still terminates the REPL", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("1 + 1\n");
+      await waitFor(/\n\s*2\b/);
+
+      proc.kill("SIGINT");
+      const exited = await Promise.race([
+        proc.exited.then(() => "exited"),
+        Bun.sleep(4000).then(() => "still running"),
+      ]);
+      expect(exited).toBe("exited");
+    });
+  });
+
   // The REPL used to stay in raw mode while evaluating, so Ctrl+C was delivered
   // as a byte nobody read and a synchronous loop could only be escaped by
   // killing the process (which left the terminal in raw mode).
@@ -1021,10 +1038,10 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
 
   test("Ctrl+C during a never-settling await leaves the REPL usable", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
-      // The executor runs synchronously, so printing from it marks the point
-      // where the REPL starts waiting. Nothing keeps the loop alive, so the wait
-      // never parks in the poller and the interrupt is picked up immediately.
-      send(`await new Promise(() => { process.stdout.write("WAIT" + "ING\\n"); })\n`);
+      // The executor runs synchronously, so printing from it marks the point where
+      // the REPL starts waiting. The short interval keeps the loop alive, so the
+      // wait parks in the poller but wakes often enough to notice the interrupt.
+      send(`await new Promise(() => { process.stdout.write("WAIT" + "ING\\n"); setInterval(() => {}, 10); })\n`);
       await waitFor("WAITING");
       send("\x03"); // Ctrl+C
       await waitFor(/interrupted/);

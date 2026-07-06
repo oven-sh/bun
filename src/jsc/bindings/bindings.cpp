@@ -6263,10 +6263,9 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     return lineColumn.line;
 }
 
-// Armed around one REPL evaluation. The watcher thread flips the receiver flag
-// before raising the termination trap, and that flag is the only durable record
-// of the signal: JSC clears both the trap bit and `hasTerminationRequest()` by
-// the time the outermost VM entry scope has unwound.
+// Armed around one REPL evaluation. The receiver flag is the only durable record
+// of the signal: JSC clears the trap bit and `hasTerminationRequest()` by the time
+// the outermost VM entry scope has unwound.
 namespace {
 class ReplSigintScope final : public Bun::SigintReceiver {
 public:
@@ -6291,10 +6290,9 @@ static void replClearTermination(JSC::VM& vm)
     vm.clearHasTerminationRequest();
 }
 
-// Arms the SIGINT watcher for `globalObject`. While armed, a SIGINT raises a
-// JSC termination trap, which unwinds synchronous JavaScript (`while (true) {}`)
-// the same way node's `breakOnSigint` does. The returned scope must be passed to
-// `Bun__REPL__disarmSigint`.
+// Arms SIGINT watching for `globalObject`: a SIGINT then raises a JSC termination
+// trap that unwinds synchronous JS, the way node's `breakOnSigint` does. Pass the
+// returned scope to `Bun__REPL__disarmSigint`.
 extern "C" void* Bun__REPL__armSigint(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

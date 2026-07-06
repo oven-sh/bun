@@ -264,6 +264,10 @@ pub struct ValkeyClient {
     /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.
     pub queue: command::entry::Queue,
 
+    /// Subscribe confirmations still owed by the promise-less SUBSCRIBE that
+    /// `JSValkeyClient::resubscribe` replays after a reconnect. One per channel.
+    pub resubscribe_pending: u32,
+
     // Connection parameters
     // `connection_strings` is retained because `js_valkey.rs` still slices it
     // when constructing/duplicating clients.
@@ -1106,6 +1110,15 @@ impl ValkeyClient {
                     // Message pushes never need promise pairs
                     should_consume_promise_pair = false;
                 }
+                Some(protocol::SubscriptionPushMessage::Subscribe)
+                    if self.resubscribe_pending > 0 =>
+                {
+                    // Confirmation of the SUBSCRIBE replayed on reconnect. It was
+                    // written without a promise, and its confirmations are the first
+                    // replies on the new connection, so no pair belongs to it.
+                    self.resubscribe_pending -= 1;
+                    should_consume_promise_pair = false;
+                }
                 Some(
                     protocol::SubscriptionPushMessage::Subscribe
                     | protocol::SubscriptionPushMessage::Unsubscribe,
@@ -1282,6 +1295,7 @@ impl ValkeyClient {
         self.flags.failed = false;
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
+        self.resubscribe_pending = 0;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete

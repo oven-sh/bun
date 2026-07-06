@@ -58,6 +58,12 @@ impl JSMap {
         crate::cpp::JSC__JSMap__size(self, global)
     }
 
+    /// Retrieve this JS Map object's keys as a JS `Array`, in insertion order.
+    #[track_caller]
+    pub fn keys(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        crate::cpp::JSC__JSMap__keys(self, global)
+    }
+
     /// Attempt to convert a `JSValue` to a `*JSMap`.
     ///
     /// Returns `None` if the value is not a Map.

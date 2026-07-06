@@ -7056,12 +7056,9 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         },
     );
 
-    // FILE_WRITE_ATTRIBUTES is requested even for read-only opens (callers
-    // may touch timestamps through the fd), but a read-only ACL grant - the
-    // normal shape for sandboxed processes such as a Windows AppContainer,
-    // where the project tree is often granted RX only - cannot satisfy it
-    // and the open fails ACCESS_DENIED even though the read itself is
-    // permitted. Retry a pure read-only open without it.
+    // Read-only opens still request FILE_WRITE_ATTRIBUTES (fd timestamp
+    // writes), which an RX-only ACL grant - the normal sandbox shape - denies.
+    // Retry a pure read-only open without it.
     if let Err(ref e) = first {
         let read_only = (flags & (O::RDWR | O::WRONLY | O::APPEND | O::CREAT)) == 0;
         if read_only && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES) {

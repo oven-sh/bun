@@ -7645,10 +7645,9 @@ impl NodeFS {
             // outlives it.
             let mut fallback_buf: Option<Box<PathBuffer>> = None;
             let mut buf: &[u8] = if let Some(errno) = rc.errno() {
-                // A sandboxed process (e.g. a Windows AppContainer) is denied
-                // the DOS volume-name translation uv_fs_realpath relies on.
-                // Resolve off an opened handle instead; that route carries the
-                // lowbox-aware GetFinalPathNameByHandle fallback.
+                // A sandboxed process (e.g. a Windows AppContainer) is denied the
+                // DOS volume-name translation uv_fs_realpath relies on. Resolve off
+                // an opened handle instead; that route has the lowbox fallback.
                 if !(errno == E::EPERM as _ || errno == E::EACCES as _) {
                     return Err(sys::Error {
                         errno,

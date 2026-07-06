@@ -88,27 +88,38 @@ void SigintWatcher::install()
 
 void SigintWatcher::uninstall()
 {
-    if (m_installed.exchange(false)) {
-        WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
-        ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
+    if (!m_installed.load()) {
+        return;
+    }
 
+    WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
+    ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
+
+    // Hand the disposition back while still armed. Clearing m_installed first
+    // leaves a window where our handler is live but the watcher thread bails out
+    // of `signalAll`, so a signal landing in it reaches nobody at all.
 #if OS(WINDOWS)
-        SetConsoleCtrlHandler(WindowsCtrlHandler, false);
+    SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        // Undo only our own handler: a native addon may have installed its own
-        // while we were armed, and clobbering it would strand that handler.
-        // `process.on("SIGINT")` instead routes through deferSigintDisposition.
-        struct sigaction current;
-        if (sigaction(SIGINT, nullptr, &current) == 0
-            && !(current.sa_flags & SA_SIGINFO)
-            && current.sa_handler == sigintWatcherHandler) {
-            sigaction(SIGINT, &m_previousAction, nullptr);
-        }
+    // Undo only our own handler: a native addon may have installed its own
+    // while we were armed, and clobbering it would strand that handler.
+    // `process.on("SIGINT")` instead routes through deferSigintDisposition.
+    struct sigaction current;
+    if (sigaction(SIGINT, nullptr, &current) == 0
+        && !(current.sa_flags & SA_SIGINFO)
+        && current.sa_handler == sigintWatcherHandler) {
+        sigaction(SIGINT, &m_previousAction, nullptr);
+    }
 #endif
 
-        m_semaphore.signal();
-        m_thread->waitForCompletion();
+    // The restore above is idempotent, so a second caller that lost this race
+    // (only the destructor can, `deref` holds m_refCountMutex) stops here.
+    if (!m_installed.exchange(false)) {
+        return;
     }
+
+    m_semaphore.signal();
+    m_thread->waitForCompletion();
 }
 
 #if !OS(WINDOWS)

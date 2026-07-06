@@ -1021,12 +1021,19 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   // strand the listener for the rest of the session.
   test("a SIGINT listener registered in the REPL survives the evaluation", async () => {
     await withTerminalRepl(async ({ send, waitFor, proc }) => {
-      send("process.on('SIGINT', () => {}); 1 + 1\n");
+      // Split the literal so the echoed input line can't satisfy the wait.
+      send("process.on('SIGINT', () => console.log('CAUGHT_' + 'SIGINT')); 1 + 1\n");
       await waitFor(/\n\s*2\b/);
 
       proc.kill("SIGINT");
-      const outcome = await Promise.race([proc.exited.then(() => "exited"), Bun.sleep(2000).then(() => "alive")]);
-      expect(outcome).toBe("alive");
+      // The loop only runs during an evaluation, so the queued signal is handed
+      // to the listener on the next one. The signal is already pending when the
+      // keystrokes are written, and a handler runs before the read they satisfy
+      // returns to userspace, so the marker can't be missed.
+      send("3 + 4\n");
+      // Getting the marker at all proves the process survived and the listener,
+      // rather than the watcher's handler, is what the disposition points at.
+      await waitFor("CAUGHT_SIGINT");
     });
   });
 

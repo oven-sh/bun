@@ -978,10 +978,10 @@ test("a terminated context-less module does not discard the main microtask queue
     const chain = promise.then(() => "survived");
     resolve(); // the continuation is now parked in the main microtask queue
 
-    const guard = setTimeout(() => { console.log("HUNG"); process.exit(3); }, 8000);
-    await m.evaluate({ timeout: 100 }).then(() => console.log("NO_THROW"), e => console.log("threw=" + e.code));
-    console.log("chain=" + (await chain));
-    clearTimeout(guard);
+    m.evaluate({ timeout: 100 }).then(() => console.log("NO_THROW"), e => console.log("threw=" + e.code));
+    // Clearing the queue drops the continuation, so this never prints and the
+    // process exits with nothing left to do.
+    chain.then(v => console.log("chain=" + v));
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

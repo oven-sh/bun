@@ -3181,6 +3181,19 @@ where
                             return;
                         }
 
+                        // A materialized ByteStream has already moved its buffered bytes into
+                        // the controller's queue, so the handle below would serve a truncated
+                        // body. Read through the stream instead.
+                        readable_stream::Source::Bytes(_)
+                            if stream.is_native_source_consumed(global_this) =>
+                        {
+                            if let Some(resp) = this.resp {
+                                let mut pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                            }
+                            return;
+                        }
+
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
                             // BACKREF: `Source::Bytes` stores a live non-null
                             // `*mut ByteStream` (the JS wrapper's `m_ctx` heap

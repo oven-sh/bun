@@ -2526,13 +2526,23 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Invalid => {
                     return Err(bun_core::err!("InvalidStream"));
                 }
-                // toBlobIfPossible should've caught this
+                // `to_blob_if_possible` converts these, but only while the native handle still
+                // owns the bytes: once the stream is materialized they live in the controller's
+                // queue, which only the (currently unsupported) JS sink below could reach.
                 webcore::readable_stream::Source::Blob(_)
-                | webcore::readable_stream::Source::File(_) => unreachable!(),
-                webcore::readable_stream::Source::JavaScript
+                | webcore::readable_stream::Source::File(_)
+                | webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
+                    return Err(bun_core::err!("UnsupportedStreamType"));
+                }
+                // Same reason the arm above cannot read its handle: a materialized ByteStream
+                // has already moved its buffer into the controller's queue, so the fast path
+                // below would hand back a truncated body.
+                webcore::readable_stream::Source::Bytes(_)
+                    if stream.is_native_source_consumed(self.global) =>
+                {
                     return Err(bun_core::err!("UnsupportedStreamType"));
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {

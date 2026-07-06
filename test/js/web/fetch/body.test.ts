@@ -860,6 +860,74 @@ describe("locking a network-backed body stream does not consume it", () => {
   });
 });
 
+// Materializing a ByteStream moves its buffered bytes into the stream controller's queue, so
+// anything that reaches past the stream for the native handle's bytes has to stop doing that
+// once the stream has been materialized.
+describe("a materialized body stream is not read through its native handle", () => {
+  // 1 MB: a short payload is served off the socket before anything buffers, which hides the
+  // truncation. At this size the ByteStream always holds a prefix by the time it materializes.
+  const payload = Buffer.alloc(1_000_000, "z").toString();
+
+  test("Bun.serve() streams a re-wrapped fetch() body in full", async () => {
+    using upstream = Bun.serve({ port: 0, fetch: () => new Response(payload) });
+    using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        const res = await fetch(upstream.url);
+        res.body!.getReader().releaseLock(); // materialize, do not read
+        return new Response(res.body);
+      },
+    });
+    const res = await fetch(server.url);
+    const text = await res.text();
+    expect(text.length).toBe(payload.length);
+    expect(text).toBe(payload);
+  });
+
+  test("Bun.serve() streams a re-wrapped Blob body in full", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const src = new Response(new Blob([payload]));
+        src.body!.getReader().releaseLock();
+        return new Response(src.body);
+      },
+    });
+    expect(await (await fetch(server.url)).text()).toBe(payload);
+  });
+
+  // HTMLRewriter buffers through ValueBufferer, which has no way to read a stream's controller
+  // queue. It used to reach for the native handle regardless and hit an `unreachable!()`.
+  test("HTMLRewriter rejects instead of crashing on a materialized body", async () => {
+    using dir = tempDir("hr-peek", {
+      "fixture.js": `
+        const src = new Response(new Blob(["<p>x</p>"]));
+        src.body.getReader().releaseLock();
+        for (const body of [src, new Response(src.body)]) {
+          try {
+            await new HTMLRewriter().on("p", {}).transform(body).text();
+            console.log("RESOLVED");
+          } catch (e) {
+            console.log("REJECTED", e.message);
+          }
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "REJECTED Failed to pipe stream\nREJECTED Failed to pipe stream\n",
+      exitCode: 0,
+    });
+    expect(stderr).toBeString();
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/6860
 describe("constructing a body from an unusable ReadableStream", () => {
   const bytes = () =>

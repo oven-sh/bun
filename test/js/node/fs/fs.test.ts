@@ -2364,6 +2364,43 @@ it("realpath async", async () => {
   expect(await promise).toBe(realpathSync(import.meta.path));
 }, 30_000);
 
+// realpath(3) rejects an empty path, and Node surfaces that through the native
+// entry points. Only realpath/realpathSync (Node's JS port, which begins with
+// path.resolve) turn an empty path into the cwd.
+describe("realpath of an empty path", () => {
+  const summarize = (error: any) => ({
+    code: error?.code,
+    syscall: error?.syscall,
+    message: error?.message,
+  });
+  const enoent = { code: "ENOENT", syscall: "realpath", message: "ENOENT: no such file or directory, realpath" };
+
+  it("realpathSync.native throws ENOENT", () => {
+    let error: unknown;
+    try {
+      fs.realpathSync.native("");
+    } catch (e) {
+      error = e;
+    }
+    expect(summarize(error)).toEqual(enoent);
+  });
+
+  it("realpath.native calls back with ENOENT", async () => {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    fs.realpath.native("", (err, resolvedPath) => resolve(err ?? { resolvedPath }));
+    expect(summarize(await promise)).toEqual(enoent);
+  });
+
+  it("realpathSync and realpath resolve it to the cwd, like Node", async () => {
+    const cwd = realpathSync(process.cwd());
+    expect(realpathSync("")).toBe(cwd);
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    fs.realpath("", (err, resolvedPath) => (err ? reject(err) : resolve(resolvedPath)));
+    expect(await promise).toBe(cwd);
+  });
+});
+
 describe("stat", () => {
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));

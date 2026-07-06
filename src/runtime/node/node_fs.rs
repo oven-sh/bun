@@ -7629,6 +7629,17 @@ impl NodeFS {
         args: &args::Realpath,
         variant: RealpathVariant,
     ) -> Maybe<ret::Realpath> {
+        // `realpath(3)` rejects an empty path. Only the emulated variant resolves it
+        // against the cwd, because Node's JS port starts with `path.resolve(path)`.
+        if variant == RealpathVariant::Native && args.path.slice().is_empty() {
+            return Err(sys::Error {
+                errno: E::ENOENT as _,
+                syscall: sys::Tag::realpath,
+                path: args.path.slice().into(),
+                ..Default::default()
+            });
+        }
+
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();

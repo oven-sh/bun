@@ -1324,6 +1324,14 @@ describe("deno_task", () => {
       .env({ ...bunEnv, IFS: "/" })
       .stdout(`["a/b/c"]\n`)
       .runAsTest("IFS from environment does not split");
+
+    // A redirect target is field-split, so surrounding whitespace in the
+    // substitution result is stripped rather than baked into the filename.
+    TestBuilder.command`echo hi > $(echo ${" foo "})`
+      .ensureTempDir()
+      .fileEquals("foo", "hi\n")
+      .doesNotExist(" foo ")
+      .runAsTest("redirect target is field-split");
   });
 
   describe("shell variables", async () => {

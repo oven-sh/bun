@@ -51,8 +51,8 @@ pub struct Expansion {
     /// so `$(false)` as argv0 fails.
     pub out_exit_code: ExitCode,
     /// Expand to a single word: suppress field splitting of command
-    /// substitutions. Set for assignment values, redirect targets, and `[[ ]]`
-    /// operands, which POSIX exempts from field splitting.
+    /// substitutions. Set for assignment values and `[[ ]]` operands, which
+    /// are exempt from field splitting (redirect targets are still split).
     pub single: bool,
 }
 
@@ -625,8 +625,8 @@ impl Expansion {
         if stdout.is_empty() {
             return;
         }
-        // Assignment values, redirect targets and `[[ ]]` operands expand to a
-        // single word: POSIX exempts them from field splitting.
+        // Assignment values and `[[ ]]` operands expand to a single word:
+        // they are exempt from field splitting.
         if me.single {
             me.current_out.extend_from_slice(&stdout);
             return;

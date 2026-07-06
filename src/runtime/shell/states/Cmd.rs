@@ -262,9 +262,12 @@ impl Cmd {
                                 atom,
                                 this,
                                 io,
+                                // Redirect targets are field-split (bash errors
+                                // on >1 field; we keep the pre-existing glue),
+                                // so surrounding IFS whitespace is stripped.
                                 ExpansionOpts {
                                     for_spawn: false,
-                                    single: true,
+                                    single: false,
                                 },
                             );
                             return Expansion::start(interp, child);

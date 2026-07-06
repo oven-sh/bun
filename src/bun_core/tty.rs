@@ -1,4 +1,5 @@
-use core::ffi::c_int;
+use core::cell::RefCell;
+use core::ffi::{c_int, c_void};
 
 // ─── MOVE-IN: Winsize (TYPE_ONLY from bun_sys → bun_core) ─────────────────
 // Used by output.rs::TERMINAL_SIZE. Field names
@@ -24,31 +25,59 @@ pub enum Mode {
     Io = 2,
 }
 
-pub fn set_mode(fd: c_int, mode: Mode) -> c_int {
-    Bun__ttySetMode(fd, mode as c_int)
+/// Raw-mode state for one terminal handle, mirroring libuv's `uv_tty_t`: the
+/// mode this handle last applied plus the termios snapshot it captured on the
+/// way out of [`Mode::Normal`]. Opaque bytes; the C side copies them in and
+/// out, so a handle restoring cooked mode never clobbers another handle's.
+pub struct State {
+    bytes: RefCell<Box<[u8]>>,
+}
+
+impl State {
+    pub fn new() -> Self {
+        Self {
+            bytes: RefCell::new(vec![0u8; Bun__ttyStateSize()].into_boxed_slice()),
+        }
+    }
+
+    pub fn set_mode(&self, fd: c_int, mode: Mode) -> c_int {
+        let mut bytes = self.bytes.borrow_mut();
+        // SAFETY: `bytes` is exactly the `Bun__ttyStateSize()` bytes the C side
+        // reads and writes, and the borrow keeps it alive across the call.
+        unsafe { Bun__ttySetMode(fd, mode as c_int, bytes.as_mut_ptr().cast::<c_void>()) }
+    }
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// RAII guard: sets `fd` to [`Mode::Raw`] on construction and restores
 /// [`Mode::Normal`] on `Drop`.
 pub struct RawModeGuard {
     fd: c_int,
+    state: State,
 }
 
 impl RawModeGuard {
     #[inline]
     pub fn new(fd: c_int) -> Self {
-        let _ = set_mode(fd, Mode::Raw);
-        Self { fd }
+        let state = State::new();
+        let _ = state.set_mode(fd, Mode::Raw);
+        Self { fd, state }
     }
 }
 
 impl Drop for RawModeGuard {
     #[inline]
     fn drop(&mut self) {
-        let _ = set_mode(self.fd, Mode::Normal);
+        let _ = self.state.set_mode(self.fd, Mode::Normal);
     }
 }
 
 unsafe extern "C" {
-    safe fn Bun__ttySetMode(fd: c_int, mode: c_int) -> c_int;
+    safe fn Bun__ttyStateSize() -> usize;
+    unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void) -> c_int;
 }

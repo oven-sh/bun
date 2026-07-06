@@ -2541,10 +2541,11 @@ fn probe_kitty_graphics() -> bool {
             Ok(t) => t,
             Err(_) => return false,
         };
-        let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
+        let tty_state = bun_core::tty::State::new();
+        let _ = tty_state.set_mode(0, bun_core::tty::Mode::Raw);
         let _restore = scopeguard::guard(saved_termios, |saved| {
             if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
+                let _ = tty_state.set_mode(0, bun_core::tty::Mode::Normal);
             }
         });
 

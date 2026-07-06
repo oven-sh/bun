@@ -125,6 +125,9 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     using p = await connectedPair(s => s.on("error", () => {}));
     const serverFd = (p.serverSock as any)._handle.fd;
     expect(serverFd).toBeGreaterThanOrEqual(0);
+    // resetAndDestroy() emits on the resetting socket when terminate() fails; an
+    // unhandled 'error' would crash the run instead of failing an assertion.
+    p.client.on("error", () => {});
 
     fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: serverFd });
     const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();

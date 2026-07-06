@@ -319,11 +319,19 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto& callback = registeredListener->callback();
 
         JSObject* jsFunction = callback.jsFunction();
+        const bool isOnce = registeredListener->isOnce();
 
-        // Node stores `once()` listeners wrapped and fires the wrapper, which trips its one-shot
-        // guard. We only materialize a wrapper on demand, so fire it when one exists, or a wrapper
-        // the caller is still holding from rawListeners() would invoke the listener a second time.
-        if (registeredListener->isOnce()) {
+        if (isOnce) {
+            // Removing a once() listener emits 'removeListener', which can re-enter and reach this
+            // registration through another in-flight snapshot. Node's once() wrapper guards against
+            // running twice with a `fired` flag; this is that guard.
+            if (registeredListener->hasFired()) [[unlikely]]
+                continue;
+            registeredListener->markAsFired();
+
+            // Node stores once() listeners wrapped and fires the wrapper. We only materialize one on
+            // demand, so fire it when it exists, or a wrapper the caller is still holding from
+            // rawListeners() would invoke the listener a second time.
             if (auto* onceWrapper = registeredListener->onceWrapper())
                 jsFunction = onceWrapper;
         }
@@ -335,7 +343,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         JSC::EnsureStillAliveScope jsFunctionProtector(jsFunction);
 
         // Do this before invocation to avoid reentrancy issues.
-        if (registeredListener->isOnce())
+        if (isOnce)
             removeListener(eventType, callback);
 
         if (!jsFunction) [[unlikely]]

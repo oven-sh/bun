@@ -975,6 +975,40 @@ describe("process", () => {
     ).toEqual({ seen: ["foo"], remaining: 0 });
   });
 
+  test("each once('removeListener') handler fires exactly once", async () => {
+    // Removing the first handler emits 'removeListener', which re-entrantly reaches the second one
+    // while the outer emit still holds it in its snapshot.
+    expect(
+      await runJSON(`
+        const calls = [];
+        process.once("removeListener", n => calls.push("h1:" + n));
+        process.once("removeListener", n => calls.push("h2:" + n));
+        process.on("foo", () => {});
+        process.removeAllListeners("foo");
+        console.log(JSON.stringify(calls));
+      `),
+    ).toEqual(["h2:removeListener", "h1:foo"]);
+  });
+
+  test("a once() listener removed mid-emit still fires", () => {
+    // The guard above keys off the listener having already run, not off it having been removed: an
+    // emit in flight still invokes a once() listener that a prior handler unregistered.
+    const order: string[] = [];
+    const h2 = () => order.push("h2");
+    const h1 = () => {
+      process.removeListener("bun-removed-mid-emit", h2);
+      order.push("h1");
+    };
+    try {
+      process.on("bun-removed-mid-emit", h1);
+      process.once("bun-removed-mid-emit", h2);
+      process.emit("bun-removed-mid-emit");
+      expect(order).toEqual(["h1", "h2"]);
+    } finally {
+      process.removeAllListeners("bun-removed-mid-emit");
+    }
+  });
+
   test("removeAllListeners() with no arguments emits 'removeListener' for every listener", async () => {
     expect(
       await runJSON(`

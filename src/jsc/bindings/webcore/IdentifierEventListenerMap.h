@@ -25,6 +25,12 @@ public:
 
     void markAsRemoved() { m_wasRemoved = true; }
 
+    // Stands in for the `fired` flag on Node's once() wrapper: an emit that still holds this
+    // registration in its snapshot must not invoke it twice. Distinct from wasRemoved(), because a
+    // once() listener removed before it ran does still fire out of an in-flight snapshot.
+    bool hasFired() const { return m_hasFired; }
+    void markAsFired() { m_hasFired = true; }
+
     // rawListeners() hands out a wrapper for `once()` listeners, cached here so repeated calls keep
     // returning the same function. Weak: once nothing holds the wrapper its identity is unobservable.
     JSC::JSObject* onceWrapper() const { return m_onceWrapper.get(); }
@@ -34,12 +40,14 @@ private:
     SimpleRegisteredEventListener(Ref<EventListener>&& listener, bool once)
         : m_isOnce(once)
         , m_wasRemoved(false)
+        , m_hasFired(false)
         , m_callback(WTF::move(listener))
     {
     }
 
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
+    bool m_hasFired : 1;
     Ref<EventListener> m_callback;
     JSC::Weak<JSC::JSObject> m_onceWrapper;
 };

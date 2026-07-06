@@ -30,6 +30,7 @@ type FSStream = import("node:fs").ReadStream &
      * sink = FileSink
      */
     [kWriteStreamFastPath]?: undefined | true | FileSink;
+    [kBackpressurePromise]?: undefined | Promise<number>;
   };
 type FD = number;
 
@@ -45,6 +46,8 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The promise the sink handed back for the writes it is still buffering, if any.
+const kBackpressurePromise = Symbol("kBackpressurePromise");
 const kFs = Symbol("kFs");
 
 const {
@@ -490,6 +493,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   // Enable fast path
   if (fastPath) {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
+    this[kBackpressurePromise] = undefined;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
@@ -673,12 +677,18 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
+      // The sink hands every write it buffers the same promise, so these reactions
+      // run in write order. Park it: a later write the sink accepts outright has to
+      // report completion behind the ones still waiting here.
+      this[kBackpressurePromise] = maybePromise;
       maybePromise
         .then(() => {
+          if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
           this.emit("drain"); // Emit drain event
           cb(null);
         })
         .catch(err => {
+          if (this[kBackpressurePromise] === maybePromise) this[kBackpressurePromise] = undefined;
           // Always call the callback with the error
           cb(err);
           // If no callback was provided, emit the error on the stream
@@ -690,7 +700,20 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
         });
       return false; // Indicate backpressure
     } else {
-      cb(null);
+      if (hasCallback) {
+        const backpressurePromise = this[kBackpressurePromise];
+        if (backpressurePromise === undefined) {
+          // node never invokes a write callback during write(). Deferring also keeps
+          // it ordered with readline's no-op cursorTo()/moveCursor(), which call back
+          // from process.nextTick().
+          process.nextTick(cb, null);
+        } else {
+          // Accepting this write is what drained the sink, so the callbacks parked on
+          // that promise are queued but have not run. Land behind them.
+          const report = () => cb(null);
+          backpressurePromise.then(report, report);
+        }
+      }
       return true; // No backpressure
     }
   } else {

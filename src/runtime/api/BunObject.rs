@@ -1926,7 +1926,7 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
         crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
-        Default::default(),
+        &Default::default(),
         None,
         global_this,
     ) {

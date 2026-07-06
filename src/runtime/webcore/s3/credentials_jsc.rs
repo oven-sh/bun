@@ -81,7 +81,7 @@ fn set_content_field(
 
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
-    defaults: S3DefaultOptions<'_>,
+    defaults: &S3DefaultOptions<'_>,
     options: Option<JSValue>,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {

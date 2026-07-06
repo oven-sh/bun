@@ -42,7 +42,7 @@ pub(crate) trait S3CredentialsExt {
         // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
-        defaults: S3DefaultOptions<'_>,
+        defaults: &S3DefaultOptions<'_>,
         options: Option<JSValue>,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions>;
@@ -59,7 +59,7 @@ impl S3CredentialsExt for S3Credentials {
     #[inline]
     fn get_credentials_with_options(
         this: &S3Credentials,
-        defaults: S3DefaultOptions<'_>,
+        defaults: &S3DefaultOptions<'_>,
         options: Option<JSValue>,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
@@ -271,7 +271,7 @@ impl S3Client {
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
-            S3DefaultOptions::default(),
+            &S3DefaultOptions::default(),
             args.next_eat(),
             global,
         )?;
@@ -381,7 +381,7 @@ impl S3Client {
                 path,
                 options,
                 &ptr.credentials,
-                ptr.default_options(),
+                &ptr.default_options(),
             )?,
         );
         // `to_js` runs `calculateEstimatedByteSize()`
@@ -428,7 +428,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.default_options(),
+            &ptr.default_options(),
         )?;
         S3File::get_presign_url_from(&mut blob, global, options)
     }
@@ -466,7 +466,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.default_options(),
+            &ptr.default_options(),
         )?;
         S3File::S3BlobStatTask::exists(global, &blob)
     }
@@ -504,7 +504,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.default_options(),
+            &ptr.default_options(),
         )?;
         S3File::S3BlobStatTask::size(global, &mut blob)
     }
@@ -542,7 +542,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.default_options(),
+            &ptr.default_options(),
         )?;
         S3File::S3BlobStatTask::stat(global, &blob)
     }
@@ -583,7 +583,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.default_options(),
+            &ptr.default_options(),
         )?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
@@ -617,7 +617,7 @@ impl S3Client {
             PathLike::default(),
             options,
             &ptr.credentials,
-            S3DefaultOptions {
+            &S3DefaultOptions {
                 options: ptr.options,
                 request_payer: ptr.request_payer,
                 ..Default::default()
@@ -659,7 +659,7 @@ impl S3Client {
             path,
             options,
             &ptr.credentials,
-            ptr.default_options(),
+            &ptr.default_options(),
         )?;
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)

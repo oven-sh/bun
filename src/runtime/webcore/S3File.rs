@@ -367,7 +367,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     path: PathLike,
     options: Option<JSValue>,
     default_credentials: &s3::S3Credentials,
-    defaults: s3::S3DefaultOptions<'_>,
+    defaults: &s3::S3DefaultOptions<'_>,
 ) -> JsResult<Blob> {
     let aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
@@ -423,7 +423,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
         path,
         options,
         existing_credentials,
-        Default::default(),
+        &Default::default(),
     )
 }
 

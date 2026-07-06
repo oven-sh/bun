@@ -2,9 +2,6 @@
 import { beforeAll,describe,expect,it } from "bun:test";
 import url from "node:url";
 
-// url.parse is deprecated.
-process.emitWarning = () => {};
-
 describe("Invalid IPv6 addresses", () => {
   it.each(["https://[::1", "https://[\n::1]"])("Invalid hostnames - parsing '%s' fails", input => {
     expect(() => url.parse(input)).toThrowError(TypeError);

@@ -573,11 +573,9 @@ fn parse_ipv4_field(field: &[u8]) -> Option<u64> {
     Some(value)
 }
 
-// A field that a resolver reads as a number: all decimal digits (c-ares reads
-// these even when inet_aton rejects them, e.g. the invalid octal "08"), or a
-// `0x`/`0X` hex prefix. A field carrying hex letters without the `0x` prefix
-// (e.g. a ".de"/".ca" TLD) is not numeric under any backend, so it marks the
-// whole name as a hostname rather than a malformed literal.
+// A field a backend reads as a number: all decimal digits, or a `0x`/`0X` hex
+// prefix. Hex letters without a `0x` prefix (a `.de`/`.ca` TLD) are not numeric
+// to any backend, so such a field marks the whole name as a hostname.
 fn looks_like_numeric_field(field: &[u8]) -> bool {
     if field.is_empty() {
         return false;
@@ -588,13 +586,9 @@ fn looks_like_numeric_field(field: &[u8]) -> bool {
     field.iter().all(u8::is_ascii_digit)
 }
 
-// Classify `name` the way node/glibc `getaddrinfo` does before resolving: a
-// string shaped like a numeric IPv4 literal (octal/hex/dword and the 1-3 field
-// shorthands) is parsed here so every backend agrees on the address, instead of
-// letting c-ares apply its own (decimal-only, non-canonical) reading. A numeric
-// literal that fails to parse is rejected rather than handed to a backend whose
-// lenient reading would dial a different host; anything not shaped like a
-// numeric literal falls through to DNS unchanged.
+// Parse inet_aton-shaped IPv4 literals to canonical octets so every backend
+// agrees. A numeric literal that fails to parse is rejected (not handed to a
+// backend with a laxer reading); a non-numeric name falls through to DNS.
 pub(super) fn classify_ipv4_literal(name: &[u8]) -> Ipv4Literal {
     // A name that does not start with a digit is always a hostname.
     if name.is_empty() || !name[0].is_ascii_digit() {
@@ -5349,10 +5343,8 @@ impl Resolver {
         let normalized = normalize_dns_name(name, &mut backend);
         opts.backend = backend;
 
-        // Resolve legacy IPv4 literals (octal/hex/dword/shorthand) to a canonical
-        // dotted quad in one place so every backend agrees with node/glibc. A
-        // numeric literal that does not parse is rejected rather than handed to a
-        // backend whose lenient reading would pick a different host.
+        // Canonicalize legacy IPv4 literals before backend dispatch so every
+        // backend agrees with node/glibc; invalid numeric attempts fail closed.
         let canonical;
         let resolved_name: &[u8] = match classify_ipv4_literal(normalized) {
             Ipv4Literal::Valid(octets) => {

@@ -215,12 +215,9 @@ describe("dns", () => {
   );
 
   describe("IPv4 literal normalization (inet_aton semantics)", () => {
-    // Legacy dotted forms (octal, hex, dword, and the 1-3 field shorthands)
-    // must resolve to the same canonical address node/glibc/curl produce, on
-    // every backend. The default c-ares backend previously read leading-zero
-    // octets as decimal and rejected the hex/dword/shorthand forms, so the same
-    // string resolved to a different host than node and than Bun's own libc
-    // backend. Numeric literals resolve without touching the network.
+    // Legacy dotted forms (octal, hex, dword, 1-3 field shorthands) must resolve
+    // to the same canonical address node/glibc/curl produce, on every backend.
+    // Numeric literals resolve without touching the network.
     const canonical: Array<[string, string]> = [
       ["0177.0.0.1", "127.0.0.1"],
       ["127.0.0.010", "127.0.0.8"],
@@ -248,14 +245,11 @@ describe("dns", () => {
         // @ts-expect-error -- backend is a valid option
         backends.map(backend => dns.lookup(input, { backend, family: 4 }).then(r => r[0].address)),
       );
-      expect(addresses).toEqual(["8.1.2.3", "8.1.2.3", "8.1.2.3"]);
+      expect(addresses).toEqual(backends.map(() => "8.1.2.3"));
     });
 
-    // A numeric literal that inet_aton rejects must not fall through to the
-    // c-ares backend, whose lenient decimal reading would dial a different host
-    // (e.g. "08.0.0.1" as 8.0.0.1). A bare "0x"/"0X" prefix is not a number
-    // either and must not be read as 0.0.0.0. Reject all of these rather than
-    // silently diverging.
+    // Malformed numeric literals must be rejected, not dialed with a backend's
+    // laxer reading (e.g. c-ares "08.0.0.1" as 8.0.0.1, or "0x" as 0.0.0.0).
     test.each(["08.0.0.1", "09.1.1.1", "256.1.1.1", "1.2.3.4.5", "0x", "127.0x", "0x.0x.0x.0x"])(
       "rejects malformed numeric literal %s",
       async input => {

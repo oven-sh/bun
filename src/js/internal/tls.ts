@@ -99,10 +99,4 @@ function convertALPNProtocols(protocols, out) {
   }
 }
 
-export {
-  VALID_TLS_ERROR_MESSAGE_TYPES,
-  convertALPNProtocols,
-  isValidTLSArray,
-  isValidTLSItem,
-  throwOnInvalidTLSArray,
-};
+export { VALID_TLS_ERROR_MESSAGE_TYPES, convertALPNProtocols, isValidTLSArray, isValidTLSItem, throwOnInvalidTLSArray };

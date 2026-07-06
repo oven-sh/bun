@@ -213,7 +213,7 @@ pub struct ImportMeta;
 
 #[derive(Clone, Copy, Default)]
 pub struct ImportMetaMain {
-    /// If true, print `!import.meta.main` (or `require.main != module`).
+    /// If true, print `!import.meta.main` (or `require.main !== module`).
     pub inverted: bool,
 }
 

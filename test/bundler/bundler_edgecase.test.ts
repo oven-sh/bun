@@ -2075,7 +2075,7 @@ describe("bundler", () => {
       `,
     },
     target: "node",
-    capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
+    capture: ["false", "false", "__require.main === __require.module", "__require.main === __require.module"],
     onAfterBundle(api) {
       // This should not be marked as a CommonJS module
       api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
@@ -2096,13 +2096,55 @@ describe("bundler", () => {
     },
     target: "node",
     format: "cjs",
-    capture: ["false", "false", "require.main == module", "require.main == module"],
+    capture: ["false", "false", "require.main === module", "require.main === module"],
     onAfterBundle(api) {
       console.log(api.readFile("/out.js"));
       // This should be marked as a CommonJS module
       api.expectFile("/out.js").toMatch(/\brequire\b/); // __require is not ok
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
+  });
+  itBundled("edgecase/ImportMetaMainPrecedenceCjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture("x=" + (require.main === module) + "!"),
+          capture(1 + (require.main === module)),
+          capture("x" + !(require.main !== module)),
+          capture((require.main === module).toString()),
+          capture((require.main !== module) ** 2),
+        );
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    capture: [
+      `"x=" + (require.main === module) + "!"`,
+      `1 + (require.main === module)`,
+      `"x" + !(require.main !== module)`,
+      `(require.main === module).toString()`,
+      `(require.main !== module) ** 2`,
+    ],
+  });
+  itBundled("edgecase/ImportMetaMainPrecedenceEsm", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture("x=" + (require.main !== module) + "!"),
+          capture((require.main !== module).toString()),
+          capture((require.main !== module) ** 2),
+          capture(import.meta.main.toString()),
+        );
+      `,
+    },
+    capture: [
+      `"x=" + !import.meta.main + "!"`,
+      `(!import.meta.main).toString()`,
+      `(!import.meta.main) ** 2`,
+      `import.meta.main.toString()`,
+    ],
   });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {

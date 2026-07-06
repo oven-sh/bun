@@ -1276,6 +1276,23 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    // `export NAME` without `=` must export the variable's current value, not
+    // assign an empty string. https://github.com/oven-sh/bun/issues/33430
+    TestBuilder.command`T=5; export T; ${BUN} -e ${"console.log(process.env.T)"} && echo shellvar=[$T]`
+      .env(bunEnv)
+      .stdout("5\nshellvar=[5]\n")
+      .runAsTest("export without value exports current shell var");
+
+    TestBuilder.command`export OUTER; ${BUN} -e ${"console.log(process.env.OUTER)"} && echo shellvar=[$OUTER]`
+      .env({ ...bunEnv, OUTER: "fromenv" })
+      .stdout("fromenv\nshellvar=[fromenv]\n")
+      .runAsTest("export without value preserves inherited env var");
+
+    TestBuilder.command`export NOSUCH; ${BUN} -e ${'console.log(process.env.NOSUCH === undefined ? "UNSET" : "SET:" + process.env.NOSUCH)'}`
+      .env(bunEnv)
+      .stdout("UNSET\n")
+      .runAsTest("export of unset name does not materialize env entry");
   });
 
   describe("pipeline", async () => {

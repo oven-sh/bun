@@ -9,6 +9,7 @@ const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ObjectAssign = Object.assign;
@@ -69,10 +70,9 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   const endpoint = `${requestHost}:${requestPort}`;
   // The ClientRequest constructor should already have validated the host and the port.
   // When the request options come from a string invalid characters would be stripped away,
-  // when it's an object ERR_INVALID_CHAR would be thrown. Here we just assert in case
+  // when it's an object ERR_INVALID_CHAR would be thrown. Validate again in case
   // agent.createConnection() is called with invalid options.
-  $assert(endpoint.includes("\r") === false);
-  $assert(endpoint.includes("\n") === false);
+  validateHeaderValue("host", endpoint);
 
   let payload = `CONNECT ${endpoint} HTTP/1.1\r\n`;
   // The parseProxyConfigFromEnv() method should have already validated the authorization header

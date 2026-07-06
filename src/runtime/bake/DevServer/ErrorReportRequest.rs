@@ -565,18 +565,22 @@ fn read_string32<'a>(
 /// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
 /// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
 pub(crate) fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
-    fn is_disallowed(prev: u8, b: u8) -> bool {
-        // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
-        // multi-byte characters and must not be blanked; only the encoded C1
-        // form (a 0xC2 lead byte followed by 0x80..=0x9F) reaches the
-        // terminal as a control.
+    let valid_utf8 = strings::is_valid_utf8(s);
+    fn is_disallowed(prev: u8, b: u8, valid_utf8: bool) -> bool {
+        // In well-formed UTF-8, lone 0x80..=0x9F bytes are continuation bytes
+        // of legitimate multi-byte characters and must not be blanked; only
+        // the encoded C1 form (a 0xC2 lead byte followed by 0x80..=0x9F)
+        // reaches the terminal as a control. The report body is raw bytes and
+        // is never validated elsewhere, so when it is not valid UTF-8 that
+        // assumption does not hold and every non-ASCII byte is blanked.
         (b < 0x20 && b != b'\t' && b != b'\n')
             || b == 0x7f
             || (prev == 0xc2 && (0x80..=0x9f).contains(&b))
+            || (!valid_utf8 && b >= 0x80)
     }
     let mut prev = 0u8;
     if !s.iter().any(|&b| {
-        let bad = is_disallowed(prev, b);
+        let bad = is_disallowed(prev, b, valid_utf8);
         prev = b;
         bad
     }) {
@@ -586,7 +590,7 @@ pub(crate) fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u
     let mut prev = 0u8;
     for i in 0..copy.len() {
         let cur = copy[i];
-        if is_disallowed(prev, cur) {
+        if is_disallowed(prev, cur, valid_utf8) {
             copy[i] = b' ';
             // For an encoded C1 control, blank the 0xC2 lead byte too so the
             // output stays valid UTF-8 instead of leaving a dangling lead byte.

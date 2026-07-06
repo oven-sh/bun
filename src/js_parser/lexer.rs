@@ -1087,6 +1087,7 @@ lexer_impl_header! {
                                     continue;
                                 }
                                 None => {
+                                    self.current += remainder.len();
                                     self.step_with(contents);
                                     continue;
                                 }

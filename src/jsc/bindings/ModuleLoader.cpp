@@ -33,6 +33,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <wtf/Scope.h>
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
@@ -1250,8 +1251,14 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();
 
+    // Bun::toString(JSGlobalObject*, JSValue) hands over a +1 on the StringImpl
+    // and BunString has no destructor, so these have to be released by hand.
     BunString specifier = Bun::toString(globalObject, specifierString);
     BunString referrer = Bun::toString(globalObject, referrerString);
+    auto derefStrings = WTF::makeScopeExit([&] {
+        specifier.deref();
+        referrer.deref();
+    });
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool wasModuleMock = pendingModule->wasModuleMock;
@@ -1278,6 +1285,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
     BunString specifier = Bun::toString(globalObject, pendingModule->internalField(0).get());
+    auto derefSpecifier = WTF::makeScopeExit([&] { specifier.deref(); });
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();

@@ -545,7 +545,7 @@ describe("errors", () => {
   });
 });
 
-describe("a failing onLoad", () => {
+describe.concurrent("a failing onLoad", () => {
   // Plugins and the module registry are process-global, so each case needs its
   // own process.
   async function runFixture(source: string) {

@@ -466,7 +466,11 @@ describe("net.createServer events", () => {
   // the kernel and surfaces as `write EPIPE` the way Node's afterWrite reports
   // it - not as a write that silently disappears into a half-open socket.
   it("should fail the writes of a connection it dropped", async () => {
+    let held: Socket | undefined;
+    let accepted: Socket | undefined;
+    let dropped: Socket | undefined;
     const server = createServer((socket: Socket) => {
+      held = socket;
       socket.write("hi"); // holds the one allowed connection open
     });
     server.maxConnections = 1;
@@ -474,29 +478,33 @@ describe("net.createServer events", () => {
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
-    const accepted = connect(port, "127.0.0.1");
-    accepted.on("error", () => {});
-    await once(accepted, "data"); // the single slot is taken
+    try {
+      accepted = connect(port, "127.0.0.1");
+      accepted.on("error", () => {});
+      await once(accepted, "data"); // the single slot is taken
 
-    const dropped = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
-    const droppedError = once(dropped, "error");
-    const droppedEnd = once(dropped, "end");
-    const [dropData] = await once(server, "drop");
-    expect(dropData.remotePort).toBeGreaterThan(0);
-    await droppedEnd; // the server let go of its side
+      dropped = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      const droppedError = once(dropped, "error");
+      const droppedEnd = once(dropped, "end");
+      const [dropData] = await once(server, "drop");
+      expect(dropData.remotePort).toBeGreaterThan(0);
+      await droppedEnd; // the server let go of its side
 
-    // The first chunk lands in the send buffer; the peer's reset comes back
-    // before the next one, and every byte after that is undeliverable.
-    const chunk = Buffer.alloc(64 * 1024, 0x41);
-    for (let i = 0; i < 8 && dropped.writable; i++) dropped.write(chunk);
+      // The first chunk lands in the send buffer; the peer's reset comes back
+      // before the next one, and every byte after that is undeliverable.
+      const chunk = Buffer.alloc(64 * 1024, 0x41);
+      for (let i = 0; i < 8 && dropped.writable; i++) dropped.write(chunk);
 
-    const [err] = (await droppedError) as [NodeJS.ErrnoException];
-    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPIPE", syscall: "write" });
-    await once(dropped, "close");
-    expect(dropped.destroyed).toBe(true);
-
-    accepted.destroy();
-    server.close();
+      const [err] = (await droppedError) as [NodeJS.ErrnoException];
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPIPE", syscall: "write" });
+      await once(dropped, "close");
+      expect(dropped.destroyed).toBe(true);
+    } finally {
+      held?.destroy();
+      accepted?.destroy();
+      dropped?.destroy();
+      server.close();
+    }
     await once(server, "close");
   });
 

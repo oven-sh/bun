@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // Two dynamic imports of the same specifier issued before the first async
 // transpile/fetch settles must both resolve, sharing one in-flight fetch.
-test("concurrent dynamic imports of the same module both resolve", async () => {
+test.concurrent("concurrent dynamic imports of the same module both resolve", async () => {
   using dir = tempDir("concurrent-dyn-import", {
     "shared.ts": `export const heavy = "H";`,
     "modules.ts": `import { heavy } from "./shared";\nexport const lazy = heavy + "-lazy";`,
@@ -62,7 +62,7 @@ async function runFixture(files: Record<string, string>, args = ["entry.mjs"]) {
   return { stdout, stderr, exitCode };
 }
 
-test("concurrent dynamic imports of a plugin-provided specifier run onLoad once", async () => {
+test.concurrent("concurrent dynamic imports of a plugin-provided specifier run onLoad once", async () => {
   const { stdout, stderr, exitCode } = await runFixture({
     "entry.mjs": `
       ${pluginPrelude}
@@ -78,7 +78,7 @@ test("concurrent dynamic imports of a plugin-provided specifier run onLoad once"
   expect(JSON.parse(stdout)).toEqual({ load: 1, n: [1, 1, 1], sameIdentity: true });
 });
 
-test("coalescing an in-flight fetch is per specifier, and survives a later import", async () => {
+test.concurrent("coalescing an in-flight fetch is per specifier, and survives a later import", async () => {
   const { stdout, stderr, exitCode } = await runFixture({
     "entry.mjs": `
       ${pluginPrelude}
@@ -93,7 +93,7 @@ test("coalescing an in-flight fetch is per specifier, and survives a later impor
   expect(JSON.parse(stdout)).toEqual({ afterConcurrent: 2, afterReimport: 2 });
 });
 
-test("a plugin-provided specifier that fails to load rejects every concurrent importer", async () => {
+test.concurrent("a plugin-provided specifier that fails to load rejects every concurrent importer", async () => {
   const { stdout, stderr, exitCode } = await runFixture({
     "entry.mjs": `
       let load = 0;
@@ -123,7 +123,7 @@ test("a plugin-provided specifier that fails to load rejects every concurrent im
   });
 });
 
-test("concurrent dynamic imports of a file run its onLoad plugin once", async () => {
+test.concurrent("concurrent dynamic imports of a file run its onLoad plugin once", async () => {
   const { stdout, stderr, exitCode } = await runFixture({
     "mod.mjs": `export const v = "from disk";`,
     "entry.mjs": `
@@ -147,7 +147,7 @@ test("concurrent dynamic imports of a file run its onLoad plugin once", async ()
 
 // The in-flight fetch is keyed on the same triple as the module registry, so
 // these two imports of one path stay separate modules with different sources.
-test("concurrent dynamic imports of one path with different type attributes are not coalesced", async () => {
+test.concurrent("concurrent dynamic imports of one path with different type attributes are not coalesced", async () => {
   const { stdout, stderr, exitCode } = await runFixture({
     "data.json": `{"a":1}`,
     "entry.mjs": `
@@ -164,7 +164,7 @@ test("concurrent dynamic imports of one path with different type attributes are 
 
 // Attributes without a `type` key are their own registry entry even though the
 // type attribute string is empty for both, so the two fetches must stay apart.
-test("concurrent dynamic imports of one path with and without import attributes stay separate modules", async () => {
+test.concurrent("concurrent dynamic imports of one path with and without import attributes stay separate modules", async () => {
   const { stdout, stderr, exitCode } = await runFixture({
     "mod.mjs": `export const v = 1;`,
     "entry.mjs": `
@@ -191,7 +191,7 @@ test("concurrent dynamic imports of one path with and without import attributes 
 
 // require(esm) forces a synchronous fetch of a key whose async fetch may still
 // be in flight; it must not get handed the pending promise.
-test("require(esm) racing a dynamic import of the same module still resolves synchronously", async () => {
+test.concurrent("require(esm) racing a dynamic import of the same module still resolves synchronously", async () => {
   const { stdout, stderr, exitCode } = await runFixture(
     {
       "esm.mjs": `export const v = "esm";`,
@@ -211,7 +211,7 @@ test("require(esm) racing a dynamic import of the same module still resolves syn
 
 // A settled fetch must be dropped again, otherwise mock.module() (which wipes
 // the module registry entry) would be defeated by the coalescing cache.
-test("a settled fetch stops being shared once the module registry owns it", async () => {
+test.concurrent("a settled fetch stops being shared once the module registry owns it", async () => {
   const { stdout, stderr, exitCode } = await runFixture(
     {
       "mod.mjs": `export const v = "real";`,
@@ -238,6 +238,7 @@ test("a settled fetch stops being shared once the module registry owns it", asyn
     },
     ["test", "invalidate.test.ts"],
   );
+  // `bun test` prints its banner to stdout and everything else to stderr.
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("0 fail");
   expect({ stdout, exitCode }).toEqual({ stdout: expect.stringContaining("bun test"), exitCode: 0 });

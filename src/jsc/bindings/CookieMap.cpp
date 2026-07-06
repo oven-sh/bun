@@ -180,19 +180,20 @@ void CookieMap::set(Ref<Cookie> cookie)
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
-    removeInternal(options.name);
-
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
     bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
 
-    // Add the new cookie
+    // Build the removal cookie before touching the map: a rejected name, path or domain
+    // must leave the cookie in place rather than dropping it without a Set-Cookie header.
     auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }
     auto cookie = cookie_exception.releaseReturnValue();
+
+    removeInternal(options.name);
     m_modifiedCookies.append(ModifiedCookie { WTF::move(cookie), true });
     return {};
 }

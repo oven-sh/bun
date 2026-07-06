@@ -93,16 +93,16 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
     ) -> Self {
+        // `root_ptr` both times: it takes `&mut JsonTape`, so neither arm can
+        // hand `tape` a frozen, shared-reborrow pointer. The parser writes
+        // through `tape` for the rest of the parse.
         let (tape, tape_owned) = match tape_alloc {
-            E::TapeAlloc::Global => (
-                core::ptr::NonNull::from(Box::leak(Box::new(E::JsonTape::empty()))),
-                true,
-            ),
+            E::TapeAlloc::Global => (Box::leak(Box::new(E::JsonTape::empty())).root_ptr(), true),
             E::TapeAlloc::Arena(arena) => {
                 // SAFETY: the caller's arena (lifetime-erased) outlives the parse and the AST.
                 let arena: &Bump = unsafe { arena.as_ref() };
                 (
-                    core::ptr::NonNull::from(&*arena.alloc(E::JsonTape::empty_in(tape_alloc))),
+                    arena.alloc(E::JsonTape::empty_in(tape_alloc)).root_ptr(),
                     false,
                 )
             }

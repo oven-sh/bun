@@ -1025,6 +1025,19 @@ impl JsonTape {
         }
     }
 
+    /// The tape allocation's own pointer, for [`ObjectJSON::new`] /
+    /// [`ArrayJSON::new`].
+    ///
+    /// Takes `&mut self` so the result can never be a shared reborrow: the
+    /// parser keeps writing through this pointer for the rest of the parse, and
+    /// a `&JsonTape`-derived pointer is frozen and has no permission to do that.
+    /// Build the pointer with this rather than a bare `NonNull::from`, so the
+    /// borrow it is derived from cannot silently be the wrong one.
+    #[inline]
+    pub fn root_ptr(&mut self) -> core::ptr::NonNull<JsonTape> {
+        core::ptr::NonNull::from(self)
+    }
+
     #[inline]
     fn alloc(&self) -> TapeAlloc {
         *self.props.allocator()
@@ -2737,5 +2750,34 @@ mod json_tape_tests {
         assert_eq!(a.slice(), b"first");
         assert_eq!(b.slice(), &big[..]);
         assert_eq!(c.slice(), b"third");
+    }
+
+    /// `Parser::new`'s arena arm roots the tape at the `&mut JsonTape` the
+    /// allocator hands back, not at a `Box::into_raw`. Writes through that root
+    /// must still be permitted: a shared reborrow here is frozen, so every
+    /// `append_props` the parse performs afterwards would be UB. This is the
+    /// shape the bundler's JSON imports take.
+    #[test]
+    fn tape_rooted_at_a_mutable_borrow_still_accepts_writes() {
+        let mut owner = JsonTape::empty();
+        // `root_ptr` takes `&mut self`, exactly as `arena.alloc(..)` yields.
+        let tape_ptr = owner.root_ptr();
+        // From here on reach the tape only through `tape_ptr`, as the parser does.
+        // SAFETY: `tape_ptr` roots the tape; `owner` is untouched until it drops.
+        let tape = |p: NonNull<JsonTape>| -> &mut JsonTape { unsafe { &mut *p.as_ptr() } };
+
+        let kb = tape(tape_ptr).alloc_str(b"b");
+        let (first, count) = tape(tape_ptr).append_props(&[prop(kb, JsonValue::Null)], &[]);
+        // SAFETY: the tape's own pointer.
+        let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+
+        // The parse keeps appending after the node is built.
+        let ka = tape(tape_ptr).alloc_str(b"a");
+        let (first, count) = tape(tape_ptr).append_props(&[prop(ka, JsonValue::Null)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+
+        assert_eq!(inner.properties()[0].key.slice(), b"b");
+        assert_eq!(outer.properties()[0].key.slice(), b"a");
     }
 }

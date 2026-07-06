@@ -5894,6 +5894,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
+    fn highest_started_stream_id(&self) -> u32 {
+        // handle_received_stream_id raises this for every stream registered on this side
+        // (including locally-initiated ones) and eviction never lowers it.
+        self.last_stream_id.get()
+    }
+
     fn is_stream_reading(&self, stream_id: u32) -> bool {
         match self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists

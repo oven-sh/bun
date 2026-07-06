@@ -1206,6 +1206,52 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             server.close();
           }
         });
+        it("client tolerates a late RST_STREAM for a stream it already closed and evicted", async () => {
+          // RFC 9113 §5.1 (nghttp2 session_detect_idle_stream): a stream this client started and
+          // closed is closed, not idle, even once its state is evicted — a late peer RST_STREAM
+          // for it must be ignored, never answered with GOAWAY(PROTOCOL_ERROR).
+          const { promise: rawSocket, resolve: onRawSocket } = Promise.withResolvers();
+          const server = net.createServer(socket => {
+            socket.on("error", () => {});
+            socket.on("data", () => {});
+            // Server preface: our (empty) SETTINGS plus an ACK of the client's.
+            socket.write(new http2utils.SettingsFrame(false).data);
+            socket.write(new http2utils.SettingsFrame(true).data);
+            onRawSocket(socket);
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          const rstFrame = (id, code) => {
+            const payload = Buffer.alloc(4);
+            payload.writeUInt32BE(code, 0);
+            return Buffer.concat([new http2utils.Frame(4, 3, 0, id).data, payload]);
+          };
+          try {
+            const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+            const sessionErrors = [];
+            client.on("error", err => sessionErrors.push(err));
+            const req = client.request({ ":path": "/" });
+            req.on("error", () => {});
+            const closed = new Promise(resolve => req.on("close", resolve));
+            const socket = await rawSocket;
+            // Close the client's only stream, then wait until the client has fully processed it.
+            socket.write(rstFrame(1, http2.constants.NGHTTP2_CANCEL));
+            await closed;
+            // Late frame for the evicted stream, then a PING the session must still answer.
+            const pinged = new Promise((resolve, reject) => {
+              client.once("ping", resolve);
+              client.once("error", reject);
+              client.once("close", () => reject(new Error("session closed before the ping arrived")));
+            });
+            socket.write(rstFrame(1, http2.constants.NGHTTP2_NO_ERROR));
+            socket.write(Buffer.concat([new http2utils.Frame(8, 6, 0, 0).data, Buffer.alloc(8, 7)]));
+            await pinged;
+            expect(sessionErrors).toEqual([]);
+            expect(client.destroyed).toBe(false);
+            client.destroy();
+          } finally {
+            server.close();
+          }
+        });
         it("should handle bad DATA_FRAME server frame size", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();

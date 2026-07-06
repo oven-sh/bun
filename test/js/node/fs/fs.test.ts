@@ -5292,9 +5292,11 @@ it.skipIf(!isLinux || (process.getuid?.() ?? -1) !== 0)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Each top dir removal still fails (its parent is not writable), but every
-    // deletable child must be gone.
-    expect({ stdout: JSON.parse(stdout.trim()), exitCode }).toEqual({
-      stdout: { syncCode: "EACCES", syncLeft: [], asyncCode: "EACCES", asyncLeft: [] },
+    // deletable child must be gone. Fall back to stderr if the child crashed
+    // before writing its JSON result, so failures self-diagnose.
+    const result = stdout.trim() ? JSON.parse(stdout.trim()) : { crashed: stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { syncCode: "EACCES", syncLeft: [], asyncCode: "EACCES", asyncLeft: [] },
       exitCode: 0,
     });
   },

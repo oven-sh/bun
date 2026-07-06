@@ -116,3 +116,22 @@ test.concurrent.skipIf(!isASAN)("destructing the VM on exit does not corrupt the
     exitCode,
   }).toEqual({ stdout: "ok", asan: null, signalCode: null, exitCode: 0 });
 });
+
+// A rejected entry point whose `uncaughtException` handler swallows the error
+// used to park the loop with nothing registered that could ever wake it. It only
+// ever returned because a 1s GC timerfd happened to be sitting in epoll; with no
+// timerfd left, the process hung forever.
+test.concurrent("an uncaughtException handler on a rejected entry point still exits", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.on("uncaughtException", () => console.log("handled")); throw new Error("boom");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("handled");
+  // It exited on its own rather than being killed by the test timeout.
+  expect(proc.signalCode ?? null).toBe(null);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

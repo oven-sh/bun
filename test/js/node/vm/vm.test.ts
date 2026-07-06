@@ -992,6 +992,36 @@ test("a terminated context-less module does not discard the main microtask queue
   });
 });
 
+// Same clear, reached from the script side. `runInThisContext` evaluates in the
+// caller's global, so there is no context queue to clear and the caller's one is
+// not ours to discard. Node keeps the continuation here too.
+test("a timed-out runInThisContext does not discard the main microtask queue", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+
+    const { promise, resolve } = Promise.withResolvers();
+    const chain = promise.then(() => "survived");
+    resolve(); // the continuation is now parked in the main microtask queue
+
+    try {
+      vm.runInThisContext("while (true) {}", { timeout: 100 });
+      console.log("NO_THROW");
+    } catch (e) {
+      console.log("threw=" + e.code);
+    }
+    // Clearing the queue drops the continuation, so this never prints and the
+    // process exits with nothing left to do.
+    chain.then(v => console.log("chain=" + v));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  capture(stderr);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["threw=ERR_SCRIPT_EXECUTION_TIMEOUT", "chain=survived"],
+    exitCode: 0,
+  });
+});
+
 // Re-raising an enclosing scope's termination must not hand the VM's singleton
 // TerminationException to the module: storing it and re-throwing it once the
 // request is cleared trips `VM::setException`'s

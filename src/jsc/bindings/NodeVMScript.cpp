@@ -281,7 +281,7 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
+static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, NodeVMGlobalObject* contextGlobalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (!vm.hasTerminationRequest())
         return false;
@@ -294,7 +294,10 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         return true;
     }
 
-    vm.drainMicrotasksForGlobalObject(globalObject);
+    // Despite the name this *clears* the queue, so scope it to the terminated
+    // context. `runInThisContext` has none of its own (null, nothing to clear);
+    // passing `globalObject` there would discard the caller's microtasks.
+    vm.drainMicrotasksForGlobalObject(contextGlobalObject);
     // The termination may have fired inside an afterEvaluate microtask
     // checkpoint, leaving the termination exception pending; clear it so
     // the ERR_SCRIPT_EXECUTION_* error below replaces it.
@@ -388,7 +391,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, globalObject, scope, script, newLimit)) {
         return {};
     }
 
@@ -453,7 +456,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    // `runInThisContext` evaluates in the caller's global, so there is no
+    // contextified global whose microtask queue the termination may clear.
+    if (checkForTermination(vm, globalObject, nullptr, scope, script, newLimit)) {
         return {};
     }
 

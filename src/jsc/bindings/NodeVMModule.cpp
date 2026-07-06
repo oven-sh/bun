@@ -246,17 +246,15 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         // An enclosing scope asked for the termination; only it can classify it.
-        // Returning rather than falling through is load-bearing: VM_RETURN_IF_EXCEPTION
-        // would store the singleton TerminationException, whose later re-throw trips
-        // `VM::setException`. `reconcileEvaluationState` settles the status safely.
+        // Returning is load-bearing: falling through would store the singleton
+        // TerminationException, whose re-throw later trips `VM::setException`.
         if (!getSigintReceived() && timeout == 0) {
             JSC::throwException(globalObject, scope, vm.ensureTerminationException());
             return {};
         }
-        // Despite the name this *clears* the queue, so it must stay scoped to the
-        // terminated context's global. `nodeVmGlobalObject` is null when there is
-        // no context, which means there is nothing to clear -- passing the caller's
-        // `globalObject` instead would discard the main thread's microtasks.
+        // Despite the name this *clears* the queue, so scope it to the terminated
+        // context. `nodeVmGlobalObject` is null when there is no context (nothing
+        // to clear); passing `globalObject` would discard the main queue.
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();

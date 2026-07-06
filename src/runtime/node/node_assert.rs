@@ -191,7 +191,10 @@ impl<S: LineToJs> PojoFields for LineDiff<'_, S> {
         global: &JSGlobalObject,
         mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
     ) -> JsResult<()> {
-        put(b"kind", JSValue::js_number_from_int32(self.line.kind as i32))?;
+        put(
+            b"kind",
+            JSValue::js_number_from_int32(self.line.kind as i32),
+        )?;
         put(b"value", self.line.value.line_to_js(global, self.encoding)?)?;
         Ok(())
     }

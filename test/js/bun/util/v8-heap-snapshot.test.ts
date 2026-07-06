@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
+
+// Each test boots a fixture that snapshots its whole heap: ~150ms in a release
+// build, but ~4s under debug/ASAN, which leaves no room under the 5s default.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
 

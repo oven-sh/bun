@@ -12,9 +12,11 @@ so.on("error", e => ev.push("err:" + code(e)));
 so.write("A");
 so.end("B");
 
+// A distinctive post-end marker (not a common letter) so the reader-side
+// assertion can't collide with benign ASAN/debug noise on the same fd.
 const { promise, resolve } = Promise.withResolvers();
 let cbErr = "no-callback";
-const ret = so.write("C", e => {
+const ret = so.write("POST_END_MARKER", e => {
   cbErr = code(e);
   resolve();
 });

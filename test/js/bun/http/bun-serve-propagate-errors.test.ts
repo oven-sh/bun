@@ -93,7 +93,7 @@ const syncFetch = (value: string) => `fetch(req, server) {
     throw ${value};
   },`;
 
-test.each([
+test.concurrent.each([
   ["routes handler, sync throw", syncRoute(thrown), "error: throw-after-upgrade"],
   ["routes handler, upgrade after await", deferredRoute(thrown), "error: throw-after-upgrade"],
   ["fetch handler, sync throw", syncFetch(thrown), "error: throw-after-upgrade"],
@@ -127,7 +127,7 @@ test.each([
 // `origin` tells the two shapes apart: a synchronous throw is an
 // uncaughtException, a rejected handler promise keeps the unhandledRejection
 // origin it would have had if Bun had not consumed the rejection itself.
-test.each([
+test.concurrent.each([
   ["sync throw", syncRoute(thrown), "uncaughtException"],
   ["upgrade after await", deferredRoute(thrown), "unhandledRejection"],
 ])("a %s after server.upgrade() reaches process.on('uncaughtException')", async (_name, handler, origin) => {

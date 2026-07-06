@@ -147,7 +147,17 @@ bool EventEmitter::removeAllListeners()
         removeAllListeners(removeListenerEventType);
     }
 
+    // A 'removeListener' handler may have registered listeners for event types the drain above had
+    // already snapshotted past. Node wipes those silently (`_events = {}`), so no event fires for
+    // them here either, but the native side still has to hear about it or an OS signal handler
+    // installed by that late registration would outlive the listener that asked for it.
+    auto orphaned = map.eventTypes();
     map.clear();
+    if (this->onDidChangeListener) {
+        for (auto& eventType : orphaned)
+            this->onDidChangeListener(*this, eventType, false);
+    }
+
     this->m_thisObject.clear();
     return true;
 }
@@ -308,10 +318,19 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         auto& callback = registeredListener->callback();
 
+        JSObject* jsFunction = callback.jsFunction();
+
+        // Node stores `once()` listeners wrapped and fires the wrapper, which trips its one-shot
+        // guard. We only materialize a wrapper on demand, so fire it when one exists, or a wrapper
+        // the caller is still holding from rawListeners() would invoke the listener a second time.
+        if (registeredListener->isOnce()) {
+            if (auto* onceWrapper = registeredListener->onceWrapper())
+                jsFunction = onceWrapper;
+        }
+
         // Make sure the JS wrapper and function stay alive until the end of this scope. Otherwise,
         // event listeners with 'once' flag may get collected as soon as they get unregistered below,
         // before we call the js function.
-        JSObject* jsFunction = callback.jsFunction();
         JSC::EnsureStillAliveScope wrapperProtector(callback.wrapper());
         JSC::EnsureStillAliveScope jsFunctionProtector(jsFunction);
 

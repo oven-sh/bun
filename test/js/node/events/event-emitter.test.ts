@@ -990,25 +990,39 @@ describe("process", () => {
     ).toEqual({ seen: ["bar", "foo", "foo"], names: [] });
   });
 
-  test.skipIf(!isPosix)("removeAllListeners() uninstalls the OS signal handler", async () => {
-    // With the handler still installed the default action never runs and the child prints "survived".
+  // With the handler still installed the default action never runs and the child prints "survived".
+  async function expectKilledBySIGUSR2(source: string) {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          process.on("SIGUSR2", () => {});
-          process.removeAllListeners();
-          process.kill(process.pid, "SIGUSR2");
-          console.log("survived");
-        `,
-      ],
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, signalCode: proc.signalCode }).toEqual({ stdout: "", signalCode: "SIGUSR2" });
     expect(exitCode).not.toBe(0);
+  }
+
+  test.skipIf(!isPosix)("removeAllListeners() uninstalls the OS signal handler", async () => {
+    await expectKilledBySIGUSR2(`
+      process.on("SIGUSR2", () => {});
+      process.removeAllListeners();
+      process.kill(process.pid, "SIGUSR2");
+      console.log("survived");
+    `);
+  });
+
+  test.skipIf(!isPosix)("removeAllListeners() uninstalls a signal handler added mid-drain", async () => {
+    // The late registration lands after removeAllListeners() snapshotted the event types, so it is
+    // wiped without a 'removeListener'. Its OS handler still has to come down with it.
+    await expectKilledBySIGUSR2(`
+      process.on("removeListener", name => {
+        if (name === "trigger") process.on("SIGUSR2", () => {});
+      });
+      process.on("trigger", () => {});
+      process.removeAllListeners();
+      process.kill(process.pid, "SIGUSR2");
+      console.log("survived");
+    `);
   });
 
   test("is an instanceof EventEmitter", () => {
@@ -1056,6 +1070,39 @@ describe("process", () => {
       expect(process.listenerCount("bun-raw-listeners-off")).toBe(0);
     } finally {
       process.removeAllListeners("bun-raw-listeners-off");
+    }
+  });
+
+  test("a rawListeners() wrapper held across an emit() becomes a no-op", () => {
+    const f = mock(() => {});
+    try {
+      process.once("bun-raw-listeners-held", f);
+      const [wrapper] = process.rawListeners("bun-raw-listeners-held");
+
+      process.emit("bun-raw-listeners-held");
+      expect(f).toHaveBeenCalledTimes(1);
+
+      // The emit already consumed the listener, so the wrapper has nothing left to do.
+      wrapper();
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      process.removeAllListeners("bun-raw-listeners-held");
+    }
+  });
+
+  test("a rawListeners() wrapper that never fired still invokes its listener", () => {
+    const f = mock(() => {});
+    try {
+      process.once("bun-raw-listeners-unfired", f);
+      const [wrapper] = process.rawListeners("bun-raw-listeners-unfired");
+      process.removeAllListeners("bun-raw-listeners-unfired");
+
+      // Node gates only on whether the wrapper itself ran, not on the listener still being
+      // registered, so this invokes f even though the registration is gone.
+      wrapper();
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      process.removeAllListeners("bun-raw-listeners-unfired");
     }
   });
 

@@ -1023,3 +1023,68 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
     expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
   });
 });
+
+describe("patchedDependencies contents_hash", () => {
+  test("two distinct patches that collided under the old wyhash contents_hash do not share a cache entry", async () => {
+    // https://github.com/oven-sh/bun/issues/32741
+    // Both patches create node_modules/is-odd/m.js with a different payload.
+    // Under Wyhash11(seed=0) their raw bytes hash to 0x429d7ca64c60f3d1, so
+    // before this change projB reused projA's cached patched package (and
+    // observed AAAAAAAA) instead of applying its own patch.
+    const header =
+      "diff --git a/m.js b/m.js\n" +
+      "new file mode 100644\n" +
+      "index 0000000..1111111\n" +
+      "--- /dev/null\n" +
+      "+++ b/m.js\n" +
+      "@@ -0,0 +1 @@\n";
+    const patchA = header + `+module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPAAAAAAAAgMsUw5DUklmnopqrstuvwxyz";\n`;
+    const patchB = header + `+module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPBBBBBBBBgMsUw5DUklmnopqrstuvwxyz";\n`;
+    // Regenerating this pair at runtime would require the internal Wyhash11
+    // (not exposed to JS), so the colliding pair is fixed. Both patches are
+    // the same length and differ only in the 8-byte payload.
+    expect(patchA.length).toBe(patchB.length);
+    expect(patchA).not.toBe(patchB);
+
+    const mkProject = (name: string, patch: string) =>
+      tempDirWithFiles(`patch-hash-${name}`, {
+        "package.json": JSON.stringify({
+          name,
+          patchedDependencies: { "is-odd@3.0.1": "patches/p.patch" },
+          dependencies: { "is-odd": "3.0.1" },
+        }),
+        patches: { "p.patch": patch },
+      });
+
+    const sharedCache = tempDirWithFiles("patch-hash-cache", {});
+    const dirA = mkProject("proj-a", patchA);
+    const dirB = mkProject("proj-b", patchB);
+
+    const install = async (cwd: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(sharedCache) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    };
+
+    await install(dirA);
+    expect(await Bun.file(join(dirA, "node_modules", "is-odd", "m.js")).text()).toContain("AAAAAAAA");
+
+    await install(dirB);
+    const mB = await Bun.file(join(dirB, "node_modules", "is-odd", "m.js")).text();
+    expect(mB).toContain("BBBBBBBB");
+    expect(mB).not.toContain("AAAAAAAA");
+
+    // A non-colliding control patch (different size, different content) has
+    // always gone to its own cache entry.
+    const dirC = mkProject("proj-ctl", header + `+module.exports="control payload";\n`);
+    await install(dirC);
+    expect(await Bun.file(join(dirC, "node_modules", "is-odd", "m.js")).text()).toContain("control payload");
+  });
+});

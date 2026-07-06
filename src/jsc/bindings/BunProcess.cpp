@@ -1412,6 +1412,17 @@ static bool signalCanBeHandled(int signalNumber)
 #endif
 }
 
+// A Symbol's Identifier hashes and compares by its description, so a plain
+// lookup would match Symbol("SIGKILL"). Only string event names name a signal.
+static int signalNumberForEventName(const Identifier& eventName)
+{
+    if (eventName.isSymbol())
+        return 0;
+
+    loadSignalNumberMap();
+    return signalNameToNumberMap->get(eventName.string());
+}
+
 #if !OS(WINDOWS)
 // Node starts signal watchers from a `newListener` hook on the main thread, so
 // uv_signal_start()'s EINVAL surfaces before the listener is ever added.
@@ -1420,8 +1431,7 @@ static bool onWillAddListenerImpl(EventEmitter& eventEmitter, const Identifier& 
     if (!Bun__isMainThreadVM())
         return true;
 
-    loadSignalNumberMap();
-    if (!isUncatchableSignal(signalNameToNumberMap->get(eventName.string())))
+    if (!isUncatchableSignal(signalNumberForEventName(eventName)))
         return true;
 
     auto* globalObject = eventEmitter.scriptExecutionContext()->jsGlobalObject();
@@ -1480,7 +1490,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         // Signal Handlers
-        loadSignalNumberMap();
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
             auto signalNames = getSignalNames();
@@ -1568,7 +1577,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
         }
 
-        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+        if (auto signalNumber = signalNumberForEventName(eventName)) {
             if (signalCanBeHandled(signalNumber)) {
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {

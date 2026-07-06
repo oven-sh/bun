@@ -165,6 +165,11 @@ test.skipIf(isWindows)("listening for SIGKILL or SIGSTOP throws EINVAL and regis
       }
     }
     result["SIGUSR2.on"] = probe("SIGUSR2", "on");
+
+    // A Symbol is never a signal name, even when its description reads like one.
+    result["Symbol(SIGKILL).on"] = probe(Symbol("SIGKILL"), "on");
+    result["Symbol(SIGSTOP).on"] = probe(Symbol("SIGSTOP"), "on");
+
     console.log(JSON.stringify(result));
   `;
 
@@ -199,8 +204,38 @@ test.skipIf(isWindows)("listening for SIGKILL or SIGSTOP throws EINVAL and regis
     "SIGSTOP.prependListener": einval,
     "SIGSTOP.prependOnceListener": einval,
     "SIGUSR2.on": { registered: true, listenerCount: 1 },
+    "Symbol(SIGKILL).on": { registered: true, listenerCount: 1 },
+    "Symbol(SIGSTOP).on": { registered: true, listenerCount: 1 },
   });
   expect(exitCode).toBe(0);
+});
+
+// An Identifier for a Symbol hashes and compares by its description, so
+// Symbol("SIGUSR2") used to match the signal-name map and install a real OS
+// handler. Node treats it as an ordinary event and lets SIGUSR2 kill us.
+test.skipIf(isWindows)("a Symbol whose description is a signal name installs no handler", async () => {
+  const script = /*js*/ `
+    process.on(Symbol("SIGUSR2"), () => {});
+
+    // Never reached: the default SIGUSR2 action terminates the process. Exists
+    // only so a missing handler-install shows up as 42 rather than a clean exit.
+    setTimeout(() => process.exit(42), 1000);
+
+    process.kill(process.pid, "SIGUSR2");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+  expect(proc.signalCode).toBe("SIGUSR2");
+  expect(exitCode).not.toBe(42);
 });
 
 // Node only starts signal watchers on the main thread, so inside a worker

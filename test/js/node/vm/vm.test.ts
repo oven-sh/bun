@@ -89,19 +89,26 @@ describe("vm", () => {
 
     // An outer watchdog firing while a nested no-options script is on the stack
     // used to abort the process, and then to report it as a SIGINT. Only the
-    // scope that armed the termination can classify it.
-    test("an outer timeout reports ERR_SCRIPT_EXECUTION_TIMEOUT through a nested script", () => {
-      (globalThis as any).__nestedSpin = () => runInThisContext("while (true) {}");
-      try {
-        expect(() => runInThisContext("__nestedSpin()", { timeout: 100 })).toThrow(
-          expect.objectContaining({
-            code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
-            message: "Script execution timed out after 100ms",
-          }),
-        );
-      } finally {
-        delete (globalThis as any).__nestedSpin;
-      }
+    // scope that armed the termination can classify it. Spawned, so a regression
+    // back to the abort is an attributable failure rather than a dead runner.
+    test("an outer timeout reports ERR_SCRIPT_EXECUTION_TIMEOUT through a nested script", async () => {
+      const fixture = `
+        const vm = require("node:vm");
+        globalThis.__nestedSpin = () => vm.runInThisContext("while (true) {}");
+        try {
+          vm.runInThisContext("__nestedSpin()", { timeout: 100 });
+          console.log("NO_THROW");
+        } catch (e) {
+          console.log(e.code + " " + e.message);
+        }
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      capture(stderr);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: "ERR_SCRIPT_EXECUTION_TIMEOUT Script execution timed out after 100ms",
+        exitCode: 0,
+      });
     });
   });
 

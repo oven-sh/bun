@@ -20,6 +20,11 @@ static BOOL WindowsCtrlHandler(DWORD signal)
 
     return false;
 }
+#else
+static void sigintWatcherHandler(int)
+{
+    SigintWatcher::get().signalReceived();
+}
 #endif
 
 SigintWatcher::SigintWatcher()
@@ -43,9 +48,7 @@ void SigintWatcher::install()
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
 
-    action.sa_handler = [](int signalNumber) {
-        get().signalReceived();
-    };
+    action.sa_handler = sigintWatcherHandler;
 
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, SIGINT);
@@ -92,10 +95,15 @@ void SigintWatcher::uninstall()
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        // Put back exactly what install() displaced. Hardcoding Bun__onPosixSignal
-        // here would swallow SIGINT for a process that never registered a
-        // listener, clobbering the startup handler that restores the terminal.
-        sigaction(SIGINT, &m_previousAction, nullptr);
+        // Undo only our own handler. Code that ran while we were armed may have
+        // installed its own (`process.on("SIGINT")`), and clobbering that would
+        // strand the listener for good: BunProcess installs it exactly once.
+        struct sigaction current;
+        if (sigaction(SIGINT, nullptr, &current) == 0
+            && !(current.sa_flags & SA_SIGINFO)
+            && current.sa_handler == sigintWatcherHandler) {
+            sigaction(SIGINT, &m_previousAction, nullptr);
+        }
 #endif
 
         m_semaphore.signal();

@@ -1016,6 +1016,20 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  // The disarm must not clobber a handler installed while the watcher was armed:
+  // BunProcess registers its SIGINT handler exactly once, so discarding it would
+  // strand the listener for the rest of the session.
+  test("a SIGINT listener registered in the REPL survives the evaluation", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send("process.on('SIGINT', () => {}); 1 + 1\n");
+      await waitFor(/\n\s*2\b/);
+
+      proc.kill("SIGINT");
+      const outcome = await Promise.race([proc.exited.then(() => "exited"), Bun.sleep(2000).then(() => "alive")]);
+      expect(outcome).toBe("alive");
+    });
+  });
+
   // The REPL used to stay in raw mode while evaluating, so Ctrl+C was delivered
   // as a byte nobody read and a synchronous loop could only be escaped by
   // killing the process (which left the terminal in raw mode).

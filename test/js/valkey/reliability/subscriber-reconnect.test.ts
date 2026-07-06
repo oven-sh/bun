@@ -200,7 +200,10 @@ async function closeSubscriber(client: RedisClient) {
   client.close();
 }
 
-describe.concurrent("Valkey: subscriber reconnect", () => {
+// Deliberately not `describe.concurrent`. Each case drives a client through a
+// real reconnect, and six of those at once starved the 10s connection timeout on
+// the Windows CI agents. Serial, the whole file is under 4s.
+describe("Valkey: subscriber reconnect", () => {
   test("replays SUBSCRIBE for every channel with a listener", async () => {
     using server = startRespServer();
     const messages = messageQueue();

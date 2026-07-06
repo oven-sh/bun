@@ -644,6 +644,78 @@ it(".params decodes percent escapes in a route segment exactly once", () => {
   expect(percent.params.id).toBe("100%25");
 });
 
+it("match() drops the URL fragment from the pathname and the query string", () => {
+  // The root "[id]" is what a leaked fragment makes "/about#top" fall through to.
+  const { dir } = make(["index.tsx", "about.tsx", "[id].tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // The fragment belongs to neither the pathname nor the query string, so each of
+  // these must match what the same URL without its fragment matches.
+  const about = router.match("/about#top")!;
+  expect({ name: about.name, pathname: about.pathname, params: about.params, query: about.query }).toEqual({
+    name: "/about",
+    pathname: "/about",
+    params: {},
+    query: {},
+  });
+
+  const withQuery = router.match("/about?a=1#top")!;
+  expect({ name: withQuery.name, pathname: withQuery.pathname, query: withQuery.query }).toEqual({
+    name: "/about",
+    pathname: "/about?a=1",
+    query: { a: "1" },
+  });
+
+  const dynamic = router.match("/posts/xyz#frag")!;
+  expect({ name: dynamic.name, pathname: dynamic.pathname, params: dynamic.params }).toEqual({
+    name: "/posts/[id]",
+    pathname: "/posts/xyz",
+    params: { id: "xyz" },
+  });
+
+  // Only the first '#' delimits; '?' and '#' after it are part of the fragment.
+  const nested = router.match("/posts/xyz#a?b=2#c")!;
+  expect({ name: nested.name, pathname: nested.pathname, params: nested.params, query: nested.query }).toEqual({
+    name: "/posts/[id]",
+    pathname: "/posts/xyz",
+    params: { id: "xyz" },
+    query: { id: "xyz" },
+  });
+
+  // A fragment on a percent-encoded pathname: the decode still happens, the
+  // fragment still goes away.
+  const encodedPath = router.match("/posts/a%20b#frag")!;
+  expect({ name: encodedPath.name, pathname: encodedPath.pathname, params: encodedPath.params }).toEqual({
+    name: "/posts/[id]",
+    pathname: "/posts/a b",
+    params: { id: "a b" },
+  });
+
+  // "%23" is an escaped '#', not a fragment delimiter.
+  const encodedHash = router.match("/posts/a%23b#frag")!;
+  expect({ name: encodedHash.name, pathname: encodedHash.pathname, params: encodedHash.params }).toEqual({
+    name: "/posts/[id]",
+    pathname: "/posts/a#b",
+    params: { id: "a#b" },
+  });
+
+  expect(router.match("/about#")?.name).toBe("/about");
+  expect(router.match("/#frag")?.name).toBe("/");
+
+  // The absolute-URL form already went through the URL parser; both forms agree.
+  const absolute = router.match("https://example.com/posts/xyz?a=1#top")!;
+  expect({ name: absolute.name, pathname: absolute.pathname, params: absolute.params, query: absolute.query }).toEqual({
+    name: "/posts/[id]",
+    pathname: "/posts/xyz?a=1",
+    params: { id: "xyz" },
+    query: { id: "xyz", a: "1" },
+  });
+});
+
 it("caps the number of parsed query string parameters instead of crashing", async () => {
   // A query string with more parameters than the iterator's fixed-size visited
   // bitset (2048 entries) must not be able to take down the process when

@@ -44,11 +44,20 @@ const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSort = Array.prototype.sort;
 const MathMax = Math.max;
 
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
+
+/**
+ * Resolves a hostname through the process-wide DNS cache — the same entries
+ * `fetch()`, `Bun.connect` and `Bun.dns.prefetch()` use. Resolves to
+ * `[{ address, family, ttl }]`, like `Bun.dns.lookup`.
+ */
+const cachedDnsLookup = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.cachedLookup", 2);
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
@@ -2516,7 +2525,7 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  const lookup = optionsLookup || dns.lookup;
+  const lookup = optionsLookup || (canLookupViaDnsCache(dnsopts) ? dnsCacheLookupFor(port) : dns.lookup);
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
     $debug("connect: autodetecting", host, port);
@@ -2560,6 +2569,62 @@ function socketToDnsFamily(family) {
     case "IPv6": return 6; // prettier-ignore
   }
   return family;
+}
+
+// The DNS cache is keyed on hostname alone and always resolves with AF_UNSPEC +
+// SOCK_STREAM (+ AI_ADDRCONFIG off Windows), which is exactly what `fetch()` and
+// `Bun.connect` ask for. Anything else (an explicit family, extra hints) has to
+// go through `dns.lookup`, or we would hand back addresses resolved under the
+// wrong hints.
+function canLookupViaDnsCache(dnsopts) {
+  return (dnsopts.family === 0 || dnsopts.family === undefined) && dnsopts.hints === (isWindows ? 0 : dns.ADDRCONFIG);
+}
+
+const byFamilyAscending = (a, b) => a.family - b.family;
+const byFamilyDescending = (a, b) => b.family - a.family;
+const toLookupAddress = ({ address, family }) => ({ address, family });
+
+// The shape `node:dns` gives an empty resolution.
+function noRecordsFoundError(hostname) {
+  const err = new Error(`getaddrinfo ENODATA ${hostname}`);
+  err.name = "DNSException";
+  err.code = "ENODATA";
+  // Hardcoded errno, matching `node:dns`.
+  err.errno = 1;
+  err.syscall = "getaddrinfo";
+  err.hostname = hostname;
+  return err;
+}
+
+function dnsCacheLookupFor(port) {
+  return function lookupViaDnsCache(hostname, options, callback) {
+    cachedDnsLookup(hostname, port).$then(
+      res => {
+        if (res.length === 0) {
+          callback(noRecordsFoundError(hostname), undefined, undefined);
+          return;
+        }
+        const order = dns.getDefaultResultOrder();
+        if (order === "ipv4first") {
+          ArrayPrototypeSort.$call(res, byFamilyAscending);
+        } else if (order === "ipv6first") {
+          ArrayPrototypeSort.$call(res, byFamilyDescending);
+        }
+        if (options.all) {
+          callback(null, ArrayPrototypeMap.$call(res, toLookupAddress));
+        } else {
+          const { address, family } = res[0];
+          callback(null, address, family);
+        }
+      },
+      err => {
+        // `Bun.dns` reports DNS failures as `DNS_ENOTFOUND` etc; `node:dns`
+        // strips the prefix. The hostname and message are set natively.
+        if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+        callback(err, undefined, undefined);
+      },
+    );
+  };
 }
 
 function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, localAddress, localPort, timeout) {

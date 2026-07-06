@@ -2,6 +2,14 @@ import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+// The DNS cache and its counters are process-global, so every test that reads
+// `getCacheStats()` runs in a fresh process.
+async function runCacheFixture(script: string) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode };
+}
+
 // The DNS cache is process-global, so this runs in its own process to get
 // clean counters. Docs promise that a failed connection evicts the host's
 // cache entry; a dead host must never be served as a cache hit.
@@ -70,5 +78,187 @@ describe("dns.prefetch", () => {
     const newStats2 = dns.getCacheStats();
     // Ensure it's cached.
     expect(newStats2.cacheHitsCompleted).toBeGreaterThan(currentStats.cacheHitsCompleted);
+  });
+
+  it("warms the cache for node:net", async () => {
+    const { result, stderr, exitCode } = await runCacheFixture(`
+      const net = require("node:net");
+      const server = net.createServer(socket => socket.end());
+      await new Promise(resolve => server.listen(0, resolve));
+      const { port } = server.address();
+
+      const before = Bun.dns.getCacheStats();
+      Bun.dns.prefetch("localhost", port);
+      const afterPrefetch = Bun.dns.getCacheStats();
+
+      // The prefetch inserts the cache entry synchronously, so the connect below
+      // hits it whether or not the resolution has landed yet.
+      await new Promise((resolve, reject) => {
+        const socket = net.connect(port, "localhost", () => socket.end());
+        socket.on("close", resolve);
+        socket.on("error", reject);
+      });
+      const afterConnect = Bun.dns.getCacheStats();
+      server.close();
+
+      const hits = s => s.cacheHitsCompleted + s.cacheHitsInflight;
+      console.log(
+        JSON.stringify({
+          prefetchMisses: afterPrefetch.cacheMisses - before.cacheMisses,
+          connectHits: hits(afterConnect) - hits(afterPrefetch),
+          connectMisses: afterConnect.cacheMisses - afterPrefetch.cacheMisses,
+        }),
+      );
+    `);
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { prefetchMisses: 1, connectHits: 1, connectMisses: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe("DNS cache stats", () => {
+  // `cacheHitsCompleted + cacheHitsInflight + cacheMisses === totalCount` is the
+  // only thing that makes the counters reconcilable. Prefetching an already
+  // cached host used to bump `totalCount` and return without counting the hit.
+  it("accounts for every getaddrinfo call", async () => {
+    const { result, stderr, exitCode } = await runCacheFixture(`
+      const before = Bun.dns.getCacheStats();
+      Bun.dns.prefetch("localhost", 443);
+      Bun.dns.prefetch("localhost", 443);
+      Bun.dns.prefetch("localhost", 443);
+      const after = Bun.dns.getCacheStats();
+
+      const delta = key => after[key] - before[key];
+      console.log(
+        JSON.stringify({
+          total: delta("totalCount"),
+          accounted: delta("cacheHitsCompleted") + delta("cacheHitsInflight") + delta("cacheMisses"),
+        }),
+      );
+    `);
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { total: 3, accounted: 3 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// `node:tls` and the `node:http` client both connect through `node:net`, so the
+// cache that `fetch()`/`Bun.connect` use has to be reachable from there too —
+// otherwise `dns.prefetch()` is a no-op for every database/HTTP driver on npm.
+describe("node:net DNS cache", () => {
+  it("resolves node:net and node:http through the shared cache", async () => {
+    const { result, stderr, exitCode } = await runCacheFixture(`
+      const net = require("node:net");
+      const http = require("node:http");
+
+      const netServer = net.createServer(socket => socket.end());
+      await new Promise(resolve => netServer.listen(0, resolve));
+      const netPort = netServer.address().port;
+
+      const httpServer = http.createServer((req, res) => res.end("ok"));
+      await new Promise(resolve => httpServer.listen(0, resolve));
+      const httpPort = httpServer.address().port;
+
+      const lookupEvents = [];
+      const netConnect = () =>
+        new Promise((resolve, reject) => {
+          const socket = net.connect(netPort, "localhost", () => socket.end());
+          socket.on("lookup", (err, address, family, host) => lookupEvents.push({ err, address, family, host }));
+          socket.on("close", resolve);
+          socket.on("error", reject);
+        });
+      const httpRequest = () =>
+        new Promise((resolve, reject) => {
+          const req = http.request(
+            { host: "localhost", port: httpPort, path: "/", headers: { connection: "close" } },
+            res => {
+              res.resume();
+              res.on("end", resolve);
+            },
+          );
+          req.on("error", reject);
+          req.end();
+        });
+
+      const hits = s => s.cacheHitsCompleted + s.cacheHitsInflight;
+      const delta = (before, after) => ({
+        hits: hits(after) - hits(before),
+        misses: after.cacheMisses - before.cacheMisses,
+        total: after.totalCount - before.totalCount,
+      });
+
+      const start = Bun.dns.getCacheStats();
+      await netConnect();
+      const afterNet = Bun.dns.getCacheStats();
+      await httpRequest();
+      const afterHttp = Bun.dns.getCacheStats();
+      netServer.close();
+      httpServer.close();
+
+      console.log(
+        JSON.stringify({
+          net: delta(start, afterNet),
+          http: delta(afterNet, afterHttp),
+          // The number of addresses "localhost" resolves to is up to the host, but
+          // the \`lookup\` event is part of the node:net contract either way.
+          lookupEvents: lookupEvents.length > 0,
+          lookupEventsValid: lookupEvents.every(
+            e => e.err === null && net.isIP(e.address) === e.family && e.host === "localhost",
+          ),
+        }),
+      );
+    `);
+    expect({ result, stderr, exitCode }).toEqual({
+      // "localhost" is resolved once and cached; node:http reuses the entry, even
+      // though it connects to a different port.
+      result: {
+        net: { hits: 0, misses: 1, total: 1 },
+        http: { hits: 1, misses: 0, total: 1 },
+        lookupEvents: true,
+        lookupEventsValid: true,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("leaves a user-supplied options.lookup in charge", async () => {
+    const { result, stderr, exitCode } = await runCacheFixture(`
+      const net = require("node:net");
+      const server = net.createServer(socket => socket.end());
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+
+      let calls = 0;
+      const before = Bun.dns.getCacheStats();
+      await new Promise((resolve, reject) => {
+        const socket = net.connect(
+          {
+            port,
+            host: "localhost",
+            lookup(hostname, options, callback) {
+              calls++;
+              callback(null, options.all ? [{ address: "127.0.0.1", family: 4 }] : "127.0.0.1", 4);
+            },
+          },
+          () => socket.end(),
+        );
+        socket.on("close", resolve);
+        socket.on("error", reject);
+      });
+      const after = Bun.dns.getCacheStats();
+      server.close();
+
+      console.log(JSON.stringify({ calls, totalCount: after.totalCount - before.totalCount }));
+    `);
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { calls: 1, totalCount: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

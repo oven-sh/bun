@@ -1086,3 +1086,21 @@ test("captureStackTrace keeps frames for a bound function not in the stack", () 
   expect(e.stack).toContain("at makeErr");
   expect(e.stack).toContain("at invoker");
 });
+
+test("captureStackTrace keeps frames when the second argument is a non-callable object", () => {
+  function makeErr(arg) {
+    const e = new Error("test");
+    Error.captureStackTrace(e, arg);
+    return [e];
+  }
+  noInline(makeErr);
+  function outer() {
+    const r = makeErr({});
+    return [r];
+  }
+  noInline(outer);
+
+  const [[e]] = outer();
+  expect(e.stack).toContain("at makeErr");
+  expect(e.stack).toContain("at outer");
+});

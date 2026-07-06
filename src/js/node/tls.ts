@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, validateSessionTimeout } = require("internal/tls");
 const {
   validateString,
   validateNumber,
@@ -396,23 +396,7 @@ function validateSecureContextOptions(options) {
       throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeysByteLength, "must be exactly 48 bytes");
     }
   }
-  // Negative session timeouts are rejected (min 0), matching Node — newer
-  // OpenSSL/BoringSSL do not handle negative values as users expect.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L319
-  if (sessionTimeout !== undefined && sessionTimeout !== null) {
-    // Node validates this with validateInt32(..., 0), whose range message
-    // reads ">= 0 && <= 2147483647"; the shared validator here words it
-    // differently, so spell the check out to match.
-    if (typeof sessionTimeout !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
-    }
-    if (!Number.isInteger(sessionTimeout)) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", "an integer", sessionTimeout);
-    }
-    if (sessionTimeout < 0 || sessionTimeout > 2147483647) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", ">= 0 && <= 2147483647", sessionTimeout);
-    }
-  }
+  validateSessionTimeout(sessionTimeout);
 }
 
 const SymbolReplace = Symbol.replace;

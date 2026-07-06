@@ -19,7 +19,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, validateSessionTimeout } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -303,6 +303,10 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
+      // Node's https.Server extends tls.Server, so it rejects the same values the
+      // tls.createServer path does, synchronously. Guarded by isTlsSymbol: a plain
+      // http.createServer has no TLS context and must keep ignoring the option.
+      validateSessionTimeout(options.sessionTimeout);
       this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,

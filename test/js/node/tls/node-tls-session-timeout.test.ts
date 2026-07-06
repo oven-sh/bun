@@ -123,3 +123,17 @@ test("sessionTimeout: null is accepted as 'not provided'", async () => {
   }
   await once(server, "close");
 });
+
+// Node's https.Server extends tls.Server, so both entry points reject the same
+// values, synchronously at construction. Bun's https.Server is http.Server, which
+// builds its TLS options bag by hand, so it has to run the same check.
+test.each([
+  [-1, "ERR_OUT_OF_RANGE"],
+  [2 ** 31, "ERR_OUT_OF_RANGE"],
+  [1.5, "ERR_OUT_OF_RANGE"],
+  ["300", "ERR_INVALID_ARG_TYPE"],
+] as const)("tls.createServer and https.createServer both reject sessionTimeout %p", (sessionTimeout, code) => {
+  const options = { ...COMMON_CERT, sessionTimeout } as unknown as Options;
+  expect(() => createServer(options)).toThrow(expect.objectContaining({ code }));
+  expect(() => https.createServer(options)).toThrow(expect.objectContaining({ code }));
+});

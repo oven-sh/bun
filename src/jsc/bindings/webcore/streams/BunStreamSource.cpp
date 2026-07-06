@@ -780,11 +780,16 @@ static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject,
         clearStreamControllerSlots(stream);
         stream->m_reader.clear();
         stream->m_lockedWithoutReader = false;
+        // This path writes the terminal state directly (the controller and reader slots are
+        // already torn down), so it settles the closed promise itself.
         if (reason.toBoolean(globalObject)) {
             stream->m_state = ReadableStreamState::Errored;
             stream->m_storedError.set(vm, stream, reason);
-        } else
+            rejectStreamClosedPromise(vm, stream, reason);
+        } else {
             stream->m_state = ReadableStreamState::Closed;
+            resolveStreamClosedPromise(vm, stream);
+        }
     }
     if (auto* closePromise = state->m_closePromise.get()) {
         state->m_closePromise.clear();

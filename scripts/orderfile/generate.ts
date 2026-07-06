@@ -81,6 +81,36 @@ interface Workload {
   env?: Record<string, string>;
 }
 
+export interface RunOptions {
+  env?: Record<string, string | undefined> | undefined;
+  cwd?: string | undefined;
+  input?: string | undefined;
+  timeout?: number | undefined;
+  /** How the command is named in errors. Defaults to the executable. */
+  label?: string | undefined;
+}
+
+/**
+ * Runs a command to completion, throwing if it could not be spawned. Exported so
+ * a test can drive it under node: bun's spawnSync delivers `input` whatever stdin
+ * is, so the wiring below only ever breaks on CI, which builds under node.
+ */
+export function runCommand(cmd: string[], options: RunOptions = {}) {
+  const r = spawnSync(cmd[0]!, cmd.slice(1), {
+    env: { ...process.env, ...options.env },
+    cwd: options.cwd,
+    input: options.input,
+    timeout: options.timeout,
+    // Only a pipe carries `input`: node drops it when stdin is "ignore", and
+    // then an interactive workload reads nothing and waits forever for a line.
+    stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    maxBuffer: 1 << 29, // nm prints ~10 MB of symbols
+  });
+  // A timeout arrives here too: spawnSync reports it as an ETIMEDOUT error.
+  if (r.error) throw new Error(`${options.label ?? cmd[0]}: ${r.error.message}`);
+  return r;
+}
+
 export interface GenerateOptions {
   /** Build directory holding the unstripped binary. */
   buildDir: string;
@@ -110,38 +140,15 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
     throw new Error(`${bunProfile} not found — build it first (bun run build:release)`);
   }
 
-  interface RunOptions {
-    env?: Record<string, string | undefined> | undefined;
-    cwd?: string | undefined;
-    input?: string | undefined;
-    timeout?: number | undefined;
-    /** How the command is named in errors. Defaults to the executable. */
-    label?: string | undefined;
-  }
-
-  function run(cmd: string[], options: RunOptions = {}) {
-    const r = spawnSync(cmd[0]!, cmd.slice(1), {
-      env: { ...process.env, ...options.env },
-      cwd: options.cwd,
-      input: options.input,
-      timeout: options.timeout,
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 1 << 29, // nm prints ~10 MB of symbols
-    });
-    // A timeout arrives here too: spawnSync reports it as an ETIMEDOUT error.
-    if (r.error) throw new Error(`${options.label ?? cmd[0]}: ${r.error.message}`);
-    return r;
-  }
-
   const scratch = mkdtempSync(join(tmpdir(), "bun-orderfile-"));
   try {
     // ── Build the tracer and the pty runner ───────────────────────────────────
     const tracer = join(scratch, "pagetrace.so");
     const ptyrun = join(scratch, "ptyrun");
     const cc = process.env.CC || "cc";
-    const build = run([cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "pagetrace.c"), "-ldl"]);
+    const build = runCommand([cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "pagetrace.c"), "-ldl"]);
     if (build.status !== 0) throw new Error(`failed to build the tracer with ${cc}\n${build.stderr}`);
-    const pty = run([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), "-lutil"]);
+    const pty = runCommand([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), "-lutil"]);
     if (pty.status !== 0) throw new Error(`failed to build the pty runner with ${cc}\n${pty.stderr}`);
 
     // ── Representative workloads ──────────────────────────────────────────────
@@ -179,7 +186,10 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
       `{ "name": "orderfile-dep", "version": "1.0.0", "main": "index.js" }\n`,
     );
     writeFileSync(join(dependency, "index.js"), `module.exports = 1;\n`);
-    const pack = run([bunProfile, "pm", "pack", "--filename", "dep.tgz"], { cwd: dependency, label: "bun pm pack" });
+    const pack = runCommand([bunProfile, "pm", "pack", "--filename", "dep.tgz"], {
+      cwd: dependency,
+      label: "bun pm pack",
+    });
     if (pack.status !== 0) throw new Error(`could not pack the install fixture\n${pack.stderr}`);
     writeFileSync(
       join(app, "package.json"),
@@ -211,7 +221,7 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
       // The tracer loads into the traced process and nowhere else. On a terminal
       // ptyrun is the parent, so it is the one that hands the preload down.
       const preload = workload.tty ? { PTYRUN_PRELOAD: tracer } : { LD_PRELOAD: tracer };
-      const r = run(workload.tty ? [ptyrun, bunProfile, ...workload.args] : [bunProfile, ...workload.args], {
+      const r = runCommand(workload.tty ? [ptyrun, bunProfile, ...workload.args] : [bunProfile, ...workload.args], {
         env: {
           ...preload,
           BUN_PAGETRACE_BIN: bunProfile,
@@ -242,7 +252,7 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
 
     // ── Symbol table ──────────────────────────────────────────────────────────
     const nm = process.env.NM || (existsSync("/usr/bin/llvm-nm") ? "llvm-nm" : "nm");
-    const symbols = run([nm, "--defined-only", "-S", "--numeric-sort", bunProfile]);
+    const symbols = runCommand([nm, "--defined-only", "-S", "--numeric-sort", bunProfile]);
     if (symbols.status !== 0) throw new Error(`${nm} failed on ${bunProfile}\n${symbols.stderr}`);
 
     // `t`/`T` only: ordering `.rodata.*` separates constants from the mergeable

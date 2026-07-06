@@ -95,6 +95,17 @@ class ReadableFromWeb extends Readable {
     return;
   }
 
+  #handleError(reader, error) {
+    if (reader) {
+      this.#reader = undefined;
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+    this.#closed = true;
+    this.destroy(error);
+  }
+
   _read() {
     $debug("ReadableFromWeb _read()", this.__id);
     // Readable calls _read() again as soon as push() is called, but #pump()
@@ -109,9 +120,10 @@ class ReadableFromWeb extends Readable {
     // #reading must be cleared as the body exits, not one microtask later: a
     // paused-mode read() loop calls _read() again without yielding, and
     // Readable leaves kReading set when _read() neither pushes nor pumps.
+    var reader;
     try {
-      var stream = this.#stream,
-        reader = this.#reader;
+      var stream = this.#stream;
+      reader = this.#reader;
       if (stream) {
         reader = this.#reader = stream.getReader();
         this.#stream = undefined;
@@ -152,6 +164,11 @@ class ReadableFromWeb extends Readable {
           }
         }
       } while (!this.#closed);
+    } catch (e) {
+      // An error from the web stream must surface on the Readable as an
+      // 'error' event. Rethrowing would only reject #pump()'s promise, which
+      // nothing awaits, turning it into an unhandled rejection instead.
+      this.#handleError(reader, e);
     } finally {
       this.#reading = false;
     }
@@ -159,16 +176,27 @@ class ReadableFromWeb extends Readable {
 
   _destroy(error, callback) {
     if (!this.#closed) {
+      this.#closed = true;
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        reader.cancel(error).finally(() => {
-          this.#closed = true;
-          callback(error);
-        });
+        PromisePrototypeThen.$call(
+          reader.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
       }
-
-      return;
+      var stream = this.#stream;
+      if (stream) {
+        this.#stream = undefined;
+        PromisePrototypeThen.$call(
+          stream.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
+      }
     }
     try {
       callback(error);

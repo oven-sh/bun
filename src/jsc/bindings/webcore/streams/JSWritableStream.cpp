@@ -260,6 +260,7 @@ void JSWritableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_closeRequest);
     visitor.append(thisObject->m_inFlightWriteRequest);
     visitor.append(thisObject->m_inFlightCloseRequest);
+    visitor.append(thisObject->m_closedPromise);
     visitor.append(thisObject->m_pendingAbortRequest.promise);
     visitor.append(thisObject->m_pendingAbortRequest.reason);
     {

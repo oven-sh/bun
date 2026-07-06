@@ -1260,6 +1260,100 @@ it("does not write body bytes for null body statuses", async () => {
   }
 });
 
+// Response.error() is a WHATWG network error: its status is 0, which has no
+// representation in an HTTP status line. It must never be written to the socket.
+describe("Response.error()", () => {
+  const unsendable =
+    "Cannot send a Response with status 0. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).";
+
+  async function rawStatusLine(port: number, method: string): Promise<string> {
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(`${method} / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    return Buffer.concat(received).toString().split("\r\n")[0];
+  }
+
+  describe.each(["GET", "HEAD"])("%s", method => {
+    it.each([
+      ["sync", () => Response.error()],
+      ["async", async () => Response.error()],
+    ])("a %s fetch handler returning it reaches error()", async (_label, fetchImpl) => {
+      const errors: Error[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: fetchImpl,
+        error(error) {
+          errors.push(error);
+          return new Response("handled", { status: 502 });
+        },
+      });
+
+      expect(await rawStatusLine(server.port, method)).toBe("HTTP/1.1 502 Bad Gateway");
+      expect(errors.map(error => error.message)).toEqual([unsendable]);
+    });
+  });
+
+  // Bun reports the synthesized error the same way it reports a thrown one, which
+  // would fail this test process, so the default 500 page is checked in a child.
+  it("responds 500 with no error() handler, and when error() returns it too", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const servers = [
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => Response.error() }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => Response.error(), error: () => Response.error() }),
+        ];
+        for (const server of servers) {
+          const response = await fetch(server.url);
+          console.log(response.status, await response.text());
+          server.stop(true);
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("500 Something went wrong!\n500 Something went wrong!\n");
+    expect(stderr).toContain(unsendable);
+  });
+
+  it("is rejected when registered as a static route", () => {
+    expect(() =>
+      Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/": Response.error() },
+      }),
+    ).toThrow(
+      "Cannot use a Response with status 0 as a static route. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+    );
+  });
+});
+
 describe("response framing", () => {
   type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
   // Read the raw response so that `Content-Length: 0` and an absent

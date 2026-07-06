@@ -3494,14 +3494,24 @@ const responsesIn = (raw: string) => Math.min(raw.split("HTTP/1.1 ").length - 1,
 
 // "pipelined" writes every request as one segment; "sequential" writes each one
 // only after the previous response landed, so nothing is ever sitting in the
-// server's read buffer. Resolving on "close" too means a server that tears the
-// connection down mid-pipeline yields the truncated bytes (an assertion
-// failure) instead of hanging until the test times out.
-function sendRequests(port: number, requests: string[], mode: "pipelined" | "sequential"): Promise<string> {
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
+// server's read buffer.
+//
+// `until` "responses" hangs up as soon as every response arrived; "serverClose"
+// waits for the server to hang up instead, so a test can assert it did.
+// Resolving on "close" in either case means a server that tears the connection
+// down mid-pipeline yields the truncated bytes (an assertion failure) rather
+// than hanging until the test times out.
+function sendRequests(
+  port: number,
+  requests: string[],
+  mode: "pipelined" | "sequential",
+  until: "responses" | "serverClose" = "responses",
+): Promise<{ raw: string; serverEnded: boolean }> {
+  const { promise, resolve, reject } = Promise.withResolvers<{ raw: string; serverEnded: boolean }>();
   const socket = connect(port, "127.0.0.1");
   let data = "";
   let sent = 0;
+  let serverEnded = false;
   const writeNext = () => {
     if (mode === "pipelined") {
       sent = requests.length;
@@ -3514,13 +3524,16 @@ function sendRequests(port: number, requests: string[], mode: "pipelined" | "seq
     data += chunk;
     const arrived = responsesIn(data);
     if (arrived >= requests.length) {
-      socket.destroy();
-      resolve(data);
+      if (until === "responses") {
+        socket.destroy();
+        resolve({ raw: data, serverEnded });
+      }
     } else if (arrived === sent) {
       writeNext();
     }
   });
-  socket.on("close", () => resolve(data));
+  socket.on("end", () => (serverEnded = true));
+  socket.on("close", () => resolve({ raw: data, serverEnded }));
   socket.on("error", reject);
   socket.on("connect", writeNext);
   return promise;
@@ -3538,9 +3551,9 @@ it.concurrent("the over-limit 503 advertises Connection: close, not keep-alive",
     const { port } = server.address() as AddressInfo;
 
     // Two pipelined requests: the second exceeds maxRequestsPerSocket.
-    const out = await sendRequests(port, [rawGet("/a"), rawGet("/b")], "pipelined");
+    const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b")], "pipelined");
 
-    const second = out.slice(out.indexOf("HTTP/1.1 503"));
+    const second = raw.slice(raw.indexOf("HTTP/1.1 503"));
     expect(second).toContain("HTTP/1.1 503");
     expect(second).toContain("Connection: close");
     expect(second).not.toContain("keep-alive");
@@ -3569,9 +3582,9 @@ it.concurrent("every pipelined request past maxRequestsPerSocket gets its own 50
 
     // Three requests pipelined into one segment: /b and /c are both over the
     // limit of 1, so both must be answered.
-    const out = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "pipelined");
+    const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "pipelined");
 
-    expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
     expect(drops.map(({ url, isIncomingMessage }) => ({ url, isIncomingMessage }))).toEqual([
       { url: "/b", isIncomingMessage: true },
       { url: "/c", isIncomingMessage: true },
@@ -3601,19 +3614,19 @@ it.concurrent("a dropped request carrying a body does not stall the rest of the 
 
     const body = "hello=world";
     const requests = [rawPost("/a", body), rawPost("/b", body), rawPost("/c", body)];
-    const out = await sendRequests(port, requests, "pipelined");
+    const { raw } = await sendRequests(port, requests, "pipelined");
 
-    expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
     expect(drops).toEqual(["/b", "/c"]);
   } finally {
     server.close();
   }
 });
 
-it.concurrent("requests arriving after maxRequestsPerSocket keep getting 503s on the same connection", async () => {
-  // Node's docs: at the limit the server "will set the Connection header value
-  // to close, but will not actually close the connection"; later requests get
-  // a 503 each rather than a dead socket.
+it.concurrent("the connection is ended only after the pipelined requests have been answered", async () => {
+  // Node leans on keepAliveTimeout to reap the connection; Bun has no
+  // keep-alive reaping, so the server hangs up itself - but not before the
+  // requests already sitting in the read buffer have each been answered.
   const drops: string[] = [];
   const server = createServer((req, res) => {
     req.resume();
@@ -3626,9 +3639,16 @@ it.concurrent("requests arriving after maxRequestsPerSocket keep getting 503s on
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
-    const out = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "sequential");
+    // The client never hangs up, so reaching "close" at all means the server did.
+    const { raw, serverEnded } = await sendRequests(
+      port,
+      [rawGet("/a"), rawGet("/b"), rawGet("/c")],
+      "pipelined",
+      "serverClose",
+    );
 
-    expect([...out.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+    expect(serverEnded).toBe(true);
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
     expect(drops).toEqual(["/b", "/c"]);
   } finally {
     server.close();

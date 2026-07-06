@@ -757,11 +757,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         if (reachedRequestsLimit) {
           // Like Node.js's parserOnIncoming: every request past the limit gets
-          // its own 'dropRequest' + 503, and the connection is not torn down -
-          // destroying it drops the requests pipelined behind this one.
+          // its own 'dropRequest' + 503. Closing the socket now (or on this
+          // response's "finish") would drop the requests pipelined behind it.
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
           http_res.end();
+          if (!socket[kEndAfterDroppedRequests]) {
+            socket[kEndAfterDroppedRequests] = true;
+            setImmediate(endSocketAfterDroppedRequests, socket);
+          }
         } else if (is_upgrade) {
           // Hand the raw socket over to the 'upgrade' listener with any bytes
           // that arrived after the request head, like Node.js. The connection
@@ -1656,6 +1660,14 @@ function renderNativeHeaders(res) {
 }
 
 const kMustCloseConnection = Symbol("kMustCloseConnection");
+const kEndAfterDroppedRequests = Symbol("kEndAfterDroppedRequests");
+
+// Runs once the current read has been fully parsed, so every request that was
+// already pipelined behind the dropped one has been answered with its own 503.
+function endSocketAfterDroppedRequests(socket) {
+  socket?.end();
+}
+
 function stopServerResponsePerf(this: any) {
   if (this[kServerResponseStatistics] && hasObserver("http")) {
     stopPerf(this, kServerResponseStatistics, {

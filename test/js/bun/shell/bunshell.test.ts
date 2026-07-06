@@ -864,6 +864,19 @@ booga"
         })
         .runAsTest("at the end of a longer word");
 
+      // https://github.com/oven-sh/bun/issues/18656
+      TestBuilder.command`echo views/** public/**/*.js .env`
+        .ensureTempDir()
+        .directory("views")
+        .file("views/a.html", "")
+        .directory("public/js")
+        .file("public/js/b.js", "")
+        .file(".env", "")
+        .stdout(out => {
+          expect(words(out)).toEqual(["views/a.html", "public/js/b.js", ".env"]);
+        })
+        .runAsTest("two `**` globs and a plain word stay three arguments");
+
       TestBuilder.command`echo ** | cat`
         .ensureTempDir()
         .file("a.txt", "")

@@ -6422,10 +6422,9 @@ pub fn read_file_range(blob: &Any, offset: SizeType, size: SizeType) -> bun_sys:
         }
     };
 
-    // POSIX `pread` ignores the file offset. Windows `dup` shares the file
-    // pointer and `pread` (ReadFile + OVERLAPPED) advances it, so capture the
-    // offset now and restore it in the close guard (which runs on every exit,
-    // including a mid-read error) to leave a caller reading the same fd after.
+    // POSIX `pread` ignores the file offset. On Windows the dup shares the file
+    // pointer and `pread` advances it, so capture the offset now and restore it
+    // in the close guard (runs on every exit) so a caller reading the fd is unaffected.
     #[cfg(windows)]
     let saved_offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR).ok();
 

@@ -64,6 +64,10 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
+    // materializeNativeSource() ran m_nativePtr's start()/drain(), so some of the handle's
+    // bytes now live in the controller's queue. NOT [[disturbed]]: installing a controller
+    // is not a read.
+    bool m_nativeSourceMaterialized : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;
@@ -117,6 +121,10 @@ public:
     {
         return m_transferred || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
+    // The native handle no longer holds the whole body: it was read, or materializing moved
+    // bytes into the controller. Gates every path that bypasses the stream to take the
+    // handle's bytes directly (the buffered consumers here, ReadableStream::to_any_blob in Rust).
+    bool nativeSourceConsumed() const { return m_disturbed || m_nativeSourceMaterialized; }
 
 private:
     JSReadableStream(JSC::VM&, JSC::Structure*);

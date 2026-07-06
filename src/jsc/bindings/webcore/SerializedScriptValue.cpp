@@ -253,6 +253,7 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    Bun__nodenet_SocketAddress = 249,
 
     ErrorTag = 255
 };

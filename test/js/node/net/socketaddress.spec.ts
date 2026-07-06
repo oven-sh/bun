@@ -329,3 +329,66 @@ describe("SocketAddress.prototype.toJSON", () => {
     });
   }); // </When called on a default SocketAddress>
 }); // </SocketAddress.prototype.toJSON>
+
+// Node's `validatePort` accepts numeric strings and coerces them via ToNumber,
+// while rejecting non-integers and out-of-range values.
+describe("SocketAddress port validation", () => {
+  it.each([
+    ["80", 80],
+    ["  80  ", 80],
+    ["0x10", 16],
+    ["1e2", 100],
+    [65535, 65535],
+    [0, 0],
+  ])("accepts %p as port %p", (port, expected) => {
+    const sa = new SocketAddress({ address: "1.2.3.4", port: port as any });
+    expect(sa.port).toBe(expected as number);
+  });
+
+  it("rejects non-integer, out-of-range, and non-numeric ports with ERR_SOCKET_BAD_PORT", () => {
+    const bad = [-1, 3.5, 65536, Infinity, NaN, "abc", "", "   ", true, null, {}, []];
+    for (const port of bad) {
+      expect(() => new SocketAddress({ address: "1.2.3.4", port: port as any })).toThrowWithCode(
+        Error,
+        "ERR_SOCKET_BAD_PORT",
+      );
+    }
+  });
+}); // </SocketAddress port validation>
+
+describe("SocketAddress invalid address", () => {
+  it.each(["999.1.1.1", "not-an-ip", "1.2.3.4.5"])("throws ERR_INVALID_ADDRESS for %p", address => {
+    expect(() => new SocketAddress({ address })).toThrowWithCode(Error, "ERR_INVALID_ADDRESS");
+  });
+}); // </SocketAddress invalid address>
+
+describe("SocketAddress.prototype", () => {
+  it("does not expose the non-Node `addrfamily` accessor", () => {
+    expect(Object.getOwnPropertyNames(SocketAddress.prototype)).not.toContain("addrfamily");
+    expect("addrfamily" in new SocketAddress()).toBeFalse();
+  });
+
+  it("matches Node's own-property names", () => {
+    expect(Object.getOwnPropertyNames(SocketAddress.prototype).sort()).toEqual([
+      "address",
+      "constructor",
+      "family",
+      "flowlabel",
+      "port",
+      "toJSON",
+    ]);
+  });
+}); // </SocketAddress.prototype>
+
+describe("structuredClone(SocketAddress)", () => {
+  it.each([
+    { family: "ipv4", address: "9.8.7.6", port: 5 },
+    { family: "ipv6", address: "abcd::1", port: 443, flowlabel: 7 },
+  ] as SocketAddressInitOptions[])("round-trips %o", options => {
+    const original = new SocketAddress(options);
+    const cloned = structuredClone(original);
+    expect(SocketAddress.isSocketAddress(cloned)).toBeTrue();
+    expect(cloned).not.toBe(original);
+    expect(cloned.toJSON()).toEqual(original.toJSON());
+  });
+}); // </structuredClone(SocketAddress)>

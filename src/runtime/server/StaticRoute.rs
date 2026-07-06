@@ -20,6 +20,9 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
+/// The implicit Content-Type of a `new Response(someString)` body.
+const MIME_TEXT_PLAIN: &[u8] = b"text/plain; charset=utf-8";
+
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
 // `*StaticRoute` is also passed as uws onAborted/
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
@@ -214,15 +217,21 @@ impl StaticRoute {
                 h.fast_remove(HTTPHeaderName::ContentLength);
             }
 
-            let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                bun_http_jsc::headers_jsc::from_fetch_headers(Some(h), any_blob_content_type(&blob))
-            } else {
-                Headers::default()
-            };
-
-            if was_string && headers.get_content_type().is_none() {
-                headers.append(b"Content-Type", b"text/plain; charset=utf-8");
+            // Consuming the body left a plain `Blob` behind, which no longer implies
+            // the `text/plain` a string body carried. Record it on the response's own
+            // headers so re-registering the same `Response` serves the same type.
+            if was_string {
+                response.get_or_create_headers(global_this)?.put_default(
+                    HTTPHeaderName::ContentType,
+                    &bun_core::String::ascii(MIME_TEXT_PLAIN),
+                    global_this,
+                )?;
             }
+
+            let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+                response.get_init_headers(),
+                any_blob_content_type(&blob),
+            );
 
             // Generate ETag if not already present
             if headers.get(b"etag").is_none() {

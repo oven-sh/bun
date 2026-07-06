@@ -410,6 +410,10 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnul
 
 struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s);
 
+/* The ALPN protocol negotiated on this socket's handshake, or NULL when the
+ * peer offered none / the socket is not TLS. The bytes belong to the SSL. */
+const char *us_socket_alpn_selected(struct us_socket_t *s, unsigned int *out_len);
+
 /* ── SSL_CTX construction ─────────────────────────────────────────────────
  * The expensive bit (cert/key/CA parse, cipher list, DH params) is decoupled
  * from sockets entirely. Build once per SecureContext / config, share across

@@ -2109,6 +2109,21 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
   return s->ssl ? s_ssl(s) : NULL;
 }
 
+const char *us_socket_alpn_selected(struct us_socket_t *s, unsigned int *out_len) {
+  *out_len = 0;
+  if (!s->ssl) {
+    return NULL;
+  }
+  const unsigned char *proto = NULL;
+  unsigned int proto_len = 0;
+  SSL_get0_alpn_selected(s_ssl(s), &proto, &proto_len);
+  if (!proto || proto_len == 0) {
+    return NULL;
+  }
+  *out_len = proto_len;
+  return (const char *)proto;
+}
+
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 

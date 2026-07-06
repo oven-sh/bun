@@ -1,11 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import net from "node:net";
 
-// A request body that is still arriving when the response finishes must keep
-// being delivered to whoever started reading it. Bun used to reject the pending
-// read with "AbortError: The connection was closed." even though the client was
-// still happily sending on a live keep-alive connection, silently losing the
-// upload of every "respond 202 now, ingest in the background" handler.
+// A handler that starts reading the body but responds early must still receive
+// the rest of it, not a spurious AbortError, while the client keeps uploading
+// on a live keep-alive connection ("respond 202 now, ingest in the background").
 describe("request body outliving the response", () => {
   // The parked request is released from inside a uws callback, which can run
   // after the microtask that settles the body promise; poll rather than assume
@@ -67,12 +65,8 @@ describe("request body outliving the response", () => {
     };
   }
 
-  // Each shape reaches the parking path through a different uws call, and the
-  // first two differ in whether `to_async()` has already armed the abort handler
-  // by the time the response is rendered:
-  //   sync               - renders inside the request callback, try_end()
-  //   async              - renders from a later microtask, try_end()
-  //   streaming-response - renders from a later microtask, end_stream()
+  // Distinct parking paths: sync `try_end()`, async `try_end()` (after
+  // `to_async()` has armed the abort handler), and streaming `end_stream()`.
   type Shape = "sync" | "async" | "streaming-response";
   const shapes: Shape[] = ["sync", "async", "streaming-response"];
 

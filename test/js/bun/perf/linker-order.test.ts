@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
 import {
   mustGenerateOrderFile,
@@ -151,6 +151,49 @@ describe("order file generator", () => {
   it.skipIf(process.platform === "linux")("refuses to run off linux", () => {
     // It is an ELF linker input and the tracer reads /proc/self/maps.
     expect(() => generateOrderFile({ buildDir: "/tmp/build" })).toThrow(/linux/);
+  });
+});
+
+/**
+ * CI builds with `node --experimental-strip-types scripts/build.ts`, so the
+ * workloads are spawned by node's spawnSync, not bun's. Node only delivers
+ * `input` when stdin is a pipe, and silently drops it when stdin is "ignore";
+ * bun delivers it either way, so nothing a developer runs locally notices. The
+ * interactive workloads are the only ones typed anything, and the ~2k tty and
+ * readline functions they exist to trace are unreachable without it.
+ */
+describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workload stdin", () => {
+  it("reaches the workload when the generator runs under node, as CI does", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        nodeExe()!,
+        "--experimental-strip-types",
+        join(import.meta.dir, "orderfile-workload-fixture.ts"),
+        bunExe(),
+        join(import.meta.dir, "../../../../scripts/orderfile/cli-fixture.js"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // node warns about the fixture's module type on every run, so stderr is never
+    // empty; an uncaught error is the part worth reading. It is also how this
+    // notices generate.ts growing TypeScript that node cannot strip, which would
+    // break the real build the same way.
+    const crash = /^\w*Error\b.*/m.exec(stderr)?.[0] ?? null;
+
+    // cli-fixture.js answers `name?` with the first line it is typed and counts
+    // the rest, so "read 0 lines" is what an empty stdin looks like. On a
+    // terminal it is worse: readline waits for a line that never arrives, and
+    // the workload times out instead of returning at all.
+    expect({
+      greeted: stdout.includes("hi world"),
+      read: /read (\d+) lines/.exec(stdout)?.[1],
+      crash,
+      exitCode,
+    }).toEqual({ greeted: true, read: "3", crash: null, exitCode: 0 });
   });
 });
 

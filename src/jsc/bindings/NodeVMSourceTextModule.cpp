@@ -216,11 +216,14 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& specifierIdentifier = builtinNames.specifierPublicName();
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
 
-    // JSC deduplicates requestedModules() by specifier (first occurrence wins,
-    // see ModuleAnalyzer::appendRequestedModule), so the import statements can
-    // outnumber the requests and positional alignment breaks on any repeated
-    // specifier. Map each unique specifier to its import attributes node, keeping
-    // the first occurrence to mirror that deduplication.
+    // `requestedModules()` is deduplicated by (specifier, phase) with the first
+    // occurrence winning (see ModuleAnalyzer::appendRequestedModule), so the
+    // import statements can outnumber the requests and positional alignment
+    // breaks on any repeated specifier. The request already carries the winning
+    // statement's parsed `type`, so derive `type` from it directly. The parser
+    // discards any non-`type` attributes, so recover those from the matching
+    // import statement, keyed by specifier (first occurrence wins, mirroring the
+    // deduplication).
     WTF::UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, ImportAttributesListNode*, IdentifierRepHash> attributesNodesBySpecifier;
 
     for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
@@ -244,17 +247,10 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         WTF::HashMap<WTF::String, WTF::String> attributeMap;
         JSObject* attributesObject = constructEmptyObject(globalObject);
 
-        if (ImportAttributesListNode* attributesNode = attributesNodesBySpecifier.get(request.m_specifier.impl())) {
-            // Surface the literal `with { ... }` attributes from source, matching
-            // what Node exposes to the link callback.
-            for (auto [key, value] : attributesNode->attributes()) {
-                attributeMap.set(key->string(), value->string());
-                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
-            }
-        } else if (request.m_attributes) {
-            // Export-from requests have no import statement node; derive the `type`
-            // from the parsed fetch parameters. A host-defined type (e.g. css)
-            // surfaces as the `type` value, never as a separate internal field.
+        // `type` is authoritative from the deduplicated request. A host-defined
+        // type (e.g. css) surfaces as the `type` value, never as a separate
+        // internal field.
+        if (request.m_attributes) {
             WTF::String attributesTypeString;
             switch (request.m_attributes->type()) {
                 using AttributeType = decltype(request.m_attributes->type());
@@ -278,6 +274,17 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             if (!attributesTypeString.isEmpty()) {
                 attributeMap.set("type"_s, attributesTypeString);
                 attributesObject->putDirect(vm, vm.propertyNames->type, JSC::jsString(vm, attributesTypeString));
+            }
+        }
+
+        // Surface any non-`type` attributes the user wrote; the parser keeps only
+        // `type` on the request, so they are recovered from the import statement.
+        if (ImportAttributesListNode* attributesNode = attributesNodesBySpecifier.get(request.m_specifier.impl())) {
+            for (auto [key, value] : attributesNode->attributes()) {
+                if (*key == vm.propertyNames->type)
+                    continue;
+                attributeMap.set(key->string(), value->string());
+                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
             }
         }
 

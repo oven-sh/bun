@@ -1200,7 +1200,24 @@ test("node:vm SourceTextModule maps import attributes per deduplicated request",
     const m2 = new vm.SourceTextModule("import {a} from 'x'; import 'x'; export const v = a;");
     await m2.link((s, ref, extra) => { seen2.push([s, extra?.attributes]); return dep; });
 
-    console.log(JSON.stringify({ seen, seen2 }));
+    // import defer and a plain import of the same specifier are two distinct
+    // requests (Evaluation + Defer phases); only the attributed one has a type.
+    const seenDefer = [];
+    const m3 = new vm.SourceTextModule("import d from 'x' with { type: 'json' }; import defer * as ns from 'x';");
+    await m3.link((s, ref, extra) => { seenDefer.push([s, extra?.attributes]); return dep; });
+
+    // An export-from wins the dedup race over a later same-specifier import, so
+    // the request keeps the export's (absent) attributes, not the import's.
+    const seenExport = [];
+    const m4 = new vm.SourceTextModule("export * from 'x' with { type: 'css' }; import 'x' with { type: 'json' };");
+    await m4.link((s, ref, extra) => { seenExport.push([s, extra?.attributes]); return dep; });
+
+    // Non-type attributes are ignored by the parser but still surfaced to link.
+    const seenExtra = [];
+    const m5 = new vm.SourceTextModule("import j from 'j' with { type: 'json', foo: 'bar' };");
+    await m5.link((s, ref, extra) => { seenExtra.push([s, extra?.attributes]); return dep; });
+
+    console.log(JSON.stringify({ seen, seen2, seenDefer, seenExport, seenExtra }));
   `;
 
   await using proc = Bun.spawn({
@@ -1220,6 +1237,12 @@ test("node:vm SourceTextModule maps import attributes per deduplicated request",
       ["c", { type: "css" }],
     ],
     seen2: [["x", {}]],
+    seenDefer: [
+      ["x", { type: "json" }],
+      ["x", {}],
+    ],
+    seenExport: [["x", { type: "css" }]],
+    seenExtra: [["j", { type: "json", foo: "bar" }]],
   });
   expect(exitCode).toBe(0);
 });

@@ -258,9 +258,22 @@ impl Expansion {
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
                 // A non-leading `~` in an assignment value (after a `:`) is
-                // resolved after the walk once its prefix text is assembled.
+                // resolved after the walk once its prefix text is assembled. Its
+                // prefix is only a tilde-prefix when it is literal text, so only
+                // record it when the next atom is literal `Text` or the word ends
+                // (`x:~`); a following `$var`/`$(...)`/quoting keeps `~` literal.
                 if me.is_assignment && matches!(simple, ast::SimpleAtom::Tilde) {
-                    me.tilde_offsets.push(me.current_out.len() as u32);
+                    let next_is_literal = match atom {
+                        ast::Atom::Compound(c) => {
+                            matches!(c.atoms.get((me.word_idx + 1) as usize), Some(ast::SimpleAtom::Text(_)) | None)
+                        }
+                        ast::Atom::Simple(_) => true,
+                    };
+                    if next_is_literal {
+                        me.tilde_offsets.push(me.current_out.len() as u32);
+                    } else {
+                        me.current_out.push(b'~');
+                    }
                     me.word_idx += 1;
                     continue;
                 }
@@ -330,20 +343,28 @@ impl Expansion {
                     }
                     None => {}
                     // `~name`, `~+`, `~-`, or `~:…`: resolve the prefix up to the
-                    // first `/`, `\`, or `:`. On failure the `~` is left literal.
+                    // first `/`, `\`, or `:`. The prefix is only a tilde-prefix
+                    // when it is literal text (bash forms it before expansion),
+                    // so a `~` followed by `$var`/`$(...)`/quoting stays literal.
+                    // On any resolution failure the `~` is left literal too.
                     Some(_) => {
-                        let prefix_len = me
-                            .current_out
-                            .iter()
-                            .position(|&b| matches!(b, b'/' | b'\\' | b':'))
-                            .unwrap_or(me.current_out.len());
-                        let resolved = Self::resolve_tilde_prefix(
-                            me.base.shell(),
-                            &me.current_out[..prefix_len],
-                        );
+                        let lit = match atom {
+                            ast::Atom::Compound(c) => match c.atoms.get(1) {
+                                Some(ast::SimpleAtom::Text(t)) => Some(*t),
+                                _ => None,
+                            },
+                            ast::Atom::Simple(_) => None,
+                        };
+                        let resolved = lit.and_then(|t| {
+                            let plen = t
+                                .iter()
+                                .position(|&b| matches!(b, b'/' | b'\\' | b':'))
+                                .unwrap_or(t.len());
+                            Self::resolve_tilde_prefix(me.base.shell(), &t[..plen]).map(|d| (plen, d))
+                        });
                         match resolved {
-                            Some(dir) => {
-                                me.current_out.splice(0..prefix_len, dir.iter().copied());
+                            Some((plen, dir)) => {
+                                me.current_out.splice(0..plen, dir.iter().copied());
                             }
                             None => me.current_out.insert(0, b'~'),
                         }

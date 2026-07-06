@@ -560,6 +560,45 @@ describe("bunshell", () => {
         .runAsTest("PATH idiom");
       // A `~` that is neither at the start nor right after a `:` stays literal.
       TestBuilder.command`A=a~/b; echo $A`.env(homeEnv).stdout("a~/b\n").runAsTest("tilde mid-value stays literal");
+      // A `~` after `:` followed by `$var`/quoting is not a literal prefix, so
+      // it stays literal (bash forms the tilde-prefix before expansion).
+      TestBuilder.command`A=x:~$U; echo $A`
+        .env({ ...homeEnv, U: "root" })
+        .stdout("x:~root\n")
+        .runAsTest("tilde after colon before a variable stays literal");
+      // Quoted tilde values never expand.
+      TestBuilder.command`A="~"; echo $A`.env(homeEnv).stdout("~\n").runAsTest("double-quoted tilde stays literal");
+      TestBuilder.command`A='~/x'; echo $A`.env(homeEnv).stdout("~/x\n").runAsTest("single-quoted tilde stays literal");
+
+      // Non-bare prefixes after a `:` (exercises the inner-tilde resolver).
+      TestBuilder.command`A=x:~+; echo $A && pwd`
+        .stdout(out => {
+          const [a, pwd] = out.split("\n");
+          expect(a).toBe(`x:${pwd}`);
+        })
+        .runAsTest("~+ after colon is $PWD");
+      // Unresolvable prefix after a `:` stays literal (inner-tilde None path).
+      TestBuilder.command`A=x:~no-such-user-zz; echo $A`
+        .stdout("x:~no-such-user-zz\n")
+        .runAsTest("unknown user after colon stays literal");
+      if (isPosix) {
+        TestBuilder.command`A=x:~root/y; echo $A`
+          .stdout(out => {
+            expect(out).not.toContain("~");
+            expect(out.startsWith("x:/")).toBe(true);
+            expect(out.endsWith("/y\n")).toBe(true);
+          })
+          .runAsTest("~user after colon resolves");
+      }
+
+      // An inner `~` composed with brace expansion: the `~` resolves first and
+      // its length change must keep the recorded brace metacharacter offsets
+      // aligned. Bun brace-expands assignment values (see the "glob expansion"
+      // suite); bash does not, so this output is intentionally Bun-specific.
+      TestBuilder.command`A=x:~/{a,b}; echo $A`
+        .env(homeEnv)
+        .stdout("x:/home/test/a x:/home/test/b\n")
+        .runAsTest("inner tilde composes with brace expansion");
     });
 
     // `~+` / `~-` and `~user` resolve the prefix between `~` and the first

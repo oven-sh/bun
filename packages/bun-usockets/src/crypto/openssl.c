@@ -1074,6 +1074,15 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_options(ssl_context, options.secure_options);
   }
 
+  /* node:tls `sessionTimeout` stamps the lifetime into every session this
+   * context mints. BoringSSL splits TLS 1.3 off into a second knob, while
+   * OpenSSL (so Node) derives both versions from SSL_CTX_set_timeout(). */
+  if (options.session_timeout > 0) {
+    SSL_CTX_set_timeout(ssl_context, (uint32_t)options.session_timeout);
+    SSL_CTX_set_session_psk_dhe_timeout(ssl_context,
+                                        (uint32_t)options.session_timeout);
+  }
+
   /* Surface resumable sessions through the new-session callback the way Node
    * does: for TLS 1.3 the resumable session only exists once the peer's
    * NewSessionTicket arrives, and BoringSSL only exposes it here. NO_INTERNAL

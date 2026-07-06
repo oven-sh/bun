@@ -43,6 +43,9 @@ pub struct SSLConfig {
     pub protos: CStrPtr,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    /// Lifetime in seconds of sessions the SSL_CTX mints (node:tls
+    /// `sessionTimeout`); 0 = unset/default.
+    pub session_timeout: i32,
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
@@ -118,6 +121,7 @@ impl SSLConfig {
         protos: core::ptr::null(),
         client_renegotiation_limit: 0,
         client_renegotiation_window: 0,
+        session_timeout: 0,
         requires_custom_request_ctx: false,
         is_using_default_ciphers: true,
         low_memory_mode: false,
@@ -214,6 +218,7 @@ impl SSLConfig {
         ctx_opts.secure_options = self.secure_options;
         ctx_opts.client_renegotiation_limit = self.client_renegotiation_limit;
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
+        ctx_opts.session_timeout = self.session_timeout;
 
         ctx_opts
     }
@@ -298,6 +303,9 @@ impl SSLConfig {
         if self.client_renegotiation_window != other.client_renegotiation_window {
             return false;
         }
+        if self.session_timeout != other.session_timeout {
+            return false;
+        }
         if self.requires_custom_request_ctx != other.requires_custom_request_ctx {
             return false;
         }
@@ -356,6 +364,7 @@ impl SSLConfig {
         hash_cstr!(protos);
         hasher.update(&self.client_renegotiation_limit.to_ne_bytes());
         hasher.update(&self.client_renegotiation_window.to_ne_bytes());
+        hasher.update(&self.session_timeout.to_ne_bytes());
         hasher.update(&[u8::from(self.requires_custom_request_ctx)]);
         hasher.update(&[u8::from(self.is_using_default_ciphers)]);
         hasher.update(&[u8::from(self.low_memory_mode)]);
@@ -447,6 +456,7 @@ impl Clone for SSLConfig {
             protos: clone_string(self.protos),
             client_renegotiation_limit: self.client_renegotiation_limit,
             client_renegotiation_window: self.client_renegotiation_window,
+            session_timeout: self.session_timeout,
             requires_custom_request_ctx: self.requires_custom_request_ctx,
             is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,

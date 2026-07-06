@@ -1247,6 +1247,7 @@ function Server(options, secureConnectionListener): void {
   this.ca = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
+  this.sessionTimeout = undefined;
   this._rejectUnauthorized = rejectUnauthorizedDefault();
   this._requestCert = undefined;
   this.servername = undefined;
@@ -1379,6 +1380,11 @@ function Server(options, secureConnectionListener): void {
       }
       this.secureOptions = secureOptions;
 
+      // validateSecureContextOptions already range-checked this. Assign
+      // unconditionally so an omitted sessionTimeout clears a previous call's
+      // value instead of keeping the old lifetime on the next listen.
+      this.sessionTimeout = options.sessionTimeout;
+
       const requestCert = options.requestCert || false;
 
       if (requestCert) this._requestCert = requestCert;
@@ -1440,6 +1446,7 @@ function Server(options, secureConnectionListener): void {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
+        sessionTimeout: this.sessionTimeout,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,

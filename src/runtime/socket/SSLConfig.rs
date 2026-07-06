@@ -231,10 +231,12 @@ impl SSLConfigFromJs for SSLConfig {
 
         result.client_renegotiation_limit = generated.client_renegotiation_limit;
         result.client_renegotiation_window = generated.client_renegotiation_window;
+        result.session_timeout = generated.session_timeout;
         any = any
             || result.requires_custom_request_ctx
             || result.client_renegotiation_limit != 0
-            || generated.client_renegotiation_window != 0;
+            || generated.client_renegotiation_window != 0
+            || result.session_timeout != 0;
 
         // We don't need to deinit `result` if `any` is false.
         if any { Ok(Some(result)) } else { Ok(None) }

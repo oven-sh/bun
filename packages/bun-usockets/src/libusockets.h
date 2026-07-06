@@ -433,6 +433,9 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    // Lifetime in seconds of sessions this context mints (node:tls
+    // `sessionTimeout`); <= 0 leaves BoringSSL's defaults in place.
+    int session_timeout;
 };
 
 enum create_bun_socket_error_t {

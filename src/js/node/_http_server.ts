@@ -310,6 +310,7 @@ function Server(options, callback): void {
         ca,
         passphrase,
         secureOptions,
+        sessionTimeout: options.sessionTimeout,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });

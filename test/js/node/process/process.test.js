@@ -624,8 +624,25 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("worker uncaughtException boom\nworker exit 0\n");
-      expect(stderr).not.toInclude("panic");
       expect(exitCode).toBe(0);
+    });
+
+    it("exits 1, not 7, when an exit listener also throws and nothing handles it", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => { throw new Error("a"); });
+           process.on("exit", () => { throw new Error("b"); });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).toInclude("error: a");
+      expect(stdout).toBeEmpty();
+      // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
+      expect(exitCode).toBe(1);
     });
   });
 

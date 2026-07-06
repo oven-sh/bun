@@ -926,6 +926,23 @@ pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &m
     &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
 
+/// Whether the patched cache folder `folder` (in `cache_dir`) actually contains
+/// the applied patch: `patch_install::apply` writes a `.bun-tag-<hash>` marker
+/// after applying, so a `_patch_hash=` folder without it must be re-patched.
+pub(crate) fn patched_cache_folder_has_tag(
+    cache_dir: bun_sys::Fd,
+    folder: &ZStr,
+    patch_hash: u64,
+) -> bool {
+    let mut tag_buf: BuntagHashBuf = BuntagHashBuf::default();
+    let tag = buntaghashbuf_make(&mut tag_buf, patch_hash);
+    let marker = bun_paths::resolve_path::join_z::<bun_paths::resolve_path::platform::Posix>(&[
+        folder.as_bytes(),
+        tag,
+    ]);
+    bun_sys::exists_at(cache_dir, marker)
+}
+
 pub struct StorePathFormatter<'a> {
     str: &'a [u8],
 }

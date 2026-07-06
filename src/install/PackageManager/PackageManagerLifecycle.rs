@@ -219,7 +219,18 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                if directories::is_folder_in_cache(self, folder_path) {
+                // A patched folder is only Done if it carries the `.bun-tag-<hash>`
+                // marker. Without it (e.g. a warm cache that captured unpatched
+                // content) fall through below to re-apply the patch or re-extract.
+                if directories::is_folder_in_cache(self, folder_path)
+                    && match patch_hash {
+                        Some(h) => {
+                            let cache_dir = directories::get_cache_directory(self);
+                            bun_install::patched_cache_folder_has_tag(cache_dir, folder_path, h)
+                        }
+                        None => true,
+                    }
+                {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }

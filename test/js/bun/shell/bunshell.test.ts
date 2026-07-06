@@ -584,9 +584,7 @@ describe("bunshell", () => {
 
         const homeEnv = { ...process.env, HOME: "/home/test", USERPROFILE: "/home/test" };
         TestBuilder.command`echo ~:x`.env(homeEnv).stdout("/home/test:x\n").runAsTest("colon terminates tilde prefix");
-        TestBuilder.command`echo ~no-such-user-zz`
-          .stdout("~no-such-user-zz\n")
-          .runAsTest("unknown user stays literal");
+        TestBuilder.command`echo ~no-such-user-zz`.stdout("~no-such-user-zz\n").runAsTest("unknown user stays literal");
       }
     });
   });

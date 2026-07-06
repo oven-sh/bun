@@ -684,7 +684,8 @@ impl Expansion {
             let len_before = me.current_out.len();
             match resolved {
                 Some(dir) => {
-                    me.current_out.splice(at..at + prefix_len, dir.iter().copied());
+                    me.current_out
+                        .splice(at..at + prefix_len, dir.iter().copied());
                 }
                 None => me.current_out.insert(at, b'~'),
             }

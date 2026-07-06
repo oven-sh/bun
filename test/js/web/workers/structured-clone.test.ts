@@ -625,7 +625,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
       expect(["OK", "SKIP"]).toContain(stdout.trim());
       expect(proc.signalCode).toBe(null);
       expect(exitCode).toBe(0);
-    });
+    }, 30_000); // Allocating 1.6GB and copying it twice takes 3.8-5.0s under ASAN.
   }
 });
 

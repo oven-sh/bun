@@ -598,9 +598,9 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *
  * Array :-
  *     ArrayTag <length:uint32_t>(<index:uint32_t><value:Value>)* (NonIndexPropertiesTag (<name:StringData><value:Value>)*)? TerminatorTag
- *     <index> is always less than NonIndexPropertiesTag. The array indices at or above it
- *     (0xFFFFFFFD and 0xFFFFFFFE) would read back as control tags, so they are written as
- *     named properties, which the deserializer turns back into indices.
+ *     <index> is always below NonIndexPropertiesTag: 0xFFFFFFFD reads back as that control tag,
+ *     and 0xFFFFFFFE is reserved with it to keep the range contiguous. Both are valid array
+ *     indices, so they are written as named properties, which deserialize back into indices.
  *
  * Object :-
  *     ObjectTag (<name:StringData><value:Value>)* TerminatorTag

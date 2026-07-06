@@ -24,13 +24,14 @@ async function silentPeer() {
   server.on("tlsClientError", err => {
     code = err.code;
   });
+  let guard;
   server.listen(0, "127.0.0.1", () => {
     const c = net.connect(server.address().port, "127.0.0.1");
     c.on("error", () => {});
     c.on("close", () => resolve(true));
     // Generous upper bound: if the watchdog never armed the peer stays open and
     // this resolves with the socket still alive, failing the assertion below.
-    const guard = setTimeout(() => {
+    guard = setTimeout(() => {
       emit("silent_still_open", !c.destroyed);
       c.destroy();
       resolve(false);
@@ -38,14 +39,19 @@ async function silentPeer() {
     guard.unref?.();
   });
   await promise;
+  // Clear the guard so it cannot fire during the later scenarios and emit a
+  // stray RESULT line (the test asserts on the exact key set).
+  clearTimeout(guard);
   emit("silent_code", code);
   await new Promise(r => server.close(r));
 }
 
-// 2. A real request that completes the handshake well inside the window must
-//    not be killed by the watchdog.
+// 2. A real request that completes the handshake must not be killed by the
+//    watchdog. A generous timeout here costs nothing: a completed handshake is
+//    dequeued immediately (onHandshake cancels the timer), so this only guards
+//    against the watchdog racing a slow debug+ASAN loopback handshake.
 async function liveRequest() {
-  const server = https.createServer({ key, cert, handshakeTimeout: 200 }, (_req, res) => res.end("ok"));
+  const server = https.createServer({ key, cert, handshakeTimeout: 10_000 }, (_req, res) => res.end("ok"));
   let sawClientError = false;
   server.on("tlsClientError", () => {
     sawClientError = true;

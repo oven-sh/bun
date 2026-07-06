@@ -246,13 +246,13 @@ it("should defer microtasks when an exception is thrown in an immediate", async 
   expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
 });
 
-describe("an already-expired timer runs before the first poll and check phases", () => {
+describe.concurrent("an already-expired timer runs before the first poll and check phases", () => {
   // Block well past the 1ms deadline so the timer is unambiguously expired by
   // the time the event loop is entered. libuv opens every `uv_run` iteration
   // with the timers phase, so the timer runs before anything queued next to it.
   const blockPastTheDeadline = `const start = Date.now(); while (Date.now() - start < 10) {}`;
 
-  test.each([
+  test.concurrent.each([
     [
       "setImmediate",
       `setTimeout(() => order.push("timeout"), 1);
@@ -292,6 +292,9 @@ describe("an already-expired timer runs before the first poll and check phases",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
     expect(stdout.trim()).toBe(JSON.stringify(expected));
     expect(exitCode).toBe(0);
   });
@@ -333,6 +336,9 @@ describe("an already-expired timer runs before the first poll and check phases",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
     expect(stdout).toContain(`order=${JSON.stringify(["timeout", "immediate"])}`);
     expect(exitCode).toBe(0);
   });

@@ -7,6 +7,7 @@ use core::ffi::c_int;
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
+use bun_dns::V4Mapped;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
 };
@@ -173,44 +174,92 @@ pub(crate) fn nameinfo_to_js_response(
 }
 
 // ── AddrInfo ───────────────────────────────────────────────────────────────
-pub(crate) fn addr_info_to_js_array(
-    addr_info: &mut c_ares::AddrInfo,
+
+/// SAFETY: `head` must be null or the head of a c-ares-owned `AddrInfo_node` chain
+/// that stays alive for `'a`.
+// LIFETIMES.tsv rows 254/256: AddrInfo.node / AddrInfo_node.next are FFI → *mut AddrInfo_node.
+unsafe fn nodes<'a>(
+    head: *mut c_ares::AddrInfo_node,
+) -> impl Iterator<Item = &'a c_ares::AddrInfo_node> {
+    let mut current = head;
+    core::iter::from_fn(move || {
+        // SAFETY: caller contract: `current` is null or a live node of the chain.
+        let node = unsafe { current.as_ref() }?;
+        current = node.next;
+        Some(node)
+    })
+}
+
+fn node_to_js(
+    node: &c_ares::AddrInfo_node,
+    map_v4: bool,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // LIFETIMES.tsv rows 254/256: AddrInfo.node / AddrInfo_node.next are FFI → *mut AddrInfo_node.
-    if addr_info.node.is_null() {
+    // bun_dns::Address::init_posix copies from the raw sockaddr by family,
+    // so we hand it `node.addr` directly after asserting a known family.
+    debug_assert!(node.family == c_ares::AF::INET || node.family == c_ares::AF::INET6);
+    // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
+    let address = unsafe { bun_dns::Address::init_posix(node.addr.cast()) };
+    let address = match map_v4 {
+        true => address.to_v4_mapped().unwrap_or(address),
+        false => address,
+    };
+    result_to_js(
+        &bun_dns::GetAddrInfoResult {
+            address,
+            ttl: node.ttl,
+        },
+        global_this,
+    )
+}
+
+pub(crate) fn addr_info_to_js_array(
+    addr_info: &mut c_ares::AddrInfo,
+    v4_mapped: V4Mapped,
+    global_this: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    let head = addr_info.node;
+    if head.is_null() {
         return JSValue::create_empty_array(global_this, 0);
     }
-    // SAFETY: node is non-null (checked above); c-ares owns the linked list.
-    let array =
-        JSValue::create_empty_array(global_this, unsafe { (*addr_info.node).count() } as usize)?;
 
-    {
-        let mut j: u32 = 0;
-        let mut current: *mut c_ares::AddrInfo_node = addr_info.node;
-        while !current.is_null() {
-            // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
-            let this_node = unsafe { &*current };
-            // bun_dns::Address::init_posix copies from the raw sockaddr by family,
-            // so we hand it `this_node.addr` directly after asserting a known family.
-            debug_assert!(
-                this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
-            );
-            // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
-            let address = unsafe { bun_dns::Address::init_posix(this_node.addr.cast()) };
-            array.put_index(
-                global_this,
-                j,
-                result_to_js(
-                    &bun_dns::GetAddrInfoResult {
-                        address,
-                        ttl: this_node.ttl,
-                    },
-                    global_this,
-                )?,
-            )?;
+    if v4_mapped == V4Mapped::Off {
+        // SAFETY: `head` is non-null (checked above); c-ares owns the linked list.
+        let array = JSValue::create_empty_array(global_this, unsafe { (*head).count() } as usize)?;
+        // SAFETY: same; the chain outlives this call.
+        for (j, node) in (0_u32..).zip(unsafe { nodes(head) }) {
+            array.put_index(global_this, j, node_to_js(node, false, global_this)?)?;
+        }
+        return Ok(array);
+    }
+
+    let count_family = |family: c_int| {
+        // SAFETY: `head` is non-null; the chain outlives this call.
+        unsafe { nodes(head) }
+            .filter(|n| n.family == family)
+            .count()
+    };
+    let v6_count = count_family(c_ares::AF::INET6);
+    // Without AI_ALL the IPv4 addresses are only mapped when the name has no IPv6 one.
+    let keep_v4 = v4_mapped == V4Mapped::All || v6_count == 0;
+    let v4_count = match keep_v4 {
+        true => count_family(c_ares::AF::INET),
+        false => 0,
+    };
+
+    let array = JSValue::create_empty_array(global_this, v6_count + v4_count)?;
+    let mut j: u32 = 0;
+    // Native IPv6 first, then the mapped IPv4 addresses, matching glibc's order.
+    // SAFETY: `head` is non-null; the chain outlives this call.
+    for node in unsafe { nodes(head) }.filter(|n| n.family == c_ares::AF::INET6) {
+        array.put_index(global_this, j, node_to_js(node, false, global_this)?)?;
+        j += 1;
+    }
+    if keep_v4 {
+        // SAFETY: same.
+        for node in unsafe { nodes(head) }.filter(|n| n.family == c_ares::AF::INET) {
+            array.put_index(global_this, j, node_to_js(node, true, global_this)?)?;
             j += 1;
-            current = this_node.next;
         }
     }
 

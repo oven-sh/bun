@@ -57,6 +57,36 @@ pub const AI_ALL: c_int = 256;
 #[cfg(not(windows))]
 pub const AI_ALL: c_int = libc::AI_ALL;
 
+/// How an `AF_INET6` lookup treats the name's IPv4 addresses.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum V4Mapped {
+    /// No `AI_V4MAPPED`: IPv4 addresses are not returned.
+    #[default]
+    Off,
+    /// `AI_V4MAPPED`: map the IPv4 addresses only when the name has no IPv6 address.
+    Fallback,
+    /// `AI_V4MAPPED | AI_ALL`: return the IPv6 addresses, then the mapped IPv4 ones.
+    All,
+}
+
+/// `node:dns` hands out the platform's `AI_*` hint values, but c-ares numbers its own
+/// `ARES_AI_*` bits differently (on glibc, `AI_V4MAPPED` lands on `ARES_AI_NUMERICSERV`
+/// and `AI_ADDRCONFIG` on `ARES_AI_ALL`). Translate rather than copy.
+fn to_cares_flags(flags: c_int) -> c_int {
+    use bun_cares_sys::c_ares_draft as cares;
+    let mut out: c_int = 0;
+    if flags & AI_V4MAPPED != 0 {
+        out |= cares::ARES_AI_V4MAPPED;
+    }
+    if flags & AI_ALL != 0 {
+        out |= cares::ARES_AI_ALL;
+    }
+    if flags & AI_ADDRCONFIG != 0 {
+        out |= cares::ARES_AI_ADDRCONFIG;
+    }
+    out
+}
+
 #[derive(Default)]
 pub struct GetAddrInfo {
     pub name: Box<[u8]>,
@@ -76,10 +106,16 @@ impl GetAddrInfo {
     pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
         let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
 
-        hints.ai_family = self.options.family.to_libc();
+        // c-ares implements neither `ARES_AI_V4MAPPED` nor `ARES_AI_ALL`, and only queries
+        // A records for `AF_UNSPEC`, so an `AI_V4MAPPED` lookup asks for both families and
+        // the mapping happens once the answers are in.
+        hints.ai_family = match self.options.v4_mapped() {
+            V4Mapped::Off => self.options.family.to_libc(),
+            V4Mapped::Fallback | V4Mapped::All => Family::Unspecified.to_libc(),
+        };
         hints.ai_socktype = self.options.socktype.to_libc();
         hints.ai_protocol = self.options.protocol.to_libc();
-        hints.ai_flags = self.options.flags;
+        hints.ai_flags = to_cares_flags(self.options.flags);
 
         hints
     }
@@ -125,6 +161,18 @@ impl Default for Options {
 }
 
 impl Options {
+    /// POSIX: `AI_V4MAPPED` only applies to `AF_INET6` lookups, and `AI_ALL` only
+    /// applies alongside it.
+    pub fn v4_mapped(self) -> V4Mapped {
+        if self.family != Family::Inet6 || self.flags & AI_V4MAPPED == 0 {
+            V4Mapped::Off
+        } else if self.flags & AI_ALL != 0 {
+            V4Mapped::All
+        } else {
+            V4Mapped::Fallback
+        }
+    }
+
     pub fn to_libc(self) -> Option<sock::addrinfo> {
         if self.family == Family::Unspecified
             && self.socktype == SocketType::Unspecified

@@ -65,6 +65,7 @@ test("observed net and http entries are PerformanceEntry objects with toJSON()",
   for (const entry of entries) {
     expect(entry).toBeInstanceOf(PerformanceEntry);
     expect(entry.constructor.name).toBe("PerformanceNodeEntry");
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(entry))).toBe(PerformanceEntry.prototype);
     expect(entry.startTime).toBeNumber();
     expect(entry.duration).toBeNumber();
     // Serializing what you observe is the whole point of observing it.
@@ -76,6 +77,13 @@ test("observed net and http entries are PerformanceEntry objects with toJSON()",
       detail: entry.detail,
     });
     expect(JSON.parse(JSON.stringify(entry))).toEqual(JSON.parse(JSON.stringify(entry.toJSON())));
+
+    // Node keeps the fields on the prototype, with `detail` and `toJSON`
+    // non-enumerable, so an entry has no own keys and enumerates four.
+    expect(Object.keys(entry)).toEqual([]);
+    const enumerated: string[] = [];
+    for (const key in entry) enumerated.push(key);
+    expect(enumerated.sort()).toEqual(["duration", "entryType", "name", "startTime"]);
   }
 
   expect(byName.connect.entryType).toBe("net");

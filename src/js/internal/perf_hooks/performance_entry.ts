@@ -65,14 +65,14 @@ class PerformanceNodeEntry {
   }
 }
 
+// Node leaves `detail` and `toJSON` non-enumerable and marks the four base
+// accessors enumerable, which is what a `for...in` over an entry yields.
 const kEnumerable = { __proto__: null, enumerable: true };
 Object.defineProperties(PerformanceNodeEntry.prototype, {
   name: kEnumerable,
   entryType: kEnumerable,
   startTime: kEnumerable,
   duration: kEnumerable,
-  detail: kEnumerable,
-  toJSON: kEnumerable,
 });
 Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
 Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);

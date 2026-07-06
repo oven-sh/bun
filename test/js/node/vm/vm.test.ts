@@ -1177,3 +1177,58 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("node:vm SourceTextModule stack frames carry the identifier and honor lineOffset", async () => {
+  // A SourceTextModule has no file behind it, so its identifier is the only
+  // handle a stack frame can show. Frames (from exported functions and from the
+  // module's own evaluation errors) must show the identifier instead of
+  // "unknown", and lineOffset must be applied with Node's 1-based convention.
+  const fixture = `
+    const vm = require("node:vm");
+    (async () => {
+      const results = [];
+      const src = "export function f(){ throw new Error('L') }";
+      for (const [tag, opts] of [
+        ["identifier", { identifier: "myid.mjs" }],
+        ["offsets", { identifier: "off.mjs", lineOffset: 10 }],
+        ["default", {}],
+      ]) {
+        const m = new vm.SourceTextModule(src, opts);
+        await m.link(() => { throw new Error("no imports"); });
+        await m.evaluate();
+        try {
+          m.namespace.f();
+        } catch (e) {
+          results.push(tag + " " + String(e.stack).split("\\n")[1].trim());
+        }
+      }
+      const m2 = new vm.SourceTextModule("\\n\\nnull.x", { identifier: "boom.mjs" });
+      await m2.link(() => { throw new Error("no imports"); });
+      try {
+        await m2.evaluate();
+      } catch (e) {
+        results.push("evalerr " + String(e.stack).split("\\n").find(l => /at /.test(l)).trim());
+      }
+      console.log(results.join("\\n"));
+    })();
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lines = stdout.trim().split("\n");
+  // Column numbers differ between engines, so match the identifier and line.
+  expect(lines[0]).toMatch(/^identifier at .*\bmyid\.mjs:1:\d+/);
+  expect(lines[1]).toMatch(/^offsets at .*\boff\.mjs:11:\d+/);
+  expect(lines[2]).toMatch(/^default at .*\bvm:module\(\d+\):1:\d+/);
+  expect(lines[3]).toMatch(/^evalerr at .*\bboom\.mjs:3:\d+/);
+  expect(stdout).not.toContain("unknown");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

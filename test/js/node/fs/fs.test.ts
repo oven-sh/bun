@@ -5205,7 +5205,9 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("closeSync throws EBADF on a double close of fd 2", async () => {
+  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // descriptor is never really closed and the second close cannot raise EBADF.
+  it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
     using dir = tempDir("fs-close-stdio-dbl", {
       "double-close-fixture.mjs": `
         import fs from "node:fs";

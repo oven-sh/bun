@@ -753,6 +753,10 @@ public:
         httpContext->getSocketContextData()->onClientError = std::move(onClientError);
     }
 
+    void setHandshakeTimeout(uint64_t timeoutMs, HttpContextData<SSL>::OnHandshakeTimeoutCallback onHandshakeTimeout, void *userData) {
+        httpContext->setHandshakeTimeout(timeoutMs, onHandshakeTimeout, userData);
+    }
+
     void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }

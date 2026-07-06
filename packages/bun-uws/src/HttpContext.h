@@ -33,6 +33,9 @@
 #include <iostream>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
+#include <algorithm>
+#include <chrono>
+#include <climits>
 #include <span>
 #include <array>
 #include <mutex>
@@ -147,11 +150,137 @@ public:
     }
 
 private:
+    /* ── TLS handshake watchdog ──────────────────────────────────────────────
+     * us_socket_timeout only resolves to the 4 second sweep, far too coarse for
+     * a handshakeTimeout the user hands us in milliseconds. Every accepted SSL
+     * socket therefore queues on an intrusive FIFO and a single one-shot timer
+     * is armed at the head's deadline; equal timeouts plus arrival ordering keep
+     * the deadlines non-decreasing, so the head is always the next to expire. */
+
+    static uint64_t nowMs() {
+        return (uint64_t) std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    static HttpResponseData<SSL> *responseData(us_socket_t *s) {
+        return reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+    }
+
+    static void unlinkPendingHandshake(HttpContextData<SSL> *httpContextData, us_socket_t *s) {
+        HttpResponseData<SSL> *responseDataS = responseData(s);
+        if (responseDataS->prevPendingHandshake) {
+            responseData(responseDataS->prevPendingHandshake)->nextPendingHandshake = responseDataS->nextPendingHandshake;
+        } else {
+            httpContextData->pendingHandshakeHead = responseDataS->nextPendingHandshake;
+        }
+        if (responseDataS->nextPendingHandshake) {
+            responseData(responseDataS->nextPendingHandshake)->prevPendingHandshake = responseDataS->prevPendingHandshake;
+        } else {
+            httpContextData->pendingHandshakeTail = responseDataS->prevPendingHandshake;
+        }
+        responseDataS->prevPendingHandshake = nullptr;
+        responseDataS->nextPendingHandshake = nullptr;
+        responseDataS->handshakeDeadline = 0;
+    }
+
+    /* Re-point the timer at the current head. Arming is only a syscall when the
+     * head's deadline actually moved, so the common push-to-a-busy-queue is free.
+     * An empty queue leaves any pending shot to fire into an empty loop below. */
+    static void armHandshakeTimer(HttpContext<SSL> *httpContext) {
+        HttpContextData<SSL> *httpContextData = &httpContext->data;
+        us_socket_t *head = httpContextData->pendingHandshakeHead;
+        if (!head) {
+            httpContextData->armedHandshakeDeadline = 0;
+            return;
+        }
+
+        uint64_t deadline = responseData(head)->handshakeDeadline;
+        if (deadline == httpContextData->armedHandshakeDeadline) {
+            return;
+        }
+
+        if (!httpContextData->handshakeTimer) {
+            /* fallthrough: an unref'd server must not be held open by this timer. */
+            httpContextData->handshakeTimer = us_create_timer(us_socket_group_loop(&httpContext->group), 1, sizeof(HttpContext<SSL> *));
+            if (!httpContextData->handshakeTimer) {
+                return;
+            }
+            *reinterpret_cast<HttpContext<SSL> **>(us_timer_ext(httpContextData->handshakeTimer)) = httpContext;
+        }
+
+        httpContextData->armedHandshakeDeadline = deadline;
+        uint64_t now = nowMs();
+        uint64_t delay = deadline > now ? deadline - now : 1;
+        us_timer_set(httpContextData->handshakeTimer, handshakeTimerCallback, (int) std::min<uint64_t>(delay, (uint64_t) INT_MAX), 0);
+    }
+
+    static void pushPendingHandshake(us_socket_t *s) {
+        HttpContext<SSL> *httpContext = fromSocket(s);
+        HttpContextData<SSL> *httpContextData = &httpContext->data;
+        HttpResponseData<SSL> *responseDataS = responseData(s);
+
+        responseDataS->handshakeDeadline = nowMs() + httpContextData->handshakeTimeoutMs;
+        responseDataS->prevPendingHandshake = httpContextData->pendingHandshakeTail;
+        responseDataS->nextPendingHandshake = nullptr;
+        if (httpContextData->pendingHandshakeTail) {
+            responseData(httpContextData->pendingHandshakeTail)->nextPendingHandshake = s;
+        } else {
+            httpContextData->pendingHandshakeHead = s;
+        }
+        httpContextData->pendingHandshakeTail = s;
+
+        armHandshakeTimer(httpContext);
+    }
+
+    /* Idempotent: a socket that already left the queue (timed out, handshaked,
+     * closed) has handshakeDeadline == 0 and is skipped. */
+    static void removePendingHandshake(us_socket_t *s) {
+        HttpResponseData<SSL> *responseDataS = responseData(s);
+        if (!responseDataS->handshakeDeadline) {
+            return;
+        }
+        HttpContext<SSL> *httpContext = fromSocket(s);
+        bool wasHead = httpContext->data.pendingHandshakeHead == s;
+        unlinkPendingHandshake(&httpContext->data, s);
+        if (wasHead) {
+            armHandshakeTimer(httpContext);
+        }
+    }
+
+    static void handshakeTimerCallback(struct us_timer_t *t) {
+        HttpContext<SSL> *httpContext = *reinterpret_cast<HttpContext<SSL> **>(us_timer_ext(t));
+        HttpContextData<SSL> *httpContextData = &httpContext->data;
+        uint64_t now = nowMs();
+
+        while (us_socket_t *s = httpContextData->pendingHandshakeHead) {
+            if (responseData(s)->handshakeDeadline > now) {
+                break;
+            }
+            /* Unlink before reporting: the callback runs JS that may close this
+             * socket (or any other one still queued behind it). */
+            unlinkPendingHandshake(httpContextData, s);
+            if (httpContextData->onHandshakeTimeout) {
+                httpContextData->onHandshakeTimeout(httpContextData->handshakeTimeoutUserData, SSL, s);
+            }
+            if (!us_socket_is_closed(s)) {
+                us_socket_close(s, 0, nullptr);
+            }
+        }
+
+        /* A timer may fire a hair early, and a clamped delay fires early on
+         * purpose; clearing the record forces armHandshakeTimer to re-arm. */
+        httpContextData->armedHandshakeDeadline = 0;
+        armHandshakeTimer(httpContext);
+    }
+
     /* ── vtable handlers ─────────────────────────────────────────────────── */
 
     static void onHandshake(us_socket_t *s, int success, struct us_bun_verify_error_t verify_error, void * /*custom_data*/) {
         // if we are closing or already closed, we don't need to do anything
         if (!us_socket_is_closed(s)) {
+            /* Settled either way: the watchdog has nothing left to guard. */
+            removePendingHandshake(s);
+
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
@@ -182,11 +311,20 @@ private:
         }
     }
 
-    static us_socket_t *onOpen(us_socket_t *s, int /*is_client*/, char * /*ip*/, int /*ip_length*/) {
+    static us_socket_t *onOpen(us_socket_t *s, int is_client, char * /*ip*/, int /*ip_length*/) {
         /* Init socket ext */
         new (us_socket_ext(s)) HttpResponseData<SSL>;
           /* Any connected socket should timeout until it has a request */
         ((HttpResponse<SSL> *) s)->resetTimeout();
+
+        if constexpr (SSL) {
+            /* Accepted before a single handshake byte arrived: start the watchdog.
+             * us_internal_ssl_on_open dispatches this before driving SSL_do_handshake. */
+            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+            if (!is_client && httpContextData->handshakeTimeoutMs) {
+                pushPendingHandshake(s);
+            }
+        }
 
         if(!SSL) {
             /* Call filter */
@@ -205,6 +343,10 @@ private:
         /* Get socket ext */
         auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
 
+        if constexpr (SSL) {
+            /* Before ~HttpResponseData: the queue links live in there. */
+            removePendingHandshake(s);
+        }
 
         /* Call filter */
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
@@ -601,8 +743,23 @@ public:
 
     /* Destruct the HttpContext, it does not follow RAII */
     void free() {
+        /* Closing the group drains the pending-handshake queue through onClose,
+         * which re-arms the timer, so the timer has to outlive the group. */
         us_socket_group_deinit(&group);
+        if (data.handshakeTimer) {
+            us_timer_close(data.handshakeTimer, 1);
+            data.handshakeTimer = nullptr;
+        }
         delete this;
+    }
+
+    /* node's tls.Server handshakeTimeout: drop peers that never finish the TLS
+     * handshake. 0 disables. The callback, when set, reports the socket before
+     * it is closed; it must not destroy this context. */
+    void setHandshakeTimeout(uint64_t timeoutMs, typename HttpContextData<SSL>::OnHandshakeTimeoutCallback handler, void *userData) {
+        data.handshakeTimeoutMs = timeoutMs;
+        data.onHandshakeTimeout = handler;
+        data.handshakeTimeoutUserData = userData;
     }
 
     void filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {

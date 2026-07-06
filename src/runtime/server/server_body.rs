@@ -3525,6 +3525,41 @@ where
         }
     }
 
+    /// Reports a peer that never finished its TLS handshake. uWS closes the
+    /// socket right after this returns, so the callback only has to surface the
+    /// error (node's `tlsClientError`).
+    pub fn on_handshake_timeout_callback(&mut self, socket: &mut uws::Socket) {
+        let Some(callback) = self.on_handshake_timeout.get() else {
+            return;
+        };
+        let is_ssl = SSL;
+        let global = self.global();
+        let node_socket = match jsc::from_js_host_call(&global, || {
+            Bun__createNodeHTTPServerSocketForClientError(
+                is_ssl,
+                std::ptr::from_mut(socket).cast::<c_void>(),
+                &global,
+            )
+        }) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if node_socket.is_undefined_or_null() {
+            return;
+        }
+
+        // SAFETY: event_loop() returns a live raw pointer tied to the global.
+        let _scope =
+            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        if let Err(err) = callback.call(
+            &global,
+            JSValue::UNDEFINED,
+            &[JSValue::from(is_ssl), node_socket],
+        ) {
+            global.report_active_exception_as_unhandled(err);
+        }
+    }
+
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
@@ -3669,6 +3704,70 @@ pub(super) fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
+pub(super) fn server_set_handshake_timeout_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    timeout_ms: f64,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set handshakeTimeout: The 'this' value is not a Server."
+        )));
+    }
+
+    if !callback.is_function() {
+        return Err(global.throw(format_args!(
+            "Failed to set handshakeTimeout: The provided value is not a function."
+        )));
+    }
+
+    // NaN, negatives and non-finite values all mean "no watchdog", matching the
+    // `> 0` guard node:tls's server uses before arming its own timer.
+    let timeout_ms: u64 = if timeout_ms.is_finite() && timeout_ms >= 1.0 {
+        timeout_ms.min(u64::MAX as f64) as u64
+    } else {
+        0
+    };
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                // SAFETY: as_ returned a non-null *mut to a live server.
+                let this = unsafe { &mut *this };
+                if let Some(app) = this.app {
+                    this.on_handshake_timeout.deinit();
+                    this.on_handshake_timeout = StrongOptional::create(callback, global);
+                    extern "C" fn thunk(
+                        user_data: *mut c_void,
+                        _ssl: c_int,
+                        socket: *mut uws_sys::us_socket_t,
+                    ) {
+                        // SAFETY: user_data is the `*mut Self` registered below; socket is a
+                        // live uWS socket that uWS closes right after we return.
+                        let this = unsafe { &mut *user_data.cast::<$T>() };
+                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                        this.on_handshake_timeout_callback(bun_opaque::opaque_deref_mut(socket));
+                    }
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).set_handshake_timeout(
+                        timeout_ms,
+                        thunk,
+                        core::ptr::from_mut::<$T>(this).cast::<c_void>(),
+                    );
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPServer);
+    handle!(HTTPSServer);
+    handle!(DebugHTTPServer);
+    handle!(DebugHTTPSServer);
+    debug_assert!(false);
+    Ok(JSValue::UNDEFINED)
+}
+
 pub(super) fn server_set_app_flags_(
     global: &JSGlobalObject,
     server: JSValue,
@@ -3769,6 +3868,19 @@ extern "C" fn server_set_on_client_error_shim(
     host_fn::to_js_host_fn_result(
         global,
         server_set_on_client_error_(global, server, callback),
+    )
+}
+
+#[unsafe(export_name = "Server__setHandshakeTimeout")]
+extern "C" fn server_set_handshake_timeout_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    timeout_ms: f64,
+    callback: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_handshake_timeout_(global, server, timeout_ms, callback),
     )
 }
 

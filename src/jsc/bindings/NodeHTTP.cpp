@@ -41,6 +41,7 @@ extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGl
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
+extern "C" EncodedJSValue Server__setHandshakeTimeout(JSC::JSGlobalObject*, EncodedJSValue, double timeout_ms, EncodedJSValue);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -988,15 +989,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 5);
+    ASSERT(callFrame->argumentCount() == 7);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
     JSValue maxHeaderSize = callFrame->uncheckedArgument(3);
     JSValue callback = callFrame->uncheckedArgument(4);
+    JSValue handshakeTimeout = callFrame->uncheckedArgument(5);
+    JSValue onHandshakeTimeout = callFrame->uncheckedArgument(6);
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    double handshakeTimeoutNumber = handshakeTimeout.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject));
@@ -1006,6 +1012,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setHandshakeTimeout(globalObject, JSValue::encode(serverValue), handshakeTimeoutNumber, JSValue::encode(onHandshakeTimeout));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsUndefined());

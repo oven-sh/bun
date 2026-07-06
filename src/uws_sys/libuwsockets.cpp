@@ -427,6 +427,18 @@ extern "C"
     }
   }
 
+  void uws_app_set_handshake_timeout(int ssl, uws_app_t *app, uint64_t timeout_ms, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket), void *user_data)
+  {
+    if (ssl)
+    {
+      ((uWS::SSLApp *)app)->setHandshakeTimeout(timeout_ms, handler, user_data);
+    }
+    else
+    {
+      ((uWS::App *)app)->setHandshakeTimeout(timeout_ms, handler, user_data);
+    }
+  }
+
   void uws_app_listen(int ssl, uws_app_t *app, int port,
                       uws_listen_handler handler, void *user_data)
   {

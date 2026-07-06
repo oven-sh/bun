@@ -14,6 +14,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  validateNumber,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
@@ -75,6 +76,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kHandshakeTimeout = Symbol("http.server.handshakeTimeout");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -313,6 +315,12 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
+      // Matches Node's tls.Server handshakeTimeout default + validation, which
+      // https.Server inherits. Only read for TLS servers - a plain http.Server
+      // has no handshake and Node ignores the option there.
+      const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+      validateNumber(handshakeTimeout, "options.handshakeTimeout");
+      this[kHandshakeTimeout] = handshakeTimeout;
     } else {
       this[tlsSymbol] = null;
     }
@@ -331,6 +339,9 @@ Server.prototype[kIncomingMessage] = undefined;
 Server.prototype[kServerResponse] = undefined;
 
 Server.prototype[kConnectionsCheckingInterval] = undefined;
+
+// 0 disables the TLS handshake watchdog; only TLS servers ever set it.
+Server.prototype[kHandshakeTimeout] = 0;
 
 function rethrowUncaught(err) {
   throw err;
@@ -910,6 +921,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       true,
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
+      // Negative/NaN/Infinity all disable the watchdog, like node:tls's own
+      // `_handshakeTimeout > 0` guard.
+      tls ? this[kHandshakeTimeout] : 0,
+      onServerHandshakeTimeout.bind(this),
     );
 
     if (this?._unref) {
@@ -1014,6 +1029,20 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   if (nodeSocket.listenerCount("error") > 0) {
     nodeSocket.emit("error", err);
   }
+}
+
+// A peer that connected but never finished the TLS handshake. Reported like
+// node's tls.Server does, through 'tlsClientError'; the native side closes the
+// socket as soon as this returns.
+function onServerHandshakeTimeout(this: Server, ssl: boolean, socket: unknown) {
+  const self = this as Server;
+  const err = $ERR_TLS_HANDSHAKE_TIMEOUT();
+  const existingDuplex = (socket as any).duplex;
+  const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
+  if (!existingDuplex) {
+    self.emit("connection", nodeSocket);
+  }
+  self.emit("tlsClientError", err, nodeSocket);
 }
 
 const kBytesWritten = Symbol("kBytesWritten");

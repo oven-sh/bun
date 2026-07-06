@@ -164,10 +164,12 @@ test.concurrent("concurrent dynamic imports of one path with different type attr
 
 // Attributes without a `type` key are their own registry entry even though the
 // type attribute string is empty for both, so the two fetches must stay apart.
-test.concurrent("concurrent dynamic imports of one path with and without import attributes stay separate modules", async () => {
-  const { stdout, stderr, exitCode } = await runFixture({
-    "mod.mjs": `export const v = 1;`,
-    "entry.mjs": `
+test.concurrent(
+  "concurrent dynamic imports of one path with and without import attributes stay separate modules",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture({
+      "mod.mjs": `export const v = 1;`,
+      "entry.mjs": `
       let load = 0;
       Bun.plugin({
         name: "file-counter",
@@ -184,10 +186,11 @@ test.concurrent("concurrent dynamic imports of one path with and without import 
       ]);
       console.log(JSON.stringify({ load, sameModule: plain === attributed, v: [plain.v, attributed.v] }));
     `,
-  });
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(JSON.parse(stdout)).toEqual({ load: 2, sameModule: false, v: [1, 1] });
-});
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({ load: 2, sameModule: false, v: [1, 1] });
+  },
+);
 
 // require(esm) forces a synchronous fetch of a key whose async fetch may still
 // be in flight; it must not get handed the pending promise.

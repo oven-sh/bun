@@ -25,16 +25,16 @@ test("console.Console#table renders Map and Set iterators", async () => {
   }
   expect(stdout).toMatchInlineSnapshot(`
     "┌───────────────────┬────────────┐
-    │ (iteration index) │   Values   │
+    │ (iteration index) │ Values     │
     ├───────────────────┼────────────┤
-    │         0         │ [ 'a', 1 ] │
-    │         1         │ [ 'b', 2 ] │
+    │ 0                 │ [ 'a', 1 ] │
+    │ 1                 │ [ 'b', 2 ] │
     └───────────────────┴────────────┘
     ┌───────────────────┬────────┐
     │ (iteration index) │ Values │
     ├───────────────────┼────────┤
-    │         0         │   7    │
-    │         1         │   8    │
+    │ 0                 │ 7      │
+    │ 1                 │ 8      │
     └───────────────────┴────────┘
     "
   `);

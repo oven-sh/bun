@@ -868,6 +868,8 @@ static void syncBuiltinESMExportsForModule(Zig::GlobalObject* globalObject, JSC:
 
     auto* namespaceObject = record->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, );
+    if (!namespaceObject)
+        return;
 
     for (const auto& exportEntry : record->exportEntries()) {
         auto exportName = JSC::Identifier::fromUid(vm, exportEntry.key.get());
@@ -913,6 +915,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
             continue;
         auto* record = entry->record();
         if (!record)
+            continue;
+        // A record exists before it is linked (an in-flight dynamic import), and an
+        // unlinked one has no bindings for anyone to observe yet. getModuleNamespace
+        // requires a linked record, so skip it the way every other registry walker does.
+        if (!record->moduleEnvironmentMayBeNull())
             continue;
 
         WTF::String keyString = moduleKey.string();

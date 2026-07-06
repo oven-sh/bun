@@ -1026,7 +1026,7 @@ static JSValue fetchESMSourceCode(
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                     \
     }
-            BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
+            BUN_FOREACH_ESM_ONLY_NATIVE_MODULE(CASE)
 #undef CASE
 
         // CommonJS modules from src/js/*

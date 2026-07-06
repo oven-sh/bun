@@ -393,9 +393,44 @@ describe.concurrent("syncBuiltinESMExports", () => {
         buffer.isUtf8 = () => "patched";
         syncBuiltinESMExports();
 
-        console.log(JSON.stringify({ namespace: String(bufferNamespace.isUtf8()) }));
+        console.log(
+          JSON.stringify({
+            namespace: String(bufferNamespace.isUtf8()),
+            // require() and import must resolve to one exports object, otherwise
+            // syncing swaps every export for an identity-different twin.
+            defaultIsExportsObject: bufferNamespace.default === buffer,
+          }),
+        );
       `),
-    ).toEqual({ namespace: "patched" });
+    ).toEqual({ namespace: "patched", defaultIsExportsObject: true });
+  });
+
+  // Without this, an agent that patches only node:fs silently swaps every export
+  // of every other imported builtin for an identity-equal but distinct twin,
+  // breaking ===, WeakMap keys, and spies held against stored references.
+  test("leaves unpatched exports identity-stable", async () => {
+    expect(
+      await runFixture(`
+        import { syncBuiltinESMExports } from "node:module";
+        import * as bufferNamespace from "node:buffer";
+        import { isUtf8 } from "node:buffer";
+        import * as fsNamespace from "node:fs";
+
+        const nativeNamedBefore = isUtf8;
+        const nativeNamespaceBefore = bufferNamespace.isUtf8;
+        const jsBuiltinBefore = fsNamespace.readFileSync;
+
+        syncBuiltinESMExports();  // nothing was patched
+
+        console.log(
+          JSON.stringify({
+            nativeNamedImport: isUtf8 === nativeNamedBefore,
+            nativeNamespace: bufferNamespace.isUtf8 === nativeNamespaceBefore,
+            jsBuiltin: fsNamespace.readFileSync === jsBuiltinBefore,
+          }),
+        );
+      `),
+    ).toEqual({ nativeNamedImport: true, nativeNamespace: true, jsBuiltin: true });
   });
 
   test("returns undefined and is a no-op when no builtin was imported", async () => {

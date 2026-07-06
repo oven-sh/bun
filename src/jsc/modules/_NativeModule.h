@@ -35,11 +35,21 @@
     macro("utf-8-validate"_s, UTF8Validate) \
     macro("abort-controller"_s, AbortControllerModule)
 
-#define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
-    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
+// Natives with no CommonJS counterpart in InternalModuleRegistry: require() hands
+// back a canonical singleton (the Module constructor, `process`, the Bun object),
+// so the ESM namespace has to be generated natively off that same singleton.
+// Everything in BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE instead resolves its ESM
+// namespace through InternalModuleRegistry (see generateInternalModuleSourceCode),
+// so that require() and import share one exports object rather than two
+// independent runs of the generator.
+#define BUN_FOREACH_ESM_ONLY_NATIVE_MODULE(macro) \
     macro("node:module"_s, NodeModule)  \
     macro("node:process"_s, NodeProcess) \
     macro("bun"_s, BunObject)
+
+#define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
+    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
+    BUN_FOREACH_ESM_ONLY_NATIVE_MODULE(macro)
 
 #define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
     BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)

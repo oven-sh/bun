@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deflateRawSync as nodeDeflateRawSync,
+  deflateSync as nodeDeflateSync,
   gzipSync as nodeGzipSync,
   inflateSync as nodeInflateSync,
   constants as zlibConstants,
@@ -148,5 +149,17 @@ describe("invalid zlib options", () => {
 
   test.each(outOfRange)("deflateSync rejects an out-of-range %s", (_name, options) => {
     expect(() => Bun.deflateSync(text, options as Bun.ZlibCompressionOptions)).toThrow("Zlib error: Invalid argument");
+  });
+
+  // `node:zlib` rejects windowBits 0 on every compress function too, and accepts
+  // it on inflate, where it means "read the window size from the zlib header".
+  test("windowBits 0 is rejected for compression but accepted by inflateSync", () => {
+    const zero = { windowBits: 0 } as Bun.ZlibCompressionOptions;
+
+    expect(() => Bun.gzipSync(text, zero)).toThrow("Zlib error: Invalid argument");
+    expect(() => Bun.deflateSync(text, zero)).toThrow("Zlib error: Invalid argument");
+    expect(() => nodeGzipSync(text, { windowBits: 0 })).toThrow(/out of range/);
+
+    expect(Buffer.from(Bun.inflateSync(nodeDeflateSync(text), zero))).toEqual(text);
   });
 });

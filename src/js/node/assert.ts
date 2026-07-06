@@ -79,8 +79,6 @@ function loadAssertionError() {
   }
 }
 
-let warned = false;
-
 // The assert module provides functions that throw
 // AssertionError's when particular conditions are not met. The
 // assert module must conform to the following interface.
@@ -103,52 +101,19 @@ function innerFail(obj) {
   throw new AssertionError(obj);
 }
 
-function fail(message?: string | Error): never;
-/** @deprecated since v10.0.0 - use fail([message]) or other assert functions instead. */
-function fail(
-  actual: unknown,
-  expected: unknown,
-  message?: string | Error,
-  operator?: string,
-  // eslint-disable-next-line @typescript-eslint/ban-types
-  stackStartFn?: Function,
-): never;
-function fail(
-  actual: unknown,
-  expected: unknown,
-  message?: string | Error,
-  operator?: string,
-  stackStartFn?: Function,
-) {
-  const argsLen = arguments.length;
-
-  let internalMessage = false;
-  if (actual == null && argsLen <= 1) {
-    internalMessage = true;
+function fail(message?: string | Error): never {
+  const internalMessage = arguments.length === 0;
+  if (internalMessage) {
     message = "Failed";
-  } else if (argsLen === 1) {
-    message = actual;
-    actual = undefined;
-  } else {
-    if (warned === false) {
-      warned = true;
-      process.emitWarning(
-        "assert.fail() with more than one argument is deprecated. " +
-          "Please use assert.strictEqual() instead or only pass a message.",
-        "DeprecationWarning",
-        "DEP0094",
-      );
-    }
-    if (argsLen === 2) operator = "!=";
   }
 
   if (message instanceof Error) throw message;
 
   const errArgs = {
-    actual,
-    expected,
-    operator: operator === undefined ? "fail" : operator,
-    stackStartFn: stackStartFn || fail,
+    actual: undefined,
+    expected: undefined,
+    operator: "fail",
+    stackStartFn: fail,
     message,
   };
   if (AssertionError === undefined) loadAssertionError();

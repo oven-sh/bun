@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { join } from "node:path";
 
 const exampleServer = exampleSite("http");
 
@@ -621,6 +622,95 @@ for (const { body, fn } of bodyTypes) {
       }
     });
 
+    // `bodyUsed` is the stream's [[disturbed]] bit, which only a read or a cancel sets.
+    // Merely locking the stream (getReader, tee) leaves the body intact.
+    describe("locking the body stream does not consume it", () => {
+      const bodies = [
+        { label: "string", make: () => "bun" },
+        { label: "Blob", make: () => new Blob(["bun"]) },
+        { label: "Uint8Array", make: () => new Uint8Array([0x62, 0x75, 0x6e]) },
+        {
+          label: "ReadableStream",
+          make: () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("bun"));
+                controller.close();
+              },
+            }),
+        },
+      ];
+
+      for (const { label, make } of bodies) {
+        describe(label, () => {
+          test("getReader() alone does not set bodyUsed", () => {
+            const result = fn(make());
+            result.body!.getReader();
+            expect(result.bodyUsed).toBe(false);
+            expect(result.body!.locked).toBe(true);
+          });
+
+          test("getReader() + releaseLock() leaves the body readable", async () => {
+            const result = fn(make());
+            result.body!.getReader().releaseLock();
+            expect(result.bodyUsed).toBe(false);
+            expect(result.body!.locked).toBe(false);
+            expect(await result.text()).toBe("bun");
+            expect(result.bodyUsed).toBe(true);
+          });
+
+          test("tee() does not set bodyUsed", async () => {
+            const result = fn(make());
+            const [branch] = result.body!.tee();
+            expect(result.bodyUsed).toBe(false);
+            expect(result.body!.locked).toBe(true);
+            expect(await new Response(branch).text()).toBe("bun");
+          });
+
+          test("clone() after getReader() + releaseLock()", async () => {
+            const result = fn(make());
+            result.body!.getReader().releaseLock();
+            const cloned = result.clone();
+            expect(await cloned.text()).toBe("bun");
+            expect(await result.text()).toBe("bun");
+          });
+
+          test("the released stream is accepted as a new body", async () => {
+            const result = fn(make());
+            result.body!.getReader().releaseLock();
+            expect(await new Response(result.body).text()).toBe("bun");
+          });
+
+          test("reading one chunk does consume it", async () => {
+            const result = fn(make());
+            const reader = result.body!.getReader();
+            await reader.read();
+            reader.releaseLock();
+            expect(result.bodyUsed).toBe(true);
+            await expect(result.text()).rejects.toThrow(TypeError);
+          });
+
+          test("cancelling consumes it", async () => {
+            const result = fn(make());
+            await result.body!.cancel();
+            expect(result.bodyUsed).toBe(true);
+            await expect(result.text()).rejects.toThrow(TypeError);
+          });
+
+          // A consume that rejects because the stream is locked must not record the read:
+          // once the lock is released the body is still there.
+          test("a rejected read while locked does not consume it", async () => {
+            const result = fn(make());
+            const reader = result.body!.getReader();
+            await expect(result.text()).rejects.toThrow(TypeError);
+            expect(result.bodyUsed).toBe(false);
+            reader.releaseLock();
+            expect(await result.text()).toBe("bun");
+          });
+        });
+      }
+    });
+
     describe("new Response()", () => {
       ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
@@ -735,6 +825,39 @@ describe.concurrent("string body consumption does not leak", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+// Network-backed bodies are the case where materializing the stream really does move bytes
+// out of the native source and into the controller's queue, so the "peek then read" shape
+// has to survive that too.
+describe("locking a network-backed body stream does not consume it", () => {
+  test("fetch() response body", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("from server") });
+    const res = await fetch(server.url);
+    res.body!.getReader().releaseLock();
+    expect(res.bodyUsed).toBe(false);
+    expect(await res.text()).toBe("from server");
+  });
+
+  test("incoming Bun.serve() request body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        req.body!.getReader().releaseLock();
+        return Response.json({ bodyUsed: req.bodyUsed, text: await req.text() });
+      },
+    });
+    const res = await fetch(server.url, { method: "POST", body: "payload" });
+    expect(await res.json()).toEqual({ bodyUsed: false, text: "payload" });
+  });
+
+  test("Bun.file() body", async () => {
+    using dir = tempDir("body-peek", { "body.txt": "filebody" });
+    const res = new Response(file(join(String(dir), "body.txt")));
+    res.body!.getReader().releaseLock();
+    expect(res.bodyUsed).toBe(false);
+    expect(await res.text()).toBe("filebody");
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/6860

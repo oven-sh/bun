@@ -488,7 +488,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
 
-    stream->m_disturbed = true;
+    stream->m_nativeSourceMaterialized = true;
     size_t autoAllocateChunkSize = stream->m_autoAllocateChunkSize ? static_cast<size_t>(stream->m_autoAllocateChunkSize) : nativeSourceDefaultChunkSize;
 
     MarkedArgumentBuffer startArgs;

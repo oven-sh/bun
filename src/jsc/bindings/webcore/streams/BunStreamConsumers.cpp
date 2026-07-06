@@ -851,7 +851,7 @@ JSValue tryUseReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCo
     JSObject* handle = nativePtr.getObject();
     if (!handle)
         return {};
-    if (stream->m_disturbed)
+    if (stream->nativeSourceConsumed())
         return {};
     JSValue methodValue = handle->get(globalObject, method);
     RETURN_IF_EXCEPTION(scope, {});

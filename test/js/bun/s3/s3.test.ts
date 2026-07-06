@@ -1801,3 +1801,97 @@ describe("s3 multipart upload id validation", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 });
+
+describe.concurrent("SharedArrayBuffer upload (stable bytes)", () => {
+  // S3 write accepts SharedArrayBuffer-backed upload data (the public type
+  // surface allows it). The byte source is snapshotted before Rust borrows it,
+  // so these uploads must still send exactly the requested view bytes against a
+  // local fake S3 endpoint — no real credentials required.
+  function fakeS3() {
+    const received: { method: string; path: string; body: Uint8Array }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        received.push({ method: req.method, path: url.pathname, body: new Uint8Array(await req.arrayBuffer()) });
+        return new Response("", { status: 200, headers: { etag: '"stable"', "content-length": "0" } });
+      },
+    });
+    const options = {
+      endpoint: server.url.href,
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      region: "us-east-1",
+    };
+    return { server, options, received };
+  }
+
+  // A SAB-backed view surrounded by 0xff bytes that must never be uploaded, so a
+  // stale or whole-buffer read would change the asserted body.
+  function sabView(offset: number, bytes: number[]) {
+    const sab = new SharedArrayBuffer(offset + bytes.length + 4);
+    const full = new Uint8Array(sab);
+    full.fill(0xff);
+    full.set(bytes, offset);
+    return new Uint8Array(sab, offset, bytes.length);
+  }
+
+  const putBody = (received: { method: string; body: Uint8Array }[]) => received.find(r => r.method === "PUT")?.body;
+
+  it("S3File.write uploads a nonzero-offset Uint8Array(SAB) view", async () => {
+    const { server, options, received } = fakeS3();
+    try {
+      await s3("file-view.bin", options).write(sabView(8, [1, 2, 3, 4, 5, 6, 7, 8]));
+      expect(received.some(r => r.method === "PUT" && r.path === "/bucket/file-view.bin")).toBe(true);
+      expect(Array.from(putBody(received)!)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("S3Client.write uploads a nonzero-offset Uint8Array(SAB) view", async () => {
+    const { server, options, received } = fakeS3();
+    try {
+      await new S3Client(options).write("client-view.bin", sabView(4, [10, 11, 12, 13]));
+      expect(received.some(r => r.method === "PUT" && r.path === "/bucket/client-view.bin")).toBe(true);
+      expect(Array.from(putBody(received)!)).toEqual([10, 11, 12, 13]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("Bun.write(S3File, view) uploads a nonzero-offset Uint8Array(SAB) view", async () => {
+    const { server, options, received } = fakeS3();
+    try {
+      await Bun.write(s3("bun-write-view.bin", options), sabView(2, [20, 21, 22]));
+      expect(received.some(r => r.method === "PUT" && r.path === "/bucket/bun-write-view.bin")).toBe(true);
+      expect(Array.from(putBody(received)!)).toEqual([20, 21, 22]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("S3File.write accepts a raw SharedArrayBuffer", async () => {
+    const { server, options, received } = fakeS3();
+    try {
+      const sab = new SharedArrayBuffer(5);
+      new Uint8Array(sab).set([1, 2, 3, 4, 5]);
+      await s3("raw-sab.bin", options).write(sab);
+      expect(Array.from(putBody(received)!)).toEqual([1, 2, 3, 4, 5]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("S3File.write accepts a zero-length Uint8Array(SAB) view", async () => {
+    const { server, options, received } = fakeS3();
+    try {
+      await s3("zero-view.bin", options).write(new Uint8Array(new SharedArrayBuffer(8), 4, 0));
+      expect(received.some(r => r.method === "PUT" && r.path === "/bucket/zero-view.bin")).toBe(true);
+      expect(putBody(received)!.byteLength).toBe(0);
+    } finally {
+      server.stop(true);
+    }
+  });
+});

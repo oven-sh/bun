@@ -2760,11 +2760,9 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
 });
 
 it("http2 client.request() rejects connection-specific headers synchronously", async () => {
-  // RFC 9113 Section 8.2.2 forbids connection-specific fields in an HTTP/2 message, and node
-  // rejects them with a synchronous ERR_HTTP2_INVALID_CONNECTION_HEADERS from every site that
-  // encodes a header block. A request that can never succeed must therefore never reach the
-  // wire, otherwise `try { session.request(h) } catch` never fires and retry logic keeps
-  // replaying a permanently-invalid request.
+  // RFC 9113 Section 8.2.2 forbids connection-specific fields in an HTTP/2 message; node rejects
+  // them with a synchronous ERR_HTTP2_INVALID_CONNECTION_HEADERS from every site that encodes a
+  // header block, so a request that can never succeed never reaches the wire.
   const delivered = [];
   const server = http2.createServer();
   server.on("stream", (stream, headers) => {
@@ -2818,14 +2816,25 @@ it("http2 client.request() rejects connection-specific headers synchronously", a
       rawHeadersArray: FORBIDDEN,
     });
 
-    // `te: trailers` is the one connection-specific field HTTP/2 keeps. An undefined value or an
-    // empty array encodes no header at all, so neither is forbidden.
+    // `te: trailers` is the one connection-specific field HTTP/2 keeps, and an empty array
+    // encodes no header at all.
     expect({
       te: tryRequest({ ":path": "/", te: "trailers" }),
       teArray: tryRequest({ ":path": "/", te: ["trailers"] }),
       emptyArray: tryRequest({ ":path": "/", connection: [] }),
       rawTe: tryRequest([":path", "/", "te", "trailers"]),
     }).toEqual({ te: null, teArray: null, emptyArray: null, rawTe: null });
+
+    // An undefined value also encodes no header, so it is not a connection-specific violation:
+    // it fails the same way any undefined-valued header does. (Bun rejects those for every header
+    // name while node skips them - a separate divergence this change does not touch.)
+    expect({
+      connectionUndefined: tryRequest({ ":path": "/", connection: undefined }),
+      plainUndefined: tryRequest({ ":path": "/", "x-anything": undefined }),
+    }).toEqual({
+      connectionUndefined: "ERR_HTTP2_INVALID_HEADER_VALUE",
+      plainUndefined: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    });
 
     const statuses = await Promise.all(responses);
     expect(statuses.map(h => h[":status"])).toEqual([200, 200, 200, 200]);
@@ -2954,6 +2963,60 @@ it("http2 respond(), additionalHeaders() and sendTrailers() reject connection-sp
     expect(informational).toEqual([]);
     expect(trailers["x-ok"]).toBe("1");
     expect(trailers["transfer-encoding"]).toBeUndefined();
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+it("http2 respondWithFile()/respondWithFD() reject connection-specific headers on the stream", async () => {
+  // Both build their header block through respond(), so they inherit its validation. node does the
+  // same inside processRespondWithFD: the send-file path destroys the stream with the error rather
+  // than throwing synchronously, because the header block is encoded after the fstat completes.
+  const syncThrew = {};
+  const serverErrors = {};
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    const which = headers["x-which"];
+    stream.on("error", e => (serverErrors[which] = e.code));
+    try {
+      if (which === "file") {
+        stream.respondWithFile(import.meta.path, { connection: "keep-alive" });
+      } else {
+        const fd = fs.openSync(import.meta.path, "r");
+        stream.on("close", () => {
+          try {
+            fs.closeSync(fd);
+          } catch {}
+        });
+        stream.respondWithFD(fd, { "http2-settings": "AAMAAABkAAQAoAAAAAIAAAAA" });
+      }
+      syncThrew[which] = false;
+    } catch (e) {
+      syncThrew[which] = e.code;
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    const clientErrors = {};
+    for (const which of ["file", "fd"]) {
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      const req = client.request({ ":path": "/", "x-which": which }, { endStream: true });
+      req.on("error", e => (clientErrors[which] = e.code));
+      req.on("data", () => {});
+      req.on("close", onClose);
+      await closed;
+    }
+
+    const FORBIDDEN = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
+    expect({ syncThrew, serverErrors, clientErrors }).toEqual({
+      syncThrew: { file: false, fd: false },
+      serverErrors: { file: FORBIDDEN, fd: FORBIDDEN },
+      clientErrors: { file: "ERR_HTTP2_STREAM_ERROR", fd: "ERR_HTTP2_STREAM_ERROR" },
+    });
   } finally {
     client.close();
     server.close();

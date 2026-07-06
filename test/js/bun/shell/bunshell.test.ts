@@ -999,6 +999,29 @@ booga"
 
       expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     });
+
+    // POSIX: a plain assignment to a name that already carries the export
+    // attribute keeps it exported, so the new value must reach child processes,
+    // not just the shell's own `$VAR` view.
+    test("reassigning an exported var updates both the shell and the child", async () => {
+      const env = { ...bunEnv, OUTER: "fromenv" };
+      const code = "process.stdout.write('child=' + (process.env.OUTER ?? '<unset>'))";
+      const { stdout } = await $`OUTER=changed; echo shell=$OUTER; ${BUN} -e ${code}`.env(env);
+      expect(stdout.toString()).toBe("shell=changed\nchild=changed");
+    });
+
+    test("append idiom on an exported var reaches the child", async () => {
+      const env = { ...bunEnv, OUTER: "fromenv" };
+      const code = "process.stdout.write(process.env.OUTER ?? '<unset>')";
+      const { stdout } = await $`OUTER="$OUTER+more"; ${BUN} -e ${code}`.env(env);
+      expect(stdout.toString()).toBe("fromenv+more");
+    });
+
+    test("bare assignment to a non-exported name stays shell-local", async () => {
+      const code = "process.stdout.write(process.env.NEWV ?? '<unset>')";
+      const { stdout } = await $`NEWV=nv; echo shell=$NEWV; ${BUN} -e ${code}`.env(bunEnv);
+      expect(stdout.toString()).toBe("shell=nv\n<unset>");
+    });
   });
 
   describe("cd & pwd", () => {

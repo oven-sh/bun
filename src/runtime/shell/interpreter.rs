@@ -2141,7 +2141,18 @@ impl ShellExecEnv {
     ) {
         match assign_ctx {
             AssignCtx::Cmd => self.cmd_local_env.insert(label, value),
-            AssignCtx::Shell => self.shell_env.insert(label, value),
+            AssignCtx::Shell => {
+                // POSIX: a plain assignment to a name that already carries the
+                // export attribute keeps it exported, so children must see the
+                // new value. Update the exported binding in place rather than
+                // shadowing it with a shell-local entry.
+                if let Some(existing) = self.export_env.get(label) {
+                    existing.deref();
+                    self.export_env.insert(label, value);
+                } else {
+                    self.shell_env.insert(label, value);
+                }
+            }
             AssignCtx::Exported => self.export_env.insert(label, value),
         }
     }

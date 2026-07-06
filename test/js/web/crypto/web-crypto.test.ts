@@ -544,3 +544,43 @@ describe("SubtleCrypto.deriveBits length", () => {
     expect(hex(await crypto.subtle.exportKey("raw", aesKey))).toBe(ecSecret);
   });
 });
+
+describe("X25519 JWK import", () => {
+  const x25519Public: JsonWebKey = {
+    kty: "OKP",
+    crv: "X25519",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+  };
+  const x25519Private: JsonWebKey = {
+    ...x25519Public,
+    d: "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo",
+  };
+  const outcome = (jwk: JsonWebKey, extractable: boolean, usages: KeyUsage[]) =>
+    crypto.subtle.importKey("jwk", jwk, "X25519", extractable, usages).then(
+      key => (key instanceof CryptoKey ? "imported" : "other"),
+      e => e.name,
+    );
+
+  it("rejects a JWK whose kty is not OKP", async () => {
+    expect({
+      wrongKty: await outcome({ ...x25519Public, kty: "EC" }, true, []),
+      okp: await outcome({ ...x25519Public, ext: true }, true, []),
+    }).toEqual({ wrongKty: "DataError", okp: "imported" });
+  });
+
+  it("rejects a JWK whose key_ops does not include the requested usages", async () => {
+    expect({
+      missingUsage: await outcome({ ...x25519Private, key_ops: ["deriveKey"] }, true, ["deriveBits"]),
+      supersetOfUsages: await outcome({ ...x25519Private, key_ops: ["deriveBits", "deriveKey"], ext: true }, true, [
+        "deriveBits",
+      ]),
+    }).toEqual({ missingUsage: "DataError", supersetOfUsages: "imported" });
+  });
+
+  it("rejects a JWK with ext set to false when extractable is requested", async () => {
+    expect({
+      extFalse: await outcome({ ...x25519Public, ext: false }, true, []),
+      extTrue: await outcome({ ...x25519Public, ext: true }, true, []),
+    }).toEqual({ extFalse: "DataError", extTrue: "imported" });
+  });
+});

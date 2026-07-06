@@ -47,7 +47,7 @@ RUN apt-get update -qq \
       -fsSLO \
       --compressed \
       --retry 5 \
-    && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
+    && gpg --batch --verify --output SHASUMS256.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
       || (echo "error: failed to verify: $tag" && exit 1) \

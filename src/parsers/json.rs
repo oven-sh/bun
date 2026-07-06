@@ -983,6 +983,7 @@ impl Materializer<'_> {
                 None => property_value_loc_or_key(self.contents, row.key_loc),
             };
             properties.push(G::Property {
+                flags: E::own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(self.json_value(&row.value, value_loc)),
                 kind: G::PropertyKind::Normal,

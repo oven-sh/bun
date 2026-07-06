@@ -6693,6 +6693,13 @@ pub fn plugin_runner_on_resolve_jsc(
     // early-return paths.
     let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
 
+    // A `file`-namespace result (the default) is a filesystem path, not a new
+    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
+    // form the module loader dispatches on.
+    if user_namespace.eql_comptime(b"file") {
+        return Ok(Some(ErrorableString::ok(file_path.into_inner())));
+    }
+
     // Our slow way of cloning the string into memory owned by JSC.
     use std::io::Write as _;
     let mut combined_string: Vec<u8> = Vec::new();

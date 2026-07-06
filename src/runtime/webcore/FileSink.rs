@@ -150,6 +150,12 @@ fn is_pollable(mode: sys::Mode) -> bool {
 pub type IOWriter = bun_io::StreamingWriter<FileSink>;
 pub type Poll = IOWriter;
 
+/// How many bytes the sink buffers in memory for a `ReadableStream` pump before
+/// it reports backpressure. Four Linux pipe buffers: enough to keep the
+/// destination busy across a drain round-trip, small enough that a destination
+/// which reads slowly (or has gone away) cannot grow the process without bound.
+const STREAM_BACKPRESSURE_HIGH_WATER_MARK: usize = 4 * 64 * 1024;
+
 // `StreamingWriter<P>` requires `P: PosixStreamingWriterParent` (POSIX) /
 // `WindowsStreamingWriterParent` (Windows). The vtable methods forward to the
 // FileSink state-machine handlers below.
@@ -969,7 +975,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, accepted)
     }
 
     #[inline]
@@ -985,7 +991,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, accepted)
     }
 
     pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
@@ -996,7 +1002,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, accepted)
     }
 
     pub fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
@@ -1279,6 +1285,31 @@ impl FileSink {
                 });
                 streams::Writable::Pending(self.pending.as_ptr())
             }
+        }
+    }
+
+    /// `to_result`, plus the backpressure signal the `readStreamIntoSink` pump
+    /// needs. Once more than [`STREAM_BACKPRESSURE_HIGH_WATER_MARK`] bytes are
+    /// sitting unflushed in the writer, report `Backpressure` so the pump awaits
+    /// `flush(true)` instead of reading the whole stream into memory. The
+    /// negative sentinel `Backpressure` encodes is understood only by that pump,
+    /// so a sink nobody is pumping a stream into (`Bun.file().writer()`,
+    /// `proc.stdin`) keeps `write()`'s number-or-Promise contract.
+    fn write_result(&self, write_result: WriteResult, accepted: u64) -> streams::Writable {
+        let result = self.to_result(write_result, accepted);
+        if !self.readable_stream.with_mut(|s| s.has())
+            || self.writer.get().buffered_len() <= STREAM_BACKPRESSURE_HIGH_WATER_MARK
+        {
+            return result;
+        }
+        match result {
+            // Finished or failed: `Backpressure` would park the pump on a drain
+            // that is never coming.
+            streams::Writable::Done
+            | streams::Writable::Err(_)
+            | streams::Writable::OwnedAndDone(_)
+            | streams::Writable::TemporaryAndDone(_) => result,
+            _ => streams::Writable::Backpressure(accepted),
         }
     }
 

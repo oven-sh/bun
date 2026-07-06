@@ -205,9 +205,9 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test.todo("ReadableStream cancellation when process exits early", async () => {
-    let cancelled = false;
+  test("ReadableStream cancellation when process exits early", async () => {
     let chunksEnqueued = 0;
+    const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<void>();
 
     const stream = new ReadableStream({
       async pull(controller) {
@@ -217,7 +217,7 @@ describe("spawn stdin ReadableStream", () => {
         controller.enqueue(`chunk ${chunksEnqueued}\n`);
       },
       cancel(_reason) {
-        cancelled = true;
+        onCancel();
       },
     });
 
@@ -243,15 +243,14 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await proc.stdout.text();
-    await proc.exited;
+    const [text] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    // Give some time for cancellation to happen
-    await Bun.sleep(100);
+    // The child is gone, so the sink is dead: the pump must cancel the source
+    // instead of pulling it forever. Hangs (and fails) if cancel() never runs.
+    await cancelled;
 
-    expect(cancelled).toBe(true);
     expect(chunksEnqueued).toBeGreaterThanOrEqual(2);
-    // head -n 2 should only output 2 lines
+    // The child exits after 2 lines.
     expect(text.trim().split("\n").length).toBe(2);
   });
 
@@ -356,15 +355,17 @@ describe("spawn stdin ReadableStream", () => {
         }
 
         // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink always holds an in-flight write. Once a few chunks have
-        // been handed to the sink, kill the child. How far the pump gets before
-        // the parent notices the death varies, so run several rounds.
+        // and the sink always holds an in-flight write. Kill the child on the
+        // second chunk: the first one is already in flight by then, and the sink
+        // stops pulling once it is backed up, so a higher count never arrives.
+        // How far the pump gets before the parent notices the death varies, so
+        // run several rounds.
         function round() {
           let produced = 0;
           const child = Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
             stdin: (${useIterator} ? iterate : readable)(() => {
-              if (++produced === 4) child.kill();
+              if (++produced === 2) child.kill();
             }),
             stdout: "ignore",
             stderr: "ignore",
@@ -411,7 +412,9 @@ describe("spawn stdin ReadableStream", () => {
         const chunk = Buffer.alloc(256 * 1024, "x");
         let produced = 0;
         function producedOne() {
-          if (++produced === 4) child.kill();
+          // Second chunk: the first is in flight, and the sink stops pulling
+          // once it is backed up, so a higher count never arrives.
+          if (++produced === 2) child.kill();
         }
         async function* iterate() {
           while (true) {
@@ -463,6 +466,95 @@ describe("spawn stdin ReadableStream", () => {
 
   test("parent exits after the child dies when stdin is a ReadableStream", async () => {
     await expectParentExitsAfterChildDies(false);
+  });
+
+  // A synchronous pull() re-fills the stream's queue inside the pump's own
+  // microtask loop, so nothing but the sink refusing more data can stop it.
+  // Both fixtures bail out of pull() past a generous bound so they terminate
+  // instead of buffering the whole stream into memory.
+  const syncPullSource = (bound: number) => /* js */ `
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    let pulls = 0;
+    const source = {
+      pull(controller) {
+        if (++pulls > ${bound}) {
+          console.log("pull() was never bounded by backpressure");
+          process.exit(1);
+        }
+        controller.enqueue(chunk);
+      },
+    };
+  `;
+
+  test("a synchronous pull() does not starve the event loop", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        ${syncPullSource(512)}
+
+        // Never reads its stdin, so the pipe fills and the sink must push back.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+          stdin: new ReadableStream(source),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+
+        let ticks = 0;
+        const timer = setInterval(() => {
+          if (++ticks < 3) return;
+          clearInterval(timer);
+          child.kill();
+        }, 1);
+
+        await child.exited;
+        console.log("ticks=" + ticks);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ticks=3", exitCode: 0 });
+    expect(stderr).not.toContain("EPIPE");
+  });
+
+  test("a synchronous pull() stops and cancels the source when the child exits early", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        ${syncPullSource(512)}
+        const { promise: cancelled, resolve: onCancel } = Promise.withResolvers();
+        source.cancel = () => onCancel();
+
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.once('data', () => process.exit(0))"],
+          stdin: new ReadableStream(source),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+
+        console.log("exited=" + (await child.exited));
+        // The sink is dead, so the pump must cancel the source rather than pull
+        // it forever. Hangs (and fails) if cancel() never runs.
+        await cancelled;
+        console.log("cancelled");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "exited=0\ncancelled", exitCode: 0 });
+    expect(stderr).not.toContain("EPIPE");
   });
 
   test("ReadableStream with process that exits immediately", async () => {

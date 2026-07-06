@@ -307,15 +307,14 @@ static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     throwTypeError(globalObject, scope, "Unknown direct controller. This is a bug in Bun."_s);
 }
 
-// ReadableStream.prototype.cancel semantics; the result promise is only ever markAsHandled'd.
-static void publicStreamCancelIgnoringResult(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+// The ReadableStreamCancel abstract op, as `pipeTo` invokes it when the destination
+// errors. Not ReadableStream.prototype.cancel: a pump always holds the stream's reader,
+// so the public method's lock check would reject every call and the underlying source's
+// cancel() would never run. The result promise is only ever markAsHandled'd.
+static void cancelStreamIgnoringResult(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
 {
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSPromise* promise = nullptr;
-    if (isReadableStreamLocked(stream))
-        promise = promiseRejectedWith(globalObject, createTypeError(globalObject, "ReadableStream is locked"_s));
-    else
-        promise = readableStreamCancel(globalObject, stream, reason);
+    JSPromise* promise = readableStreamCancel(globalObject, stream, reason);
     if (catchScope.exception()) [[unlikely]] {
         takeAbruptCompletion(globalObject, catchScope);
         return;
@@ -999,7 +998,7 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     op->m_reader.clear();
     auto* result = op->m_result.get();
     if (auto* stream = op->m_stream.get())
-        publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
+        cancelStreamIgnoringResult(vm, globalObject, stream, error);
     JSValue rejectionValue = error;
     if (op->m_sink && !op->m_didClose) {
         op->m_didClose = true;
@@ -1023,9 +1022,10 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     RELEASE_AND_RETURN(scope, rejectPromise(globalObject, result, rejectionValue));
 }
 
-// One sink.write(chunk). `wrote < 0` = HTTP-sink backpressure: register the flush continuation
-// (its context carries the unwritten batch tail) and suspend. A Promise `wrote` is
-// deliberately NOT awaited, only marked as handled.
+// One sink.write(chunk). `wrote < 0` = the sink is backed up: register the flush continuation
+// (its context carries the unwritten batch tail) and suspend. A pending Promise `wrote` is
+// deliberately NOT awaited, only marked as handled; an already-rejected one is the write
+// failing outright, which aborts the pump.
 static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk, JSObject* batchValues, unsigned nextIndex, unsigned length)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1056,8 +1056,15 @@ static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObj
         flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadStreamIntoSinkFlushFulfilled(), runtime->onReadStreamIntoSinkRejected(), jsUndefined(), context);
         return false;
     }
-    if (auto* wrotePromise = dynamicDowncast<JSPromise>(wrote))
+    if (auto* wrotePromise = dynamicDowncast<JSPromise>(wrote)) {
         markPromiseAsHandled(vm, wrotePromise);
+        // The destination went away mid-write (EPIPE once a subprocess closes its stdin).
+        // Without this the pump keeps reading the source forever into a dead sink.
+        if (wrotePromise->status() == JSPromise::Status::Rejected) {
+            throwException(globalObject, scope, wrotePromise->result());
+            return std::nullopt;
+        }
+    }
     return true;
 }
 
@@ -1331,7 +1338,7 @@ static void resumableHandleAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSR
     op->m_error.set(vm, op, error);
     op->m_closed = true;
     if (auto* stream = op->m_stream.get())
-        publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
+        cancelStreamIgnoringResult(vm, globalObject, stream, error);
     queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onResumableSinkEndMicrotask(), error, op);
     op->m_reading = false;
 }

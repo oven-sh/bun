@@ -969,6 +969,40 @@ describe("contextified sandbox is the store for guest-created globals", () => {
     expect(runInContext("Object.getOwnPropertyNames(globalThis).includes('leaked')", sandbox)).toBe(false);
   });
 
+  // A store site hot enough to reach the JIT tiers must not start writing a
+  // second copy onto the context's global object behind the sandbox's back.
+  test("the sandbox stays the store when the assignment site gets hot", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("for (let i = 0; i < 2000; i++) globalThis.hot = i;", sandbox);
+
+    expect(sandbox.hot).toBe(1999);
+    expect(delete sandbox.hot).toBe(true);
+    expect(runInContext("typeof hot", sandbox)).toBe("undefined");
+
+    sandbox.hot = "rehomed";
+    expect(runInContext("hot", sandbox)).toBe("rehomed");
+  });
+
+  // These reach the `slot.isStrictMode() && !isDeclared` branch, whose isDeclared
+  // input now accounts for bindings on the context's global object.
+  test("strict-mode contextual stores still reach the sandbox", () => {
+    const builtin: any = {};
+    createContext(builtin);
+    runInContext("'use strict'; Object = 5;", builtin);
+    expect(builtin.Object).toBe(5);
+
+    const declared: any = {};
+    createContext(declared);
+    runInContext("'use strict'; var v; v = 7;", declared);
+    expect(declared.v).toBe(7);
+
+    const preset: any = { p: 0 };
+    createContext(preset);
+    runInContext("'use strict'; p = 9;", preset);
+    expect(preset.p).toBe(9);
+  });
+
   test("a symbol-keyed assignment stays on the context's global object", () => {
     const sandbox: any = {};
     createContext(sandbox);

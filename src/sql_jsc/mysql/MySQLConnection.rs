@@ -666,17 +666,16 @@ impl MySQLConnection {
         self.auth_data.clear();
         self.auth_data.shrink_to_fit();
 
-        // `auth_plugin_data_part_2` carries a trailing NUL per the wire
-        // protocol. caching_sha2_password's RSA path XORs the password
-        // cyclically against the full nonce, so an unstripped 21-byte nonce
-        // leaves byte 20 of the password unmasked (#26195). Drop the NUL so
-        // the stored nonce is the expected 20 bytes.
-        let part_1 = &handshake.auth_plugin_data_part_1[..];
-        let part_2 = &handshake.auth_plugin_data_part_2[..];
-        let part_2 = part_2.strip_suffix(&[0]).unwrap_or(part_2);
-        self.auth_data.reserve(part_1.len() + part_2.len());
-        self.auth_data.extend_from_slice(part_1);
-        self.auth_data.extend_from_slice(part_2);
+        // The wire nonce is NUL-terminated; that byte is not part of the
+        // scramble (#26195). Truncate by position, not by value.
+        self.auth_data.reserve(
+            handshake.auth_plugin_data_part_1.len() + handshake.auth_plugin_data_part_2.len(),
+        );
+        self.auth_data
+            .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
+        self.auth_data
+            .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
+        self.auth_data.truncate(Auth::SCRAMBLE_LENGTH);
 
         // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {
@@ -904,7 +903,10 @@ impl MySQLConnection {
                 // Update auth plugin and data
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
+                // Terminated the same way as the handshake's auth-plugin-data
+                // (see above); truncate by position, not by value (#26195).
                 let auth_data = auth_switch.plugin_data.slice();
+                let auth_data = &auth_data[..auth_data.len().min(Auth::SCRAMBLE_LENGTH)];
                 self.auth_plugin = Some(auth_method);
                 self.auth_data.clear();
                 self.auth_data.extend_from_slice(auth_data);

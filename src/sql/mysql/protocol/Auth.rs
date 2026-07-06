@@ -14,6 +14,11 @@ use crate::shared::Data;
 
 bun_core::declare_scope!(Auth, hidden);
 
+/// Every current auth plugin's nonce is this many bytes (MySQL's `SCRAMBLE_LENGTH`).
+/// HandshakeV10 and AuthSwitchRequest both wire-terminate it with a NUL that is not
+/// part of the nonce (#26195); storage sites truncate to this length by position.
+pub const SCRAMBLE_LENGTH: usize = 20;
+
 pub mod mysql_native_password {
     use super::*;
 
@@ -29,7 +34,7 @@ pub mod mysql_native_password {
         // A malicious or broken server can send an AuthSwitchRequest with a
         // short plugin_data; without this check the slicing below reads past
         // the end of the buffer.
-        if nonce.len() < 20 {
+        if nonce.len() < SCRAMBLE_LENGTH {
             return Err(err!("MissingAuthData"));
         }
 
@@ -72,6 +77,12 @@ pub mod caching_sha2_password {
         let mut digest2 = [0u8; 32];
         let mut digest3 = [0u8; 32];
         let mut result: [u8; 32] = [0u8; 32];
+
+        // Same short-plugin_data hazard as mysql_native_password::scramble (#26195).
+        if nonce.len() < SCRAMBLE_LENGTH {
+            return Err(err!("MissingAuthData"));
+        }
+        let nonce = &nonce[..SCRAMBLE_LENGTH];
 
         // SHA256(password)
         // Null ENGINE — see note in mysql_native_password::scramble.

@@ -54,8 +54,9 @@ let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
-  port?: number;
   address: string;
+  // `declare` keeps `port` off the instances that have none, the way Node's errors do.
+  declare port?: number;
 
   constructor(err: number, syscall: string, address: string, port?: number) {
     // TODO(joyeecheung): We have to use the type-checked
@@ -72,6 +73,60 @@ class ExceptionWithHostPort extends Error {
     }
 
     super(`${syscall} ${code}${details}`);
+
+    this.errno = err;
+    this.code = code;
+    this.syscall = syscall;
+    this.address = address;
+    if (port) {
+      this.port = port;
+    }
+  }
+  get ["constructor"]() {
+    return Error;
+  }
+}
+
+let uvBinding: any;
+let uvErrorMap: Map<number, [string, string]>;
+const uvUnmappedError = ["UNKNOWN", "unknown error"];
+
+function lazyUV() {
+  return (uvBinding ??= process.binding("uv"));
+}
+
+/** The libuv errno for a system error code, e.g. `"EACCES"` -> `-13`. `undefined` if libuv has no such code. */
+function uvErrnoFromCode(code: string): number | undefined {
+  return lazyUV()["UV_" + code];
+}
+
+/** `[code, description]` for a libuv errno, e.g. `-13` -> `["EACCES", "permission denied"]`. */
+function uvErrmapGet(errno: number) {
+  uvErrorMap ??= lazyUV().getErrorMap();
+  return uvErrorMap.$get(errno);
+}
+
+/**
+ * Node's `uvExceptionWithHostPort`: `"<syscall> <CODE>: <description> <address>"`.
+ * https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/errors.js#L692
+ */
+class UVExceptionWithHostPort extends Error {
+  errno: number;
+  syscall: string;
+  address: string;
+  // `declare` keeps `port` off the instances that have none, the way Node's errors do.
+  declare port?: number;
+
+  constructor(err: number, syscall: string, address: string, port?: number) {
+    const { 0: code, 1: uvmsg } = uvErrmapGet(err) || uvUnmappedError;
+    let details = "";
+    if (port && port > 0) {
+      details = ` ${address}:${port}`;
+    } else if (address) {
+      details = ` ${address}`;
+    }
+
+    super(`${syscall} ${code}: ${uvmsg}${details}`);
 
     this.errno = err;
     this.code = code;
@@ -277,6 +332,8 @@ export default {
   hideFromStack,
   warnNotImplementedOnce,
   ExceptionWithHostPort,
+  UVExceptionWithHostPort,
+  uvErrnoFromCode,
   NodeAggregateError,
   ConnResetException,
   ErrnoException,

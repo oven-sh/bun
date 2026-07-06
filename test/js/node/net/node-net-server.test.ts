@@ -1,8 +1,9 @@
 import { realpathSync } from "fs";
+import { isWindows, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
-import { tmpdir } from "os";
+import { constants, tmpdir } from "os";
 import { join } from "path";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
@@ -566,6 +567,89 @@ describe("net.createServer events", () => {
       client.end();
     } finally {
       server.close();
+    }
+  });
+});
+
+describe("net.Server listen errors", () => {
+  // Node shapes every listen failure with uvExceptionWithHostPort():
+  // "listen <CODE>: <description> <address>", errno is the negative libuv code,
+  // and the failing address/port are own properties. A pipe listen reports port -1.
+  async function listenError(options: object) {
+    const server = createServer();
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    server.on("error", resolve);
+    server.once("listening", () => {
+      server.close();
+      reject(new Error("expected listen() to fail, but the server started listening"));
+    });
+    server.listen(options as any);
+    return await promise;
+  }
+
+  function shapeOf(err: any) {
+    return {
+      code: err.code,
+      errno: err.errno,
+      syscall: err.syscall,
+      address: err.address,
+      port: err.port,
+      hasOwnPort: Object.hasOwn(err, "port"),
+      message: err.message,
+    };
+  }
+
+  // libuv's uv_pipe_bind converts a bind() ENOENT into EACCES, so Node never
+  // reports ENOENT for a unix socket whose directory does not exist.
+  it.skipIf(isWindows)("a unix socket in a missing directory reports EACCES", async () => {
+    using dir = tempDir("netlisten", {});
+    const path = join(String(dir), "does-not-exist", "x.sock");
+
+    expect(shapeOf(await listenError({ path }))).toEqual({
+      code: "EACCES",
+      errno: -13,
+      syscall: "listen",
+      address: path,
+      port: -1,
+      hasOwnPort: true,
+      message: `listen EACCES: permission denied ${path}`,
+    });
+  });
+
+  // ENOTDIR is not one of the handful of codes Bun used to know how to format.
+  it.skipIf(isWindows)("a unix socket under a non-directory reports ENOTDIR in Node's shape", async () => {
+    using dir = tempDir("netlisten", { "file.txt": "" });
+    const path = join(String(dir), "file.txt", "x.sock");
+
+    expect(shapeOf(await listenError({ path }))).toEqual({
+      code: "ENOTDIR",
+      errno: -20,
+      syscall: "listen",
+      address: path,
+      port: -1,
+      hasOwnPort: true,
+      message: `listen ENOTDIR: not a directory ${path}`,
+    });
+  });
+
+  it("a TCP listen failure carries the negative libuv errno", async () => {
+    const taken = createServer();
+    try {
+      taken.listen(0, "127.0.0.1");
+      await once(taken, "listening");
+      const { port } = taken.address() as AddressInfo;
+
+      expect(shapeOf(await listenError({ host: "127.0.0.1", port }))).toEqual({
+        code: "EADDRINUSE",
+        errno: -constants.errno.EADDRINUSE,
+        syscall: "listen",
+        address: "127.0.0.1",
+        port,
+        hasOwnPort: true,
+        message: `listen EADDRINUSE: address already in use 127.0.0.1:${port}`,
+      });
+    } finally {
+      taken.close();
     }
   });
 });

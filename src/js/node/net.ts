@@ -28,6 +28,8 @@ let dns: typeof import("node:dns");
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const {
   ExceptionWithHostPort,
+  UVExceptionWithHostPort,
+  uvErrnoFromCode,
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
@@ -3431,7 +3433,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
+    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? -1 : port));
   }
   return this;
 };
@@ -3726,36 +3728,20 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
   }
 }
 
-// Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"
-// (Node uses exceptionWithHostPort). Only rewrites known uv codes; the code is
-// already set natively.
+// Reshape a native listen failure into the error Node builds with
+// uvExceptionWithHostPort(): "listen <CODE>: <description> <address>", the
+// negative libuv errno, and the address/port as own properties.
+// A pipe listen is signalled by port === -1, the way Node encodes it.
 // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
-function uvListenErrorDescription(code) {
-  switch (code) {
-    case "EADDRINUSE":
-      return "address already in use";
-    case "EACCES":
-      return "permission denied";
-    case "EADDRNOTAVAIL":
-      return "address not available";
-    case "EINVAL":
-      return "invalid argument";
-    default:
-      return undefined;
-  }
-}
 function formatListenError(err, address, port) {
-  const desc = err && typeof err.code === "string" ? uvListenErrorDescription(err.code) : undefined;
-  if (desc) {
-    err.syscall = "listen";
-    // Node's exceptionWithHostPort also exposes the failing address/port as
-    // own properties; user code commonly reads them off listen errors.
-    err.address = address;
-    if (port) err.port = port;
-    const where = port ? `${address}:${port}` : address;
-    err.message = `listen ${err.code}: ${desc}${where ? ` ${where}` : ""}`;
-  }
-  return err;
+  // Argument validation and the readableAll/writableAll chmod reach this path
+  // too; only the native bind/listen failure carries syscall === "listen".
+  if (!err || err.syscall !== "listen" || typeof err.code !== "string") return err;
+  // libuv's uv_pipe_bind reports a pipe path it cannot reach as EACCES.
+  const code = port === -1 && err.code === "ENOENT" ? "EACCES" : err.code;
+  const errno = uvErrnoFromCode(code);
+  if (errno === undefined) return err;
+  return new UVExceptionWithHostPort(errno, "listen", address, port);
 }
 
 function checkBindError(err, port, handle) {

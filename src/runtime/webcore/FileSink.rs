@@ -1296,10 +1296,15 @@ impl FileSink {
     /// `to_result`, plus the backpressure signal the `readStreamIntoSink` pump
     /// needs. Once more than [`STREAM_BACKPRESSURE_HIGH_WATER_MARK`] bytes are
     /// sitting unflushed in the writer, report `Backpressure` so the pump awaits
-    /// `flush(true)` instead of reading the whole stream into memory. The
-    /// negative sentinel `Backpressure` encodes is understood only by that pump,
-    /// so a sink nobody is pumping a stream into (`Bun.file().writer()`,
-    /// `proc.stdin`) keeps `write()`'s number-or-Promise contract.
+    /// `flush(true)` instead of reading the whole stream into memory.
+    ///
+    /// Only that pump understands the negative sentinel, so this must never reach
+    /// a write user JS issued. `readable_stream` is set by exactly one caller,
+    /// `assign_to_stream`, i.e. `Bun.spawn({ stdin: <ReadableStream> })` — and in
+    /// that case `proc.stdin` is the stream, not this sink (spawn caches it), so
+    /// the sink has no JS handle. Every sink that does have one (`proc.stdin` for
+    /// `stdin: "pipe"`, `Bun.file().writer()`) has no stream attached and keeps
+    /// `write()`'s number-or-Promise contract.
     fn write_result(&self, write_result: WriteResult, accepted: u64) -> streams::Writable {
         let result = self.to_result(write_result, accepted);
         if !self.readable_stream.with_mut(|s| s.has())

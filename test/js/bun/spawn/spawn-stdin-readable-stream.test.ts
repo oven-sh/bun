@@ -468,6 +468,30 @@ describe("spawn stdin ReadableStream", () => {
     await expectParentExitsAfterChildDies(false);
   });
 
+  // The sink reports backpressure to the pump with a negative `write()` return,
+  // a sentinel only the pump understands. That is safe because a sink fed by a
+  // ReadableStream has no JS handle: spawn caches `proc.stdin` as the stream
+  // itself. If that ever changes, the sentinel reaches user code instead.
+  test("proc.stdin is the stream, not a writable sink, when stdin is a ReadableStream", async () => {
+    const stream = new ReadableStream({
+      pull(controller) {
+        controller.enqueue("x");
+        controller.close();
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.resume()"],
+      stdin: stream,
+      stdout: "ignore",
+      env: bunEnv,
+    });
+
+    expect(proc.stdin).toBe(stream);
+    expect((proc.stdin as any).write).toBeUndefined();
+    expect(await proc.exited).toBe(0);
+  });
+
   // A synchronous pull() re-fills the stream's queue inside the pump's own
   // microtask loop, so nothing but the sink refusing more data can stop it.
   // Both fixtures bail out of pull() past a generous bound so they terminate

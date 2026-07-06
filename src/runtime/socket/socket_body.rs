@@ -418,7 +418,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
-    pub(super) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+    fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
@@ -3658,6 +3658,25 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: only called from the `if SSL` branch; `NewSocket<SSL>` and
         // `NewSocket<true>` are the same monomorphisation when `SSL == true`.
         unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
+    }
+
+    /// Remember the ticket of the session this connection holds; `None` forgets
+    /// it. A NewSessionTicket's ticket is this connection's whatever the
+    /// handshake did, one `setSession()` offered only while it was resumed.
+    pub(super) fn set_tls_ticket(&self, ticket: Option<Box<[u8]>>, from_new_session: bool) {
+        self.tls_ticket.set(ticket);
+        self.update_flags(|f| f.set(Flags::TLS_TICKET_FROM_NEW_SESSION, from_new_session));
+    }
+
+    /// The remembered ticket, when the session it belongs to is the one in use.
+    pub(super) fn tls_ticket_in_use(&self, session_reused: bool) -> Option<&[u8]> {
+        let ticket = self.tls_ticket.get().as_deref()?;
+        (session_reused
+            || self
+                .flags
+                .get()
+                .contains(Flags::TLS_TICKET_FROM_NEW_SESSION))
+        .then_some(ticket)
     }
 
     #[bun_jsc::host_fn(method)]

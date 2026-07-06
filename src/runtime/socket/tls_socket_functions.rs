@@ -268,7 +268,6 @@ pub(super) mod ffi {
         pub(crate) fn X509_check_issued(issuer: *mut X509, subject: *mut X509) -> c_int;
     }
 }
-use super::Flags;
 use crate::node::StringOrBuffer;
 
 // The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
@@ -1189,9 +1188,10 @@ pub(super) fn set_session(
         // A TLS 1.3 handshake drops the offered session from the SSL once it
         // resumes it, taking the ticket with it, so keep a copy for
         // `getTLSTicket()`.
-        this.tls_ticket
-            .set(session_ticket(ffi::SSL_SESSION::opaque_ref(session)).map(Box::from));
-        this.update_flags(|f| f.remove(Flags::TLS_TICKET_FROM_NEW_SESSION));
+        this.set_tls_ticket(
+            session_ticket(ffi::SSL_SESSION::opaque_ref(session)).map(Box::from),
+            false,
+        );
         Ok(JSValue::UNDEFINED)
     } else {
         Err(global.throw(format_args!(
@@ -1236,8 +1236,7 @@ pub(super) fn remember_new_session_ticket(this: &This, serialized_session: &[u8]
     let Some(ticket) = session_ticket(ffi::SSL_SESSION::opaque_ref(session)) else {
         return;
     };
-    this.tls_ticket.set(Some(Box::from(ticket)));
-    this.update_flags(|f| f.insert(Flags::TLS_TICKET_FROM_NEW_SESSION));
+    this.set_tls_ticket(Some(Box::from(ticket)), true);
 }
 
 pub(super) fn get_tls_ticket(
@@ -1257,20 +1256,10 @@ pub(super) fn get_tls_ticket(
     }
 
     // TLS 1.3 keeps only authentication data in the session `SSL_get_session()`
-    // returns, so answer from the ticket we remembered instead: a ticket we
-    // offered is the live one only while that session is the one in use, one
-    // from a NewSessionTicket always is.
-    let Some(ticket) = this.tls_ticket.get() else {
+    // returns, so answer from the ticket we remembered instead.
+    let Some(ticket) = this.tls_ticket_in_use(ffi::SSL_session_reused(ssl) == 1) else {
         return Ok(JSValue::UNDEFINED);
     };
-    if !this
-        .flags
-        .get()
-        .contains(Flags::TLS_TICKET_FROM_NEW_SESSION)
-        && ffi::SSL_session_reused(ssl) != 1
-    {
-        return Ok(JSValue::UNDEFINED);
-    }
     jsc::ArrayBuffer::create_buffer(global, ticket)
 }
 

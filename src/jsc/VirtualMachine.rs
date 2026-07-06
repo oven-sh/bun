@@ -2462,11 +2462,18 @@ impl VirtualMachine {
         // `unhandled_error_counter` is cumulative and is not reset between test
         // files, so only this body's errors count.
         let unhandled_before = self.unhandled_error_counter;
-        if self.event_loop_mut().drain_microtasks().is_err() {
-            return;
+        // The body has to evaluate with the loop entered, the way it did inside
+        // `tick()`: a nested callback's `exit()` drains microtasks at count 1, and
+        // draining them mid-body reorders a constructor against its own
+        // continuations. `exit()` drains what the body and the rejection listeners
+        // left behind.
+        self.event_loop_mut().enter();
+        let drained = self.event_loop_mut().drain_microtasks();
+        if drained.is_ok() {
+            self.global().handle_rejected_promises();
         }
-        self.global().handle_rejected_promises();
-        if self.event_loop_mut().drain_microtasks().is_err() {
+        self.event_loop_mut().exit();
+        if drained.is_err() {
             return;
         }
         // SAFETY: `evaluation` is a live JSC heap cell returned by
@@ -4610,7 +4617,12 @@ impl VirtualMachine {
     ) -> Result<*mut JSInternalPromise, bun_core::Error> {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
-        self.run_entry_point_body(promise);
+        // Deliberately not `run_entry_point_body`: a worker's body has to evaluate
+        // inside the termination-aware wait below, which stops before the next
+        // `tick()` once `terminate()` lands. Evaluating it on the microtask queue
+        // instead lets a `tick()` start with the termination exception already
+        // pending, and its first task dispatch trips `scope.assertNoException()`.
+        // `web_worker.rs` runs the timers phase before it enters the loop.
         self.event_loop_mut()
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {

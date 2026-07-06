@@ -1132,6 +1132,15 @@ impl WebWorker {
             let _ = vm.global().vm().run_gc(false);
         }
 
+        // `uv_run` opens with `uv__run_timers`, so a timer that expired while the
+        // worker's entrypoint ran synchronously is due before the `setImmediate`
+        // callbacks it queued alongside it. Skip it once `terminate()` has landed:
+        // firing a timer callback then would re-enter JS with the termination
+        // exception pending.
+        if !self.has_requested_terminate() {
+            vm.event_loop_mut().drain_expired_timers();
+        }
+
         // Always do a first tick so we call CppTask without delay after
         // dispatchOnline.
         vm.as_mut().tick();

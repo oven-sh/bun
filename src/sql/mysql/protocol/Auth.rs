@@ -13,6 +13,12 @@ use crate::shared::Data;
 
 bun_core::declare_scope!(Auth, hidden);
 
+/// Length of the server-provided nonce every auth plugin scrambles against
+/// (`SCRAMBLE_LENGTH` in MySQL's `mysql_com.h`). The handshake and
+/// AuthSwitchRequest packets carry a trailing NUL after it which terminates the
+/// C string and is not part of the nonce.
+pub const SCRAMBLE_LENGTH: usize = 20;
+
 pub mod mysql_native_password {
     use super::*;
 
@@ -28,7 +34,7 @@ pub mod mysql_native_password {
         // A malicious or broken server can send an AuthSwitchRequest with a
         // short plugin_data; without this check the slicing below reads past
         // the end of the buffer.
-        if nonce.len() < 20 {
+        if nonce.len() < SCRAMBLE_LENGTH {
             return Err(crate::Error::MissingAuthData);
         }
 
@@ -47,7 +53,7 @@ pub mod mysql_native_password {
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
         let mut sha1 = SHA1::init();
         sha1.update(&nonce[0..8]);
-        sha1.update(&nonce[8..20]);
+        sha1.update(&nonce[8..SCRAMBLE_LENGTH]);
         sha1.update(&stage2);
         sha1.r#final(&mut stage3);
         // `defer sha1.deinit()` → handled by Drop on SHA1
@@ -71,6 +77,14 @@ pub mod caching_sha2_password {
         let mut digest2 = [0u8; 32];
         let mut digest3 = [0u8; 32];
         let mut result: [u8; 32] = [0u8; 32];
+
+        // Same short-plugin_data hazard as mysql_native_password::scramble; the
+        // nonce is the 20-byte scramble, never the NUL the server terminates it
+        // with (go-sql-driver `authData[:20]`, mysql2 `data.slice(0, 20)`).
+        if nonce.len() < SCRAMBLE_LENGTH {
+            return Err(crate::Error::MissingAuthData);
+        }
+        let nonce = &nonce[..SCRAMBLE_LENGTH];
 
         // SHA256(password)
         // Null ENGINE — see note in mysql_native_password::scramble.

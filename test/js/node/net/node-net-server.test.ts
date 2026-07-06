@@ -652,4 +652,19 @@ describe("net.Server listen errors", () => {
       taken.close();
     }
   });
+
+  // Node exposes `port` only when there is one (`if (port) ex.port = port`), so an
+  // ephemeral-port listen that never got a port must not carry it at all.
+  // 192.0.2.0/24 is TEST-NET-1 (RFC 5737): never assigned to an interface.
+  it("a listen failure with no port does not expose a port property", async () => {
+    expect(shapeOf(await listenError({ host: "192.0.2.1", port: 0 }))).toEqual({
+      code: "EADDRNOTAVAIL",
+      errno: -constants.errno.EADDRNOTAVAIL,
+      syscall: "listen",
+      address: "192.0.2.1",
+      port: undefined,
+      hasOwnPort: false,
+      message: "listen EADDRNOTAVAIL: address not available 192.0.2.1",
+    });
+  });
 });

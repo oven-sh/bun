@@ -2526,16 +2526,21 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
         return {};
     }
 
-    JSString* text = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
+    const JSValue strValue = callFrame->argument(0);
+    const JSValue offsetValue = callFrame->argument(1);
+    const JSValue lengthValue = callFrame->argument(2);
+
+    JSString* text = strValue.toStringOrNull(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     size_t offset = 0;
-    if (!parseArrayIndex(scope, lexicalGlobalObject, callFrame->argument(1), offset)) [[unlikely]] {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, offsetValue, offset)) [[unlikely]] {
         return {};
     }
 
-    // The coercions above can run arbitrary JS, which may detach or resize the view.
-    if (castedThis->isDetached()) [[unlikely]] {
+    // toStringOrNull/toNumber only run user-overridable code for object arguments, and
+    // that code can detach or resize the view, so re-validate only when it could have run.
+    if ((strValue.isObject() || offsetValue.isObject()) && castedThis->isDetached()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
@@ -2546,18 +2551,20 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
     }
 
     size_t maxLength = byteLength - offset;
-    if (!parseArrayIndex(scope, lexicalGlobalObject, callFrame->argument(2), maxLength)) [[unlikely]] {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, lengthValue, maxLength)) [[unlikely]] {
         return {};
     }
 
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
+    // A length argument that is an object may have detached or resized the view too.
+    if (lengthValue.isObject()) {
+        if (castedThis->isDetached()) [[unlikely]] {
+            throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+            return {};
+        }
+        byteLength = castedThis->byteLength();
     }
-    byteLength = castedThis->byteLength();
 
-    const size_t remaining = offset < byteLength ? byteLength - offset : 0;
-    maxLength = std::min(remaining, maxLength);
+    maxLength = std::min(offset < byteLength ? byteLength - offset : 0, maxLength);
     if (maxLength == 0) {
         return JSC::JSValue::encode(JSC::jsNumber(0));
     }

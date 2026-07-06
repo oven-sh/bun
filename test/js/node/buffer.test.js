@@ -4257,6 +4257,53 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       expect(buf.write("hello", 6)).toBe(3);
       expect(buf.toString("hex")).toBe("cccccccccccc68656c");
     });
+
+    // A detaching valueOf on the offset or length argument is the one case that runs user JS;
+    // the binding re-checks detachment there and must not write into freed memory.
+    it.each(["offset", "length"])("%s throws when a detaching valueOf runs mid-coercion", async which => {
+      const args = which === "offset" ? `detach, 5` : `0, detach`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const buf = Buffer.from(new ArrayBuffer(9));
+           const detach = { valueOf() { structuredClone(buf.buffer, { transfer: [buf.buffer] }); return 5; } };
+           try { buf.hexWrite("68656c", ${args}); console.log("NO THROW"); }
+           catch (e) { console.log(e.constructor.name); }`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "TypeError",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+
+    it("clamps when a length valueOf shrinks a resizable buffer", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ab = new ArrayBuffer(9, { maxByteLength: 9 });
+           const buf = Buffer.from(ab);
+           const shrink = { valueOf() { ab.resize(2); return 1000; } };
+           const written = buf.hexWrite("68656c6c6f", 0, shrink);
+           console.log(JSON.stringify({ written, length: buf.length }));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // 2 bytes left after the shrink, so only one byte-pair is written.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `{"written":2,"length":2}`,
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
   });
 });
 

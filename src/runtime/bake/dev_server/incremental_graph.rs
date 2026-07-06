@@ -78,6 +78,13 @@ pub enum Content {
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.
     CssRoot(u64),
+    /// A `CssRoot` that is a CSS module: alongside the CSS asset hash it
+    /// carries its JS stub module (the class-name map) so
+    /// `import styles from "./x.module.css"` resolves in the HMR runtime.
+    CssModule {
+        hash: u64,
+        code: Box<[u8]>,
+    },
     CssChild,
 }
 
@@ -86,6 +93,7 @@ impl Content {
     fn js_code(&self) -> Option<&[u8]> {
         match self {
             Content::Js(c) | Content::Asset(c) => Some(c),
+            Content::CssModule { code, .. } => Some(code),
             _ => None,
         }
     }
@@ -95,7 +103,7 @@ impl Content {
             Content::Unknown => FileKind::Unknown,
             Content::Js(_) => FileKind::Js,
             Content::Asset(_) => FileKind::Asset,
-            Content::CssRoot(_) | Content::CssChild => FileKind::Css,
+            Content::CssRoot(_) | Content::CssModule { .. } | Content::CssChild => FileKind::Css,
         }
     }
 }
@@ -469,7 +477,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Content::Js(_) | Content::Asset(_) => {
                 // Box<[u8]> dropped here.
             }
-            Content::CssRoot(_) | Content::CssChild => {
+            Content::CssRoot(_) | Content::CssModule { .. } | Content::CssChild => {
+                // A CssModule's stub Box<[u8]> drops with the matched value.
                 if css == FreeCssMode::UnrefCss {
                     // SAFETY: see `owner()`; touches `assets` sibling only.
                     unsafe { (*self.owner()).assets.unref_by_path(key) };
@@ -641,6 +650,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.stale_files.unset(file_index.get() as usize);
         }
 
+        // Whether an earlier pass of this same finalize already received a
+        // chunk for this file (the JS pass runs before the CSS pass).
+        let received_this_finalize = *ctx.get_cached_index(SIDE, index) != CachedFileIndex::NONE;
         *ctx.get_cached_index(SIDE, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
 
@@ -649,12 +661,39 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
 
+                let mut prior_stub_code: Option<Box<[u8]>> = None;
+                let mut same_bundle_stub: Option<(Box<[u8]>, packed_map::Shared)> = None;
                 if found_existing {
                     // Note: take the existing slot out so `free_file_content`
                     // can borrow `&mut self` while we hold the `File` by value.
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
+
+                    // A CSS module receives two chunks per finalize: its JS
+                    // stub (JS pass), whose prior bytes we keep for the
+                    // unchanged-check, then its CSS hash, which adopts the stub.
+                    if let Content::CssModule { code, .. } = &mut existing.content {
+                        match &content {
+                            // Without a JS pass this finalize, the file is no
+                            // longer a client CSS module (e.g. its target
+                            // flipped to server-only) — demote to CssRoot.
+                            ReceiveChunkContent::Css(_) if received_this_finalize => {
+                                same_bundle_stub = Some((
+                                    core::mem::take(code),
+                                    core::mem::replace(
+                                        &mut existing.source_map,
+                                        packed_map::Shared::None,
+                                    ),
+                                ));
+                            }
+                            ReceiveChunkContent::Css(_) => {}
+                            ReceiveChunkContent::Js { .. } => {
+                                prior_stub_code = Some(core::mem::take(code));
+                            }
+                        }
+                    }
+
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
                     if existing.failed {
@@ -674,13 +713,26 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
 
                 let (new_content, new_source_map, code_len) = match content {
-                    ReceiveChunkContent::Css(css) => {
-                        (Content::CssRoot(css), packed_map::Shared::None, None)
-                    }
+                    ReceiveChunkContent::Css(css) => match same_bundle_stub {
+                        // Merge the CSS hash with the stub received this pass.
+                        Some((code, source_map)) => {
+                            (Content::CssModule { hash: css, code }, source_map, None)
+                        }
+                        None => (Content::CssRoot(css), packed_map::Shared::None, None),
+                    },
                     ReceiveChunkContent::Js { code, source_map } => {
+                        // A byte-identical stub means the class map did not
+                        // change; keep it out of the hot chunk so pure style
+                        // edits stay CSS-only (no importer re-evaluation).
+                        let stub_unchanged =
+                            prior_stub_code.is_some_and(|old| strings::eql(&old, &code));
                         let len = code.len();
                         let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
                             Content::Js(code)
+                        } else if ctx.loaders[index.get() as usize].is_css() {
+                            // CSS-module stub; the CSS pass always follows in
+                            // this same finalize and merges the real hash.
+                            Content::CssModule { hash: 0, code }
                         } else {
                             Content::Asset(code)
                         };
@@ -697,16 +749,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             _ => {
                                 // Must precompute line count so source-map
                                 // concatenation knows how many newlines to skip.
-                                let count = match &kind {
-                                    Content::Js(c) | Content::Asset(c) => {
-                                        strings::count_char(&c[..], b'\n') as u32
-                                    }
-                                    _ => 0,
+                                let count = match kind.js_code() {
+                                    Some(c) => strings::count_char(c, b'\n') as u32,
+                                    None => 0,
                                 };
                                 packed_map::Shared::LineCount(packed_map::LineCount::init(count))
                             }
                         };
-                        (kind, sm, Some(len))
+                        (kind, sm, if stub_unchanged { None } else { Some(len) })
                     }
                 };
 
@@ -1284,6 +1334,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             // CSS can't import JS; trace is done.
                             return Ok(());
                         }
+                        Content::CssModule { hash, code } => {
+                            match goal {
+                                TraceImportGoal::FindCss => {
+                                    self.current_css_files.push(*hash);
+                                }
+                                TraceImportGoal::FindClientModules => {
+                                    let len = code.len();
+                                    self.current_chunk_parts.push(file_index);
+                                    self.current_chunk_len += len;
+                                }
+                                _ => {}
+                            }
+                            // The stub imports nothing at runtime; its edges
+                            // are CSS children handled by the CSS trace.
+                            return Ok(());
+                        }
                         _ => {}
                     }
                 }
@@ -1642,10 +1708,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let owned_path = owned_path.slice();
             match SIDE {
                 Side::Client => match &self.bundled_files.values()[index].content {
-                    Content::CssRoot(_) | Content::CssChild => {
+                    Content::CssRoot(_) | Content::CssModule { .. } | Content::CssChild => {
                         if matches!(
                             self.bundled_files.values()[index].content,
-                            Content::CssRoot(_),
+                            Content::CssRoot(_) | Content::CssModule { .. },
                         ) {
                             entry_points.append_css(owned_path)?;
                         }
@@ -1656,7 +1722,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             self.stale_files.set(dep.get() as usize);
                             if matches!(
                                 self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
+                                Content::CssRoot(_) | Content::CssModule { .. },
                             ) {
                                 let k = bun_ptr::RawSlice::new(
                                     &*self.bundled_files.keys()[dep.get() as usize],
@@ -1678,7 +1744,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             let k = k.slice();
                             if matches!(
                                 self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
+                                Content::CssRoot(_) | Content::CssModule { .. },
                             ) {
                                 entry_points.append_css(k)?;
                             } else {

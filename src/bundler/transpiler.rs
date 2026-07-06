@@ -3147,12 +3147,7 @@ impl<'a> Transpiler<'a> {
         // this arm, before any other `log_mut()` reborrow above.
         let mut opts = bun_css::ParserOptions::default(None);
         opts.logger = Some(core::ptr::NonNull::new(self.log).unwrap());
-        const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
-        let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
-            && strings::eql_comptime(
-                &file_path_text[file_path_text.len() - CSS_MODULE_SUFFIX.len()..],
-                CSS_MODULE_SUFFIX,
-            );
+        let enable_css_modules = crate::is_css_module_path(file_path_text);
         if enable_css_modules {
             opts.filename = bun_paths::basename(file_path_text);
             opts.css_modules = Some(bun_css::CssModuleConfig::default());

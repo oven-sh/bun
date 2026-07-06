@@ -1163,10 +1163,7 @@ pub mod parse_worker {
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
 
-                const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
-                let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
-                    && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
-                        == CSS_MODULE_SUFFIX;
+                let enable_css_modules = crate::is_css_module_path(source.path.pretty);
                 // `parse_bundler` takes `ParserOptions<'static>` (the
                 // `'a` on `ParserOptions` is PhantomData-only; storage is a raw
                 // `NonNull<Log>`). Construct via `default(None)` to get `'static`,

@@ -105,6 +105,68 @@ devTest("import.meta.hot.accept patches imports", {
     expect(await c.js<string>`callFunction()`).toBe("B!3!6");
   },
 });
+devTest("editing an imported json file updates accepting importers", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "data.json": `{ "value": 1 }`,
+    "index.ts": `
+      import data from "./data.json";
+      console.log("value:" + data.value);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value:1");
+    await dev.write("data.json", `{ "value": 2 }`);
+    await c.expectMessage("value:2");
+  },
+});
+devTest("co-edited async dependency fires accept with settled exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "data.ts": `
+      export const value = await Promise.resolve(1);
+      import.meta.hot.accept(newModule => {
+        console.log("accept:" + newModule.value);
+      });
+    `,
+    "index.ts": `
+      import { value } from "./data";
+      console.log("index:" + value);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index:1");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
+        "index.ts",
+        `
+          import { value } from "./data";
+          console.log("index2:" + value);
+          import.meta.hot.accept();
+        `,
+      );
+      await dev.write(
+        "data.ts",
+        `
+          export const value = await Promise.resolve(2);
+          import.meta.hot.accept(newModule => {
+            console.log("accept:" + newModule.value);
+          });
+        `,
+      );
+    }
+    await c.expectMessageInAnyOrder("index2:2", "accept:2");
+  },
+});
 devTest("import.meta.hot.accept specifier", {
   timeoutMultiplier: 3,
   files: {

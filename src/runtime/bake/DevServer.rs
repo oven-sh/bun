@@ -4275,6 +4275,11 @@ pub(super) fn finalize_bundle(
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
     for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() {
+        // CSS-module stubs have no JS import edges; their records are CSS
+        // @imports attached by the CSS pass below (ProcessMode::Css).
+        if ctx.loaders[part_range.source_index.get() as usize].is_css() {
+            continue;
+        }
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
                 &mut ctx,

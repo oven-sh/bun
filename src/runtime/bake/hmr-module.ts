@@ -303,6 +303,10 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         require: mod.require.bind(mod),
       };
       mod.exports = null;
+    } else {
+      // Re-evaluating a stale CJS module: drop the cached ESM view so
+      // importers observe the re-assigned `cjs.exports`.
+      mod.exports = null;
     }
     if (importer) {
       mod.importers.add(importer);
@@ -402,6 +406,10 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         exports: {},
         require: mod.require.bind(mod),
       };
+      mod.exports = null;
+    } else {
+      // Re-evaluating a stale CJS module: drop the cached ESM view so
+      // importers observe the re-assigned `cjs.exports`.
       mod.exports = null;
     }
     if (importer) {
@@ -750,33 +758,63 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Reload all modules
+  // Reload all modules. Mark everything stale up-front so an importer that
+  // reloads ahead of its updated dependency re-evaluates the dependency
+  // inline (with the new code) instead of reading its stale exports.
   const promises: Promise<HMRModule>[] = [];
+  const staleReloads: [HMRModule, HotAcceptFunction | null, HMRModule["depAccepts"]][] = [];
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    staleReloads.push([mod, mod.selfAccept, mod.depAccepts]);
     mod.selfAccept = null;
     mod.depAccepts = null;
-
-    const modOrPromise = loadModuleAsync(mod.id, false, null);
-    if (modOrPromise === mod) {
-      if (selfAccept) {
-        selfAccept(getEsmExports(mod));
-      }
-    } else {
-      DEBUG.ASSERT(modOrPromise instanceof Promise);
-      promises.push(
-        (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) {
+  }
+  // Accept callbacks for modules whose inline (top-level-await) re-eval is
+  // still in flight at their own turn; fired after all reloads settle.
+  const pendingAccepts: [HMRModule, HotAcceptFunction][] = [];
+  let reloadCursor = 0;
+  try {
+    for (; reloadCursor < staleReloads.length; reloadCursor++) {
+      const [mod, selfAccept] = staleReloads[reloadCursor];
+      const modOrPromise = loadModuleAsync(mod.id, false, null);
+      if (modOrPromise === mod) {
+        if (selfAccept) {
+          if (mod.state === State.Pending) {
+            pendingAccepts.push([mod, selfAccept]);
+          } else {
             selfAccept(getEsmExports(mod));
           }
-          return mod;
-        }),
-      );
+        }
+      } else {
+        DEBUG.ASSERT(modOrPromise instanceof Promise);
+        promises.push(
+          (modOrPromise as Promise<HMRModule>).then(mod => {
+            if (selfAccept) {
+              selfAccept(getEsmExports(mod));
+            }
+            return mod;
+          }),
+        );
+      }
     }
+  } catch (e) {
+    // A synchronous re-eval throw: modules after the thrower never reloaded;
+    // restore their handlers so future updates still treat them as accepting.
+    for (let i = reloadCursor + 1; i < staleReloads.length; i++) {
+      const [mod, selfAccept, depAccepts] = staleReloads[i];
+      if (mod.state === State.Stale) {
+        mod.selfAccept = selfAccept;
+        mod.depAccepts = depAccepts;
+      }
+    }
+    throw e;
   }
   if (promises.length > 0) {
     await Promise.all(promises);
+  }
+  for (const [mod, selfAccept] of pendingAccepts) {
+    DEBUG.ASSERT(mod.state !== State.Pending);
+    selfAccept(getEsmExports(mod));
   }
   for (const mod of toReload) {
     const { selfAccept } = mod;

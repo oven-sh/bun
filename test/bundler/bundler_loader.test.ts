@@ -520,9 +520,9 @@ describe("bundler", async () => {
       },
     });
 
-    // CSS imports are delivered out-of-band by the dev server, so the JS
-    // chunk only contains the importing module. This used to panic while
-    // linking the CSS file's lazy-export JS stub.
+    // A CSS module ships both its CSS (delivered out-of-band as an asset)
+    // and a JS stub module exporting the class-name map, referenced by the
+    // importer's dependency tuple.
     itBundled("bake-dev/loader-css-module-import", {
       format: "internal_bake_dev",
       outdir: "/out",
@@ -535,9 +535,16 @@ describe("bundler", async () => {
       },
       onAfterBundle(api) {
         const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
-        expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
+        const js = api.readFile(join("/out", jsFile));
+        expect(js).toContain('"entry.ts"');
+        expect(js).toContain('"styles.module.css", 1, "default"');
+        expect(js).toContain('"styles.module.css"(hmr, module, exports)');
+        const mangled = js.match(/foo_[A-Za-z0-9_-]+/);
+        expect(mangled).toBeTruthy();
         const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
-        expect(api.readFile(join("/out", cssFile))).toContain("color: red");
+        const css = api.readFile(join("/out", cssFile));
+        expect(css).toContain("color: red");
+        expect(css).toContain(`.${mangled![0]}`);
       },
     });
   });

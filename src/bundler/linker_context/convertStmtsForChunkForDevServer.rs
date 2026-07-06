@@ -57,19 +57,31 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
-    for record in ast.import_records.as_mut_slice() {
-        if record.path.is_disabled {
-            continue;
-        }
-        if record.source_index.is_valid()
-            && loaders[record.source_index.get() as usize] == Loader::Css
-        {
-            record.path.is_disabled = true;
-            continue;
-        }
-        // Make sure the printer gets the resolved path
-        if record.source_index.is_valid() {
-            record.path = sources[record.source_index.get() as usize].path;
+    // A CSS-module stub's records are the CSS AST's own `@import`/`composes`
+    // records, read concurrently by CSS-chunk codegen tasks; leave them
+    // untouched. The stub has no `SImport` statements to rewrite anyway.
+    if ast.css.is_none() {
+        let targets = c.graph.ast.items_target();
+        for record in ast.import_records.as_mut_slice() {
+            if record.path.is_disabled {
+                continue;
+            }
+            if record.source_index.is_valid()
+                && loaders[record.source_index.get() as usize] == Loader::Css
+            {
+                let idx = record.source_index.get() as usize;
+                // A CSS module has a JS stub module in the dev graph exporting
+                // its class-name map; keep the import so the HMR binding
+                // resolves. Plain CSS is delivered out of band via <link>.
+                if !crate::is_client_css_module(targets[idx], sources[idx].path.pretty) {
+                    record.path.is_disabled = true;
+                    continue;
+                }
+            }
+            // Make sure the printer gets the resolved path
+            if record.source_index.is_valid() {
+                record.path = sources[record.source_index.get() as usize].path;
+            }
         }
     }
 

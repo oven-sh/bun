@@ -624,3 +624,231 @@ function extractCssUrl(backgroundImage: string): string {
   }
   return url[2];
 }
+
+devTest("css modules work with hmr (#18258)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<h1>Hello</h1>`,
+    }),
+    "styles.module.css": `
+      .title {
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      document.querySelector("h1").className = styles.title;
+      globalThis.evalCount = (globalThis.evalCount ?? 0) + 1;
+      console.log("class:" + styles.title);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const msg = await c.getStringMessage();
+    assert(msg.startsWith("class:title_"), `expected a hashed class name, got ${JSON.stringify(msg)}`);
+    const className = msg.slice("class:".length);
+    await c.style("." + className).color.expect.toBe("red");
+
+    // Class names are hashed from the file path, so a pure style edit is a
+    // CSS-only hot swap: no reload and no importer re-evaluation.
+    await dev.patch("styles.module.css", { find: "red", replace: "blue" });
+    await c.style("." + className).color.expect.toBe("#00f");
+    const [domClass, evalCount] = await c.js<[string, number]>`
+      [document.querySelector("h1").className, globalThis.evalCount]
+    `;
+    expect(domClass).toBe(className);
+    expect(evalCount).toBe(1);
+  },
+});
+devTest("css modules support all import shapes (#18258)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p>shapes</p>`,
+    }),
+    "shapes.module.css": `
+      .a { color: red; }
+      .b { color: blue; }
+    `,
+    "empty.module.css": `/* no local classes */`,
+    "bare.module.css": `
+      body { background-color: green; }
+    `,
+    "index.ts": `
+      import styles, { a } from "./shapes.module.css";
+      import * as ns from "./shapes.module.css";
+      import empty from "./empty.module.css";
+      import "./bare.module.css";
+      console.log(JSON.stringify({
+        namedMatchesDefault: a === styles.a,
+        nsDefault: ns.default.a === a,
+        keys: Object.keys(styles).sort(),
+        empty,
+      }));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      JSON.stringify({
+        namedMatchesDefault: true,
+        nsDefault: true,
+        keys: ["a", "b"],
+        empty: {},
+      }),
+    );
+    // The bare import's element-selector rule still applies.
+    await c.style("body").backgroundColor.expect.toBe("green");
+  },
+});
+devTest("css module edits propagate new class names to accepting importers (#18258)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .a { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("keys:" + Object.keys(styles).sort().join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("keys:a");
+    await dev.write(
+      "styles.module.css",
+      `
+        .a { color: red; }
+        .b { color: blue; }
+      `,
+    );
+    await c.expectMessage("keys:a,b");
+    await dev.write(
+      "styles.module.css",
+      `
+        .b { color: blue; }
+      `,
+    );
+    await c.expectMessage("keys:b");
+  },
+});
+devTest("two importers share one css module instance (#18258)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .shared { color: red; }
+    `,
+    "a.ts": `
+      import styles from "./styles.module.css";
+      export const mapA = styles;
+    `,
+    "b.ts": `
+      import styles from "./styles.module.css";
+      export const mapB = styles;
+    `,
+    "index.ts": `
+      import { mapA } from "./a";
+      import { mapB } from "./b";
+      console.log("same:" + (mapA === mapB) + " " + mapA.shared);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const msg = await c.getStringMessage();
+    assert(msg.startsWith("same:true shared_"), msg);
+  },
+});
+devTest("plain css imports stay side-effect only (#18258 regression guard)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "plain.css": `
+      body { color: red; }
+    `,
+    "index.ts": `
+      import "./plain.css";
+      globalThis.evalCount = (globalThis.evalCount ?? 0) + 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await dev.patch("plain.css", { find: "red", replace: "blue" });
+    await c.style("body").color.expect.toBe("#00f");
+    expect(await c.js<number>`globalThis.evalCount`).toBe(1);
+  },
+});
+devTest("css module composes across files (#18258)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<button>ok</button>`,
+    }),
+    "base.module.css": `
+      .base { font-weight: 700; }
+    `,
+    "button.module.css": `
+      .btn {
+        composes: base from "./base.module.css";
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      document.querySelector("button").className = styles.btn;
+      console.log("btn:" + styles.btn);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const msg = await c.getStringMessage();
+    const classes = msg.slice("btn:".length).split(" ");
+    expect(classes).toHaveLength(2);
+    const own = classes.find(cls => cls.startsWith("btn_"));
+    assert(own, msg);
+    const composed = classes.find(cls => cls.startsWith("base_"));
+    assert(composed, msg);
+    await c.style("." + own).color.expect.toBe("red");
+    // The composed module's own rule must be delivered too.
+    await c.style("." + composed).fontWeight.expect.toBe("700");
+  },
+});
+
+devTest("emptying a css module removes its styles and class map (#18258)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<h1>Hello</h1>`,
+    }),
+    "styles.module.css": `
+      .title { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      document.querySelector("h1").className = styles.title ?? "";
+      console.log("keys:" + Object.keys(styles).sort().join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("keys:title");
+    const className = await c.js<string>`document.querySelector("h1").className`;
+    await c.style("." + className).color.expect.toBe("red");
+
+    await dev.write("styles.module.css", " ", { dedent: false });
+    await c.expectMessage("keys:");
+    await c.style("." + className).notFound();
+
+    await dev.write("styles.module.css", `.title { color: blue; }`);
+    await c.expectMessage("keys:title");
+    await c.style("." + className).color.expect.toBe("#00f");
+  },
+});

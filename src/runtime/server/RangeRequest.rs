@@ -131,8 +131,11 @@ pub fn if_range_allows_range(
     last_modified_ms: Option<u64>,
 ) -> bool {
     let v = strings::trim(if_range, b" \t");
+    // Only reachable via a whitespace-only header (uWS maps a zero-length
+    // header to "absent"). Empty is neither a valid entity-tag nor an
+    // HTTP-date, so fail closed like every other unparsable case.
     if v.is_empty() {
-        return true;
+        return false;
     }
 
     // Entity-tag form: an opaque-quoted tag, optionally weak-prefixed.

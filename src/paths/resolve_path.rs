@@ -1732,7 +1732,9 @@ fn join_abs_string_buf_checked_impl<'a, P: PlatformT, const STRICT_POSIX: bool>(
         total += p.len() + 1;
     }
     if total < buf.len() {
-        return Some(_join_abs_string_buf::<false, P, STRICT_POSIX>(cwd, buf, parts));
+        return Some(_join_abs_string_buf::<false, P, STRICT_POSIX>(
+            cwd, buf, parts,
+        ));
     }
 
     // Slow path: allocate a large scratch for the result. The inner

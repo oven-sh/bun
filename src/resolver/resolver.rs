@@ -4491,6 +4491,11 @@ impl<'a> Resolver<'a> {
                                     || err == bun_core::err!("AccessDenied")
                                     || err == bun_core::err!("PermissionDenied"))
                             {
+                                debuglog!(
+                                    "treating permission-denied ancestor \"{}\" as empty: {}",
+                                    bstr::BStr::new(queue_top_unsafe_path),
+                                    bstr::BStr::new(err.name())
+                                );
                                 break 'open_dir FD::INVALID;
                             }
                             let cached_dir_entry_result = rfs!()

@@ -597,7 +597,10 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  * Value :- Array | Object | Map | Set | Terminal
  *
  * Array :-
- *     ArrayTag <length:uint32_t>(<index:uint32_t><value:Value>)* TerminatorTag
+ *     ArrayTag <length:uint32_t>(<index:uint32_t><value:Value>)* (NonIndexPropertiesTag (<name:StringData><value:Value>)*)? TerminatorTag
+ *     <index> is always less than NonIndexPropertiesTag. The array indices at or above it
+ *     (0xFFFFFFFD and 0xFFFFFFFE) would read back as control tags, so they are written as
+ *     named properties, which the deserializer turns back into indices.
  *
  * Object :-
  *     ObjectTag (<name:StringData><value:Value>)* TerminatorTag
@@ -2719,11 +2722,23 @@ SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, cons
     ctx->write(data, size);
 }
 
+// Only array-storage arrays hold elements past their vector, in a sparse map, which is the
+// only way an array's length can dwarf its element count. Stepping 0..length there is work
+// proportional to nothing, so visit the array's own index keys instead.
+static ALWAYS_INLINE bool shouldVisitOwnIndexKeys(JSArray* array)
+{
+    return array->length() > array->getVectorLength();
+}
+
 SerializationReturnCode CloneSerializer::serialize(JSValue in)
 {
     VM& vm = m_lexicalGlobalObject->vm();
     Vector<uint32_t, 16> indexStack;
-    Vector<uint32_t, 16> lengthStack;
+    // For each array being walked: one past its last cursor value, and the own index keys to
+    // visit (empty when the cursor steps 0..length directly). Keys that the index slot cannot
+    // represent sit past the end, and are written as named properties once the walk finishes.
+    Vector<uint32_t, 16> arrayEndStack;
+    Vector<Vector<uint32_t>, 4> arrayKeyStack;
     Vector<PropertyNameArrayBuilder, 16> propertyStack;
     Vector<JSObject*, 32> inputObjectStack;
     Vector<JSMapIterator*, 4> mapIteratorStack;
@@ -2745,22 +2760,48 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             unsigned length = inArray->length();
             if (!startArray(inArray))
                 break;
+
+            Vector<uint32_t> keys;
+            unsigned walkEnd = length;
+            if (shouldVisitOwnIndexKeys(inArray)) {
+                PropertyNameArrayBuilder indexNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                inArray->getOwnIndexedPropertyNames(m_lexicalGlobalObject, indexNames, DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                Vector<uint32_t> reservedKeys;
+                for (const Identifier& name : indexNames) {
+                    std::optional<uint32_t> key = parseIndex(name);
+                    if (!key)
+                        continue;
+                    if (*key >= NonIndexPropertiesTag)
+                        reservedKeys.append(*key);
+                    else
+                        keys.append(*key);
+                }
+                walkEnd = keys.size();
+                keys.appendVector(reservedKeys);
+            }
+
             inputObjectStack.append(inArray);
             indexStack.append(0);
-            lengthStack.append(length);
+            arrayEndStack.append(walkEnd);
+            arrayKeyStack.append(WTF::move(keys));
         }
         arrayStartVisitMember:
             [[fallthrough]];
         case ArrayStartVisitMember: {
             JSObject* array = inputObjectStack.last();
-            uint32_t index = indexStack.last();
-            if (index == lengthStack.last()) {
+            uint32_t cursor = indexStack.last();
+            if (cursor == arrayEndStack.last()) {
+                Vector<uint32_t> keys = WTF::move(arrayKeyStack.last());
+                arrayKeyStack.removeLast();
                 indexStack.removeLast();
-                lengthStack.removeLast();
+                arrayEndStack.removeLast();
 
                 propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                for (unsigned i = cursor; i < keys.size(); ++i)
+                    propertyStack.last().add(keys[i]);
                 if (propertyStack.last().size()) {
                     write(NonIndexPropertiesTag);
                     indexStack.append(0);
@@ -2772,6 +2813,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 inputObjectStack.removeLast();
                 break;
             }
+
+            const Vector<uint32_t>& keys = arrayKeyStack.last();
+            uint32_t index = keys.isEmpty() ? cursor : keys[cursor];
             inValue = array->getDirectIndex(m_lexicalGlobalObject, index);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!inValue) {
@@ -2779,6 +2823,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 goto arrayStartVisitMember;
             }
 
+            ASSERT(index < NonIndexPropertiesTag);
             write(index);
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
             auto dumped = dumpIfTerminal(inValue, terminalCode);

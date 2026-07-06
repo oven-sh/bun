@@ -978,3 +978,116 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
   });
 });
+
+describe("sparse arrays", () => {
+  // Dictionary-mode arrays keep their elements in a sparse map, so the serializer has to
+  // visit their own index keys. Walking 0..length instead is work proportional to nothing.
+  test("a sparse array round-trips its elements, named properties and length", () => {
+    const input: any = [];
+    input[0] = "first";
+    input[200_000] = "far";
+    input.tag = "named";
+
+    for (const cloned of [structuredClone(input), deserialize(serialize(input))]) {
+      expect(Object.getOwnPropertyNames(cloned)).toEqual(["0", "200000", "length", "tag"]);
+      expect(cloned[0]).toBe("first");
+      expect(cloned[200_000]).toBe("far");
+      expect(cloned.tag).toBe("named");
+      expect(cloned.length).toBe(200_001);
+    }
+  });
+
+  // StructuredSerializeInternal walks EnumerableOwnPropertyNames, so a non-enumerable index
+  // is dropped the same way a non-enumerable named property already was. Matches node.
+  test("a non-enumerable index is not cloned", () => {
+    const input: any = [];
+    Object.defineProperty(input, 0, { value: 42, enumerable: false, writable: true, configurable: true });
+    Object.defineProperty(input, "named", { value: 43, enumerable: false, writable: true, configurable: true });
+    input[1] = "kept";
+
+    for (const cloned of [structuredClone(input), deserialize(serialize(input))]) {
+      expect(Object.getOwnPropertyNames(cloned)).toEqual(["1", "length"]);
+      expect(cloned[1]).toBe("kept");
+      expect(cloned.length).toBe(2);
+    }
+  });
+
+  // The serializer writes each element as <index:uint32_t>, and 0xFFFFFFFD..0xFFFFFFFF are
+  // reserved there for control tags. 4294967293 and 4294967294 are the last two valid array
+  // indices, so they have to be written as named properties instead.
+  //
+  // An O(length) walk cannot finish any of these arrays. The child is where that shows up:
+  // without the own-index-keys path it never prints a result and the test times out.
+  test("the last valid array indices round-trip, and length never drives the walk", async () => {
+    const fixture = /* js */ `
+      import { deserialize, serialize } from "bun:jsc";
+
+      const results = {};
+
+      const hugeLength = [];
+      hugeLength[0] = "only";
+      hugeLength.length = 1e9;
+      const clonedHugeLength = structuredClone(hugeLength);
+      results.hugeLength = {
+        keys: Object.keys(clonedHugeLength),
+        at0: clonedHugeLength[0],
+        length: clonedHugeLength.length,
+      };
+
+      // 4294967292 sits one below the reserved range and is the control.
+      for (const index of [4294967292, 4294967293, 4294967294]) {
+        const input = [];
+        input[0] = "first";
+        input[index] = { nested: index };
+        input.tag = "named";
+        const cloned = deserialize(serialize(structuredClone(input)));
+        results[index] = {
+          keys: Object.keys(cloned),
+          at0: cloned[0],
+          atIndex: cloned[index],
+          tag: cloned.tag,
+          length: cloned.length,
+        };
+      }
+
+      console.log(JSON.stringify(results));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        hugeLength: { keys: ["0"], at0: "only", length: 1e9 },
+        4294967292: {
+          keys: ["0", "4294967292", "tag"],
+          at0: "first",
+          atIndex: { nested: 4294967292 },
+          tag: "named",
+          length: 4294967293,
+        },
+        4294967293: {
+          keys: ["0", "4294967293", "tag"],
+          at0: "first",
+          atIndex: { nested: 4294967293 },
+          tag: "named",
+          length: 4294967294,
+        },
+        4294967294: {
+          keys: ["0", "4294967294", "tag"],
+          at0: "first",
+          atIndex: { nested: 4294967294 },
+          tag: "named",
+          length: 4294967295,
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -1113,10 +1113,7 @@ impl EventLoop {
 
         self.process_gc_timer();
         self.process_gc_timer();
-        // Park in the I/O loop, bounded by the soonest timer deadline, then
-        // fire whatever came due. The body needs `Timer::All`, so it goes
-        // through `RuntimeHooks::poll_and_drain_timers`.
-        self.vm_ref().as_mut().poll_and_drain_timers();
+        loop_.tick();
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

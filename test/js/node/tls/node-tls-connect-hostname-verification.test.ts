@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { once } from "node:events";
 import fs from "node:fs";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
@@ -74,6 +75,38 @@ describe("tls.connect hostname verification without explicit servername", () => 
       const result = await promise;
       assert.strictEqual(result.authorized, false);
       assert.match(result.authorizationError, /ERR_TLS_CERT_ALTNAME_INVALID/);
+    });
+  });
+
+  // tls.connect({ socket }) skips lookupAndConnect, so `host` only reaches the
+  // handshake through the connect options. Node honors it for certificate
+  // validation anyway: "If [socket] is specified, path, host and port are
+  // ignored, except for certificate validation."
+  test("verifies against options.host when wrapping an existing socket", async () => {
+    await withServer(async port => {
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      const { promise, resolve, reject } = Promise.withResolvers<{ checkedWith?: string; authorized: boolean }>();
+      let checkedWith: string | undefined;
+      // The cert is CN=agent1, so verifying against "localhost" would reject it.
+      const socket = tls.connect({
+        socket: raw,
+        host: "agent1",
+        ca,
+        checkServerIdentity(hostname, cert) {
+          checkedWith = hostname;
+          return tls.checkServerIdentity(hostname, cert);
+        },
+      });
+      socket.on("secureConnect", () => {
+        resolve({ checkedWith, authorized: socket.authorized });
+        socket.destroy();
+      });
+      socket.on("error", err => {
+        socket.destroy();
+        reject(err);
+      });
+      assert.deepStrictEqual(await promise, { checkedWith: "agent1", authorized: true });
     });
   });
 

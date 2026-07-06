@@ -695,6 +695,8 @@ it("does not present a client certificate to a server whose `ca` was set without
     rejectUnauthorized: false,
   });
   client.on("error", reject);
+  // A handshake that dies without an 'error' would otherwise hang the await.
+  client.on("close", () => reject(new Error("client closed before the server accepted the connection")));
   try {
     expect(await promise).toEqual({ authorized: false, clientCertificate: null });
   } finally {
@@ -732,6 +734,9 @@ it("verifies against a user-supplied `ca` when the TLS socket rides on a Duplex"
     const { promise, resolve } = Promise.withResolvers<string>();
     client.on("secureConnect", () => resolve(`authorized=${client.authorized}`));
     client.on("error", err => resolve(`error ${(err as NodeJS.ErrnoException).code ?? err.message}`));
+    // Settle rather than hang if the socket dies without either event. The
+    // string matches none of the expectations below, so it still fails loudly.
+    client.on("close", () => resolve("closed before secureConnect or error"));
     try {
       return await promise;
     } finally {

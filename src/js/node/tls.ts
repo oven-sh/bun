@@ -1303,40 +1303,6 @@ function Server(options, secureConnectionListener): void {
       }
       this.key = key;
 
-      // BoringSSL rejects a mixed EC/RSA multi-identity configuration while
-      // loading the chain. The native context is built lazily at listen time,
-      // so surface the most common mismatch synchronously here: a key whose
-      // type differs from its own index-paired certificate. This is a
-      // best-effort check - the native loader at listen time remains the
-      // authority and still rejects configurations that pass it.
-      const keyLength = Array.isArray(key) ? key.length : 0;
-      if (keyLength > 1 && cert) {
-        const certs = Array.isArray(cert) ? cert : [cert];
-        try {
-          const { createPrivateKey, X509Certificate } = require("node:crypto");
-          for (let i = 0; i < keyLength; i++) {
-            const k = key[i];
-            if (typeof k !== "string" && !$isTypedArrayView(k)) continue;
-            const pairedCert = certs[i < certs.length ? i : certs.length - 1];
-            const certType = new X509Certificate(pairedCert).publicKey.asymmetricKeyType;
-            if (createPrivateKey(k).asymmetricKeyType !== certType) {
-              const err = new Error(
-                "error:0b000074:X.509 certificate routines:OPENSSL_internal:KEY_TYPE_MISMATCH",
-              ) as Error & { code: string; library: string; function: string; reason: string };
-              err.code = "ERR_OSSL_X509_KEY_TYPE_MISMATCH";
-              err.library = "X.509 certificate routines";
-              err.function = "OPENSSL_internal";
-              err.reason = "KEY_TYPE_MISMATCH";
-              throw err;
-            }
-          }
-        } catch (e: any) {
-          if (e?.code === "ERR_OSSL_X509_KEY_TYPE_MISMATCH") throw e;
-          // An unparseable key or certificate falls through to the native
-          // load, which produces its own error.
-        }
-      }
-
       let ca = options.ca;
       // The process-wide default-CA override (tls.setDefaultCACertificates)
       // applies here too when no explicit `ca` was given: this path hands raw

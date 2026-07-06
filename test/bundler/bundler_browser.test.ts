@@ -134,6 +134,22 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+  itBundled("browser/NodeUrlWebSocketProtocolsAreSlashed", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse, format, resolve } from "node:url";
+        for (const protocol of ["ws", "wss"]) {
+          console.log(parse(protocol + ":host/p").host);
+          console.log(format({ protocol, host: "h", pathname: "/p" }));
+          console.log(resolve(protocol + "://h/a/b", "../../x"));
+        }
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "null\nws://h/p\nws://h/x\nnull\nwss://h/p\nwss://h/x",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

@@ -95,11 +95,15 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     ftp: true,
     gopher: true,
     file: true,
+    ws: true,
+    wss: true,
     "http:": true,
     "https:": true,
     "ftp:": true,
     "gopher:": true,
     "file:": true,
+    "ws:": true,
+    "wss:": true,
   };
 
 function urlParse(

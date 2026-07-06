@@ -1,4 +1,4 @@
-import { expect, test as bunTest } from "bun:test";
+import { test as bunTest, expect } from "bun:test";
 import { isASAN, isDebug } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;

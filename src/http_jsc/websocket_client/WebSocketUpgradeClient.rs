@@ -1544,6 +1544,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
+        // The client requested one or more subprotocols but the server's 101
+        // did not select any. Both RFC 6455 §4.1 and the WHATWG "establish a
+        // WebSocket connection" algorithm require failing the connection.
         // SAFETY: short-lived `&self` read.
         if !protocol_header_seen && !unsafe { (*this).subprotocols.is_empty() } {
             // SAFETY: no `&mut Self` is live across this call.
@@ -1568,16 +1571,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if websocket_accept_header.value() != unsafe { &(&(*this).expected_accept)[..] } {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader) };
-            return;
-        }
-
-        // The client requested one or more subprotocols but the server's 101
-        // did not select any. Both RFC 6455 §4.1 and the WHATWG "establish a
-        // WebSocket connection" algorithm require failing the connection.
-        // SAFETY: `this` is live (caller contract); short-lived shared borrow.
-        if !protocol_header_seen && !unsafe { (*this).subprotocols.is_empty() } {
-            // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::terminate(this, ErrorCode::MissingClientProtocol) };
             return;
         }
 

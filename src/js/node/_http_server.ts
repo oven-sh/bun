@@ -19,7 +19,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { normalizeKeyOption, throwOnInvalidTLSArray } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -277,7 +277,7 @@ function Server(options, callback): void {
 
     let key = options.key;
     if (key) {
-      throwOnInvalidTLSArray("options.key", key);
+      key = normalizeKeyOption(key);
       this[isTlsSymbol] = true;
     }
 

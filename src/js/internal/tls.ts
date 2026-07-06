@@ -1,16 +1,8 @@
 const { isTypedArray, isArrayBuffer } = require("node:util/types");
-
-function isPemObject(obj: unknown): obj is { pem: unknown } {
-  return $isObject(obj) && "pem" in obj;
-}
-
-function isPemArray(obj: unknown): obj is [{ pem: unknown }] {
-  // if (obj instanceof Object && "pem" in obj) return isValidTLSArray(obj.pem);
-  return $isArray(obj) && obj.every(isPemObject);
-}
+const { validateString } = require("internal/validators");
 
 function isValidTLSItem(obj: unknown) {
-  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj) || isPemArray(obj)) {
+  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) {
     return true;
   }
 
@@ -50,4 +42,60 @@ function isValidTLSArray(obj: unknown) {
 
 const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArray, DataView, or BunFile";
 
-export { VALID_TLS_ERROR_MESSAGE_TYPES, isValidTLSArray, isValidTLSItem, throwOnInvalidTLSArray };
+// `{ pem, passphrase? }` is only an element form of the `key` array; `cert` and
+// `ca` take the raw forms only.
+function isPemObject(entry: unknown): entry is { pem: unknown; passphrase?: unknown } {
+  return $isObject(entry) && (entry as { pem?: unknown }).pem !== undefined;
+}
+
+/**
+ * Validates `options.key` and unwraps the `{ pem, passphrase? }` array elements
+ * documented by `tls.createSecureContext`. An entry's own passphrase applies to
+ * that key alone, which a native secure context (one passphrase per SSL_CTX)
+ * cannot express, so that entry's key is decrypted here instead. Returns `key`
+ * untouched when there is nothing to unwrap.
+ * https://github.com/nodejs/node/blob/main/lib/internal/tls/secure-context.js
+ */
+function normalizeKeyOption(key: unknown) {
+  if (!$isArray(key)) {
+    throwOnInvalidTLSArray("options.key", key);
+    return key;
+  }
+
+  const length = key.length;
+  let hasPemObject = false;
+  for (let i = 0; i < length; i++) {
+    if (isPemObject(key[i])) {
+      hasPemObject = true;
+      break;
+    }
+  }
+  if (!hasPemObject) {
+    throwOnInvalidTLSArray("options.key", key);
+    return key;
+  }
+
+  let createPrivateKey;
+  const normalized = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    const entry = key[i];
+    const isPem = isPemObject(entry);
+    const pem = isPem ? entry.pem : entry;
+    if (!isValidTLSItem(pem)) {
+      throw $ERR_INVALID_ARG_TYPE("options.key", VALID_TLS_ERROR_MESSAGE_TYPES, pem);
+    }
+
+    const passphrase = isPem ? entry.passphrase : undefined;
+    if ($isUndefinedOrNull(passphrase)) {
+      normalized[i] = pem;
+      continue;
+    }
+
+    validateString(passphrase, "options.passphrase");
+    createPrivateKey ??= require("node:crypto").createPrivateKey;
+    normalized[i] = createPrivateKey({ key: pem, passphrase }).export({ type: "pkcs8", format: "pem" });
+  }
+  return normalized;
+}
+
+export { VALID_TLS_ERROR_MESSAGE_TYPES, isValidTLSArray, isValidTLSItem, normalizeKeyOption, throwOnInvalidTLSArray };

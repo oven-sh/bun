@@ -4039,7 +4039,6 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       // Result should be clamped to buffer size
       expect(result).toBeLessThanOrEqual(buf.length);
     });
-
   }
 
   // Node only put utf8/latin1/ascii behind the strict JS wrapper that rejects an

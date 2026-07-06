@@ -3240,7 +3240,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Comma
                 | TokenTag::BraceEnd
                 | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
+                | TokenTag::Asterisk
+                | TokenTag::DoubleAsterisk => true,
 
                 TokenTag::Pipe
                 | TokenTag::DoublePipe
@@ -3248,7 +3249,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::DoubleAmpersand
                 | TokenTag::Redirect
                 | TokenTag::Dollar
-                | TokenTag::DoubleAsterisk
                 | TokenTag::Eq
                 | TokenTag::Semicolon
                 | TokenTag::Newline

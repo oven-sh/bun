@@ -2451,35 +2451,23 @@ impl VirtualMachine {
     /// queue in the same tick, running an I/O completion or port message the
     /// body queued ahead of a timer that expired while it ran. `uv_run` opens
     /// with `uv__run_timers`, so Node dispatches that timer before either.
-    ///
-    /// Node's `processTicksAndRejections` notifies unhandled rejections and
-    /// drains whatever the listener schedules, all before `uv_run`, so that runs
-    /// first here too. A body that threw rejects `evaluation`, and a rejection it
-    /// left unreported bumps `unhandled_error_counter`, which is what
-    /// `is_event_loop_alive()` reads to exit without entering the loop: neither
-    /// reaches a timers phase.
     fn run_entry_point_body(&mut self, evaluation: *mut JSInternalPromise) {
-        // `unhandled_error_counter` is cumulative and is not reset between test
-        // files, so only this body's errors count.
-        let unhandled_before = self.unhandled_error_counter;
         // The body has to evaluate with the loop entered, the way it did inside
         // `tick()`: a nested callback's `exit()` drains microtasks at count 1, and
         // draining them mid-body reorders a constructor against its own
-        // continuations. `exit()` drains what the body and the rejection listeners
-        // left behind.
+        // continuations. `exit()` drains what the body left behind. Reporting
+        // rejections is left to the wait loop's `tick()`, as on the pre-existing
+        // path, so this stays a pure microtask drain.
         self.event_loop_mut().enter();
         let drained = self.event_loop_mut().drain_microtasks();
-        if drained.is_ok() {
-            self.global().handle_rejected_promises();
-        }
         self.event_loop_mut().exit();
         if drained.is_err() {
             return;
         }
         // SAFETY: `evaluation` is a live JSC heap cell returned by
-        // `reload_entry_point*` and kept alive by the module loader.
-        let threw = crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected;
-        if threw || self.unhandled_error_counter > unhandled_before {
+        // `reload_entry_point*` and kept alive by the module loader. A body that
+        // threw rejects it; Node reports the error and exits without a loop.
+        if crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected {
             return;
         }
         self.event_loop_mut().drain_expired_timers();

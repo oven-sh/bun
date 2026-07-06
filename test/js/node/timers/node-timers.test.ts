@@ -343,87 +343,14 @@ describe.concurrent("an already-expired timer runs before the first poll and che
     expect(exitCode).toBe(0);
   });
 
-  // `unhandled_error_counter` is cumulative across a run, so the timers phase has
-  // to weigh this file's errors, not every file's.
-  test("inside a test file that follows one with an unhandled rejection", async () => {
-    using dir = tempDir("timers-phase-order-test-after-rejection", {
-      "a-rejects.test.js": `
-        const { test } = require("bun:test");
-        Promise.reject(new Error("boom"));
-        test("leaves an unhandled rejection behind", () => {});
-      `,
-      "b-order.test.js": `
-        const { test, expect } = require("bun:test");
-        const order = [];
-        setTimeout(() => order.push("timeout"), 1);
-        setImmediate(() => order.push("immediate"));
-        ${blockPastTheDeadline}
-        test("the expired timer still ran first", () => {
-          console.log("order=" + JSON.stringify(order));
-          expect(order).toEqual(["timeout", "immediate"]);
-        });
-      `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "a-rejects.test.js", "b-order.test.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    // The rejection aborts `a-rejects.test.js` and fails the run, which is not
-    // what this is about: the point is that `b-order.test.js` still orders right.
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toContain(`order=${JSON.stringify(["timeout", "immediate"])}`);
-    expect(stderr).toContain("(pass) the expired timer still ran first");
-  });
-
-  // Node reports an unhandled rejection from `processTicksAndRejections()`, which
-  // also runs before the loop is entered, listener microtasks and all.
-  test("but after an unhandled rejection is reported", async () => {
-    using dir = tempDir("timers-phase-order-rejection", {
-      "index.js": `
-        const order = [];
-        process.on("unhandledRejection", () => {
-          order.push("rejection");
-          queueMicrotask(() => order.push("microtask"));
-        });
-        process.on("exit", () => console.log(JSON.stringify(order)));
-        Promise.reject(new Error("boom"));
-        setTimeout(() => order.push("timeout"), 1);
-        ${blockPastTheDeadline}
-      `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    if (exitCode !== 0) {
-      expect(stderr).toBe("");
-    }
-    expect(stdout.trim()).toBe(JSON.stringify(["rejection", "microtask", "timeout"]));
-    expect(exitCode).toBe(0);
-  });
-
-  // An entry point that fails never reaches the loop: Node reports the error and
-  // exits without running the timers phase.
-  test.concurrent.each([
-    ["throws", `throw new Error("boom");`],
-    ["leaves an unhandled rejection nobody reports", `Promise.reject(new Error("boom"));`],
-  ])("but not when the entry point %s", async (_name, failure) => {
-    using dir = tempDir("timers-phase-order-failure", {
+  // An entry point that throws rejects the module promise and exits without
+  // entering the loop, as Node does; the timer never fires.
+  test.concurrent("but not when the entry point throws", async () => {
+    using dir = tempDir("timers-phase-order-throw", {
       "index.js": `
         setTimeout(() => console.log("timer fired"), 1);
         ${blockPastTheDeadline}
-        ${failure}
+        throw new Error("boom");
       `,
     });
 

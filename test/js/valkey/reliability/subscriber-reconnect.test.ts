@@ -187,7 +187,20 @@ function messageQueue() {
 
 const commandLines = (connection: Connection) => connection.commands.map(command => command.join(" "));
 
-describe("Valkey: subscriber reconnect", () => {
+/**
+ * Drop the subscriptions before closing. `close()` on a still-subscribed client
+ * leaves the event loop pinned by the handler map until GC (#33103). A failed
+ * client rejects the UNSUBSCRIBE it sends, which is fine: `unsubscribe()` clears
+ * the handlers before it reaches the socket.
+ */
+async function closeSubscriber(client: RedisClient) {
+  try {
+    await client.unsubscribe();
+  } catch {}
+  client.close();
+}
+
+describe.concurrent("Valkey: subscriber reconnect", () => {
   test("replays SUBSCRIBE for every channel with a listener", async () => {
     using server = startRespServer();
     const messages = messageQueue();
@@ -220,7 +233,7 @@ describe("Valkey: subscriber reconnect", () => {
       expect(await publisher.publish("sports", "after")).toBe(1);
       expect(await messages.next()).toBe("after");
     } finally {
-      subscriber.close();
+      await closeSubscriber(subscriber);
       publisher.close();
     }
   });
@@ -242,7 +255,7 @@ describe("Valkey: subscriber reconnect", () => {
 
       expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "SUBSCRIBE news", "PING"]);
     } finally {
-      subscriber.close();
+      await closeSubscriber(subscriber);
     }
   });
 
@@ -283,7 +296,7 @@ describe("Valkey: subscriber reconnect", () => {
       await expect(subscriber.ping()).rejects.toThrow(/NOPERM/);
       expect(commandLines(server.connections[1])).toEqual(["HELLO 3", "SUBSCRIBE news", "PING"]);
     } finally {
-      subscriber.close();
+      await closeSubscriber(subscriber);
     }
   });
 
@@ -311,7 +324,7 @@ describe("Valkey: subscriber reconnect", () => {
       expect(await publisher.publish("news", "after")).toBe(1);
       expect(await messages.next()).toBe("after");
     } finally {
-      subscriber.close();
+      await closeSubscriber(subscriber);
       publisher.close();
     }
   });

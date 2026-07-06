@@ -1273,8 +1273,6 @@ impl JSValkeyClient {
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
 
-        self.resubscribe()?;
-
         if let Some(this_value) = self.this_value.get().try_get() {
             let hello_value: JSValue = 'js_hello: {
                 match protocol_jsc::resp_value_to_js(value, &global_object) {
@@ -1310,7 +1308,11 @@ impl JSValkeyClient {
                 self.client_mut().flags.connection_promise_returns_client = false;
             }
         }
-        Ok(())
+
+        // Last, so a failure here cannot strand `.connect()`. Still ahead of the
+        // offline queue: nothing drains it until this scope's microtask drain and
+        // `on_writable` run, both of which happen after this returns.
+        self.resubscribe()
     }
 
     /// Replay the subscription set onto a freshly (re)connected socket.

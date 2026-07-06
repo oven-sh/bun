@@ -86,7 +86,7 @@ impl Assigns {
                         io,
                         ExpansionOpts {
                             for_spawn: false,
-                            single: false,
+                            single: true,
                         },
                     );
                     return Expansion::start(interp, child);

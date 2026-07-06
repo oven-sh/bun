@@ -1273,6 +1273,9 @@ describe("deno_task", () => {
     TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,,b)`
       .stdout(`["a","","b"]\n`)
       .runAsTest("non-whitespace IFS keeps empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,a)`
+      .stdout(`["","a"]\n`)
+      .runAsTest("non-whitespace IFS keeps single leading empty field");
     TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,a,b)`
       .stdout(`["","a","b"]\n`)
       .runAsTest("non-whitespace IFS keeps leading empty field");
@@ -1299,6 +1302,19 @@ describe("deno_task", () => {
     TestBuilder.command`IFS=:; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} "$(echo a:b:c)"`
       .stdout(`["a:b:c"]\n`)
       .runAsTest("quoted command substitution is not split");
+
+    // POSIX exempts assignment values from field splitting even with a custom
+    // IFS; the captured delimiters must survive verbatim.
+    TestBuilder.command`IFS=,; VAR=$(echo a,b,c); BUN_TEST_VAR=1 ${BUN} -e ${ARGV} "$VAR"`
+      .stdout(`["a,b,c"]\n`)
+      .runAsTest("assignment value is not field-split");
+
+    // IFS inherited from the environment (process.env) must not drive
+    // splitting; every POSIX shell ignores it. Only a script-local IFS does.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a/b/c)`
+      .env({ ...bunEnv, IFS: "/" })
+      .stdout(`["a/b/c"]\n`)
+      .runAsTest("IFS from environment does not split");
   });
 
   describe("shell variables", async () => {

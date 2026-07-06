@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 
 it("should log to console correctly", async () => {
@@ -141,6 +142,54 @@ NamedError: console.error a named error
 
   Error log"
 `);
+});
+
+it("console.trace goes to stderr, labelled like Node", async () => {
+  using dir = tempDir("console-trace", {
+    "index.ts": `
+function inner() {
+  console.trace("hello", 42);
+}
+inner();
+console.trace();
+console.group("G");
+console.trace("in group");
+console.groupEnd();
+console.log("stdout stays clean");
+`,
+  });
+  const filepath = join(String(dir), "index.ts").replaceAll("\\", "/");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const normalize = (text: string) =>
+    text
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\\", "/")
+      .replaceAll(realpathSync.native(String(dir)).replaceAll("\\", "/") + "/index.ts", "<file>")
+      .replaceAll(filepath, "<file>")
+      .replace(/<file>:\d+:\d+/g, "<file>:NN:NN");
+
+  // stdout keeps the group label and the log line, and nothing else.
+  expect(normalize(stdout)).toBe("G\nstdout stays clean\n");
+  expect(normalize(stderr)).toMatchInlineSnapshot(`
+"Trace: hello 42
+      at inner (<file>:NN:NN)
+      at <file>:NN:NN
+Trace
+      at <file>:NN:NN
+  Trace: in group
+      at <file>:NN:NN
+"
+`);
+  expect(exitCode).toBe(0);
 });
 
 it("console.log with SharedArrayBuffer", () => {

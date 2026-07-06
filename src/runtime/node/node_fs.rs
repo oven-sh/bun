@@ -9770,20 +9770,16 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
         Ok(()) => Ok(()),
         Err(e) => {
             let errno = e.get_errno();
-            // Non-Linux POSIX (macOS/BSD) returns
-            // a *permission* error (EPERM, occasionally EACCES) from `unlinkat(2)`
-            // without `AT_REMOVEDIR` when the target is a directory — Linux returns
-            // EISDIR directly. Stat to disambiguate so the recursive-rm dir fallback
+            // A permission error from `unlinkat(2)` without `AT_REMOVEDIR` can
+            // mask the fact that the target is a directory we should recurse
+            // into: macOS/BSD return EPERM/EACCES when the target itself is a
+            // directory, and on every POSIX system unlinking a directory whose
+            // parent is not writable fails with EACCES before any EISDIR check.
+            // Stat to disambiguate so the recursive-rm dir fallback
             // (`Err(EISDIR) => treat_as_dir`) fires; a genuine permission error
-            // (immutable file, unwritable parent dir, …) still propagates.
-            #[cfg(any(
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd",
-                target_os = "dragonfly",
-            ))]
+            // (immutable file, unwritable parent dir on a regular file, …) still
+            // propagates.
+            #[cfg(unix)]
             if matches!(errno, E::EPERM | E::EACCES) {
                 // No-follow stat — don't follow symlinks, to match unlinkat.
                 // `z` (a `&ZStr`, `Copy`) is still valid — `unlinkat` only borrowed it.

@@ -395,10 +395,11 @@ impl Cmd {
                     let me = interp.as_cmd_mut(this);
                     if out.bounds.is_empty() {
                         // An empty
-                        // expansion that did *not* see a `""` literal pushes
-                        // no arg at all — `$unset` vanishes, only `""` yields
-                        // an empty argv word.
-                        if !out.buf.is_empty() || out.has_quoted_empty {
+                        // expansion that did *not* see a `""` literal or a
+                        // field from IFS splitting pushes no arg at all —
+                        // `$unset` vanishes, while `""` and a sole empty IFS
+                        // field each yield one empty argv word.
+                        if !out.buf.is_empty() || out.has_quoted_empty || out.has_empty_field {
                             me.args.push(out.buf);
                         }
                     } else {

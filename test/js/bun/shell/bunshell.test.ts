@@ -1283,6 +1283,15 @@ describe("deno_task", () => {
       .stdout(`["","","a"]\n`)
       .runAsTest("non-whitespace IFS keeps consecutive leading empty fields");
 
+    // A result that splits down to a single empty field still yields one
+    // (empty) argv word, distinct from an unset variable which yields none.
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,)`
+      .stdout(`[""]\n`)
+      .runAsTest("non-whitespace IFS: sole delimiter yields one empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,,)`
+      .stdout(`["",""]\n`)
+      .runAsTest("non-whitespace IFS: two delimiters yield two empty fields");
+
     // Empty IFS disables field splitting entirely.
     TestBuilder.command`IFS=; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${"a b"})`
       .stdout(`["a b"]\n`)

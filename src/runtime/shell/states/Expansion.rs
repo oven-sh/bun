@@ -89,6 +89,11 @@ pub struct ExpansionOut {
     /// word yet" from "one empty word committed" (a leading empty field from
     /// non-whitespace IFS splitting, or a leading empty brace variant).
     pub committed: bool,
+    /// Set when IFS field splitting yielded at least one field, so a result
+    /// that splits down to a single empty field (e.g. `$(echo ,)` with
+    /// `IFS=,`) still produces one empty argv word. Distinct from
+    /// `has_quoted_empty` so it does not affect leading-tilde handling.
+    pub has_empty_field: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -559,8 +564,11 @@ impl Expansion {
     /// unset so the caller applies the default separators. Only `shell_env` is
     /// consulted, never `export_env`: like every POSIX shell, Bun Shell must
     /// not let an inherited environment `IFS` (here, `process.env.IFS`) control
-    /// field splitting. A script-local `IFS=...` assignment lands in
-    /// `shell_env`, so the legitimate use is unaffected.
+    /// field splitting, and `export_env` holds the inherited process
+    /// environment. A bare `IFS=...` assignment lands in `shell_env`, so the
+    /// common idiom works. The `export IFS=...` spelling (which writes only
+    /// `export_env`) is not yet honored for splitting; distinguishing
+    /// script-exported vars from inherited ones needs a separate change.
     fn get_ifs(shell: &ShellExecEnv) -> Option<Vec<u8>> {
         use crate::shell::env_str::EnvStr;
         let entry = shell.shell_env.get(EnvStr::init_slice(b"IFS"))?;
@@ -641,6 +649,10 @@ impl Expansion {
         let Some((last, rest)) = fields.split_last() else {
             return;
         };
+        // At least one field exists, so the expansion yields at least one word
+        // even if it is a single empty field (`$(echo ,)` with `IFS=,`), which
+        // leaves `buf`/`bounds` empty.
+        me.out.has_empty_field = true;
         for field in rest {
             me.current_out.extend_from_slice(field);
             Self::push_current_out(me);

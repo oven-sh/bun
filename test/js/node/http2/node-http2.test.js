@@ -3023,6 +3023,41 @@ it("http2 respondWithFile()/respondWithFD() reject connection-specific headers o
   }
 });
 
+it("http2 respondWithFile() on a directory with a connection-specific header tears down the stream", async () => {
+  // doSendFileFD's error branch calls respond() before destroy(). respond() validates headers and
+  // can throw on a connection-specific field, which must not skip the teardown: node destroys the
+  // stream (ERR_HTTP2_SEND_FILE), so the client sees a stream error instead of hanging forever.
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.respondWithFile(tmpdir(), { connection: "keep-alive" });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    const { promise, resolve } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" }, { endStream: true });
+    const events = [];
+    req.on("response", () => events.push("response"));
+    req.on("error", e => events.push(`error:${e.code}`));
+    req.on("data", () => {});
+    // Without the teardown guard the server throws inside the fstat callback, never RSTs the
+    // stream, and this close never fires - the await hangs until the test times out.
+    req.on("close", () => resolve());
+    req.resume();
+    await promise;
+    expect({ events, rstCode: req.rstCode }).toEqual({
+      events: ["error:ERR_HTTP2_STREAM_ERROR"],
+      rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 client survives session teardown from a socket write while flushing queued DATA frames", async () => {
   // A flow-control-limited DATA frame sits in the native outbound queue until
   // the peer reopens the window. The flush that follows writes to the JS

@@ -501,10 +501,8 @@ describe.skipIf(!isPosix)("ref/unref keep-alive", () => {
     }
   });
 
-  it("ref() puts the automatic keep-alive back", async () => {
-    const fifo = join(tmpdirSync(), "ref-restores.fifo");
-    mkfifo(fifo, 0o666);
-    const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  it("ref() restores the keep-alive that unref() turned off", async () => {
+    const { fifo, readFd } = blockedFifo("ref-restores");
     try {
       await using proc = Bun.spawn({
         cmd: [
@@ -514,29 +512,33 @@ describe.skipIf(!isPosix)("ref/unref keep-alive", () => {
             const sink = Bun.file(${JSON.stringify(fifo)}).writer();
             sink.unref();
             sink.ref();
-            await sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
-            console.log("drained");
+            sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+            console.log("writing");
           `,
         ],
         env: bunEnv,
+        stdout: "pipe",
         stderr: "pipe",
       });
-      // Drain the pipe so the pending write can finish. The child only gets
-      // there if ref() restored the event-loop ref that unref() dropped.
-      let received = 0;
-      for await (const chunk of Bun.file(readFd).stream()) received += chunk.byteLength;
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode, received }).toEqual({
-        stdout: "drained",
-        stderr: "",
-        exitCode: 0,
-        received: 4 * 1024 * 1024,
-      });
+      // Wait until the child has issued the write (so the pending keep-alive is
+      // in play), then confirm it does NOT exit on its own: ref() put the
+      // in-flight-write keep-alive back that unref() had turned off. The reader
+      // never drains, so the write stays pending and the only thing that can
+      // exit the process is a missing keep-alive.
+      for await (const line of proc.stdout.values()) {
+        if (new TextDecoder().decode(line).includes("writing")) break;
+      }
+      const outcome = await Promise.race([
+        proc.exited.then(code => ({ exitedOnItsOwn: true, code })),
+        Bun.sleep(1500).then(() => ({ exitedOnItsOwn: false })),
+      ]);
+      expect(outcome).toEqual({ exitedOnItsOwn: false });
+
+      proc.kill();
+      await proc.exited;
     } finally {
-      try {
-        fs.closeSync(readFd);
-      } catch {}
+      fs.closeSync(readFd);
     }
   });
 

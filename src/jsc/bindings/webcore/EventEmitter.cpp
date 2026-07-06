@@ -25,6 +25,8 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
 
 bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
+    if (this->onWillAddListener && !this->onWillAddListener(*this, eventType)) [[unlikely]]
+        return false;
 
     if (prepend) {
         if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { Worker } from "node:worker_threads";
 
 // When multiple listeners are registered for the same signal, removing one
 // listener must NOT uninstall the underlying OS signal handler while other
@@ -133,4 +134,97 @@ test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the h
 done"
 `);
   expect(exitCode).toBe(0);
+});
+
+// SIGKILL and SIGSTOP cannot be caught, so Node rejects them at registration
+// time with the EINVAL that uv_signal_start() returns, and adds no listener.
+test.skipIf(isWindows)("listening for SIGKILL or SIGSTOP throws EINVAL and registers nothing", async () => {
+  const script = /*js*/ `
+    const probe = (sig, method) => {
+      try {
+        process[method](sig, () => {});
+        return { registered: true, listenerCount: process.listenerCount(sig) };
+      } catch (e) {
+        return {
+          name: e.name,
+          message: e.message,
+          code: e.code,
+          errno: e.errno,
+          syscall: e.syscall,
+          listenerCount: process.listenerCount(sig),
+        };
+      } finally {
+        process.removeAllListeners(sig);
+      }
+    };
+
+    const result = {};
+    for (const sig of ["SIGKILL", "SIGSTOP"]) {
+      for (const method of ["on", "addListener", "once", "prependListener", "prependOnceListener"]) {
+        result[sig + "." + method] = probe(sig, method);
+      }
+    }
+    result["SIGUSR2.on"] = probe("SIGUSR2", "on");
+    console.log(JSON.stringify(result));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // EINVAL is 22 on every platform Bun builds for; libuv reports it negated.
+  const einval = {
+    name: "Error",
+    message: "uv_signal_start EINVAL",
+    code: "EINVAL",
+    errno: -22,
+    syscall: "uv_signal_start",
+    listenerCount: 0,
+  };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "SIGKILL.on": einval,
+    "SIGKILL.addListener": einval,
+    "SIGKILL.once": einval,
+    "SIGKILL.prependListener": einval,
+    "SIGKILL.prependOnceListener": einval,
+    "SIGSTOP.on": einval,
+    "SIGSTOP.addListener": einval,
+    "SIGSTOP.once": einval,
+    "SIGSTOP.prependListener": einval,
+    "SIGSTOP.prependOnceListener": einval,
+    "SIGUSR2.on": { registered: true, listenerCount: 1 },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Node only starts signal watchers on the main thread, so inside a worker
+// process.on("SIGKILL") is an ordinary event listener and does not throw.
+test.skipIf(isWindows)("listening for SIGKILL inside a worker does not throw", async () => {
+  const source = /*js*/ `
+    const { parentPort } = require("node:worker_threads");
+    try {
+      process.on("SIGKILL", () => {});
+      parentPort.postMessage({ registered: true, listenerCount: process.listenerCount("SIGKILL") });
+    } catch (e) {
+      parentPort.postMessage({ threw: e.message });
+    }
+  `;
+
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  const worker = new Worker(source, { eval: true });
+  worker.on("message", resolve);
+  worker.on("error", reject);
+  worker.on("exit", code => reject(new Error(`worker exited with code ${code} before posting a message`)));
+
+  try {
+    expect(await promise).toEqual({ registered: true, listenerCount: 1 });
+  } finally {
+    await worker.terminate();
+  }
 });

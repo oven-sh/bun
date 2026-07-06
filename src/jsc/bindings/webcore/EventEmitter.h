@@ -69,6 +69,10 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
+    // Runs before the listener is added. Returning false rejects it; the hook
+    // owns throwing the exception the caller will then propagate.
+    WTF::Function<bool(EventEmitter&, const Identifier& eventName)> onWillAddListener = WTF::Function<bool(EventEmitter&, const Identifier& eventName)>(nullptr);
+
     unsigned getMaxListeners() const { return m_maxListeners; };
 
     void setMaxListeners(unsigned count);

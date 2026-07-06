@@ -1443,9 +1443,9 @@ impl Init {
             result.status_text = OwnedString::new(status_text.to_bun_string(global_this)?);
         }
 
-        if let Some(method_value) =
-            response_init.fast_get_truthy(global_this, BuiltinName::method)?
-        {
+        // `fast_get`, not `fast_get_truthy`: `undefined` falls through to the
+        // default, but `""` is an invalid method token and must throw.
+        if let Some(method_value) = response_init.fast_get(global_this, BuiltinName::method)? {
             result.method = match bun_http_jsc::method_jsc::request_method_from_js(
                 global_this,
                 method_value,

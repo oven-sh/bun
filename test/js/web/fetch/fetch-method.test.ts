@@ -80,7 +80,7 @@ describe("fetch() method", () => {
     expect(line).toBe("Propfind / HTTP/1.1");
   });
 
-  test.each(["GET POST", "GET\n", "foo bar", "GET/1", "@GET", "GET\u00ff"])(
+  test.each(["", "GET POST", "GET\n", "foo bar", "GET/1", "@GET", "GET\u00ff"])(
     "rejects on the invalid token %p",
     async input => {
       await expect(fetch("http://127.0.0.1:1/", { method: input })).rejects.toThrow(/is not a valid HTTP method/);
@@ -114,7 +114,7 @@ describe("new Request() method", () => {
     expect(new Request("http://example.com/other", source).method).toBe("BREW");
   });
 
-  test.each(["GET POST", "foo bar", "@GET"])("throws a TypeError on the invalid token %p", input => {
+  test.each(["", "GET POST", "foo bar", "@GET"])("throws a TypeError on the invalid token %p", input => {
     expect(() => new Request("http://example.com/", { method: input })).toThrow(/is not a valid HTTP method/);
     expect(() => new Request("http://example.com/", { method: input })).toThrow(TypeError);
   });
@@ -122,5 +122,16 @@ describe("new Request() method", () => {
   test.each(["CONNECT", "TRACE", "TRACK"])("throws a TypeError on the forbidden method %p", input => {
     expect(() => new Request("http://example.com/", { method: input })).toThrow(/HTTP method is unsupported/);
     expect(() => new Request("http://example.com/", { method: input })).toThrow(TypeError);
+  });
+
+  // `init["method"]` keys on WebIDL presence, so only `undefined` falls through
+  // to the default; everything else is stringified and validated as a token.
+  test("only undefined falls through to GET", () => {
+    const method = (init: RequestInit) => new Request("http://example.com/", init).method;
+    expect(method({})).toBe("GET");
+    expect(method({ method: undefined })).toBe("GET");
+    expect(method({ method: null as never })).toBe("null");
+    expect(method({ method: 0 as never })).toBe("0");
+    expect(method({ method: false as never })).toBe("false");
   });
 });

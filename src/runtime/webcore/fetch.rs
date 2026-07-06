@@ -616,10 +616,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // **Start with the harmless ones.**
 
-    // "method"
+    // "method". `get` (not `get_truthy`) because the fetch spec keys on WebIDL
+    // presence: only `undefined` falls through to the default, while `""` is an
+    // invalid token and must throw.
     let mut method: MethodBuf = match 'extract_method: {
         if let Some(options) = options_object {
-            if let Some(method_) = options.get_truthy(global_this, "method")? {
+            if let Some(method_) = options.get(global_this, "method")? {
                 break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
             }
         }
@@ -629,7 +631,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_init_object {
-            if let Some(method_) = req.get_truthy(global_this, "method")? {
+            if let Some(method_) = req.get(global_this, "method")? {
                 break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
             }
         }

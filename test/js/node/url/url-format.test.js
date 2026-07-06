@@ -279,6 +279,84 @@ describe("url.format", () => {
     }
   });
 
+  test("only slashed protocols get the // authority separator", () => {
+    // A protocol-less object never gains a "//", and a non-slashed protocol
+    // only gets one when the object was parsed with `slashes`.
+    const cases = [
+      [{ auth: "u", hostname: "h" }, "u@h"],
+      [{ host: "h", pathname: "p" }, "hp"],
+      [{ hostname: "h" }, "h"],
+      [{ host: "h", pathname: "/p", search: "?q", hash: "#f" }, "h/p?q#f"],
+      [{ protocol: "mailto:", host: "h", pathname: "x" }, "mailto:hx"],
+      [{ slashes: true, host: "h", pathname: "p" }, "//h/p"],
+      [{ slashes: true, pathname: "x/y" }, "///x/y"],
+      [{ protocol: "http:", host: "h", pathname: "p" }, "http://h/p"],
+      [{ protocol: "http:", pathname: "x/y" }, "http:x/y"],
+      [{ protocol: "ftp:", pathname: "/x" }, "ftp:/x"],
+      [{ protocol: "gopher:", pathname: "/x" }, "gopher:/x"],
+    ];
+    for (const [urlObject, expected] of cases) {
+      assert.strictEqual(url.format(urlObject), expected, `format(${JSON.stringify(urlObject)})`);
+    }
+  });
+
+  test("file: keeps its empty authority and never swallows a // pathname", () => {
+    // "file:/x/y" and "file://srv/x" mean different things than what was asked
+    // for: the latter would name a remote host `srv`.
+    const cases = [
+      [{ protocol: "file:" }, "file://"],
+      [{ protocol: "file:", pathname: "/x/y" }, "file:///x/y"],
+      [{ protocol: "file", pathname: "//srv/x" }, "file:////srv/x"],
+      [{ protocol: "file:", pathname: "x/y" }, "file://x/y"],
+      [{ protocol: "file:", slashes: true, pathname: "x/y" }, "file:///x/y"],
+      [{ protocol: "file:", slashes: false, pathname: "/x" }, "file:///x"],
+      [{ protocol: "file:", host: "h", pathname: "/x" }, "file://h/x"],
+      [{ protocol: "file:", hostname: "h", pathname: "/x" }, "file://h/x"],
+    ];
+    for (const [urlObject, expected] of cases) {
+      assert.strictEqual(url.format(urlObject), expected, `format(${JSON.stringify(urlObject)})`);
+    }
+
+    // The host of a formatted file: URL is still empty after re-parsing.
+    assert.strictEqual(url.parse(url.format({ protocol: "file", pathname: "//srv/x" })).host, "");
+  });
+
+  test("auth is escaped like node: every colon is preserved", () => {
+    const cases = [
+      [{ auth: "u:p:q", host: "h" }, "u:p:q@h"],
+      [{ auth: "u:p:q", hostname: "h", port: 9 }, "u:p:q@h:9"],
+      [{ auth: ":::", host: "h" }, ":::@h"],
+      // A literal "%3A" in auth is escaped to "%253A", not decoded back to ":".
+      [{ auth: "a%3Ab", host: "h" }, "a%253Ab@h"],
+      [{ auth: "atslash/@:/@", hostname: "foo", protocol: "http:", pathname: "/" }, "http://atslash%2F%40:%2F%40@foo/"],
+    ];
+    for (const [urlObject, expected] of cases) {
+      assert.strictEqual(url.format(urlObject), expected, `format(${JSON.stringify(urlObject)})`);
+    }
+
+    // url.format(url.parse(x)) === x is documented for these.
+    for (const href of ["http://u:p:q@h/", "coap:u:p:q@[::1]:61616/a", "http://a:b:c:d@h/x?y#z"]) {
+      const parsed = url.parse(href);
+      assert.strictEqual(url.format(parsed), href);
+      assert.strictEqual(parsed.href, href);
+    }
+    assert.strictEqual(url.format(url.parse("http://u:p%3Aq@h/")), "http://u:p:q@h/");
+  });
+
+  test("an already bracketed IPv6 hostname is not bracketed again", () => {
+    const cases = [
+      [{ protocol: "http", hostname: "[::1]", port: 8 }, "http://[::1]:8"],
+      [{ protocol: "http:", hostname: "[::1]" }, "http://[::1]"],
+      [{ protocol: "http:", hostname: "::1", port: 8 }, "http://[::1]:8"],
+      [{ hostname: "[::1]" }, "[::1]"],
+      [{ hostname: "::1", port: 1 }, "[::1]:1"],
+      [{ protocol: "http:", slashes: true, host: "[::1]:8", pathname: "/" }, "http://[::1]:8/"],
+    ];
+    for (const [urlObject, expected] of cases) {
+      assert.strictEqual(url.format(urlObject), expected, `format(${JSON.stringify(urlObject)})`);
+    }
+  });
+
   test("format encodes every hash character in the search component", () => {
     // A search string containing more than one "#" must have all of them
     // percent-encoded; otherwise re-parsing the formatted URL truncates the

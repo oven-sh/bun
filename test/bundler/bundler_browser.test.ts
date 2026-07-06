@@ -413,6 +413,23 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("browser/NodeUrlFormatAuthority", {
+    files: {
+      "/entry.js": /* js */ `
+        import { format } from "node:url";
+        console.log(format({ auth: "u", hostname: "h" }));
+        console.log(format({ host: "h", pathname: "p" }));
+        console.log(format({ protocol: "file:", pathname: "/x/y" }));
+        console.log(format({ protocol: "file", pathname: "//srv/x" }));
+        console.log(format({ protocol: "http", hostname: "[::1]", port: 8 }));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "u@h\nhp\nfile:///x/y\nfile:////srv/x\nhttp://[::1]:8",
+    },
+  });
+
   itBundled("browser/NodeUrlFormatSearchHash", {
     files: {
       "/entry.js": /* js */ `

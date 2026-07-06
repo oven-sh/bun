@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import * as pathNamespace from "node:path";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -407,6 +408,10 @@ test("Error.captureStackTrace cannot add stack to a non-extensible object", () =
   const nonExtensibleError = Object.preventExtensions(new Error("non-extensible"));
   expectTypeError(() => Error.captureStackTrace(nonExtensibleError), NOT_EXTENSIBLE);
   expect(Object.isExtensible(nonExtensibleError)).toBe(false);
+
+  // a module namespace is an exotic, permanently non-extensible object
+  expectTypeError(() => Error.captureStackTrace(pathNamespace), NOT_EXTENSIBLE);
+  expect(Object.getOwnPropertyNames(pathNamespace)).not.toContain("stack");
 });
 
 test("Error.captureStackTrace cannot overwrite a non-configurable stack", () => {
@@ -427,6 +432,24 @@ test("Error.captureStackTrace cannot overwrite a non-configurable stack", () => 
     expectTypeError(() => Error.captureStackTrace(error), NOT_CONFIGURABLE);
     expect(error.stack).toBe("original");
   }
+});
+
+test("Error.captureStackTrace cannot overwrite a non-configurable stack on an unmaterialized error", () => {
+  const limit = Error.stackTraceLimit;
+  let error;
+  try {
+    // an empty stack trace leaves the error's info unmaterialized, so the error takes
+    // the lazy ".stack" accessor path rather than the eager one
+    Error.stackTraceLimit = 0;
+    error = new Error("locked");
+    Object.defineProperty(error, "stack", { value: "original", writable: false, configurable: false });
+    expect(Object.getOwnPropertyNames(error)).toEqual(["message", "stack"]);
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+
+  expectTypeError(() => Error.captureStackTrace(error), NOT_CONFIGURABLE);
+  expect(error.stack).toBe("original");
 });
 
 test("Error.captureStackTrace still works on ordinary targets", () => {

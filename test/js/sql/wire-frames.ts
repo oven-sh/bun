@@ -398,6 +398,37 @@ export function mysqlTextResultSet(
   return Buffer.concat(parts);
 }
 
+// MySQL binary-protocol resultset row — page_protocol_binary_resultset_row.html:
+//   Int<1>(0x00) null_bitmap[(column_count + 7 + 2) / 8] then one ProtocolBinary value per
+//   non-NULL column. The bitmap's two low bits are reserved, so column i lives at bit i + 2.
+//   Only the string<lenenc> value encoding is emitted, which covers every VAR_STRING column.
+export function mysqlBinaryResultSetRow(seq: number, cols: (string | Buffer | null)[]): Buffer {
+  const nullBitmap = Buffer.alloc((cols.length + 7 + 2) >> 3);
+  const values: Buffer[] = [];
+  for (let i = 0; i < cols.length; i++) {
+    const col = cols[i];
+    if (col === null) nullBitmap[(i + 2) >> 3] |= 1 << ((i + 2) & 7);
+    else values.push(mysqlLenencStr(col));
+  }
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x00]), nullBitmap, ...values]));
+}
+
+// MySQL Binary Protocol Resultset — page_protocol_binary_resultset.html, in the
+// CLIENT_DEPRECATE_EOF framing. Same envelope as mysqlTextResultSet; only the row
+// encoding differs. This is what COM_STMT_EXECUTE answers with.
+export function mysqlBinaryResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: (string | Buffer | null)[][],
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlBinaryResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe));
+  return Buffer.concat(parts);
+}
+
 // MySQL COM_STMT_PREPARE_OK — page_protocol_com_stmt_prepare.html#sect_protocol_com_stmt_prepare_response_ok:
 //   Int<1>(0x00) Int<4>(statement_id) Int<2>(num_columns) Int<2>(num_params) Int<1>(0x00) Int<2>(warning_count)
 export function mysqlStmtPrepareOk(seq: number, stmtId: number, numColumns: number, numParams: number): Buffer {

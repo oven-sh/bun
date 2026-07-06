@@ -329,18 +329,13 @@ impl JSValue {
     /// known to be a BigInt; checks `min <= self <= max` without truncation.
     #[inline]
     pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
-        unsafe extern "C" {
-            safe fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
-        }
-        JSC__isBigIntInInt64Range(self, min, max)
+        crate::cpp::JSC__isBigIntInInt64Range(self, min, max)
     }
-    /// `JSValue.isBigIntInUInt64Range`.
+    /// `JSValue.isBigIntInUInt64Range` — `self` must already be
+    /// known to be a BigInt; checks `min <= self <= max` without truncation.
     #[inline]
     pub fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
-        unsafe extern "C" {
-            safe fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
-        }
-        JSC__isBigIntInUInt64Range(self, min, max)
+        crate::cpp::JSC__isBigIntInUInt64Range(self, min, max)
     }
     /// `JSValue.isCallable()`.
     #[inline]

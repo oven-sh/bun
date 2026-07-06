@@ -85,10 +85,4 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-export {
-  VALID_TLS_ERROR_MESSAGE_TYPES,
-  isValidTLSArray,
-  isValidTLSItem,
-  throwOnInvalidTLSArray,
-  tlsHandshakeError,
-};
+export { VALID_TLS_ERROR_MESSAGE_TYPES, isValidTLSArray, isValidTLSItem, throwOnInvalidTLSArray, tlsHandshakeError };

@@ -3756,12 +3756,22 @@ pub(super) fn server_set_on_handshake_error_(
                         // SAFETY: user_data is the `*mut Self` registered below; socket is a live
                         // uWS socket; code/reason are NUL-terminated (or null) for this call.
                         let this = unsafe { &mut *user_data.cast::<$T>() };
-                        let verify_error = uws_sys::us_bun_verify_error_t { error_no, code, reason };
+                        let verify_error = uws_sys::us_bun_verify_error_t {
+                            error_no,
+                            code,
+                            reason,
+                        };
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        this.on_handshake_error_callback(bun_opaque::opaque_deref_mut(socket), &verify_error);
+                        this.on_handshake_error_callback(
+                            bun_opaque::opaque_deref_mut(socket),
+                            &verify_error,
+                        );
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).on_handshake_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                    bun_opaque::opaque_deref_mut(app).on_handshake_error(
+                        thunk,
+                        core::ptr::from_mut::<$T>(this).cast::<c_void>(),
+                    );
                 }
                 return Ok(JSValue::UNDEFINED);
             }

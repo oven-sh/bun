@@ -4,13 +4,13 @@
 // failures on the floor, so every class below was silent.
 import { expect, test } from "bun:test";
 import { tls as COMMON_CERT } from "harness";
+import { constants as cryptoConstants } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 import tls from "node:tls";
-import { constants as cryptoConstants } from "node:crypto";
 
 type Probe = (port: number) => Promise<unknown>;
 

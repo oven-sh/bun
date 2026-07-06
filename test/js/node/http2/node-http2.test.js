@@ -641,7 +641,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await doHttp2Request(HTTPS_SERVER, url, { ":path": "/" }, null, TLS_OPTIONS);
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ERR_HTTP2_ERROR");
+            // Bun.serve only offers "http/1.1" over ALPN, so an h2-only client is
+            // refused during the handshake with a fatal no_application_protocol
+            // alert instead of sending an h2 preface at an HTTP/1.1 server.
+            expect(err.code).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
           }
         });
         it("works with Duplex", async () => {

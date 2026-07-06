@@ -2487,7 +2487,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if SSL {
             bun_boringssl::load();
-            let Some(ssl_options) = this_ref.config.ssl_config.as_ref().map(|c| c.as_usockets())
+            let Some(ssl_options) = this_ref
+                .config
+                .ssl_config
+                .as_ref()
+                .map(ssl_options_for_serve)
             else {
                 // unreachable in practice — fromJS guarantees ssl_config when SSL.
                 let _ = global.throw(format_args!(
@@ -2608,7 +2612,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     (
                         sni_name.as_ptr(),
                         sni_name.to_bytes().len(),
-                        sni_ssl_config.as_usockets(),
+                        ssl_options_for_serve(sni_ssl_config),
                     )
                 };
                 // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
@@ -3113,6 +3117,22 @@ mod ffi {
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
     }
+}
+
+/// `Bun.serve` over TLS only speaks HTTP/1.1, so its contexts advertise
+/// `http/1.1` in wire format unless `tls.ALPNProtocols` overrides it — the same
+/// default node's `https.Server` applies.
+const DEFAULT_SERVER_ALPN: &[u8] = b"\x08http/1.1";
+
+/// Borrows `cfg`: the returned options point into it (and into the 'static
+/// default), and `create_ssl_context` copies before returning.
+fn ssl_options_for_serve(cfg: &server_config::SSLConfig) -> uws_sys::BunSocketContextOptions {
+    let mut opts = cfg.as_usockets();
+    if cfg.protos_bytes().is_none() {
+        opts.protos = DEFAULT_SERVER_ALPN.as_ptr();
+        opts.protos_len = DEFAULT_SERVER_ALPN.len() as u32;
+    }
+    opts
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

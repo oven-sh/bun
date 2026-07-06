@@ -214,6 +214,12 @@ impl SSLConfig {
         ctx_opts.secure_options = self.secure_options;
         ctx_opts.client_renegotiation_limit = self.client_renegotiation_limit;
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
+        // Borrowed: `create_ssl_context` copies the list before returning, and
+        // `self` outlives that call at every site.
+        if let Some(protos) = self.protos_bytes() {
+            ctx_opts.protos = protos.as_ptr();
+            ctx_opts.protos_len = protos.len() as u32;
+        }
 
         ctx_opts
     }

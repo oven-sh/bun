@@ -58,4 +58,14 @@ impl HTTPCertError {
             },
         }
     }
+
+    /// True when the peer refused our ALPN offer with a fatal
+    /// `no_application_protocol` alert. A failed handshake carries BoringSSL's
+    /// reason string, the shape `node:net` decomposes into `ERR_SSL_<REASON>`.
+    pub fn is_no_application_protocol(&self) -> bool {
+        bun_core::strings::ends_with_comptime(
+            self.reason.as_bytes(),
+            b":TLSV1_ALERT_NO_APPLICATION_PROTOCOL",
+        )
+    }
 }

@@ -437,6 +437,12 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    /* ALPN protocol list this context offers when acting as a server, in TLS
+     * wire format (a series of 1-byte length-prefixed names). Copied into the
+     * SSL_CTX; the caller's buffer only has to outlive the build call. NULL or
+     * a zero length leaves ALPN unnegotiated, as if never configured. */
+    const unsigned char *protos;
+    unsigned int protos_len;
 };
 
 enum create_bun_socket_error_t {

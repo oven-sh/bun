@@ -471,10 +471,13 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     record->link(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    status(Status::Linked);
+    // Mirror the record status onto this wrapper and its dependencies even when
+    // link() threw: JSC reverts only the modules still on the linking stack to
+    // UNLINKED, so a dependency whose own instantiation completed stays LINKED
+    // and must remain independently evaluable (matches Node's vm module).
     propagateLinked();
+    RETURN_IF_EXCEPTION(scope, {});
     return jsUndefined();
 }
 

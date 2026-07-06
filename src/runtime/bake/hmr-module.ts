@@ -798,14 +798,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       }
     }
   } catch (e) {
-    // A synchronous re-eval throw: modules after the thrower never reloaded;
-    // restore their handlers so future updates still treat them as accepting.
-    for (let i = reloadCursor + 1; i < staleReloads.length; i++) {
+    // A synchronous re-eval throw: restore handlers on modules that did not
+    // complete a reload (the thrower included) so future updates still treat
+    // them as accepting. `??=` keeps handlers re-registered mid-eval.
+    for (let i = reloadCursor; i < staleReloads.length; i++) {
       const [mod, selfAccept, depAccepts] = staleReloads[i];
-      if (mod.state === State.Stale) {
-        mod.selfAccept = selfAccept;
-        mod.depAccepts = depAccepts;
-      }
+      if (mod.state !== State.Stale) continue;
+      mod.selfAccept ??= selfAccept;
+      mod.depAccepts ??= depAccepts;
     }
     throw e;
   }

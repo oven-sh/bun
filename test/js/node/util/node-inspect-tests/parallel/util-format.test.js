@@ -495,3 +495,51 @@ test("no assertion failures", () => {
     );
   });
 });
+
+test("%s inspects values whose Symbol.toPrimitive is inherited from a built-in", () => {
+  // Date and boxed Symbol both inherit Symbol.toPrimitive from a built-in
+  // prototype, so they are inspected rather than passed to String().
+  assert.strictEqual(util.format("%s", new Date(0)), "1970-01-01T00:00:00.000Z");
+  assert.strictEqual(util.format("%s", Object(symbol)), "[Symbol: Symbol(foo)]");
+  assert.strictEqual(util.formatWithOptions({ colors: true }, "%s", new Date(0)), "1970-01-01T00:00:00.000Z");
+  assert.strictEqual(util.format("%s", Object.create(Date.prototype)), "Date {}");
+
+  class MyDate extends Date {}
+  assert.strictEqual(util.format("%s", new MyDate(0)), "MyDate 1970-01-01T00:00:00.000Z");
+
+  // The proxy is unwrapped before the check, so the built-in target counts.
+  const proxiedDate = new Proxy(new Date(0), {});
+  assert.strictEqual(
+    util.format("%s", proxiedDate),
+    util.inspect(proxiedDate, { depth: 0, colors: false, compact: 3 }),
+  );
+
+  // An own or user-defined conversion is still preferred over inspecting.
+  assert.strictEqual(util.format("%s", { [Symbol.toPrimitive]: () => "own toPrimitive" }), "own toPrimitive");
+  assert.strictEqual(
+    util.format("%s", { __proto__: null, [Symbol.toPrimitive]: () => "own toPrimitive, no toString" }),
+    "own toPrimitive, no toString",
+  );
+  class UserToPrimitive {
+    [Symbol.toPrimitive]() {
+      return "user prototype toPrimitive";
+    }
+  }
+  assert.strictEqual(util.format("%s", new UserToPrimitive()), "user prototype toPrimitive");
+  class SubDate extends Date {
+    [Symbol.toPrimitive]() {
+      return "subclass toPrimitive";
+    }
+  }
+  assert.strictEqual(util.format("%s", new SubDate(0)), "subclass toPrimitive");
+  const dateWithOwnToString = new Date(0);
+  dateWithOwnToString.toString = () => "own toString";
+  assert.strictEqual(util.format("%s", dateWithOwnToString), "own toString");
+
+  // Inherited from a prototype with no constructor: not a built-in.
+  const nullProtoToPrimitive = { __proto__: { __proto__: null, [Symbol.toPrimitive]: () => "null prototype" } };
+  assert.strictEqual(util.format("%s", nullProtoToPrimitive), "null prototype");
+
+  // A non-callable Symbol.toPrimitive is ignored.
+  assert.strictEqual(util.format("%s", { [Symbol.toPrimitive]: 5 }), "{ Symbol(Symbol.toPrimitive): 5 }");
+});

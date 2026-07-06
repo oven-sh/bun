@@ -113,6 +113,17 @@ const cookie = new Bun.Cookie("visited", "true");
 cookies.set(cookie);
 ```
 
+Cookie names are allowed to carry the `__Secure-` and `__Host-` prefixes, which browsers only honor when the cookie meets the prefix's requirements. Bun throws a `TypeError` instead of emitting a cookie every browser would ignore:
+
+- `__Secure-` requires `secure: true`.
+- `__Host-` requires `secure: true`, no `domain`, and a `path` of `"/"`.
+
+```ts title="prefixed-cookie.ts" icon="/icons/typescript.svg"
+cookies.set("__Host-session", "abc123", { secure: true });
+
+cookies.set("__Host-session", "abc123"); // TypeError
+```
+
 #### `delete(name: string): void`
 
 #### `delete(options: CookieStoreDeleteOptions): void`

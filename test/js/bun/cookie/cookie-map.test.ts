@@ -453,6 +453,86 @@ describe("delete with prefixed cookie names", () => {
       "id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]);
   });
+
+  test("deleting a __Host- cookie with a domain throws and leaves the map untouched", () => {
+    const map = new Bun.CookieMap("__Host-id=1");
+    expect(() => map.delete({ name: "__Host-id", domain: "example.com" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix does not allow a domain',
+    );
+    expect(map.get("__Host-id")).toBe("1");
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test("deleting a __Host- cookie with a path other than / throws", () => {
+    const map = new Bun.CookieMap("__Host-id=1");
+    expect(() => map.delete("__Host-id", { path: "/admin" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires path: "/"',
+    );
+    expect(map.get("__Host-id")).toBe("1");
+  });
+});
+
+describe("set with prefixed cookie names", () => {
+  test("setting a __Host- cookie without secure throws", () => {
+    const map = new Bun.CookieMap();
+    expect(() => map.set("__Host-s", "v")).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test("setting a __Secure- cookie without secure throws", () => {
+    const map = new Bun.CookieMap();
+    expect(() => map.set("__Secure-s", "v")).toThrow('Invalid cookie name: "__Secure-" prefix requires secure: true');
+    expect(() => map.set({ name: "__Secure-s", value: "v" })).toThrow(
+      'Invalid cookie name: "__Secure-" prefix requires secure: true',
+    );
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test("setting a __Host- cookie with a domain throws", () => {
+    const map = new Bun.CookieMap();
+    expect(() => map.set("__Host-s", "v", { secure: true, domain: "example.com" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix does not allow a domain',
+    );
+  });
+
+  test("setting a __Host- cookie with a path other than / throws", () => {
+    const map = new Bun.CookieMap();
+    expect(() => map.set("__Host-s", "v", { secure: true, path: "/admin" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires path: "/"',
+    );
+    expect(() => map.set("__Host-s", "v", { secure: true, path: "" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires path: "/"',
+    );
+  });
+
+  test("a rejected set leaves the previous cookie in place", () => {
+    const map = new Bun.CookieMap("__Host-s=original");
+    expect(() => map.set("__Host-s", "replacement")).toThrow();
+    expect(map.get("__Host-s")).toBe("original");
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test("setting a valid prefixed cookie works", () => {
+    const map = new Bun.CookieMap();
+    map.set("__Host-s", "v", { secure: true });
+    map.set("__Secure-s", "v", { secure: true, domain: "example.com", path: "/admin" });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Host-s=v; Path=/; Secure; SameSite=Lax",
+      "__Secure-s=v; Domain=example.com; Path=/admin; Secure; SameSite=Lax",
+    ]);
+  });
+
+  test("setting a Cookie object parsed from a header enforces the prefix rules", () => {
+    const map = new Bun.CookieMap();
+    // Cookie.parse reports what was on the wire, so set() is what has to reject it.
+    expect(() => map.set(Bun.Cookie.parse("__Host-s=v"))).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires secure: true',
+    );
+    expect(map.toSetCookieHeaders()).toEqual([]);
+
+    map.set(Bun.Cookie.parse("__Host-s=v; Path=/; Secure"));
+    expect(map.toSetCookieHeaders()).toEqual(["__Host-s=v; Path=/; Secure; SameSite=Lax"]);
+  });
 });
 
 describe("invalid delete usage", () => {

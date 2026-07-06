@@ -474,3 +474,157 @@ describe("cookie name parsing from Cookie header", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// RFC 6265bis 4.1.3: a user agent ignores a cookie whose name carries one of these prefixes
+// unless it satisfies the prefix's requirements, so creating one is a mistake worth reporting.
+describe("__Secure- and __Host- name prefixes", () => {
+  test("__Secure- requires secure", () => {
+    expect(() => new Bun.Cookie("__Secure-a", "1")).toThrow(
+      'Invalid cookie name: "__Secure-" prefix requires secure: true',
+    );
+    expect(() => new Bun.Cookie("__Secure-a", "1", { secure: false })).toThrow(
+      'Invalid cookie name: "__Secure-" prefix requires secure: true',
+    );
+    expect(new Bun.Cookie("__Secure-a", "1", { secure: true }).toString()).toBe(
+      "__Secure-a=1; Path=/; Secure; SameSite=Lax",
+    );
+  });
+
+  test("__Secure- allows a domain and any path", () => {
+    expect(new Bun.Cookie("__Secure-a", "1", { secure: true, domain: "example.com", path: "/admin" }).toString()).toBe(
+      "__Secure-a=1; Domain=example.com; Path=/admin; Secure; SameSite=Lax",
+    );
+  });
+
+  test("__Host- requires secure", () => {
+    expect(() => new Bun.Cookie("__Host-a", "1")).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(new Bun.Cookie("__Host-a", "1", { secure: true }).toString()).toBe(
+      "__Host-a=1; Path=/; Secure; SameSite=Lax",
+    );
+  });
+
+  test("__Host- forbids a domain", () => {
+    expect(() => new Bun.Cookie("__Host-a", "1", { secure: true, domain: "example.com" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix does not allow a domain',
+    );
+  });
+
+  test('__Host- requires a path of "/"', () => {
+    expect(() => new Bun.Cookie("__Host-a", "1", { secure: true, path: "/admin" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires path: "/"',
+    );
+    // An empty path omits the attribute entirely, which __Host- does not allow either.
+    expect(() => new Bun.Cookie("__Host-a", "1", { secure: true, path: "" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires path: "/"',
+    );
+  });
+
+  test("the prefix is matched case-insensitively, like browsers do", () => {
+    expect(() => new Bun.Cookie("__host-a", "1")).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(() => new Bun.Cookie("__SECURE-a", "1")).toThrow(
+      'Invalid cookie name: "__Secure-" prefix requires secure: true',
+    );
+  });
+
+  test("a name that only contains the prefix is unaffected", () => {
+    expect(new Bun.Cookie("x__Host-a", "1").toString()).toBe("x__Host-a=1; Path=/; SameSite=Lax");
+    expect(new Bun.Cookie("__Host", "1").toString()).toBe("__Host=1; Path=/; SameSite=Lax");
+  });
+
+  test("the object and Cookie.from forms are checked too", () => {
+    expect(() => new Bun.Cookie({ name: "__Host-a", value: "1" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix requires secure: true',
+    );
+    expect(() => Bun.Cookie.from("__Host-a", "1", { secure: true, domain: "example.com" })).toThrow(
+      'Invalid cookie name: "__Host-" prefix does not allow a domain',
+    );
+  });
+
+  test("Cookie.parse reports what was on the wire without throwing", () => {
+    const cookie = Bun.Cookie.parse("__Host-a=1");
+    expect(cookie.secure).toBe(false);
+    expect(cookie.toString()).toBe("__Host-a=1; Path=/; SameSite=Lax");
+  });
+
+  test("a cookie in the wire-invalid state from Cookie.parse can be repaired", () => {
+    const cookie = Bun.Cookie.parse("__Host-a=1");
+    cookie.secure = true;
+    const map = new Bun.CookieMap();
+    map.set(cookie);
+    expect(map.toSetCookieHeaders()).toEqual(["__Host-a=1; Path=/; Secure; SameSite=Lax"]);
+  });
+
+  test("the setters cannot mutate a prefixed cookie into a state browsers ignore", () => {
+    const cookie = new Bun.Cookie("__Host-a", "1", { secure: true });
+    expect(() => (cookie.secure = false)).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(() => (cookie.domain = "example.com")).toThrow('Invalid cookie name: "__Host-" prefix does not allow a domain');
+    expect(() => (cookie.path = "/admin")).toThrow('Invalid cookie name: "__Host-" prefix requires path: "/"');
+    expect(cookie.toString()).toBe("__Host-a=1; Path=/; Secure; SameSite=Lax");
+
+    const secureCookie = new Bun.Cookie("__Secure-a", "1", { secure: true });
+    expect(() => (secureCookie.secure = false)).toThrow('Invalid cookie name: "__Secure-" prefix requires secure: true');
+    // __Secure- constrains nothing but the secure flag.
+    secureCookie.domain = "example.com";
+    secureCookie.path = "/admin";
+    expect(secureCookie.toString()).toBe("__Secure-a=1; Domain=example.com; Path=/admin; Secure; SameSite=Lax");
+  });
+
+  test("a cookie already set on a map cannot be mutated into an invalid one", () => {
+    // CookieMap.set() keeps a reference to the Cookie, so the object stays reachable.
+    const cookie = new Bun.Cookie("__Host-a", "1", { secure: true });
+    const map = new Bun.CookieMap();
+    map.set(cookie);
+    expect(() => (cookie.secure = false)).toThrow('Invalid cookie name: "__Host-" prefix requires secure: true');
+    expect(map.toSetCookieHeaders()).toEqual(["__Host-a=1; Path=/; Secure; SameSite=Lax"]);
+  });
+
+  test("setters on a cookie without a prefixed name are unaffected", () => {
+    const cookie = new Bun.Cookie("a", "1", { secure: true });
+    cookie.secure = false;
+    cookie.domain = "example.com";
+    cookie.path = "/admin";
+    expect(cookie.toString()).toBe("a=1; Domain=example.com; Path=/admin; SameSite=Lax");
+  });
+
+  test("Bun.serve emits a __Host- cookie the browser accepts", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => {
+          req.cookies.set("__Host-sid", "s3cret", { secure: true });
+          return new Response("ok");
+        },
+      },
+    });
+    const res = await fetch(server.url);
+    expect(res.headers.getSetCookie()).toEqual(["__Host-sid=s3cret; Path=/; Secure; SameSite=Lax"]);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("cookie path attribute", () => {
+  test("a path that does not start with / is rejected", () => {
+    // RFC 6265 5.2.4: user agents ignore such a Path attribute, and Bun's own parser drops
+    // it, so the cookie could not even round-trip through Bun.Cookie.parse.
+    expect(() => new Bun.Cookie("a", "b", { path: "x" })).toThrow('Invalid cookie path: must start with "/"');
+    expect(() => new Bun.Cookie("a", "b", { path: "../x" })).toThrow('Invalid cookie path: must start with "/"');
+    expect(() => Bun.Cookie.from("a", "b", { path: "x" })).toThrow('Invalid cookie path: must start with "/"');
+    expect(() => new Bun.CookieMap().delete("a", { path: "x" })).toThrow('Invalid cookie path: must start with "/"');
+  });
+
+  test("the path setter rejects a relative path", () => {
+    const cookie = new Bun.Cookie("a", "b", { path: "/x" });
+    expect(() => (cookie.path = "x")).toThrow('Invalid cookie path: must start with "/"');
+    expect(cookie.path).toBe("/x");
+  });
+
+  test("an empty path omits the attribute", () => {
+    expect(new Bun.Cookie("a", "b", { path: "" }).toString()).toBe("a=b; SameSite=Lax");
+  });
+
+  test("an absolute path round-trips through Cookie.parse", () => {
+    const serialized = new Bun.Cookie("a", "b", { path: "/x" }).toString();
+    expect(serialized).toBe("a=b; Path=/x; SameSite=Lax");
+    expect(Bun.Cookie.parse(serialized).path).toBe("/x");
+  });
+});

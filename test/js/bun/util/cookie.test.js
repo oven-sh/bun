@@ -574,12 +574,21 @@ describe("cookie.serialize(name, value, options)", function () {
         "/foo=bar?baz",
         '/foo"bar"',
         "/../foo/bar",
-        "../foo/",
-        "./",
       ];
 
       validPaths.forEach(function (path) {
         expect(cookie.serialize("foo", "bar", { path: path })).toEqual("foo=bar; Path=" + path + "; SameSite=Lax");
+      });
+    });
+
+    // RFC 6265 5.2.4: a user agent ignores a Path attribute that does not start with "/".
+    it("should throw for a path that does not start with /", function () {
+      var relativePaths = ["../foo/", "./", "foo"];
+
+      relativePaths.forEach(function (path) {
+        expect(cookie.serialize.bind(cookie, "foo", "bar", { path: path })).toThrow(
+          'Invalid cookie path: must start with "/"',
+        );
       });
     });
 

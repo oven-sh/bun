@@ -34,21 +34,94 @@ Cookie::Cookie(const String& name, const String& value,
 {
 }
 
+static ExceptionOr<void> validateCookieAttributes(const String& name, const String& domain, const String& path)
+{
+    if (!Cookie::isValidCookieName(name)) {
+        return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
+    }
+    if (auto validation = Cookie::validateCookiePath(path); validation.hasException()) {
+        return validation.releaseException();
+    }
+    if (!Cookie::isValidCookieDomain(domain)) {
+        return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+    }
+    return {};
+}
+
 ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     const String& domain, const String& path,
     int64_t expires, bool secure, CookieSameSite sameSite,
     bool httpOnly, double maxAge, bool partitioned)
 {
-    if (!isValidCookieName(name)) {
-        return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
-    }
-    if (!isValidCookiePath(path)) {
-        return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
-    }
-    if (!isValidCookieDomain(domain)) {
-        return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+    if (auto validation = validateCookieAttributes(name, domain, path); validation.hasException()) {
+        return validation.releaseException();
     }
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
+}
+
+ExceptionOr<Ref<Cookie>> Cookie::create(const CookieInit& init)
+{
+    if (auto validation = validateCookieAttributes(init.name, init.domain, init.path); validation.hasException()) {
+        return validation.releaseException();
+    }
+    if (auto validation = validateNamePrefix(init.name, init.domain, init.path, init.secure); validation.hasException()) {
+        return validation.releaseException();
+    }
+    return adoptRef(*new Cookie(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned));
+}
+
+// RFC 6265bis 4.1.3: a user agent ignores a cookie whose name carries one of these prefixes
+// unless the cookie satisfies the prefix's requirements. Browsers match the prefix
+// case-insensitively.
+static bool hasHostPrefix(const String& name)
+{
+    return name.startsWithIgnoringASCIICase("__Host-"_s);
+}
+
+static bool hasSecurePrefix(const String& name)
+{
+    return name.startsWithIgnoringASCIICase("__Secure-"_s);
+}
+
+ExceptionOr<void> Cookie::validatePrefixSecure(const String& name, bool secure)
+{
+    if (secure) {
+        return {};
+    }
+    if (hasHostPrefix(name)) {
+        return Exception { TypeError, "Invalid cookie name: \"__Host-\" prefix requires secure: true"_s };
+    }
+    if (hasSecurePrefix(name)) {
+        return Exception { TypeError, "Invalid cookie name: \"__Secure-\" prefix requires secure: true"_s };
+    }
+    return {};
+}
+
+ExceptionOr<void> Cookie::validatePrefixDomain(const String& name, const String& domain)
+{
+    if (!domain.isEmpty() && hasHostPrefix(name)) {
+        return Exception { TypeError, "Invalid cookie name: \"__Host-\" prefix does not allow a domain"_s };
+    }
+    return {};
+}
+
+ExceptionOr<void> Cookie::validatePrefixPath(const String& name, const String& path)
+{
+    if (path != "/"_s && hasHostPrefix(name)) {
+        return Exception { TypeError, "Invalid cookie name: \"__Host-\" prefix requires path: \"/\""_s };
+    }
+    return {};
+}
+
+ExceptionOr<void> Cookie::validateNamePrefix(const String& name, const String& domain, const String& path, bool secure)
+{
+    if (auto validation = validatePrefixSecure(name, secure); validation.hasException()) {
+        return validation.releaseException();
+    }
+    if (auto validation = validatePrefixDomain(name, domain); validation.hasException()) {
+        return validation.releaseException();
+    }
+    return validatePrefixPath(name, path);
 }
 
 String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies)
@@ -228,6 +301,19 @@ bool Cookie::isValidCookiePath(const String& path)
         }
     }
     return true;
+}
+
+ExceptionOr<void> Cookie::validateCookiePath(const String& path)
+{
+    if (!isValidCookiePath(path)) {
+        return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+    }
+    // RFC 6265 5.2.4: a user agent ignores a Path attribute that does not start with "/" and
+    // scopes the cookie to the request's directory instead. An empty path omits the attribute.
+    if (!path.isEmpty() && !path.startsWith('/')) {
+        return Exception { TypeError, "Invalid cookie path: must start with \"/\""_s };
+    }
+    return {};
 }
 
 static inline bool isValidCharacterInCookieDomain(char16_t c)

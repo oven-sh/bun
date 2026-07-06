@@ -402,7 +402,12 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
-        if (commonJSModule) {
+        // Only mocks need to unwrap `default` here. For everything else the source code
+        // below carries a "module.exports" binding that require() reads back out, and
+        // going through it is what registers the module so a later import() reuses this
+        // load instead of running the loader a second time. Mocks skip provideFetch, so
+        // they have nothing to read back and still need the shortcut.
+        if (commonJSModule && wasModuleMock) {
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {

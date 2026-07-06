@@ -400,7 +400,34 @@ describe("the loader runs once per specifier", () => {
 
     // @ts-expect-error
     const imported = await import("load-once-esmodule-require-first");
-    expect(imported.default).toBe("world");
+    expect([calls, imported.default]).toEqual([1, "world"]);
+  });
+
+  // `default: null` is the one value the "module.exports" binding and a nullish check
+  // disagree about, so require() has to read the binding's presence, not its value.
+  it.each([
+    ["null", null],
+    ["false", false],
+    ["0", 0],
+  ])("require() agrees in either order when the __esModule default is %s", async (label, value) => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module(`load-once-falsy-import-first-${label}`, () => {
+          calls++;
+          return { exports: { __esModule: true, default: value }, loader: "object" };
+        });
+        builder.module(`load-once-falsy-require-first-${label}`, () => ({
+          exports: { __esModule: true, default: value },
+          loader: "object",
+        }));
+      },
+    });
+
+    expect(require(`load-once-falsy-require-first-${label}`)).toBe(value);
+
+    await import(`load-once-falsy-import-first-${label}`);
+    expect([require(`load-once-falsy-import-first-${label}`), calls]).toEqual([value, 1]);
   });
 
   it("a namespaced onLoad object loader unwraps the __esModule default after import()", async () => {

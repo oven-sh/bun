@@ -2520,6 +2520,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
+                // The ALPN list in `ssl_options` is inert for H3: quic.c's
+                // `us_quic_prepare_ssl_ctx` overrides the select callback with
+                // the h3 selector on every context it builds.
                 let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
@@ -3128,10 +3131,10 @@ const DEFAULT_SERVER_ALPN: &[u8] = b"\x08http/1.1";
 /// default), and `create_ssl_context` copies before returning.
 fn ssl_options_for_serve(cfg: &server_config::SSLConfig) -> uws_sys::BunSocketContextOptions {
     let mut opts = cfg.as_usockets();
-    if cfg.protos_bytes().is_none() {
-        opts.protos = DEFAULT_SERVER_ALPN.as_ptr();
-        opts.protos_len = DEFAULT_SERVER_ALPN.len() as u32;
-    }
+    // An explicitly empty list stays empty: that opts out of ALPN entirely.
+    let protos = cfg.protos_bytes().unwrap_or(DEFAULT_SERVER_ALPN);
+    opts.protos = protos.as_ptr();
+    opts.protos_len = protos.len() as u32;
     opts
 }
 

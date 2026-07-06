@@ -1185,13 +1185,19 @@ impl<const SSL: bool> Handler<SSL> {
 
                 return client.first_call::<SSL>(socket);
             } else {
-                // An h2-only offer refused with `no_application_protocol` says
-                // the server speaks no HTTP/2. `error_no` is uSockets' EPROTO
-                // sentinel here, which the X509 table below would mislabel.
-                if client.alpn_offer() == AlpnOffer::H2Only
-                    && handshake_error.is_no_application_protocol()
-                {
-                    client.close_and_fail::<SSL>(bun_core::err!(HTTP2Unsupported), socket);
+                // The peer refused our ALPN offer. `error_no` is uSockets' EPROTO
+                // sentinel rather than an X509 verify code, so the table below
+                // would mislabel it as a certificate failure.
+                if handshake_error.is_no_application_protocol() {
+                    client.close_and_fail::<SSL>(
+                        if client.alpn_offer() == AlpnOffer::H2Only {
+                            // The only protocol we offered was h2.
+                            bun_core::err!(HTTP2Unsupported)
+                        } else {
+                            bun_core::err!("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL")
+                        },
+                        socket,
+                    );
                     return;
                 }
                 // if we are here is because server rejected us, and the error_no is the cause of this

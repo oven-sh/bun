@@ -1515,6 +1515,9 @@ impl FetchTasklet {
             e if e == err!("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR") => {
                 BunString::static_("unknown certificate verification error")
             }
+            e if e == err!("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL") => BunString::static_(
+                "The server supports none of the ALPN protocols this request offered",
+            ),
 
             e => BunString::create_format(format_args!(
                 "{} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()",

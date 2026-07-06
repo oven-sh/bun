@@ -214,12 +214,10 @@ impl SSLConfig {
         ctx_opts.secure_options = self.secure_options;
         ctx_opts.client_renegotiation_limit = self.client_renegotiation_limit;
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
-        // Borrowed: `create_ssl_context` copies the list before returning, and
-        // `self` outlives that call at every site.
-        if let Some(protos) = self.protos_bytes() {
-            ctx_opts.protos = protos.as_ptr();
-            ctx_opts.protos_len = protos.len() as u32;
-        }
+        // `protos` stays unset on purpose: an ALPN list only belongs on the CTX
+        // for a server that selects from it. Clients apply theirs per-SSL, and
+        // sockets accepting with a per-connection selector take it off the
+        // config first. Bun.serve sets it itself when it builds these options.
 
         ctx_opts
     }

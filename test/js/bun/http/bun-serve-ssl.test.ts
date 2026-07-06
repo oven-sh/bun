@@ -196,6 +196,16 @@ describe("Bun.serve ALPN", () => {
     expect(await probe(server.port, ["http/1.1"])).toEqual({ code: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL" });
   });
 
+  test("fetch reports the refused ALPN offer, not a certificate error", async () => {
+    // fetch offers http/1.1, which this server does not support.
+    using server = serve({ ...COMMON_CERT, ALPNProtocols: "\x06custom" });
+    const err = await fetch(server.url, { tls: { ca: COMMON_CERT.cert } }).catch(e => e);
+    expect({ code: err.code, message: err.message }).toEqual({
+      code: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL",
+      message: "The server supports none of the ALPN protocols this request offered",
+    });
+  });
+
   test("an empty ALPNProtocols list opts out of negotiation", async () => {
     using server = serve({ ...COMMON_CERT, ALPNProtocols: Buffer.alloc(0) });
     expect(await probe(server.port, ["http/1.1"])).toEqual({ alpn: false });

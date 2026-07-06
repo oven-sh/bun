@@ -421,10 +421,9 @@ pub mod ssl_wrapper {
                     // `verify_error` is real for the JS-side
                     // `rejectUnauthorized` decision; load the shared system
                     // roots per-SSL so a server using the same CTX never sees
-                    // CertificateRequest. (Pre-redesign this happened by
-                    // accident: net.ts forced `requestCert: true` after
-                    // `[buntls]` and `SSLConfig.fromJS` rebuilt the CTX with
-                    // roots from that.)
+                    // CertificateRequest. A CTX whose store already holds the
+                    // user's CAs keeps it — swapping in the shared roots would
+                    // throw away the only anchors that can verify the peer.
                     if boring_sys::SSL_CTX_get_verify_mode(ctx.as_ptr())
                         == boring_sys::SSL_VERIFY_NONE
                     {
@@ -433,7 +432,9 @@ pub mod ssl_wrapper {
                             boring_sys::SSL_VERIFY_PEER,
                             Some(always_continue_verify),
                         );
-                        if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
+                        if us_ssl_ctx_has_user_ca(ctx.as_ptr()) == 0
+                            && let Some(roots) = NonNull::new(us_get_shared_default_ca_store())
+                        {
                             let _ = boring_sys::SSL_set0_verify_cert_store(
                                 ssl.as_ptr(),
                                 roots.as_ptr(),
@@ -1240,6 +1241,10 @@ pub mod ssl_wrapper {
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        /// 1 when `ctx`'s verification store holds user-provided CAs (`ca` /
+        /// `caFile` options, or a later `addCACert`).
+        // safe: reads an ex_data slot on a live SSL_CTX; null-tolerant.
+        safe fn us_ssl_ctx_has_user_ca(ctx: *mut boring_sys::SSL_CTX) -> c_int;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

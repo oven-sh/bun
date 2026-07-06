@@ -995,11 +995,6 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       ssl_ctx_build_fail(ssl_context);
       return NULL;
     }
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
-
   } else if (options.ca && options.ca_count > 0) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
@@ -1014,16 +1009,22 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         return NULL;
       }
       ERR_clear_error();
-      SSL_CTX_set_verify(ssl_context,
-          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                      : SSL_VERIFY_PEER,
-          us_verify_callback);
     }
   } else if (options.request_cert) {
     /* No per-config CAs are added to this store, so the process-wide shared
      * copy (built once) can be used instead of re-parsing the ~150 bundled
      * roots for every context - the same approach as Node's root_cert_store. */
     SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
+  }
+
+  /* Node's tls_wrap.cc SetVerifyMode: a server asks the peer for a certificate
+   * only when requestCert was set, and refuses a peer that declines only when
+   * rejectUnauthorized is also set. A `ca` bundle on its own is inert — it
+   * scopes verification, it does not turn the server into an mTLS enforcer.
+   * Leaving the CTX at SSL_VERIFY_NONE here does not weaken clients: every
+   * client SSL is raised to SSL_VERIFY_PEER per-socket in
+   * us_internal_ssl_attach (and the SSLWrapper equivalent in src/uws). */
+  if (options.request_cert) {
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,
@@ -1266,6 +1267,12 @@ void us_internal_ssl_ctx_unref(SSL_CTX *p) {
   if (p) SSL_CTX_free(p);
 }
 
+int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
+  if (!ctx) return 0;
+  us_ex_idx_ensure();
+  return SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
+}
+
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
 void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
@@ -1312,8 +1319,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      us_ex_idx_ensure();
-      if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+      if (!us_ssl_ctx_has_user_ca(ctx)) {
         /* Default context: give this socket the process-shared root bundle.
          * A context whose store holds user-provided CAs (ca/caFile options or
          * addCACert) keeps using its own store - overriding it here would

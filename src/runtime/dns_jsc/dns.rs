@@ -5340,8 +5340,13 @@ impl Resolver {
             Ipv4Literal::Invalid => {
                 let mut promise = JSPromiseStrong::init(global_this);
                 let promise_value = promise.value();
-                error_to_deferred(c_ares::Error::ENOTFOUND, b"getaddrinfo", Some(name), &mut promise)
-                    .reject_later(global_this);
+                error_to_deferred(
+                    c_ares::Error::ENOTFOUND,
+                    b"getaddrinfo",
+                    Some(name),
+                    &mut promise,
+                )
+                .reject_later(global_this);
                 return Ok(promise_value);
             }
             Ipv4Literal::NotNumeric => normalized,

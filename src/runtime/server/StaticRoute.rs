@@ -20,9 +20,6 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
-/// The implicit Content-Type of a `new Response(someString)` body.
-const MIME_TEXT_PLAIN: &[u8] = b"text/plain; charset=utf-8";
-
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
 // `*StaticRoute` is also passed as uws onAborted/
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
@@ -221,9 +218,10 @@ impl StaticRoute {
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
             if was_string {
+                let text_mime = bun_http_types::MimeType::TEXT;
                 response.get_or_create_headers(global_this)?.put_default(
                     HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(MIME_TEXT_PLAIN),
+                    &bun_core::String::ascii(text_mime.value.as_ref()),
                     global_this,
                 )?;
             }

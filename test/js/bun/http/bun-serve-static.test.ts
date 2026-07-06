@@ -207,7 +207,7 @@ describe("static route Content-Type", () => {
   // Registering a Response snapshots (and consumes) its body. Doing that must not
   // change the Content-Type the next registration of the same Response produces.
   test.each([
-    ["string body", () => new Response("hello"), "text/plain; charset=utf-8"],
+    ["string body", () => new Response("hello"), "text/plain;charset=utf-8"],
     [
       "typed Blob body",
       () => new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" })),

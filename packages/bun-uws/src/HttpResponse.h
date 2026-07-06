@@ -792,12 +792,18 @@ public:
         return this;
     }
 
+    /* Called by the end/tryEnd/sendTerminatingChunk shims as the response
+     * finishes. Honours keepRequestBodyOnDone exactly like markDone(): a
+     * consumer still reading the request body needs onAborted to survive, or
+     * nothing reports the peer going away and its read never settles. */
     HttpResponse* clearOnWritableAndAborted() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
         httpResponseData->writableUserData = nullptr;
-        httpResponseData->onAborted = nullptr;
+        if (!httpResponseData->keepRequestBodyOnDone) {
+            httpResponseData->onAborted = nullptr;
+        }
         httpResponseData->onTimeout = nullptr;
 
         return this;
@@ -830,7 +836,15 @@ public:
      * consumer that is still reading the request body receives the remaining
      * bytes after the response was sent. The caller owns disarming them. */
     void setKeepRequestBodyOnDone(bool value) {
-        getHttpResponseData()->keepRequestBodyOnDone = value;
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        httpResponseData->keepRequestBodyOnDone = value;
+        /* markDone() held the socket non-idle while the body was still owed to a
+         * consumer, and it does not run a second time for this request. Once the
+         * body is no longer kept and the response is done, the socket really is
+         * idle again: closeIdleConnections() has to be able to see it. */
+        if (!value && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) {
+            httpResponseData->isIdle = true;
+        }
     }
 
     void* getSocketData() {

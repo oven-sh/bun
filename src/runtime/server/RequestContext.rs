@@ -2452,14 +2452,17 @@ where
         {
             return false;
         }
-        // Nothing is left to read the body on once the socket goes away.
-        if self.resp.is_none() || self.should_close_connection() {
-            return false;
-        }
         // `mark_request_body_consumer` set this when the consumer appeared,
         // which is what keeps uws's `inStream`/`onAborted` alive across the
-        // response's `markDone()`. Without it there is nothing to park on.
+        // response's `markDone()`. Without it there is nothing to park on —
+        // and no proof that `resp` is still a live socket, so this has to come
+        // before anything dereferences it (`end_already_responded_stream`
+        // reaches here with a `resp` that may already be freed).
         if !self.flags.has_body_abort_handler() || !self.request_body_has_pending_consumer() {
+            return false;
+        }
+        // Nothing is left to read the body on once the socket goes away.
+        if self.resp.is_none() || self.should_close_connection() {
             return false;
         }
         ctx_log!("parkForRequestBodyDrain");
@@ -2482,6 +2485,14 @@ where
     /// path handed us. `self` may be freed: do not touch it afterwards.
     fn finish_request_body_drain(&mut self) {
         debug_assert!(self.flags.is_draining_request_body());
+        if let Some(resp) = self.resp {
+            // uws disarms the idle timeout when it hands over the body's last
+            // chunk, expecting the response on its way out to re-arm it. Ours
+            // already went out, so nothing else will, and the keep-alive socket
+            // would never be reaped.
+            // SAFETY: FFI handle; `is_draining_request_body` proves it is live.
+            resp.reset_timeout();
+        }
         self.detach_response();
         self.deref();
     }

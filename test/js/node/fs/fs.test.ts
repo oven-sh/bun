@@ -1412,12 +1412,26 @@ it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
   ).toEqual(expected);
 });
 
+// The recursive walker skips an entry it cannot open with ENOENT/ENOTDIR/EPERM/ELOOP,
+// so the only errno left to make a subdirectory fail is EACCES. Root bypasses the
+// permission check, so the child drops to an unprivileged uid first.
+const UNPRIVILEGED_UID = 65534;
+const dropPrivileges = `if (process.getuid() === 0) process.setuid(${UNPRIVILEGED_UID});`;
+function makeUnreadableDir(parent: string, name: string) {
+  const dir = join(parent, name);
+  fs.mkdirSync(dir);
+  fs.writeFileSync(join(dir, "hidden.txt"), "hidden");
+  fs.chmodSync(dir, 0o000);
+  // Every ancestor must stay traversable by the unprivileged child.
+  fs.chmodSync(parent, 0o755);
+  return () => fs.chmodSync(dir, 0o755);
+}
+
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on
 // structs stored by-value inside the entries ArrayList, which passed interior
 // ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
-// then freeing it again in entries.deinit()). A self-referential symlink makes
-// the recursive walk fail with ELOOP after entries have been collected, exercising
-// that cleanup path.
+// then freeing it again in entries.deinit()). An unreadable subdirectory makes the
+// recursive walk fail after entries have been collected, exercising that cleanup path.
 it.skipIf(isWindows)(
   "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
   async () => {
@@ -1426,34 +1440,41 @@ it.skipIf(isWindows)(
       "b.txt": "b",
       "c.txt": "c",
     });
-    fs.symlinkSync("loop", join(String(dir), "loop"));
+    const restore = makeUnreadableDir(String(dir), "unreadable");
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const fs = require("fs");
-          let code;
-          for (let i = 0; i < 2; i++) {
-            try {
-              fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
-              throw new Error("expected readdirSync to throw");
-            } catch (e) {
-              code = e.code;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const fs = require("fs");
+            ${dropPrivileges}
+            // Proves the root itself is readable, so the failure below comes from the subdir.
+            console.log(fs.readdirSync(${JSON.stringify(String(dir))}).length);
+            let code;
+            for (let i = 0; i < 2; i++) {
+              try {
+                fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
+                throw new Error("expected readdirSync to throw");
+              } catch (e) {
+                code = e.code;
+              }
             }
-          }
-          console.log(code);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
+            console.log(code);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "4\nEACCES", exitCode: 0 });
+    } finally {
+      restore();
+    }
   },
 );
 
@@ -1464,39 +1485,88 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   using dir = tempDir("readdir-recursive-multi-error", {
     "keep.txt": "x",
   });
-  // Self-referencing symlinks: opening one with O_DIRECTORY fails with
-  // ELOOP, which is not swallowed by the recursive walker, so every
-  // enqueued subtask hits the pending_err path.
-  for (let i = 0; i < 64; i++) {
-    const link = join(String(dir), `loop${i}`);
-    fs.symlinkSync(link, link);
-  }
+  // Every unreadable subdirectory fails its openat, so every enqueued subtask
+  // hits the pending_err path.
+  const restores = Array.from({ length: 64 }, (_, i) => makeUnreadableDir(String(dir), `unreadable${i}`));
 
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
           const fs = require("fs");
+          ${dropPrivileges}
+          console.log(fs.readdirSync(${JSON.stringify(String(dir))}).length);
           fs.promises.readdir(${JSON.stringify(String(dir))}, { recursive: true }).then(
             r => console.log("resolved", r.length),
             e => console.log("rejected", e.code),
           );
         `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    timeout: 10_000,
-  });
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "rejected ELOOP",
-    exitCode: 0,
-    signalCode: null,
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "65\nrejected EACCES",
+      exitCode: 0,
+      signalCode: null,
+    });
+  } finally {
+    for (const restore of restores) restore();
+  }
+});
+
+// A symlink cycle anywhere in the tree aborted every recursive listing with ELOOP,
+// even though a dangling symlink (ENOENT) at the same point was already skipped.
+// Node's recursive walkers ignore per-entry stat failures and list the whole tree.
+it.skipIf(isWindows)("recursive readdir skips symlink cycles instead of failing with ELOOP", async () => {
+  using dir = tempDir("readdir-symlink-cycle", {
+    "d1/f": "x",
+    "real/inside.txt": "i",
   });
+  const root = String(dir);
+  mkdirSync(join(root, "d1", "d2"));
+  symlinkSync("missing", join(root, "dangling")); // broken: open fails with ENOENT
+  symlinkSync("lpB", join(root, "lpA")); // two-link cycle: open fails with ELOOP
+  symlinkSync("lpA", join(root, "lpB"));
+  symlinkSync("self", join(root, "self")); // self-referential cycle
+  symlinkSync("real", join(root, "link")); // resolvable: still walked into
+
+  // The cycle must really be a cycle, otherwise everything below passes vacuously.
+  expect(() => readdirSync(join(root, "lpA"))).toThrow(expect.objectContaining({ code: "ELOOP" }));
+
+  const paths = [
+    "d1",
+    "d1/d2",
+    "d1/f",
+    "dangling",
+    "link",
+    "link/inside.txt",
+    "lpA",
+    "lpB",
+    "real",
+    "real/inside.txt",
+    "self",
+  ];
+  const names = ["d1", "d2", "dangling", "f", "inside.txt", "inside.txt", "link", "lpA", "lpB", "real", "self"];
+  const sorted = (entries: (string | Dirent)[]) =>
+    entries.map(entry => (typeof entry === "string" ? entry : entry.name)).sort();
+
+  expect(sorted(readdirSync(root, { recursive: true }))).toEqual(paths);
+  expect(sorted(readdirSync(root, { recursive: true, withFileTypes: true }))).toEqual(names);
+  expect(sorted(await promises.readdir(root, { recursive: true }))).toEqual(paths);
+  expect(sorted(await promises.readdir(root, { recursive: true, withFileTypes: true }))).toEqual(names);
+
+  const drained: string[] = [];
+  using handle = fs.opendirSync(root, { recursive: true });
+  for (let entry: Dirent | null; (entry = handle.readSync()); ) drained.push(entry.name);
+  expect(drained.sort()).toEqual(names);
 });
 
 describe("readSync", () => {

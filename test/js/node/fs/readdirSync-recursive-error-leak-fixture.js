@@ -3,16 +3,20 @@
 // be fully released. Each Dirent owns a ref to both .name and .path; previously
 // only .name was dereferenced on the sync error path, leaking the .path string.
 //
-// This fixture builds a wide, shallow tree under a long path, with a
-// self-referential symlink two levels deep. The recursive walker is
-// breadth-first, so every depth-1 directory is fully scanned (allocating
-// distinct Dirent.path strings) before the depth-2 symlink is opened and fails
-// with ELOOP. It repeats the failing readdirSync many times and asserts RSS
-// growth between a warmed-up baseline and the end of the run stays bounded.
+// This fixture builds a wide, shallow tree under a long path, with an unreadable
+// directory two levels deep. The recursive walker is breadth-first, so every
+// depth-1 directory is fully scanned (allocating distinct Dirent.path strings)
+// before the depth-2 directory is opened and fails with EACCES. It repeats the
+// failing readdirSync many times and asserts RSS growth between a warmed-up
+// baseline and the end of the run stays bounded.
 
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+// Root bypasses the permission check that makes the depth-2 directory fail to
+// open. Drop first so the whole tree below is owned by the unprivileged uid.
+if (process.getuid() === 0) process.setuid(65534);
 
 const seg = (ch, n = 220) => Buffer.alloc(n, ch).toString();
 
@@ -32,20 +36,21 @@ for (let i = 0; i < 8; i++) {
   subdirs.push(d);
 }
 
-// Self-referential symlink at depth 2. Opened last (BFS), yields ELOOP, which
-// is not in the silently-skipped set (NOENT/NOTDIR/PERM) and so propagates as
-// an error after all the Dirents above have been collected.
-const loop = path.join(subdirs[0], "zzloop");
-fs.symlinkSync("zzloop", loop);
+// Unreadable directory at depth 2. Opened last (BFS), yields EACCES, which is not
+// in the silently-skipped set (NOENT/NOTDIR/PERM/LOOP) and so propagates as an
+// error after all the Dirents above have been collected.
+const blocked = path.join(subdirs[0], "zzblocked");
+fs.mkdirSync(blocked);
+fs.chmodSync(blocked, 0o000);
 
-// Sanity: confirm the error path actually fires.
-let threw = false;
+// Sanity: confirm the error path actually fires, for the reason we think it does.
+let code;
 try {
   fs.readdirSync(root, { recursive: true, withFileTypes: true });
-} catch {
-  threw = true;
+} catch (e) {
+  code = e.code;
 }
-if (!threw) throw new Error("expected readdirSync to throw (symlink loop not triggering error path)");
+if (code !== "EACCES") throw new Error("expected readdirSync to throw EACCES, got " + code);
 
 // Warmup: saturate allocator working set / ASAN quarantine so the baseline
 // measurement is taken after steady state is reached.
@@ -69,6 +74,7 @@ const deltaMB = Math.round((after - before) / 1024 / 1024);
 console.log("RSS delta", deltaMB, "MB");
 
 try {
+  fs.chmodSync(blocked, 0o755);
   fs.rmSync(base, { recursive: true, force: true });
 } catch {}
 

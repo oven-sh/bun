@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -157,5 +157,38 @@ describe.concurrent("process-stdio", () => {
     expect(stdout?.toString()).toBe(
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
+  });
+
+  // Materializing process.stdout dups fd 1 and flips it to O_NONBLOCK. The
+  // native console writer must not silently drop data on the resulting EAGAIN
+  // when the pipe is full: every console.log line has to survive a slow reader.
+  test.skipIf(isWindows)("console.log is not lossy after process.stdout is touched on a slow pipe", async () => {
+    const N = 1500;
+    const pad = Buffer.alloc(500, "x").toString();
+    using dir = tempDir("stdout-nonblock-loss", {
+      "child.mjs": `
+        if (process.argv[2] === "touch") void process.stdout.writableHighWaterMark;
+        const pad = ${JSON.stringify(pad)};
+        for (let i = 0; i < ${N}; i++) console.log("O" + i + " " + pad);
+      `,
+    });
+    // The reader starts 400ms late via a shell fifo, so the 64 KiB pipe fills
+    // and write(2) on the now-nonblocking fd 1 returns EAGAIN mid-run.
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'exec "$0" "$1" touch | { sleep 0.4; exec cat; }',
+        bunExe(),
+        path.join(String(dir), "child.mjs"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const delivered = stdout.split("\n").filter(l => /^O\d+ x+$/.test(l)).length;
+    expect(delivered).toBe(N);
+    expect(exitCode).toBe(0);
   });
 });

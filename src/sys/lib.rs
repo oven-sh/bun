@@ -9282,11 +9282,29 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+///
+/// fd 1/2 can be flipped to `O_NONBLOCK` out from under this writer when user
+/// code materializes `process.stdout`/`process.stderr` (the node-compat stream
+/// dups the fd and sets the flag on the shared file description). A plain
+/// `write(2)` then fails with `EAGAIN` on a full pipe, so we block on `poll`
+/// until the fd drains rather than silently discarding the remaining bytes.
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native() as core::ffi::c_int,
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                // A real error (e.g. EPIPE) surfaces on the next `write`.
+                let _ = posix::poll(&mut pfd, -1);
+            }
             Err(_) => return false,
         }
     }

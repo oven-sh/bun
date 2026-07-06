@@ -4512,7 +4512,11 @@ fn read_fill_vec(
     let mut total: i64 = 0;
     loop {
         if buf.capacity() == buf.len() {
-            buf.reserve(grow_by);
+            // Fallible (amortized) growth: OOM propagates as ENOMEM instead of
+            // aborting, matching the fallible pre-reservation in the callers.
+            if buf.try_reserve(grow_by).is_err() {
+                return Err(Error::oom());
+            }
         }
         // SAFETY: `read_chunk` writes initialized bytes; we commit exactly what was written.
         let n = read_chunk(unsafe { bun_core::vec::spare_bytes_mut(buf) }, total)?;
@@ -5547,6 +5551,7 @@ pub mod linux {
         pub const ISDIR: u32 = libc::IN_ISDIR;
         pub const ONESHOT: u32 = libc::IN_ONESHOT;
         pub const IGNORED: u32 = libc::IN_IGNORED;
+        pub const Q_OVERFLOW: u32 = libc::IN_Q_OVERFLOW;
         pub const CLOEXEC: c_int = libc::IN_CLOEXEC;
         pub const NONBLOCK: c_int = libc::IN_NONBLOCK;
         use core::ffi::c_int;

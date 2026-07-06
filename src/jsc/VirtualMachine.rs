@@ -2280,6 +2280,42 @@ impl VirtualMachine {
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
 
+        // Node.js `--trace-*` and `--stack-trace-limit` flags need
+        // `internal/process/pre_execution` to run before any user code.
+        // `reload_entry_point` is the single funnel for the main entry,
+        // workers, and `-e` evals, so this covers them all. Gated on a cheap
+        // argv scan so the zero-flag path costs nothing; the module registry
+        // caches the evaluation, so hot reloads and worker re-entries are
+        // no-ops after the first call.
+        //
+        // Process argv is identical on every thread, so a worker spawned with
+        // an explicit `execArgv: ['--trace-*']` from an untraced parent would
+        // be missed by the global scan — also scan this VM's own worker
+        // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
+        // empty execArgv under a traced parent stays a no-op there.)
+        fn is_bootstrap_flag(arg: &[u8]) -> bool {
+            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
+        }
+        let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
+            || self
+                .worker_ref()
+                .and_then(crate::web_worker::WebWorker::exec_argv)
+                .is_some_and(|exec_argv| {
+                    use bun_core::WTFStringImplExt as _;
+                    exec_argv.iter().any(|&arg| {
+                        // SAFETY: each entry borrows the C++ `WorkerOptions`
+                        // array, kept alive by the owning `WebCore::Worker`
+                        // for the worker's lifetime (see `WebWorker::argv`).
+                        !arg.is_null()
+                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
+                    })
+                });
+        if needs_pre_execution {
+            // The C++ side catches and reports any JS exception thrown while
+            // evaluating `internal/process/pre_execution`.
+            crate::cpp::Bun__preExecutionBootstrap(self.global());
+        }
+
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
@@ -6656,6 +6692,13 @@ pub fn plugin_runner_on_resolve_jsc(
     // is `Copy` (no `Drop`), so guard the WTF refcount across the remaining
     // early-return paths.
     let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
+
+    // A `file`-namespace result (the default) is a filesystem path, not a new
+    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
+    // form the module loader dispatches on.
+    if user_namespace.eql_comptime(b"file") {
+        return Ok(Some(ErrorableString::ok(file_path.into_inner())));
+    }
 
     // Our slow way of cloning the string into memory owned by JSC.
     use std::io::Write as _;

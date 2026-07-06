@@ -418,6 +418,12 @@ fn err_from_static(name: &'static str) -> bun_core::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
+/// `CLONE_NOFOLLOW` from `<sys/clonefile.h>` — not re-exported by `bun_sys::c`
+/// (or the `libc` crate), so define it locally. `clonefile(2)` then clones a
+/// symbolic-link `src` itself rather than the file it points to.
+#[cfg(target_os = "macos")]
+const CLONE_NOFOLLOW: u32 = 0x0001;
+
 /// Path-length field width.
 type PathInt = u32;
 
@@ -2004,8 +2010,10 @@ mod _async_tasks {
 
             #[cfg(target_os = "macos")]
             {
+                // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
+                // mirror the O_NOFOLLOW directory open below instead of dereferencing.
                 if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
+                    bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
                     sys::Tag::clonefile,
                     src.as_bytes(),
                 ) {
@@ -2025,7 +2033,7 @@ mod _async_tasks {
                 }
             }
 
-            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY;
+            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
             let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(
@@ -3488,7 +3496,10 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                 }
-                if val.is_number() || val.is_string() {
+                // Node branches on `typeof options === 'object'`, so a `String`
+                // wrapper is an options bag (the block above), never a positional
+                // mode; the string-like `is_string()` would route it through both.
+                if val.is_number() || val.is_string_literal() {
                     mode = node::mode_from_js(ctx, val)?.unwrap_or(mode);
                 }
             }
@@ -4166,9 +4177,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| {
-                            ctx.throw_invalid_arguments(format_args!("Invalid flag"))
-                        })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
@@ -4268,9 +4277,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| {
-                            ctx.throw_invalid_arguments(format_args!("Invalid flag"))
-                        })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
@@ -5117,7 +5124,7 @@ impl NodeFS {
                         flags |= sys::O::EXCL;
                     }
 
-                    let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+                    let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.dest.slice())),
                     };
@@ -5189,7 +5196,7 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
-            let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+            let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
@@ -5296,7 +5303,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Syscall::open(dest, flags, DEFAULT_PERMISSION)?;
+            let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -7423,7 +7430,14 @@ impl NodeFS {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
-                match sys::openat(args.dirfd, path, args.flag.as_int(), args.mode) {
+                // O_TRUNC is dropped on purpose: keeping the existing blocks
+                // allocated makes rewriting a large file cheaper, and the resize
+                // below sets the final size. O_APPEND writes at EOF, so it keeps it.
+                let mut flags = args.flag.as_int();
+                if (flags & sys::O::APPEND) == 0 {
+                    flags &= !sys::O::TRUNC;
+                }
+                match sys::openat(args.dirfd, path, flags, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => fd,
                 }
@@ -7451,11 +7465,25 @@ impl NodeFS {
         // Worthwhile after 6 MB at least on ext4 linux
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
-                let offset: usize = if matches!(args.file, PathOrFileDescriptor::Path(_)) {
-                    // on mac, it's relatively positioned
+                let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
+                // Preallocating grows the file, so skip it when the kernel picks
+                // the write offset at write() time: an O_APPEND write would land
+                // after the grown end, leaving a hole where the data belongs.
+                let appends = if is_path {
+                    (args.flag.as_int() & sys::O::APPEND) != 0
+                } else {
+                    // `flag` is the option, not how the caller opened this fd.
+                    match sys::get_fcntl_flags(fd) {
+                        Ok(open_flags) => (open_flags as c_int & sys::O::APPEND) != 0,
+                        Err(_) => break 'preallocate,
+                    }
+                };
+                if appends {
+                    break 'preallocate;
+                }
+                let offset: usize = if is_path {
                     0
                 } else {
-                    // on linux, it's absolutely positioned
                     match Syscall::lseek(fd, 0, libc::SEEK_CUR) {
                         Err(_) => break 'preallocate,
                         Ok(pos) => usize::try_from(pos).expect("int cast"),
@@ -7469,9 +7497,16 @@ impl NodeFS {
             }
         }
 
+        // A write error is held back rather than returned, so the resize below
+        // still runs: a partial write must not leave the old tail sitting behind
+        // the bytes that did land.
+        let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
             match sys::write(fd, buf) {
-                Err(err) => return Err(err),
+                Err(err) => {
+                    write_err = Some(err);
+                    break;
+                }
                 Ok(amt) => {
                     buf = &buf[amt..];
                     #[cfg(not(windows))]
@@ -7487,9 +7522,11 @@ impl NodeFS {
 
         // https://github.com/oven-sh/bun/issues/2931
         // https://github.com/oven-sh/bun/issues/10222
-        // Only truncate if we're not appending and writing to a path
-        if (args.flag.as_int() & sys::O::APPEND) == 0
-            && !matches!(args.file, PathOrFileDescriptor::Fd(_))
+        // Resize only when the flags asked to truncate (the open above dropped
+        // O_TRUNC): `r+` & co. overwrite in place, and Node never resizes a
+        // descriptor it was handed.
+        if (args.flag.as_int() & sys::O::TRUNC) != 0
+            && matches!(args.file, PathOrFileDescriptor::Path(_))
         {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).
@@ -7501,6 +7538,10 @@ impl NodeFS {
             {
                 let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
             }
+        }
+
+        if let Some(err) = write_err {
+            return Err(err);
         }
 
         if args.flush {
@@ -8315,7 +8356,9 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0 {
+            if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
+                || attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
+            {
                 let r = self._copy_single_file_sync(
                     src,
                     dest,
@@ -8376,8 +8419,10 @@ impl NodeFS {
 
         #[cfg(target_os = "macos")]
         'try_with_clonefile: {
+            // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
+            // mirror the O_NOFOLLOW directory open below instead of dereferencing.
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                bun_sys::c::clonefile_rc(src, dest, 0),
+                bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
                 sys::Tag::clonefile,
                 src.as_bytes(),
             ) {
@@ -8399,7 +8444,12 @@ impl NodeFS {
             }
         }
 
-        let fd = match openat_os_path(FD::cwd(), src, sys::O::DIRECTORY | sys::O::RDONLY, 0) {
+        let fd = match openat_os_path(
+            FD::cwd(),
+            src,
+            sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
+            0,
+        ) {
             Err(err) => return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
             Ok(fd_) => fd_,
         };
@@ -8665,7 +8715,8 @@ impl NodeFS {
                     flags |= sys::O::EXCL;
                 }
 
-                let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
+                let dest_fd =
+                    Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
@@ -8758,7 +8809,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
+            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8929,10 +8980,11 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = match Self::_cp_open_dest_with_mkdir(self, dest, flags) {
-                Ok(fd) => fd,
-                Err(e) => return Err(e),
-            };
+            let dest_fd =
+                match Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
+                    Ok(fd) => fd,
+                    Err(e) => return Err(e),
+                };
 
             // No O_TRUNC at open: if src and dest resolve to the same inode,
             // that would zero the file before the first read.
@@ -9117,17 +9169,40 @@ impl NodeFS {
                     return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p)
                         .unwrap_or(dst_enoent_maybe);
                 }
-                let flags = if stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0 {
-                    windows::SYMBOLIC_LINK_FLAG_DIRECTORY
-                } else {
-                    0
-                };
                 wbuf[len] = 0;
-                if unsafe { windows::CreateSymbolicLinkW(dest.as_ptr(), wbuf.as_ptr(), flags) } == 0
-                {
+                // `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells network
+                // targets as `\\?\UNC\server\share\…`; rewrite in place to the
+                // absolute `\\server\share\…` form (libuv `fs__realpath_handle`).
+                let is_unc = strings::has_prefix_comptime_utf16(&wbuf[..len], b"\\\\?\\UNC\\");
+                let target = if is_unc {
+                    let skip = b"\\\\?\\UN".len();
+                    wbuf[skip] = u16::from(b'\\');
+                    bun_core::WStr::from_buf(&wbuf[skip..], len - skip)
+                } else {
+                    bun_core::WStr::from_buf(&wbuf[..], len)
+                };
+                let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
+                // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
+                // so unprivileged creation is requested. UNC targets skip the junction
+                // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.
+                let link_result = if is_dir && !is_unc {
+                    let mut dest8 = paths::path_buffer_pool::get();
+                    let mut target8 = paths::path_buffer_pool::get();
+                    sys::symlink_or_junction(
+                        strings::from_wpath(&mut dest8[..], dest.as_slice()),
+                        strings::from_wpath(&mut target8[..], target.as_slice()),
+                        None,
+                    )
+                } else {
+                    sys::symlink_w(
+                        dest,
+                        target,
+                        sys::WindowsSymlinkOptions { directory: is_dir },
+                    )
+                };
+                if let Err(err) = link_result {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());
-                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p)
-                        .unwrap_or(dst_enoent_maybe);
+                    return Err(err.with_path(p));
                 }
                 return Ok(());
             }
@@ -9148,14 +9223,14 @@ impl NodeFS {
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
     /// `_copy_single_file_sync`.
-    /// Tries `open(dest, flags, default_permission)`; on ENOENT creates the
+    /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32) -> Maybe<FD> {
+    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
         // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
-        match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+        match Syscall::open(dest, flags, mode) {
             Ok(result) => Ok(result),
             Err(err) => {
                 if err.get_errno() == E::ENOENT {
@@ -9174,7 +9249,7 @@ impl NodeFS {
                         ..Default::default()
                     });
                     mkdir_result?;
-                    if let Ok(result) = Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+                    if let Ok(result) = Syscall::open(dest, flags, mode) {
                         return Ok(result);
                     }
                 }

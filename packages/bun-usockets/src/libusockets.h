@@ -369,6 +369,11 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * call consumes the reference. `error` != 0 aborts the handshake. Safe to call
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
+/* Attach an opaque resume handle to the in-flight handshake. `owner_free` runs
+ * exactly once, when the handshake's SSL is freed (which always precedes the
+ * socket's free), so the resolver can invalidate a pending JS resolution. */
+void us_socket_sni_attach_resume(us_socket_r s, void *owner,
+    void (*owner_free)(void *owner));
 void *us_socket_server_name_userdata(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────

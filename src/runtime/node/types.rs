@@ -1702,7 +1702,7 @@ impl FileSystemFlags {
     /// Open file for reading. An exception occurs if the file does not exist.
     pub const R: Self = Self(O::RDONLY);
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    pub const W: Self = Self(O::WRONLY | O::CREAT);
+    pub const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
 
     #[inline]
     pub fn as_int(self) -> c_int {

@@ -7430,7 +7430,14 @@ impl NodeFS {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
-                match sys::openat(args.dirfd, path, args.flag.as_int(), args.mode) {
+                // O_TRUNC is dropped on purpose: keeping the existing blocks
+                // allocated makes rewriting a large file cheaper, and the resize
+                // below sets the final size. O_APPEND writes at EOF, so it keeps it.
+                let mut flags = args.flag.as_int();
+                if (flags & sys::O::APPEND) == 0 {
+                    flags &= !sys::O::TRUNC;
+                }
+                match sys::openat(args.dirfd, path, flags, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => fd,
                 }
@@ -7458,11 +7465,25 @@ impl NodeFS {
         // Worthwhile after 6 MB at least on ext4 linux
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
-                let offset: usize = if matches!(args.file, PathOrFileDescriptor::Path(_)) {
-                    // on mac, it's relatively positioned
+                let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
+                // Preallocating grows the file, so skip it when the kernel picks
+                // the write offset at write() time: an O_APPEND write would land
+                // after the grown end, leaving a hole where the data belongs.
+                let appends = if is_path {
+                    (args.flag.as_int() & sys::O::APPEND) != 0
+                } else {
+                    // `flag` is the option, not how the caller opened this fd.
+                    match sys::get_fcntl_flags(fd) {
+                        Ok(open_flags) => (open_flags as c_int & sys::O::APPEND) != 0,
+                        Err(_) => break 'preallocate,
+                    }
+                };
+                if appends {
+                    break 'preallocate;
+                }
+                let offset: usize = if is_path {
                     0
                 } else {
-                    // on linux, it's absolutely positioned
                     match Syscall::lseek(fd, 0, libc::SEEK_CUR) {
                         Err(_) => break 'preallocate,
                         Ok(pos) => usize::try_from(pos).expect("int cast"),
@@ -7476,9 +7497,16 @@ impl NodeFS {
             }
         }
 
+        // A write error is held back rather than returned, so the resize below
+        // still runs: a partial write must not leave the old tail sitting behind
+        // the bytes that did land.
+        let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
             match sys::write(fd, buf) {
-                Err(err) => return Err(err),
+                Err(err) => {
+                    write_err = Some(err);
+                    break;
+                }
                 Ok(amt) => {
                     buf = &buf[amt..];
                     #[cfg(not(windows))]
@@ -7494,9 +7522,11 @@ impl NodeFS {
 
         // https://github.com/oven-sh/bun/issues/2931
         // https://github.com/oven-sh/bun/issues/10222
-        // Only truncate if we're not appending and writing to a path
-        if (args.flag.as_int() & sys::O::APPEND) == 0
-            && !matches!(args.file, PathOrFileDescriptor::Fd(_))
+        // Resize only when the flags asked to truncate (the open above dropped
+        // O_TRUNC): `r+` & co. overwrite in place, and Node never resizes a
+        // descriptor it was handed.
+        if (args.flag.as_int() & sys::O::TRUNC) != 0
+            && matches!(args.file, PathOrFileDescriptor::Path(_))
         {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).
@@ -7508,6 +7538,10 @@ impl NodeFS {
             {
                 let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
             }
+        }
+
+        if let Some(err) = write_err {
+            return Err(err);
         }
 
         if args.flush {

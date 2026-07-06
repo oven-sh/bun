@@ -802,6 +802,40 @@ describe("net.Socket node compatibility shapes", () => {
     expect(Object.hasOwn(error!, "port")).toBe(true);
     expect(error?.port).toBe(port);
   });
+
+  // The pipe connect error is delivered on a later tick, so a teardown can land
+  // in between. Mirrors the re-entrancy #32660 fixed on the TCP side.
+  it.each([
+    ["destroyed before the deferred connect error lands", (s: Socket) => s.destroy()],
+    [
+      "destroyed from the connectionAttemptFailed listener",
+      (s: Socket) => s.on("connectionAttemptFailed", () => s.destroy()),
+    ],
+  ])("an IPC socket %s still closes exactly once", async (_label, teardown) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const path = join(socket_domain, `teardown-${randomUUID()}.sock`);
+    let closes = 0;
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error) => uncaught.push(err);
+    process.on("uncaughtException", onUncaught);
+    try {
+      const socket = connect({ path });
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        closes++;
+        resolve();
+      });
+      teardown(socket);
+      await promise;
+      // Let the deferred afterConnect tick land on an already-dead socket.
+      await new Promise<void>(r => setImmediate(r));
+      expect(uncaught).toEqual([]);
+      expect(closes).toBe(1);
+      expect(socket.destroyed).toBe(true);
+    } finally {
+      process.removeListener("uncaughtException", onUncaught);
+    }
+  });
 });
 
 it("Socket has a prototype", () => {

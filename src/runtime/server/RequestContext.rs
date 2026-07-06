@@ -4068,25 +4068,25 @@ where
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
             } else {
-                {
-                    // Moved out so the Strong (and its underlying GC handle) is
-                    // released at scope exit via `Drop` on `strong::Optional`.
-                    let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
-                    this.request_body_take_unref();
+                // Moved out so the Strong (and its underlying GC handle) is
+                // released at scope exit via `Drop` on `strong::Optional`.
+                let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
+                this.request_body_take_unref();
 
-                    readable.value.ensure_still_alive();
-                    if let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr {
-                        // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
-                        // heap `ByteStream` kept alive by `readable` for this call.
-                        let bytes = bun_ptr::BackRef::from(
-                            NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
-                        );
-                        // TODO: properly propagate exception upwards
-                        let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
-                    }
-                }
-                // Must run on every `last` path: a parked context is only alive
-                // to deliver this chunk. `self` may be freed after it.
+                readable.value.ensure_still_alive();
+                // `finish_request_body_stage` has to run on every `last` path: a
+                // parked context is only alive to deliver this chunk.
+                let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
+                    this.finish_request_body_stage();
+                    return;
+                };
+                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
+                // heap `ByteStream` kept alive by `readable` for this call.
+                let bytes = bun_ptr::BackRef::from(
+                    NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
+                );
+                // TODO: properly propagate exception upwards
+                let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
                 this.finish_request_body_stage();
             }
 

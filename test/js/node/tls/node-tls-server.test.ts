@@ -823,44 +823,6 @@ it("leaves socket.authorized false unless a client certificate was requested and
   }
 });
 
-it("createServer({ca}) without requestCert never asks the client for a certificate", async () => {
-  // A server-side `ca` only scopes verification; on its own it must not make
-  // the server send a CertificateRequest, so a client that has a certificate
-  // configured never presents it and a client that has none still connects.
-  const fixtures = join(import.meta.dir, "fixtures");
-  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
-  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
-  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
-
-  const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; clientCertificate: unknown }>();
-  const server: Server = createServer({ key: agent1Key, cert: agent1Cert, ca: [ca1] }, socket => {
-    const peer = socket.getPeerCertificate() as PeerCertificate;
-    resolve({ authorized: socket.authorized, clientCertificate: peer?.subject?.CN ?? null });
-    socket.end();
-  });
-  server.on("error", reject);
-  server.on("tlsClientError", reject);
-  server.listen(0);
-  await once(server, "listening");
-  const address = server.address() as AddressInfo;
-  const client = connect({
-    port: address.port,
-    host: "127.0.0.1",
-    // The client holds a certificate that the server's `ca` would accept. It
-    // must still stay unused: nobody asked for it.
-    key: agent1Key,
-    cert: agent1Cert,
-    rejectUnauthorized: false,
-  });
-  client.on("error", reject);
-  try {
-    expect(await promise).toEqual({ authorized: false, clientCertificate: null });
-  } finally {
-    client.end();
-    server.close();
-  }
-});
-
 it("createServer({pfx, requestCert}) verifies client certificates against the pfx-embedded CA", async () => {
   // agent1.pfx bundles agent1's key/cert plus ca1; a server built from it must
   // be able to verify a client certificate signed by that embedded CA.

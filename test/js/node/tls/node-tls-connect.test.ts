@@ -665,6 +665,45 @@ it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls
   await once(server, "close");
 });
 
+it("does not present a client certificate to a server whose `ca` was set without requestCert", async () => {
+  // A server-side `ca` only scopes verification; on its own it must not make
+  // the server send a CertificateRequest. A client holding a certificate the
+  // server's `ca` would happily accept therefore never gets asked for it, and
+  // a client with no certificate at all still connects.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+
+  const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; clientCertificate: unknown }>();
+  const server = tls.createServer({ key: agent1Key, cert: agent1Cert, ca: [ca1] }, socket => {
+    const peer = socket.getPeerCertificate();
+    resolve({ authorized: socket.authorized, clientCertificate: peer?.subject?.CN ?? null });
+    socket.end();
+  });
+  server.on("tlsClientError", reject);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const client = tlsConnect({
+    port,
+    host: "127.0.0.1",
+    // The client is fully equipped to do mTLS. Nobody asked, so it must stay unused.
+    key: agent1Key,
+    cert: agent1Cert,
+    rejectUnauthorized: false,
+  });
+  client.on("error", reject);
+  try {
+    expect(await promise).toEqual({ authorized: false, clientCertificate: null });
+  } finally {
+    client.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
 it("verifies against a user-supplied `ca` when the TLS socket rides on a Duplex", async () => {
   // A Duplex that is not a net.Socket takes the SSLWrapper attach path, which
   // loads the shared system roots into sockets whose context has no verify

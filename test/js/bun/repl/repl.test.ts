@@ -51,27 +51,30 @@ async function withTerminalRepl(
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
 
-  await using terminal = new Bun.Terminal({
-    cols: 120,
-    rows: 40,
-    data(_term, data) {
-      const str = Buffer.from(data).toString();
-      received.push(str);
-      if (resolveWaiter) {
-        resolveWaiter();
-        resolveWaiter = null;
-      }
-    },
-  });
-
+  // The inline `terminal` option is what makes the child a session leader with
+  // the pty as its controlling terminal, so Ctrl+C reaches it as SIGINT.
+  // Handing `Bun.spawn` an already-created `Bun.Terminal` skips that setup.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
-    terminal,
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
     },
+    terminal: {
+      cols: 120,
+      rows: 40,
+      data(_term, data) {
+        const str = Buffer.from(data).toString();
+        received.push(str);
+        if (resolveWaiter) {
+          resolveWaiter();
+          resolveWaiter = null;
+        }
+      },
+    },
   });
+  const terminal = proc.terminal!;
+  using closeTerminal = { [Symbol.dispose]: () => terminal.close() };
 
   const send = (text: string) => terminal.write(text);
 
@@ -91,11 +94,14 @@ async function withTerminalRepl(
           `Timed out waiting for pattern: ${pattern}\nReceived so far:\n${stripAnsi(received.join("").slice(cursor))}`,
         );
       }
-      // Wait for the next chunk of terminal data (or time out).
-
-      await new Promise<void>(resolve => {
-        resolveWaiter = resolve;
-      });
+      // Wait for the next chunk of terminal data, or for the deadline: without
+      // the race this sleeps forever when the child goes quiet.
+      await Promise.race([
+        new Promise<void>(resolve => {
+          resolveWaiter = resolve;
+        }),
+        Bun.sleep(remaining),
+      ]);
       resolveWaiter = null;
     }
   };
@@ -990,6 +996,43 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       terminal.write("\x04"); // Ctrl+D
       const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // The REPL used to stay in raw mode while evaluating, so Ctrl+C was delivered
+  // as a byte nobody read and a synchronous loop could only be escaped by
+  // killing the process (which left the terminal in raw mode).
+  test("Ctrl+C interrupts a synchronous infinite loop", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Print from inside the evaluation so the interrupt is sent only once the
+      // loop is actually running. Split the literal so the echoed input line
+      // can't satisfy the wait.
+      send(`process.stdout.write("RUN" + "NING\\n"); while (true) {}\n`);
+      await waitFor("RUNNING");
+      send("\x03"); // Ctrl+C
+      const output = await waitFor(/interrupted/);
+      expect(stripAnsi(output)).toContain("Script execution was interrupted by `SIGINT`");
+
+      // And the session keeps working.
+      send("111 + 222\n");
+      await waitFor(/\n\s*333\b/);
+    });
+  });
+
+  test("Ctrl+C during a never-settling await leaves the REPL usable", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // The executor runs synchronously, so printing from it marks the point
+      // where the REPL starts waiting. The long timer keeps the loop alive, so
+      // the wait parks in the poller exactly like a real pending `await` would.
+      send(`await new Promise(() => { process.stdout.write("WAIT" + "ING\\n"); setTimeout(() => {}, 600000); })\n`);
+      await waitFor("WAITING");
+      send("\x03"); // Ctrl+C
+      await waitFor(/interrupted/);
+
+      // Interrupting used to leave the VM permanently execution-forbidden,
+      // which silently dropped every microtask from then on.
+      send("await Promise.resolve(1234 * 1000)\n");
+      await waitFor(/\n\s*1234000\b/);
     });
   });
 

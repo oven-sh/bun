@@ -1,23 +1,27 @@
 #pragma once
 
+#include <atomic>
+
 namespace Bun {
 
+// `m_sigintReceived` is written by the SigintWatcher thread and read by the VM
+// thread, so it has to be atomic.
 class SigintReceiver {
 public:
     SigintReceiver() = default;
 
     void setSigintReceived(bool value = true)
     {
-        m_sigintReceived = value;
+        m_sigintReceived.store(value, std::memory_order_relaxed);
     }
 
-    bool getSigintReceived()
+    bool getSigintReceived() const
     {
-        return m_sigintReceived;
+        return m_sigintReceived.load(std::memory_order_relaxed);
     }
 
 protected:
-    bool m_sigintReceived = false;
+    std::atomic<bool> m_sigintReceived = false;
 };
 
 } // namespace Bun

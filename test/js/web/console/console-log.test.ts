@@ -168,6 +168,7 @@ it("console.assert prepends the Assertion failed marker", async () => {
         console.assert(false, "Whoops %s work", "didn't"); // string first arg: "Assertion failed: " + format, %s still applies
         console.assert(false, "plain message");            // string first arg, no specifiers
         console.assert(false, 42);                         // non-string first arg: bare marker, space separator
+        console.assert(false, [1, 2], "arr");              // non-string first arg stays data, not "1,2"
         console.assert(false, "");                         // empty string is still a string -> colon prefix
         console.assert(false);                             // no args -> bare marker
         console.assert(true, "should not print");          // truthy condition prints nothing
@@ -186,6 +187,7 @@ it("console.assert prepends the Assertion failed marker", async () => {
       "Assertion failed: Whoops didn't work",
       "Assertion failed: plain message",
       "Assertion failed 42",
+      "Assertion failed [ 1, 2 ] arr",
       "Assertion failed: ",
       "Assertion failed",
       "Assertion failed: from node:console works",
@@ -197,8 +199,9 @@ it("console.assert prepends the Assertion failed marker", async () => {
 });
 
 // A custom `new Console(...)` instance uses the JS builtin assert, which must
-// follow the same Node rules: a non-string first arg gets a bare "Assertion
-// failed" marker with a space separator (not a colon).
+// follow the same Node rules: a non-string first arg survives as data for the
+// formatter (bare marker, space separator) rather than being string-coerced
+// into the prefix as "[object Object]".
 it("custom Console.assert prepends the Assertion failed marker like Node", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -208,6 +211,8 @@ it("custom Console.assert prepends the Assertion failed marker like Node", async
         const { Console } = require("node:console");
         const c = new Console(process.stdout, process.stderr);
         c.assert(false, "Whoops %s work", "didn't");
+        c.assert(false, { code: "E42", user: "u1" }, "ctx");
+        c.assert(false, [1, 2], "arr");
         c.assert(false, 42);
         c.assert(false);
         c.assert(true, "should not print");
@@ -221,7 +226,14 @@ it("custom Console.assert prepends the Assertion failed marker like Node", async
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.replaceAll("\r\n", "\n")).toBe(
-    ["Assertion failed: Whoops didn't work", "Assertion failed 42", "Assertion failed", ""].join("\n"),
+    [
+      "Assertion failed: Whoops didn't work",
+      "Assertion failed { code: 'E42', user: 'u1' } ctx",
+      "Assertion failed [ 1, 2 ] arr",
+      "Assertion failed 42",
+      "Assertion failed",
+      "",
+    ].join("\n"),
   );
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);

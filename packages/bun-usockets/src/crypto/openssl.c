@@ -1308,15 +1308,16 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
-    /* The CTX is mode-neutral and may have verify_mode == NONE (no
-     * ca/requestCert in options). Clients must always run verification so
-     * verify_error is populated for the JS rejectUnauthorized check — but
-     * setting VERIFY_PEER on the CTX would make a server using the same
-     * SecureContext send CertificateRequest. SSL_set_verify scopes the mode to
-     * this socket; SSL_set0_verify_cert_store gives it the process-shared root
-     * bundle without touching the CTX (servers using the same CTX never pay
-     * the ~150-root build). us_verify_callback returns 1 so the handshake
-     * never aborts here — JS reads verify_error and decides. */
+    /* The CTX is mode-neutral and may have verify_mode == NONE (anything
+     * without requestCert, a bare `ca` included). Clients must always run
+     * verification so verify_error is populated for the JS rejectUnauthorized
+     * check — but setting VERIFY_PEER on the CTX would make a server using the
+     * same SecureContext send CertificateRequest. SSL_set_verify scopes the
+     * mode to this socket; SSL_set0_verify_cert_store hands it the
+     * process-shared root bundle without touching the CTX (servers never pay
+     * the ~150-root build), and only when the CTX carries no CAs of its own.
+     * us_verify_callback returns 1 so the handshake never aborts here — JS
+     * reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
       if (!us_ssl_ctx_has_user_ca(ctx)) {

@@ -45,6 +45,11 @@ pub struct FileSink {
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
 
+    /// Mirrors `JSFileSink::m_refCount > 0` (it starts at 1): cleared by
+    /// `FileSink.unref()`, restored by `FileSink.ref()`. While cleared, the
+    /// automatic keep-alive below must not re-arm the event loop ref.
+    pub keep_alive_allowed: Cell<bool>,
+
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
     pub pollable: Cell<bool>,
@@ -401,12 +406,7 @@ impl FileSink {
             let has_pending_data = (*this).writer.get().has_pending_data();
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
-            // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
-            // Hoist `io_evtloop()` out of the closure so no raw deref appears inside it.
-            let evtloop = (*this).io_evtloop();
-            (*this)
-                .writer
-                .with_mut(|w| w.update_ref(evtloop, has_pending_data));
+            (*this).set_keep_alive(has_pending_data);
 
             if has_pending_data {
                 if let Some(vm) = (*this).js_vm() {
@@ -657,8 +657,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer
-                            .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                        self.set_keep_alive(false);
                     }
                 }
                 return sys::Result::Ok(());
@@ -674,8 +673,7 @@ impl FileSink {
             sys::Result::Ok(()) => {
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
-                self.writer
-                    .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                self.set_keep_alive(false);
                 #[cfg(unix)]
                 {
                     if self.nonblocking.get() {
@@ -821,7 +819,7 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             if (*this).done.get() || !(*this).writer.get().has_pending_data() {
-                (*this).update_ref(false);
+                (*this).set_keep_alive(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
             }
@@ -834,12 +832,12 @@ impl FileSink {
             // callback it may trigger goes via the stored `*mut FileSink` backref.
             match (*this).writer.with_mut(|w| w.flush()) {
                 WriteResult::Err(_) | WriteResult::Done(_) => {
-                    (*this).update_ref(false);
+                    (*this).set_keep_alive(false);
                     (*this).run_pending_later();
                 }
                 WriteResult::Wrote(amount_drained) => {
                     if amount_drained == amount_buffered {
-                        (*this).update_ref(false);
+                        (*this).set_keep_alive(false);
                         (*this).run_pending_later();
                     }
                 }
@@ -1088,7 +1086,7 @@ impl FileSink {
 
         match flush_result {
             WriteResult::Done(written) => {
-                self.update_ref(false);
+                self.set_keep_alive(false);
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
@@ -1132,17 +1130,25 @@ impl FileSink {
         crate::webcore::sink::Sink::init(self)
     }
 
+    /// `JSFileSink::ref()` / `unref()`, called when their `m_refCount` crosses
+    /// 0↔1. Records the user's choice, then re-applies what the automatic
+    /// management wants right now — `ref()` restores it, it does not pin.
     pub fn update_ref(&self, value: bool) {
-        // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
-        // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
-        // covers both. No JS re-entry — pure libuv ref/unref.
-        self.writer.with_mut(|w| {
-            if value {
-                w.enable_keeping_process_alive(self.io_evtloop());
-            } else {
-                w.disable_keeping_process_alive(self.io_evtloop());
-            }
-        });
+        self.keep_alive_allowed.set(value);
+        self.set_keep_alive(!self.done.get() && self.writer.get().has_pending_data());
+    }
+
+    /// The only place the event loop ref is armed or disarmed. `wants` is what
+    /// the automatic management asks for; an explicit `FileSink.unref()` from
+    /// JS vetoes it until `FileSink.ref()` is called.
+    fn set_keep_alive(&self, wants: bool) {
+        let enable = wants && self.keep_alive_allowed.get();
+        // Hoist `io_evtloop()` out of the closure so no raw deref appears inside
+        // it. `with_mut`: the Windows `BaseWindowsPipeWriter` impls take
+        // `&mut self` (the posix `PosixStreamingWriter` impls are `&self`); it
+        // covers both. No JS re-entry — pure libuv/poll ref/unref.
+        let evtloop = self.io_evtloop();
+        self.writer.with_mut(|w| w.update_ref(evtloop, enable));
     }
 }
 
@@ -1302,6 +1308,7 @@ impl FileSink {
             done: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
+            keep_alive_allowed: Cell::new(true),
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
@@ -1444,8 +1451,7 @@ impl FileSink {
                 // SAFETY: `as_any_promise` returned non-null.
                 match unsafe { (*js_promise).status() } {
                     bun_jsc::js_promise::Status::Pending => {
-                        self.writer
-                            .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                        self.set_keep_alive(true);
                         self.ref_();
                         // TODO: properly propagate exception upwards
                         // `JSValue::then` takes already-wrapped C-ABI

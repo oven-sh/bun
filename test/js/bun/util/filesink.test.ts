@@ -433,3 +433,120 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
+
+describe.skipIf(!isPosix)("ref/unref keep-alive", () => {
+  // A FIFO whose read end nobody drains: the child's write stays pending
+  // forever, so the process can only exit if unref() actually took effect.
+  function blockedFifo(label: string) {
+    const fifo = join(tmpdirSync(), `${label}.fifo`);
+    mkfifo(fifo, 0o666);
+    return { fifo, readFd: fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK) };
+  }
+
+  it("unref() is not re-armed by a later pending write", async () => {
+    const { fifo, readFd } = blockedFifo("unref-sticky");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const sink = Bun.file(${JSON.stringify(fifo)}).writer();
+            sink.unref();
+            sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+            process.on("exit", () => console.log("exited"));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "exited",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    } finally {
+      fs.closeSync(readFd);
+    }
+  });
+
+  it("unref() after a write already went pending lets the process exit", async () => {
+    const { fifo, readFd } = blockedFifo("unref-after-write");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const sink = Bun.file(${JSON.stringify(fifo)}).writer();
+            sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+            sink.unref();
+            process.on("exit", () => console.log("exited"));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "exited",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    } finally {
+      fs.closeSync(readFd);
+    }
+  });
+
+  it("ref() puts the automatic keep-alive back", async () => {
+    const fifo = join(tmpdirSync(), "ref-restores.fifo");
+    mkfifo(fifo, 0o666);
+    const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const sink = Bun.file(${JSON.stringify(fifo)}).writer();
+            sink.unref();
+            sink.ref();
+            await sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+            console.log("drained");
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      // Drain the pipe so the pending write can finish. The child only gets
+      // there if ref() restored the event-loop ref that unref() dropped.
+      let received = 0;
+      for await (const chunk of Bun.file(readFd).stream()) received += chunk.byteLength;
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, received }).toEqual({
+        stdout: "drained",
+        stderr: "",
+        exitCode: 0,
+        received: 4 * 1024 * 1024,
+      });
+    } finally {
+      try {
+        fs.closeSync(readFd);
+      } catch {}
+    }
+  });
+
+  it("ref()/unref() on a regular file do nothing and do not break writes", async () => {
+    const target = join(tmpdirSync(), "ref-noop.txt");
+    const sink = Bun.file(target).writer();
+    sink.unref();
+    sink.ref();
+    sink.write("hello");
+    await sink.end();
+    expect(await Bun.file(target).text()).toBe("hello");
+  });
+});

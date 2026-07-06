@@ -550,8 +550,9 @@ fn parse_ipv4_field(field: &[u8]) -> Option<u64> {
             (10, field)
         };
     if digits.is_empty() {
-        // A bare "0x"/"0X" is zero; a lone "0" reaches this via the decimal arm.
-        return Some(0);
+        // "0x"/"0X" with no trailing digits is not a number to inet_aton; a lone
+        // "0" reaches this via the decimal arm with a non-empty digit sequence.
+        return None;
     }
     let mut value: u64 = 0;
     for &c in digits {
@@ -572,31 +573,52 @@ fn parse_ipv4_field(field: &[u8]) -> Option<u64> {
     Some(value)
 }
 
+// A field that a resolver reads as a number: all decimal digits (c-ares reads
+// these even when inet_aton rejects them, e.g. the invalid octal "08"), or a
+// `0x`/`0X` hex prefix. A field carrying hex letters without the `0x` prefix
+// (e.g. a ".de"/".ca" TLD) is not numeric under any backend, so it marks the
+// whole name as a hostname rather than a malformed literal.
+fn looks_like_numeric_field(field: &[u8]) -> bool {
+    if field.is_empty() {
+        return false;
+    }
+    if field.len() >= 2 && field[0] == b'0' && (field[1] | 0x20) == b'x' {
+        return true;
+    }
+    field.iter().all(u8::is_ascii_digit)
+}
+
 // Classify `name` the way node/glibc `getaddrinfo` does before resolving: a
-// string that is shaped like a numeric IPv4 literal (octal/hex/dword and the
-// 1-3 field shorthands) is parsed here so every backend agrees on the address,
-// instead of letting c-ares apply its own (decimal-only, non-canonical) reading.
+// string shaped like a numeric IPv4 literal (octal/hex/dword and the 1-3 field
+// shorthands) is parsed here so every backend agrees on the address, instead of
+// letting c-ares apply its own (decimal-only, non-canonical) reading. A numeric
+// literal that fails to parse is rejected rather than handed to a backend whose
+// lenient reading would dial a different host; anything not shaped like a
+// numeric literal falls through to DNS unchanged.
 pub(super) fn classify_ipv4_literal(name: &[u8]) -> Ipv4Literal {
-    // Only strings made entirely of hex-digit/`x`/`.` bytes and starting with a
-    // digit can be an IPv4 literal attempt; anything else is a real hostname.
-    if name.is_empty()
-        || !name[0].is_ascii_digit()
-        || !name
-            .iter()
-            .all(|&c| c.is_ascii_hexdigit() || c == b'.' || c == b'x' || c == b'X')
-    {
+    // A name that does not start with a digit is always a hostname.
+    if name.is_empty() || !name[0].is_ascii_digit() {
         return Ipv4Literal::NotNumeric;
     }
+
+    // When parsing fails, reject only if every field was a numeric attempt that
+    // a backend could still read as a (different) address; otherwise it is a
+    // hostname and must reach DNS, matching node/glibc.
+    let on_parse_failure = if name.split(|&b| b == b'.').all(looks_like_numeric_field) {
+        Ipv4Literal::Invalid
+    } else {
+        Ipv4Literal::NotNumeric
+    };
 
     let mut fields = [0u64; 4];
     let mut count = 0usize;
     for field in name.split(|&b| b == b'.') {
         if count == 4 {
-            return Ipv4Literal::Invalid;
+            return on_parse_failure;
         }
         match parse_ipv4_field(field) {
             Some(value) => fields[count] = value,
-            None => return Ipv4Literal::Invalid,
+            None => return on_parse_failure,
         }
         count += 1;
     }
@@ -606,30 +628,30 @@ pub(super) fn classify_ipv4_literal(name: &[u8]) -> Ipv4Literal {
     let addr: u32 = match count {
         1 => match u32::try_from(fields[0]) {
             Ok(v) => v,
-            Err(_) => return Ipv4Literal::Invalid,
+            Err(_) => return on_parse_failure,
         },
         2 => {
             if fields[0] > 0xFF || fields[1] > 0x00FF_FFFF {
-                return Ipv4Literal::Invalid;
+                return on_parse_failure;
             }
             ((fields[0] as u32) << 24) | fields[1] as u32
         }
         3 => {
             if fields[0] > 0xFF || fields[1] > 0xFF || fields[2] > 0xFFFF {
-                return Ipv4Literal::Invalid;
+                return on_parse_failure;
             }
             ((fields[0] as u32) << 24) | ((fields[1] as u32) << 16) | fields[2] as u32
         }
         4 => {
             if fields[..4].iter().any(|&f| f > 0xFF) {
-                return Ipv4Literal::Invalid;
+                return on_parse_failure;
             }
             ((fields[0] as u32) << 24)
                 | ((fields[1] as u32) << 16)
                 | ((fields[2] as u32) << 8)
                 | fields[3] as u32
         }
-        _ => return Ipv4Literal::Invalid,
+        _ => return on_parse_failure,
     };
 
     Ipv4Literal::Valid(addr.to_be_bytes())

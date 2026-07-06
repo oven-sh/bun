@@ -253,8 +253,10 @@ describe("dns", () => {
 
     // A numeric literal that inet_aton rejects must not fall through to the
     // c-ares backend, whose lenient decimal reading would dial a different host
-    // (e.g. "08.0.0.1" as 8.0.0.1). Reject it instead of silently diverging.
-    test.each(["08.0.0.1", "09.1.1.1", "256.1.1.1", "1.2.3.4.5"])(
+    // (e.g. "08.0.0.1" as 8.0.0.1). A bare "0x"/"0X" prefix is not a number
+    // either and must not be read as 0.0.0.0. Reject all of these rather than
+    // silently diverging.
+    test.each(["08.0.0.1", "09.1.1.1", "256.1.1.1", "1.2.3.4.5", "0x", "127.0x", "0x.0x.0x.0x"])(
       "rejects malformed numeric literal %s",
       async input => {
         // @ts-expect-error -- backend is a valid option

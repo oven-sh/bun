@@ -122,7 +122,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
 // Error.prepareStackTrace is an ordinary, deletable property of the Error constructor, so it has to
 // be read back every time a stack is formatted. Returns nullptr when the default formatting should
-// run, which includes the property still holding the default formatter: inlining it is cheaper.
+// run. A throwing user getter propagates; computeErrorInfoWrapperToJSValue maps the resulting empty
+// return to jsUndefined() so materializeErrorInfoIfNeeded never stores an empty JSValue.
 static JSObject* userPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -134,6 +135,7 @@ static JSObject* userPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (!prepareStackTrace || !prepareStackTrace.isCallable())
         return nullptr;
 
+    // The default formatter is much cheaper to run inline than through a JS call.
     if (prepareStackTrace == globalObject->m_errorConstructorPrepareStackTraceInternalValue.get(globalObject))
         return nullptr;
 

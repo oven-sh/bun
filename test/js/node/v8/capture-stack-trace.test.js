@@ -1113,3 +1113,35 @@ test("an Error.prepareStackTrace accessor installed with defineProperty is honor
     exitCode: 0,
   });
 });
+
+// Reading the property runs whatever getter is installed on it. If that getter throws,
+// .stack throws that error (as Node does) and a subsequent read returns undefined
+// instead of storing an empty JSValue. https://github.com/oven-sh/bun/issues/34095
+test("a throwing Error.prepareStackTrace getter propagates out of .stack", async () => {
+  const fixture = [
+    `Object.defineProperty(Error, "prepareStackTrace", {`,
+    `  configurable: true,`,
+    `  get() { throw new Error("boom from getter"); },`,
+    `});`,
+
+    `const e = new Error("x");`,
+    `let first = "no-throw";`,
+    `try { void e.stack; } catch (err) { first = err.message; }`,
+    `console.log(JSON.stringify({ first, secondType: typeof e.stack }));`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout || "null"), signalCode: proc.signalCode, exitCode }).toEqual({
+    out: { first: "boom from getter", secondType: "undefined" },
+    signalCode: null,
+    exitCode: 0,
+  });
+});

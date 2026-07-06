@@ -20,12 +20,21 @@ static BOOL WindowsCtrlHandler(DWORD signal)
 
     return false;
 }
+#else
+static void handleSigint(int)
+{
+    SigintWatcher::get().signalReceived();
+}
 #endif
 
 SigintWatcher::SigintWatcher()
     : m_semaphore(1)
 {
     m_globalObjects.reserveInitialCapacity(16);
+#if !OS(WINDOWS)
+    memset(&m_previousAction, 0, sizeof(struct sigaction));
+    m_previousAction.sa_handler = SIG_DFL;
+#endif
 }
 
 SigintWatcher::~SigintWatcher()
@@ -37,26 +46,34 @@ void SigintWatcher::install()
 {
 #if OS(WINDOWS)
     SetConsoleCtrlHandler(WindowsCtrlHandler, true);
+
+    if (m_installed.exchange(true)) {
+        return;
+    }
 #else
     Bun__ensureSignalHandler();
 
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
 
-    action.sa_handler = [](int signalNumber) {
-        get().signalReceived();
-    };
+    action.sa_handler = handleSigint;
 
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, SIGINT);
     action.sa_flags = 0;
 
-    sigaction(SIGINT, &action, nullptr);
-#endif
+    struct sigaction previous;
+    memset(&previous, 0, sizeof(struct sigaction));
+    sigaction(SIGINT, &action, &previous);
 
     if (m_installed.exchange(true)) {
         return;
     }
+
+    // Whatever SIGINT did before we took it over: SIG_DFL, or the handler
+    // process.on("SIGINT") installed. uninstall() restores it.
+    m_previousAction = previous;
+#endif
 
     m_thread = WTF::Thread::create("SigintWatcher"_s, [this] {
         while (m_installed.load()) {
@@ -90,13 +107,13 @@ void SigintWatcher::uninstall()
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        struct sigaction action;
-        memset(&action, 0, sizeof(struct sigaction));
-        action.sa_handler = Bun__onPosixSignal;
-        sigemptyset(&action.sa_mask);
-        sigaddset(&action.sa_mask, SIGINT);
-        action.sa_flags = SA_RESTART;
-        sigaction(SIGINT, &action, nullptr);
+        // Leave SIGINT alone if someone else claimed it while we were watching:
+        // a process.on("SIGINT") listener registered mid-run owns it now.
+        struct sigaction current;
+        memset(&current, 0, sizeof(struct sigaction));
+        if (sigaction(SIGINT, nullptr, &current) == 0 && current.sa_handler == handleSigint) {
+            sigaction(SIGINT, &m_previousAction, nullptr);
+        }
 #endif
 
         m_semaphore.signal();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1234,5 +1234,75 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/31885
+describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT disposition", () => {
+  // Printed after the vm run, so the parent only signals once SIGINT is back in
+  // whatever state the script left it. kill() delivers the signal before it
+  // returns, so a child still alive here swallowed it: fail, rather than hang.
+  const stayAliveThenReady = `
+    setTimeout(() => { process.stdout.write("survived\\n"); process.exit(7); }, 1500);
+    process.stdout.write("ready\\n");
+  `;
+
+  async function sigintAfterReady(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    let stdout = "";
+    const ready = Promise.withResolvers<void>();
+    const drained = (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("ready\n")) ready.resolve();
+      }
+    })();
+    proc.exited.then(() => ready.reject(new Error(`child exited before printing "ready": ${stdout}`)));
+
+    await ready.promise;
+    proc.kill("SIGINT");
+
+    const exitCode = await proc.exited;
+    await drained;
+    return { stdout, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("SIGINT terminates the process when no listener was ever registered", async () => {
+    const result = await sigintAfterReady(`
+      require("node:vm").runInNewContext("1 + 1", {}, { breakOnSigint: true });
+      ${stayAliveThenReady}
+    `);
+
+    // SIG_DFL, same as node: exit 130, no "survived".
+    expect(result).toEqual({ stdout: "ready\n", exitCode: 130, signalCode: "SIGINT" });
+  });
+
+  test("a listener registered before the run still receives SIGINT after it", async () => {
+    const result = await sigintAfterReady(`
+      process.on("SIGINT", () => { process.stdout.write("listener\\n"); process.exit(0); });
+      require("node:vm").runInNewContext("1 + 1", {}, { breakOnSigint: true });
+      ${stayAliveThenReady}
+    `);
+
+    expect(result).toEqual({ stdout: "ready\nlistener\n", exitCode: 0, signalCode: null });
+  });
+
+  test("removing the last listener after the run hands SIGINT back to the default", async () => {
+    const result = await sigintAfterReady(`
+      const listener = () => { process.stdout.write("listener\\n"); process.exit(0); };
+      process.on("SIGINT", listener);
+      require("node:vm").runInNewContext("1 + 1", {}, { breakOnSigint: true });
+      process.off("SIGINT", listener);
+      ${stayAliveThenReady}
+    `);
+
+    expect(result).toEqual({ stdout: "ready\n", exitCode: 130, signalCode: "SIGINT" });
   });
 });

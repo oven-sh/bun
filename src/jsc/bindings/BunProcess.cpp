@@ -1166,6 +1166,12 @@ bool isSignalName(WTF::String input)
 
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
+    // Only populated once process.on(<signal>) adds a listener. SigintWatcher
+    // forwards SIGINT here when no vm context is registered to be interrupted,
+    // which can happen before any listener exists: nothing to dispatch to.
+    if (!signalNumberToNameMap) [[unlikely]]
+        return;
+
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);

@@ -7,6 +7,10 @@
 
 #include <atomic>
 
+#if !OS(WINDOWS)
+#include <signal.h>
+#endif
+
 namespace Bun {
 
 template<typename T>
@@ -106,6 +110,10 @@ private:
     WTF::Vector<JSC::JSGlobalObject*> m_globalObjects;
     WTF::Vector<SigintReceiver*> m_receivers;
     uint32_t m_refCount = 0;
+#if !OS(WINDOWS)
+    // The SIGINT disposition install() replaced, restored by uninstall().
+    struct sigaction m_previousAction;
+#endif
 
     bool signalAll();
 };

@@ -1255,6 +1255,52 @@ describe("deno_task", () => {
     // TODO Sleep tests
   });
 
+  // Field splitting of an unquoted command substitution must follow $IFS.
+  // `process.argv.slice(1)` reports the exact argv the split produced.
+  describe("IFS field splitting", async () => {
+    const ARGV = "console.log(JSON.stringify(process.argv.slice(1)))";
+    const TAB = "\t";
+
+    // Custom IFS splits on its own delimiters.
+    TestBuilder.command`IFS=:; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a:b:c)`
+      .stdout(`["a","b","c"]\n`)
+      .runAsTest("colon IFS splits on colons");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,b,c)`
+      .stdout(`["a","b","c"]\n`)
+      .runAsTest("comma IFS splits on commas");
+
+    // A non-whitespace IFS char is a hard delimiter: empty fields are kept.
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,,b)`
+      .stdout(`["a","","b"]\n`)
+      .runAsTest("non-whitespace IFS keeps empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,a,b)`
+      .stdout(`["","a","b"]\n`)
+      .runAsTest("non-whitespace IFS keeps leading empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,,a)`
+      .stdout(`["","","a"]\n`)
+      .runAsTest("non-whitespace IFS keeps consecutive leading empty fields");
+
+    // Empty IFS disables field splitting entirely.
+    TestBuilder.command`IFS=; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${"a b"})`
+      .stdout(`["a b"]\n`)
+      .runAsTest("empty IFS disables splitting");
+
+    // The default IFS includes TAB, which must split even when IFS is untouched.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${`a${TAB}b`})`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("default IFS splits on tab");
+
+    // IFS whitespace runs collapse and do not produce empty fields.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${`a${TAB}${TAB}b  c`})`
+      .stdout(`["a","b","c"]\n`)
+      .runAsTest("default IFS collapses whitespace runs");
+
+    // A quoted command substitution is never field-split.
+    TestBuilder.command`IFS=:; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} "$(echo a:b:c)"`
+      .stdout(`["a:b:c"]\n`)
+      .runAsTest("quoted command substitution is not split");
+  });
+
   describe("shell variables", async () => {
     TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && ${BUN} -e ${"console.log(process.env.VAR)"}`
       .stdout("\n1\nundefined\n")

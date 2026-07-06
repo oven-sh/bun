@@ -533,59 +533,113 @@ impl Expansion {
     /// end-offset so the consumer's `[prev..bound]` slicing reconstructs each
     /// word and the trailing `[prev..]` slice yields the final one.
     fn push_current_out(me: &mut Expansion) {
-        if !me.out.buf.is_empty() {
+        // A non-empty `bounds` means a word was already committed, so this
+        // flush is a subsequent word even when `buf` is still empty (leading
+        // empty fields produced by non-whitespace IFS splitting).
+        if !me.out.buf.is_empty() || !me.out.bounds.is_empty() {
             me.out.bounds.push(me.out.buf.len() as u32);
         }
         me.out.buf.append(&mut me.current_out);
         me.meta_offsets.clear();
     }
 
-    /// Newlines→spaces, trim, then split on whitespace runs into separate
-    /// argv words.
+    /// Reads the current value of `IFS` (shell env, then exported env). Returns
+    /// `None` when `IFS` is unset so the caller applies the default separators.
+    fn get_ifs(shell: &ShellExecEnv) -> Option<Vec<u8>> {
+        use crate::shell::env_str::EnvStr;
+        let key = EnvStr::init_slice(b"IFS");
+        let entry = shell
+            .shell_env
+            .get(key)
+            .or_else(|| shell.export_env.get(key))?;
+        let bytes = entry.slice().to_vec();
+        entry.deref();
+        Some(bytes)
+    }
+
+    /// POSIX field splitting of a command-substitution result. `ifs` is the
+    /// active separator set (default `" \t\n"`). Leading/trailing IFS
+    /// whitespace is ignored, runs of IFS whitespace collapse to one
+    /// delimiter, and each non-whitespace IFS byte (with adjacent IFS
+    /// whitespace) delimits one field, so consecutive ones yield empty fields.
+    fn ifs_split_fields<'a>(s: &'a [u8], ifs: &[u8]) -> Vec<&'a [u8]> {
+        let is_ifs = |b: u8| ifs.contains(&b);
+        let is_ifs_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n') && ifs.contains(&b);
+        let n = s.len();
+        let mut fields: Vec<&[u8]> = Vec::new();
+        let mut i = 0usize;
+        while i < n && is_ifs_ws(s[i]) {
+            i += 1;
+        }
+        while i < n {
+            let start = i;
+            while i < n && !is_ifs(s[i]) {
+                i += 1;
+            }
+            fields.push(&s[start..i]);
+            if i >= n {
+                break;
+            }
+            // Consume one delimiter: IFS whitespace, then at most one
+            // non-whitespace IFS byte, then trailing IFS whitespace.
+            while i < n && is_ifs_ws(s[i]) {
+                i += 1;
+            }
+            if i < n && is_ifs(s[i]) {
+                i += 1;
+                while i < n && is_ifs_ws(s[i]) {
+                    i += 1;
+                }
+            }
+        }
+        fields
+    }
+
+    /// Split an unquoted command-substitution result into argv words using
+    /// POSIX field splitting driven by `IFS`.
     fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
-        // Strip a single trailing newline, then convert remaining newlines
-        // to spaces.
-        if stdout.last() == Some(&b'\n') {
+        // Command substitution deletes trailing newlines before field splitting.
+        while stdout.last() == Some(&b'\n') {
             stdout.pop();
         }
-        for b in stdout.iter_mut() {
-            if *b == b'\n' {
-                *b = b' ';
-            }
-        }
-        // Trim leading/trailing whitespace.
-        let s: &[u8] = {
-            let mut lo = 0usize;
-            let mut hi = stdout.len();
-            while lo < hi && matches!(stdout[lo], b' ' | b'\n' | b'\r' | b'\t') {
-                lo += 1;
-            }
-            while hi > lo && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
-                hi -= 1;
-            }
-            &stdout[lo..hi]
-        };
-        if s.is_empty() {
+        if stdout.is_empty() {
             return;
         }
-        // Split on runs of spaces — each run is a word boundary.
-        let mut prev_ws = false;
-        let mut a = 0usize;
-        for (i, &c) in s.iter().enumerate() {
-            if prev_ws {
-                if c != b' ' {
-                    a = i;
-                    prev_ws = false;
-                }
-                continue;
+        let ifs = Self::get_ifs(me.base.shell());
+        let ifs_bytes: &[u8] = match &ifs {
+            // `IFS=` (set to empty) disables field splitting entirely.
+            Some(v) if v.is_empty() => {
+                me.current_out.extend_from_slice(&stdout);
+                return;
             }
-            if c == b' ' {
-                prev_ws = true;
-                me.current_out.extend_from_slice(&s[a..i]);
-                Self::push_current_out(me);
-            }
+            Some(v) => v,
+            None => b" \t\n",
+        };
+        let fields = Self::ifs_split_fields(&stdout, ifs_bytes);
+        if fields.is_empty() {
+            return;
         }
-        me.current_out.extend_from_slice(&s[a..]);
+        // `started` tracks whether a word has already been *committed* to `out`
+        // (so the next commit needs a boundary). Any prefix still in
+        // `current_out` is the start of word 0, not a committed word, so it is
+        // excluded. An empty first field leaves `buf` empty yet still commits
+        // word 0, so this flag, not `buf` emptiness, drives boundary recording.
+        let mut started = !me.out.buf.is_empty() || !me.out.bounds.is_empty();
+        let last = fields.len() - 1;
+        for (idx, field) in fields.iter().enumerate() {
+            me.current_out.extend_from_slice(field);
+            // The final field stays in `current_out` so following atoms can
+            // concatenate onto it; `push_current_out` flushes it later.
+            if idx == last {
+                break;
+            }
+            if started {
+                me.out.bounds.push(me.out.buf.len() as u32);
+            }
+            me.out.buf.append(&mut me.current_out);
+            me.meta_offsets.clear();
+            started = true;
+        }
     }
 
     pub fn child_done(

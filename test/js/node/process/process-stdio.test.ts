@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import fs from "fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {

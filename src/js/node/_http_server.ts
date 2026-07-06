@@ -19,7 +19,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, tlsHandshakeError } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -75,6 +75,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kTlsClientErrorMirror = Symbol("http.server.tlsClientErrorMirror");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -247,6 +248,14 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
+// Only a TLS server can see a handshake failure, and `listen({ tls })` can turn
+// a plain http.Server into one after construction - attach at both points.
+function installTlsClientErrorMirror(server) {
+  if (server[kTlsClientErrorMirror]) return;
+  server[kTlsClientErrorMirror] = true;
+  server.on("tlsClientError", mirrorTlsClientErrorToClientError);
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -313,6 +322,7 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
+      installTlsClientErrorMirror(this);
     } else {
       this[tlsSymbol] = null;
     }
@@ -558,6 +568,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
+      installTlsClientErrorMirror(this);
     }
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
@@ -910,6 +921,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       true,
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
+      tls ? onServerHandshakeError.bind(this) : undefined,
     );
 
     if (this?._unref) {
@@ -1013,6 +1025,30 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   self.emit("clientError", err, nodeSocket);
   if (nodeSocket.listenerCount("error") > 0) {
     nodeSocket.emit("error", err);
+  }
+}
+
+// A TLS handshake on an accepted connection failed: there is no TLS session, so
+// no request will ever arrive on this socket. Node's tls.Server reports it
+// through 'tlsClientError'; https.Server mirrors it to 'clientError' through
+// the listener installed by the Server constructor.
+function onServerHandshakeError(socket: unknown, verifyError: Error | null) {
+  const self = this as Server;
+  const err = tlsHandshakeError(verifyError);
+  const existingDuplex = (socket as any).duplex;
+  const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, true);
+  if (!existingDuplex) {
+    self.emit("connection", nodeSocket);
+  }
+  self.emit("tlsClientError", err, nodeSocket);
+}
+
+// Node's https.Server installs this in its constructor, so it runs before any
+// user 'tlsClientError' listener and a handshake failure reaches 'clientError'
+// first: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
+function mirrorTlsClientErrorToClientError(this: Server, err, socket) {
+  if (!this.emit("clientError", err, socket)) {
+    socket.destroy(err);
   }
 }
 

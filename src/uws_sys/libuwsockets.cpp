@@ -427,6 +427,24 @@ extern "C"
     }
   }
 
+  /* Only the SSL app ever dispatches on_handshake; the plain-HTTP vtable has no
+   * such slot, so there is nothing to register on uWS::App. */
+  void uws_app_set_on_handshake_error(int ssl, uws_app_t *app, void (*handler)(void *user_data, struct us_socket_t *rawSocket, int error, const char *code, const char *reason), void *user_data)
+  {
+    if (!ssl)
+    {
+      return;
+    }
+    uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+    if (handler == nullptr) {
+      uwsApp->setOnHandshakeError(nullptr);
+      return;
+    }
+    uwsApp->setOnHandshakeError([handler, user_data](struct us_socket_t *rawSocket, int error, const char *code, const char *reason) {
+      handler(user_data, rawSocket, error, code, reason);
+    });
+  }
+
   void uws_app_listen(int ssl, uws_app_t *app, int port,
                       uws_listen_handler handler, void *user_data)
   {

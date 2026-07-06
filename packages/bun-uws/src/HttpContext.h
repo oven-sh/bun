@@ -153,6 +153,16 @@ private:
         // if we are closing or already closed, we don't need to do anything
         if (!us_socket_is_closed(s)) {
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+            if (!success && httpContextData->onHandshakeError) {
+                /* node's 'tlsClientError': the TLS session was never established,
+                 * so there is no request and no response - report the failure and
+                 * let the SSL layer tear the connection down. The handler runs JS,
+                 * which may close this socket. */
+                httpContextData->onHandshakeError(s, verify_error.error, verify_error.code, verify_error.reason);
+                if (us_socket_is_closed(s)) {
+                    return;
+                }
+            }
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
             if(httpContextData->flags.rejectUnauthorized) {

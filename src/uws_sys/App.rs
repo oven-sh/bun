@@ -261,6 +261,17 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
+    /// Register the TLS-handshake-failure handler. A no-op on the plain-HTTP app,
+    /// whose socket vtable has no `on_handshake` slot.
+    pub fn on_handshake_error(
+        &mut self,
+        handler: extern "C" fn(*mut c_void, *mut us_socket_t, c_int, *const c_char, *const c_char),
+        user_data: *mut c_void,
+    ) {
+        // Callers receive the raw C args; `code`/`reason` are borrowed for the call.
+        c::uws_app_set_on_handshake_error(Self::SSL_FLAG, self.as_raw(), handler, user_data)
+    }
+
     pub fn listen_with_config(
         &mut self,
         handler: c::uws_listen_handler,
@@ -504,6 +515,20 @@ pub mod c {
             ssl: c_int,
             app: &mut uws_app_s,
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
+            user_data: *mut c_void,
+        );
+        // safe: same as `uws_app_set_on_clienterror` — the handler/user_data pair
+        // is stored opaquely by the C++ shim.
+        pub(crate) safe fn uws_app_set_on_handshake_error(
+            ssl: c_int,
+            app: &mut uws_app_s,
+            handler: extern "C" fn(
+                *mut c_void,
+                *mut us_socket_t,
+                c_int,
+                *const c_char,
+                *const c_char,
+            ),
             user_data: *mut c_void,
         );
         pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;

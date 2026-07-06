@@ -3525,6 +3525,56 @@ where
         }
     }
 
+    /// A TLS handshake on an accepted connection failed. Hands the failure to
+    /// `node:http`'s `'tlsClientError'` dispatcher along with a socket wrapper
+    /// for the connection that never produced a request.
+    pub fn on_handshake_error_callback(
+        &mut self,
+        socket: &mut uws::Socket,
+        verify_error: &uws_sys::us_bun_verify_error_t,
+    ) {
+        let Some(callback) = self.on_handshake_error.get() else {
+            return;
+        };
+        let global = self.global();
+        let node_socket = match jsc::from_js_host_call(&global, || {
+            Bun__createNodeHTTPServerSocketForClientError(
+                SSL,
+                std::ptr::from_mut(socket).cast::<c_void>(),
+                &global,
+            )
+        }) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if node_socket.is_undefined_or_null() {
+            return;
+        }
+
+        // A handshake that never reached the peer's certificate (plaintext at the
+        // TLS port, bad record version, ...) has no verify error; JS reports those
+        // as ECONNRESET, the way `node:tls` does.
+        let verify_error_value = if verify_error.error_no == 0 {
+            JSValue::NULL
+        } else {
+            match jsc::system_error::verify_error_to_js(verify_error, &global) {
+                Ok(v) => v,
+                Err(_) => return,
+            }
+        };
+
+        // SAFETY: event_loop() returns a live raw pointer tied to the global.
+        let _scope =
+            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        if let Err(err) = callback.call(
+            &global,
+            JSValue::UNDEFINED,
+            &[node_socket, verify_error_value],
+        ) {
+            global.report_active_exception_as_unhandled(err);
+        }
+    }
+
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
@@ -3669,6 +3719,62 @@ pub(super) fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
+pub(super) fn server_set_on_handshake_error_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set tlsClientError: The 'this' value is not a Server."
+        )));
+    }
+
+    if !callback.is_function() {
+        return Err(global.throw(format_args!(
+            "Failed to set tlsClientError: The provided value is not a function."
+        )));
+    }
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                // SAFETY: as_ returned a non-null *mut to a live server.
+                let this = unsafe { &mut *this };
+                if let Some(app) = this.app {
+                    this.on_handshake_error.deinit();
+                    this.on_handshake_error = StrongOptional::create(callback, global);
+                    // uws_sys::App::on_handshake_error takes the raw C-ABI handler shape;
+                    // reassemble the verify error the uws dispatcher unpacked.
+                    extern "C" fn thunk(
+                        user_data: *mut c_void,
+                        socket: *mut uws_sys::us_socket_t,
+                        error_no: c_int,
+                        code: *const core::ffi::c_char,
+                        reason: *const core::ffi::c_char,
+                    ) {
+                        // SAFETY: user_data is the `*mut Self` registered below; socket is a live
+                        // uWS socket; code/reason are NUL-terminated (or null) for this call.
+                        let this = unsafe { &mut *user_data.cast::<$T>() };
+                        let verify_error = uws_sys::us_bun_verify_error_t { error_no, code, reason };
+                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                        this.on_handshake_error_callback(bun_opaque::opaque_deref_mut(socket), &verify_error);
+                    }
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).on_handshake_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPServer);
+    handle!(HTTPSServer);
+    handle!(DebugHTTPServer);
+    handle!(DebugHTTPSServer);
+    debug_assert!(false);
+    Ok(JSValue::UNDEFINED)
+}
+
 pub(super) fn server_set_app_flags_(
     global: &JSGlobalObject,
     server: JSValue,
@@ -3769,6 +3875,18 @@ extern "C" fn server_set_on_client_error_shim(
     host_fn::to_js_host_fn_result(
         global,
         server_set_on_client_error_(global, server, callback),
+    )
+}
+
+#[unsafe(export_name = "Server__setOnHandshakeError")]
+extern "C" fn server_set_on_handshake_error_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_on_handshake_error_(global, server, callback),
     )
 }
 

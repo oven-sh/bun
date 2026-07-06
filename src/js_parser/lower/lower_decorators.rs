@@ -2437,16 +2437,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ── Phase 8: Assemble output ─────────────────────
         if is_expr {
             let mut comma_parts = BumpVec::<Expr>::new_in(bump);
-            if let Some(cda) = class_dec_assign_expr {
-                comma_parts.push(cda);
-            }
             if let Some(ba) = base_assign_expr {
                 comma_parts.push(ba);
             }
 
-            // Can't capture `&mut self` in a closure while also calling
-            // `p.method()`, so inline both call sites against a `&[Stmt]`
-            // slice array.
+            // Member decorator arrays first (per ES spec), then class
+            // decorator arrays, so member decorator expressions are
+            // evaluated before class decorator expressions.
             for stmts_list in [&pre_eval_stmts[..], &prefix_stmts[..]] {
                 for pstmt in stmts_list.iter() {
                     match &pstmt.data {
@@ -2484,6 +2481,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            // Class decorator array after member decorator arrays
+            if let Some(cda) = class_dec_assign_expr {
+                comma_parts.push(cda);
+            }
             // _init = __decoratorStart(...)
             comma_parts.push(p.assign_to(init_ref, init_start_expr, loc));
 
@@ -2539,14 +2540,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Statement mode
-        if !matches!(class_dec_stmt.data, js_ast::StmtData::SEmpty(_)) {
-            out.push(class_dec_stmt);
-        }
+        // Statement mode: member decorator arrays first (per ES spec),
+        // then class decorator arrays, so member decorator expressions
+        // are evaluated before class decorator expressions.
         if !matches!(base_decl_stmt.data, js_ast::StmtData::SEmpty(_)) {
             out.push(base_decl_stmt);
         }
         out.extend_from_slice(&pre_eval_stmts);
+        if !matches!(class_dec_stmt.data, js_ast::StmtData::SEmpty(_)) {
+            out.push(class_dec_stmt);
+        }
         out.extend_from_slice(&prefix_stmts);
         out.push(init_decl_stmt);
         out.push(original_stmt.unwrap());

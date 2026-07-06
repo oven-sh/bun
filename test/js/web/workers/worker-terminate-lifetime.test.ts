@@ -131,7 +131,13 @@ test(
                     property + ";",
                 ),
             );
-            const closed = new Promise(resolve => w.addEventListener("close", resolve, { once: true }));
+            const { promise: closed, resolve, reject } = Promise.withResolvers();
+            w.addEventListener("close", resolve, { once: true });
+            // A worker that dies before reaching the property read would still
+            // fire close, and the test would pass having exercised nothing.
+            w.addEventListener("error", event => reject(event.error ?? new Error(property + ": " + event.message)), {
+              once: true,
+            });
             w.addEventListener("message", () => w.terminate(), { once: true });
             return closed;
           }),
@@ -145,9 +151,9 @@ test(
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: `terminated ${lazyProperties.length}\n`,
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
       stderr: "",
+      stdout: `terminated ${lazyProperties.length}\n`,
       exitCode: 0,
       signalCode: null,
     });

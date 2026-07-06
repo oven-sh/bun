@@ -5289,11 +5289,7 @@ it.skipIf(!isLinux || (process.getuid?.() ?? -1) !== 0)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Each top dir removal still fails (its parent is not writable), but every
     // deletable child must be gone.

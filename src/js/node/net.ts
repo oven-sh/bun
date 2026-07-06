@@ -256,17 +256,18 @@ function tlsHandshakeError(verifyError) {
 
 /**
  * A write parked on the native drain can never complete once the socket is
- * gone. Fail it so the caller's write callback runs and 'finish'/destroy are
- * not stuck behind it, the way Node's onWriteComplete does for the write
- * request libuv cancels when the handle closes.
+ * gone. Closing the handle cancels the write request in Node, so its callback
+ * gets errnoException(UV_ECANCELED, 'write') while the error that caused the
+ * close surfaces on 'error'. Failing the write also unsticks the writable side,
+ * so 'finish' and destroy are not queued behind a callback that never fires.
  */
-function failPendingWrite(self, err?) {
+function failPendingWrite(self) {
   const callback = self[kwriteCallback];
   if (!callback) return;
   self._pendingData = null;
   self._pendingEncoding = "";
   self[kwriteCallback] = null;
-  callback(err ?? $ERR_SOCKET_CLOSED());
+  callback(new ErrnoException(UV_ECANCELED, "write"));
 }
 
 const SocketHandlers: SocketHandler = {
@@ -513,7 +514,7 @@ function SocketEmitEndNT(self, _err?) {
       const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
         self.destroy(er);
-        failPendingWrite(self, er);
+        failPendingWrite(self);
         return;
       }
     }
@@ -528,11 +529,11 @@ function SocketEmitEndNT(self, _err?) {
       er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
       er.syscall = "read";
       self.destroy(er);
-      failPendingWrite(self, er);
+      failPendingWrite(self);
     } else {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
-      failPendingWrite(self, _err);
+      failPendingWrite(self);
     }
     return;
   }
@@ -550,7 +551,7 @@ function SocketEmitEndNT(self, _err?) {
     self.destroy();
   }
   if (self.destroyed || _err) {
-    failPendingWrite(self, _err);
+    failPendingWrite(self);
   }
 }
 
@@ -1110,7 +1111,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       // the close was driven by a recv() failure (libus close-code enum values
       // are filtered out in NewSocket::on_close).
       self.destroy(er);
-      failPendingWrite(self, er);
+      failPendingWrite(self);
       return;
     }
     self[kended] = true;

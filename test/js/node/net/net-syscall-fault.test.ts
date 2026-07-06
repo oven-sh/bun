@@ -97,13 +97,14 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   });
 
   // EAGAIN forever parks the write callback on a drain that can never arrive,
-  // so the socket's teardown is the only path left to it. Node hands the
-  // cancelled write request's error to the callback; Bun dropped it entirely.
+  // so the socket's teardown is the only path left to it. Node cancels the
+  // write request on handle close; Bun dropped the callback entirely.
   test("a peer reset fails a client's parked write callback", async () => {
     using p = await connectedPair(s => s.on("error", () => {}));
     const clientFd = (p.client as any)._handle.fd;
     expect(clientFd).toBeGreaterThanOrEqual(0);
-    p.client.on("error", () => {});
+    const errors: NodeJS.ErrnoException[] = [];
+    p.client.on("error", e => errors.push(e));
 
     fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: clientFd });
     const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
@@ -111,7 +112,10 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     p.serverSock.resetAndDestroy();
 
     const writeErr = await written.promise;
-    expect(writeErr?.code).toBe("ECONNRESET");
+    // The cancelled write and the error that caused it are separate signals,
+    // exactly as Node reports them.
+    expect({ code: writeErr?.code, syscall: writeErr?.syscall }).toEqual({ code: "ECANCELED", syscall: "write" });
+    expect(errors.map(e => e.code)).toEqual(["ECONNRESET"]);
     expect(p.client.writableFinished).toBe(false);
   });
 
@@ -128,7 +132,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     p.client.resetAndDestroy();
 
     const writeErr = await written.promise;
-    expect(writeErr).toBeTruthy();
+    expect({ code: writeErr?.code, syscall: writeErr?.syscall }).toEqual({ code: "ECANCELED", syscall: "write" });
     expect(p.serverSock.writableFinished).toBe(false);
   });
 

@@ -7,13 +7,30 @@ const { isIP } = require("node:net");
 const net = require("node:net");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel, isTlsSymbol } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
+
+// Node's https.Server extends tls.Server, so it is a TLS listener even when the
+// options carry no key or cert - every handshake fails and nothing is ever
+// served in the clear. http.Server only turns TLS on when it sees cert material,
+// so force it on here: a typo'd option name or an undefined read from disk must
+// not silently downgrade an https endpoint to plaintext HTTP.
+function Server(options, callback): void {
+  if (!(this instanceof Server)) return new Server(options, callback);
+  this[isTlsSymbol] = true;
+  http.Server.$call(this, options, callback);
+  return this;
+}
+$toClass(Server, "Server", http.Server);
+
+function createServer(options, callback) {
+  return new Server(options, callback);
+}
 
 function request(...args) {
   let options = {};
@@ -503,8 +520,8 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
-  createServer: http.createServer,
+  Server,
+  createServer,
   get,
   request,
 };

@@ -268,54 +268,55 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
+  }
 
-    let cert = options.cert;
-    if (cert) {
-      throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
-    }
+  let cert = options.cert;
+  if (cert) {
+    throwOnInvalidTLSArray("options.cert", cert);
+    this[isTlsSymbol] = true;
+  }
 
-    let key = options.key;
-    if (key) {
-      throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
-    }
+  let key = options.key;
+  if (key) {
+    throwOnInvalidTLSArray("options.key", key);
+    this[isTlsSymbol] = true;
+  }
 
-    let ca = options.ca;
-    if (ca) {
-      throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
-    }
+  let ca = options.ca;
+  if (ca) {
+    throwOnInvalidTLSArray("options.ca", ca);
+    this[isTlsSymbol] = true;
+  }
 
-    let passphrase = options.passphrase;
-    if (passphrase && typeof passphrase !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-    }
+  let passphrase = options.passphrase;
+  if (passphrase && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
 
-    let serverName = options.servername;
-    if (serverName && typeof serverName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
-    }
+  let serverName = options.servername;
+  if (serverName && typeof serverName !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
+  }
 
-    let secureOptions = options.secureOptions || 0;
-    if (secureOptions && typeof secureOptions !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-    }
+  let secureOptions = options.secureOptions || 0;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+  }
 
-    if (this[isTlsSymbol]) {
-      this[tlsSymbol] = normalizeServerTls({
-        serverName,
-        key,
-        cert,
-        ca,
-        passphrase,
-        secureOptions,
-        requestCert: options.requestCert,
-        rejectUnauthorized: options.rejectUnauthorized,
-      });
-    } else {
-      this[tlsSymbol] = null;
-    }
+  // node:https pre-sets `isTlsSymbol`, so an `https.createServer({})` with no
+  // key/cert still builds a certificate-less TLS listener whose handshakes all
+  // fail, instead of quietly serving plaintext HTTP on an https endpoint.
+  if (this[isTlsSymbol]) {
+    this[tlsSymbol] = normalizeServerTls({
+      serverName,
+      key,
+      cert,
+      ca,
+      passphrase,
+      secureOptions,
+      requestCert: options.requestCert,
+      rejectUnauthorized: options.rejectUnauthorized,
+    });
   }
 
   this[optionsSymbol] = options;

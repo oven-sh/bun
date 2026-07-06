@@ -115,6 +115,19 @@ describe("Url.prototype.parse host handling", () => {
     expect(parse("http://Ünicode.com/").hostname).toBe("xn--nicode-2ya.com");
   });
 
+  // https://github.com/oven-sh/bun/issues/24812
+  it("parses a multi-host connection string", () => {
+    expect(parse("mongodb://user:password@[fd34:b871:e6a7::1],[fd34:b871:e6a7::2]:27017/db")).toMatchObject({
+      protocol: "mongodb:",
+      auth: "user:password",
+      host: "[fd34:b871:e6a7::1],[fd34:b871:e6a7::2]:27017",
+      port: "27017",
+      hostname: "fd34:b871:e6a7::1],[fd34:b871:e6a7::2",
+      pathname: "/db",
+      href: "mongodb://user:password@[fd34:b871:e6a7::1],[fd34:b871:e6a7::2]:27017/db",
+    });
+  });
+
   it.each([
     ["http://h:8a/x", "ERR_INVALID_ARG_VALUE"],
     ["https://evil.com:.example.com", "ERR_INVALID_ARG_VALUE"],

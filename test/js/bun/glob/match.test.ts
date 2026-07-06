@@ -24,7 +24,7 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 describe("Glob.match", () => {
@@ -386,13 +386,24 @@ describe("Glob.match", () => {
     expect(new Glob(pastCap).match(Buffer.alloc(257, "a").toString())).toBeFalse();
   });
 
-  test("pathologically deep brace patterns do not overflow the stack", () => {
+  test("pathologically deep brace patterns do not overflow the stack", async () => {
     // Each group along a match path adds a native recursion frame; thousands
-    // of sequential groups used to segfault. The depth cap returns false
-    // instead of crashing.
-    const n = 5000;
-    const flat = Array.from({ length: n }, () => "{a,b}").join("");
-    expect(new Glob(flat).match(Buffer.alloc(n, "a").toString())).toBeFalse();
+    // of sequential groups used to segfault. Run in a child so a regression
+    // is a clean failure instead of crashing the whole test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const n = 5000;
+         const flat = Array.from({ length: n }, () => "{a,b}").join("");
+         if (new Bun.Glob(flat).match(Buffer.alloc(n, "a").toString()) !== false) process.exit(2);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // The depth cap returns false (exit 0); no crash (signalCode null).
+    expect({ exitCode, signalCode: proc.signalCode, stderr }).toMatchObject({ exitCode: 0, signalCode: null });
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

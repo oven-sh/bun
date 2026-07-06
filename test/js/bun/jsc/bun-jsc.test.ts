@@ -25,6 +25,7 @@ import {
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import v8 from "node:v8";
 
 describe("bun:jsc", () => {
   function count() {
@@ -220,6 +221,37 @@ describe("bun:jsc", () => {
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
+  });
+});
+
+describe("deserialize rejects input with no bytes", () => {
+  // Zero bytes cannot encode a value, so they must fail the same way any other
+  // payload without a version header does, instead of producing a plausible null.
+  function expectRejected(fn: () => unknown) {
+    expect(fn).toThrow(TypeError);
+    expect(fn).toThrow("Unable to deserialize data.");
+  }
+
+  it.each([
+    ["Buffer.alloc(0)", () => Buffer.alloc(0)],
+    ["new Uint8Array(0)", () => new Uint8Array(0)],
+    ["new DataView(new ArrayBuffer(0))", () => new DataView(new ArrayBuffer(0))],
+    ["new ArrayBuffer(0)", () => new ArrayBuffer(0)],
+    ["new SharedArrayBuffer(0)", () => new SharedArrayBuffer(0)],
+    ["a zero-length view of a non-empty buffer", () => new Uint8Array(new ArrayBuffer(8), 4, 0)],
+  ])("%s", (_label, make) => {
+    expectRejected(() => deserialize(make()));
+    expectRejected(() => v8.deserialize(make() as any));
+  });
+
+  it("still deserializes a value that really is null", () => {
+    expect(deserialize(serialize(null))).toBeNull();
+    expect(v8.deserialize(v8.serialize(null))).toBeNull();
+  });
+
+  it("still deserializes a serialized empty buffer", () => {
+    expect(deserialize(serialize(Buffer.alloc(0)))).toStrictEqual(Buffer.alloc(0));
+    expect(v8.deserialize(v8.serialize(Buffer.alloc(0)))).toStrictEqual(Buffer.alloc(0));
   });
 });
 

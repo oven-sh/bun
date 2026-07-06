@@ -1027,3 +1027,50 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   expect(exitCode).toBe(0);
 });
+
+// Deleting the property has to bring the default formatter back, and a formatter assigned
+// afterwards has to take effect. source-map-support, jest and stack-utils all do this.
+// Runs in a subprocess because `delete Error.prepareStackTrace` mutates realm-wide state.
+test("delete Error.prepareStackTrace restores the default formatter", async () => {
+  const fixture = [
+    `const out = {};`,
+    `Error.prepareStackTrace = () => "ONE";`,
+    `out.withFormatter = new Error().stack;`,
+
+    `delete Error.prepareStackTrace;`,
+    `out.typeofAfterDelete = typeof Error.prepareStackTrace;`,
+    `out.headerAfterDelete = new Error("after delete").stack.split("\\n")[0];`,
+    `out.hasFramesAfterDelete = /\\n\\s+at /.test(new Error("after delete").stack);`,
+
+    `Error.prepareStackTrace = () => "TWO";`,
+    `out.afterReassign = new Error().stack;`,
+
+    `delete Error.prepareStackTrace;`,
+    `const captured = new Error("captured");`,
+    `Error.captureStackTrace(captured);`,
+    `out.capturedHeader = captured.stack.split("\\n")[0];`,
+
+    `console.log(JSON.stringify(out));`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout || "null"), exitCode }).toEqual({
+    out: {
+      withFormatter: "ONE",
+      typeofAfterDelete: "undefined",
+      headerAfterDelete: "Error: after delete",
+      hasFramesAfterDelete: true,
+      afterReassign: "TWO",
+      capturedHeader: "Error: captured",
+    },
+    exitCode: 0,
+  });
+});

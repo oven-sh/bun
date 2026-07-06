@@ -497,9 +497,6 @@ public:
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
                                                                                                              \
-    /* Error.prepareStackTrace */                                                                            \
-    V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
-                                                                                                             \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
@@ -515,11 +512,8 @@ public:
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
                                                                                                              \
-    /* The original, unmodified Error.prepareStackTrace. */                                                  \
-    /* */                                                                                                    \
-    /* We set a default value for this to mimic Node.js behavior It is a */                                  \
-    /* separate from the user-facing value so that we can tell if the user */                                \
-    /* really set it or if it's just the default value. */                                                   \
+    /* The default value of Error.prepareStackTrace, to mimic Node.js. Comparing the property */             \
+    /* against it is how we tell whether the user really installed a formatter of their own. */              \
     V(public, LazyPropertyOfGlobalObject<JSC::JSFunction>, m_errorConstructorPrepareStackTraceInternalValue) \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_nodeErrorCache)                                       \

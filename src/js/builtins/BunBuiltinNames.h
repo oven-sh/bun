@@ -152,6 +152,7 @@ using namespace JSC;
     macro(pokePromiseAsHandled) \
     macro(port) \
     macro(post) \
+    macro(prepareStackTrace) \
     macro(preventAbort) \
     macro(preventCancel) \
     macro(preventClose) \

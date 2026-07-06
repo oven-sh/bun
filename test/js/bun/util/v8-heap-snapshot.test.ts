@@ -48,6 +48,9 @@ const walked = {
   undefinedNodes: 0,
 };
 
+// Deliberately sequential rather than `test.concurrent`: each fixture is
+// single-threaded, so fanning six snapshots out at once buys wall time this file
+// does not need by multiplying the peak RSS this file exists to bound.
 test("v8 heap snapshot", async () => {
   expect(await runFixture("generate-string")).toEqual({ type: "string", ...structure, ...walked });
 });

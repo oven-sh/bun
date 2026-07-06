@@ -1,7 +1,7 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
-import { SocketAddress, SocketAddressInitOptions } from "node:net";
+import { BlockList, SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
 let v6: SocketAddress;
@@ -89,6 +89,76 @@ describe("SocketAddress constructor", () => {
       expect(() => new SocketAddress({ family })).toThrowWithCode(Error, "ERR_INVALID_ARG_VALUE");
     },
   );
+
+  // ===========================================================================
+  // ===================== STRICT PARSING / CANONICALIZATION ===================
+  // ===========================================================================
+
+  // Node parses with a strict canonical parser (libuv's inet_pton) and rejects
+  // the non-canonical forms that the lenient c-ares inet_net_pton path accepts.
+  it.each([
+    ["ipv4", "010.1.2.3"],
+    ["ipv4", "0x0a000001"],
+    ["ipv4", "1.2.3"],
+    ["ipv4", "1.2.3.256"],
+    ["ipv4", "01.2.3.4"],
+    ["ipv6", "::ffff:010.1.2.3"],
+    ["ipv6", "fe80::1::2"],
+    ["ipv6", "zzz"],
+  ] as [SocketAddressInitOptions["family"], string][])(
+    "new SocketAddress({ family: %p, address: %p }) throws ERR_INVALID_ADDRESS",
+    (family, address) => {
+      expect(() => new SocketAddress({ family, address })).toThrowWithCode(Error, "ERR_INVALID_ADDRESS");
+    },
+  );
+
+  // A trailing zone id (%eth0, %1) is stripped and accepted, matching node.
+  it.each(["fe80::1%eth0", "fe80::1%1"])("accepts and strips the zone id in %p", address => {
+    expect(new SocketAddress({ family: "ipv6", address }).address).toBe("fe80::1");
+  });
+
+  // `.address` is canonicalized from the parsed bytes, not echoed verbatim.
+  it.each([
+    ["2001:0DB8:0000::0001", "2001:db8::1"],
+    ["2001:DB8::1", "2001:db8::1"],
+    ["::FFFF:1.1.1.1", "::ffff:1.1.1.1"],
+    ["0000:0000:0000:0000:0000:0000:0000:0001", "::1"],
+  ])("canonicalizes %p to %p", (input, expected) => {
+    expect(new SocketAddress({ family: "ipv6", address: input }).address).toBe(expected);
+  });
+
+  it("leaves already-canonical IPv4 text unchanged", () => {
+    expect(new SocketAddress({ family: "ipv4", address: "123.123.123.123" }).address).toBe("123.123.123.123");
+  });
+
+  it("canonicalized address is stable across toJSON and the getter", () => {
+    const sa = new SocketAddress({ family: "ipv6", address: "2001:0DB8::1" });
+    expect(sa.address).toBe("2001:db8::1");
+    expect(sa.toJSON().address).toBe("2001:db8::1");
+  });
+
+  // BlockList routes every string through the same SocketAddress parser, so
+  // the strict-parsing and zone-id fixes apply there too. The zone-id case is
+  // a security-relevant false negative: getpeername surfaces a link-local peer
+  // as fe80::1%eth0, which must still match a rule blocking fe80::1.
+  describe("BlockList shares the SocketAddress parser", () => {
+    it.each(["010.1.2.3", "0x0a000001", "1.2.3", "1.2.3.256", "::ffff:010.1.2.3"])(
+      "addAddress(%p) throws ERR_INVALID_ADDRESS",
+      addr => {
+        const blockList = new BlockList();
+        const family = addr.includes(":") ? "ipv6" : "ipv4";
+        expect(() => blockList.addAddress(addr, family)).toThrowWithCode(Error, "ERR_INVALID_ADDRESS");
+      },
+    );
+
+    it("matches an IPv6 address that carries a zone id against a zone-less rule", () => {
+      const blockList = new BlockList();
+      blockList.addAddress("fe80::1", "ipv6");
+      expect(blockList.check("fe80::1%eth0", "ipv6")).toBe(true);
+      expect(blockList.check("fe80::1%1", "ipv6")).toBe(true);
+      expect(blockList.check("fe80::2%eth0", "ipv6")).toBe(false);
+    });
+  });
 
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================

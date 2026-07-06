@@ -67,10 +67,12 @@ console.log("ws:" + got);
 server.stop(true);
 `;
 
-const syncRoute = `routes: {
+const thrown = `new Error("throw-after-upgrade")`;
+
+const syncRoute = (value: string) => `routes: {
     "/": (req, server) => {
       server.upgrade(req, { data: {} });
-      throw new Error("throw-after-upgrade");
+      throw ${value};
     },
   },`;
 
@@ -78,24 +80,31 @@ const syncRoute = `routes: {
 // is consumed by Bun's own reaction and never reaches the unhandled-rejection
 // reporter. Bun.sleep() parks the continuation on a macrotask, past the
 // microtask drain; the test waits on the websocket, not on the clock.
-const deferredRoute = `routes: {
+const deferredRoute = (value: string) => `routes: {
     "/": async (req, server) => {
       await Bun.sleep(1);
       server.upgrade(req, { data: {} });
-      throw new Error("throw-after-upgrade");
+      throw ${value};
     },
   },`;
 
-const syncFetch = `fetch(req, server) {
+const syncFetch = (value: string) => `fetch(req, server) {
     server.upgrade(req, { data: {} });
-    throw new Error("throw-after-upgrade");
+    throw ${value};
   },`;
 
 test.each([
-  ["routes handler, sync throw", syncRoute],
-  ["routes handler, upgrade after await", deferredRoute],
-  ["fetch handler, sync throw", syncFetch],
-])("Bun.serve() reports a %s that throws after server.upgrade()", async (_name, handler) => {
+  ["routes handler, sync throw", syncRoute(thrown), "error: throw-after-upgrade"],
+  ["routes handler, upgrade after await", deferredRoute(thrown), "error: throw-after-upgrade"],
+  ["fetch handler, sync throw", syncFetch(thrown), "error: throw-after-upgrade"],
+  // A nullish thrown value is still a thrown value, and the non-upgraded path
+  // reports it, so these must not be filtered out on the way to the reporter.
+  // (on_reject() normalizes a nullish rejection reason to undefined, so the
+  // deferred shape cannot tell `throw null` from `throw undefined`.)
+  ["routes handler, sync throw undefined", syncRoute("undefined"), "error: undefined"],
+  ["routes handler, sync throw null", syncRoute("null"), "error: null"],
+  ["routes handler, throw undefined after await", deferredRoute("undefined"), "error: undefined"],
+])("Bun.serve() reports a %s after server.upgrade()", async (_name, handler, expected) => {
   using dir = tempDir("throw-after-upgrade", {
     "index.ts": afterUpgradeFixture(handler),
   });
@@ -111,7 +120,7 @@ test.each([
 
   // The socket was already handed to the WebSocket, so the upgrade still succeeds.
   expect(stdout).toBe("ws:upgraded\n");
-  expect(stderr).toContain("error: throw-after-upgrade");
+  expect(stderr).toContain(expected);
   expect(exitCode).toBe(1);
 });
 
@@ -119,8 +128,8 @@ test.each([
 // uncaughtException, a rejected handler promise keeps the unhandledRejection
 // origin it would have had if Bun had not consumed the rejection itself.
 test.each([
-  ["sync throw", syncRoute, "uncaughtException"],
-  ["upgrade after await", deferredRoute, "unhandledRejection"],
+  ["sync throw", syncRoute(thrown), "uncaughtException"],
+  ["upgrade after await", deferredRoute(thrown), "unhandledRejection"],
 ])("a %s after server.upgrade() reaches process.on('uncaughtException')", async (_name, handler, origin) => {
   using dir = tempDir("throw-after-upgrade-handler", {
     "index.ts": afterUpgradeFixture(

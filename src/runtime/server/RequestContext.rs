@@ -953,7 +953,8 @@ where
     /// dropping it.
     fn report_error_after_upgrade(&self, value: JSValue, is_rejection: bool) {
         debug_assert!(self.did_upgrade_web_socket());
-        if value.is_empty_or_undefined_or_null() {
+        // `throw undefined` still threw; only an absent value has nothing to say.
+        if value.is_empty() {
             return;
         }
         let Some(server) = self.server else { return };

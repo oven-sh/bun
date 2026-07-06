@@ -1713,10 +1713,9 @@ impl<'bump> Parser<'bump> {
         let mut has_brace_close = false;
         let mut has_comma = false;
         let mut has_glob_syntax = false;
-        // A `~` expands only at the start of a word. Brace expansion runs first,
-        // so the start of each brace element (after `{` or `,`) is a word start
-        // iff the brace group itself began at one; `brace_word_start` stacks that
-        // entry state per nesting level (empty until the first `{`).
+        // A `~` expands only at word start. Brace expansion runs first, so each
+        // brace element starts a word iff the brace group did; `brace_word_start`
+        // stacks that entry state per nesting level.
         let mut at_word_start = true;
         let mut brace_word_start: Vec<bool> = Vec::new();
         {

@@ -254,4 +254,33 @@ describe("Valkey: subscriber reconnect", () => {
       client.close();
     }
   });
+
+  test("replays SUBSCRIBE after SELECT when the URL names a database", async () => {
+    using server = startRespServer();
+    const messages = messageQueue();
+
+    // The replay is written while SELECT's reply is still outstanding, so it has
+    // to land behind SELECT on the wire or it would subscribe on database 0.
+    const subscriber = new RedisClient(`${server.url}/3`, { autoReconnect: true, maxRetries: 10 });
+    const publisher = new RedisClient(`${server.url}/3`, { autoReconnect: false });
+
+    try {
+      await subscriber.connect();
+      await subscriber.subscribe("news", message => messages.push(message));
+      expect(commandLines(server.connections[0])).toEqual(["HELLO 3", "SELECT 3", "SUBSCRIBE news"]);
+
+      await publisher.connect();
+      server.connections[0].socket!.end();
+      await server.waitForConnections(3);
+      expect(await subscriber.ping()).toBe("PONG");
+
+      expect(commandLines(server.connections[2])).toEqual(["HELLO 3", "SELECT 3", "SUBSCRIBE news", "PING"]);
+
+      expect(await publisher.publish("news", "after")).toBe(1);
+      expect(await messages.next()).toBe("after");
+    } finally {
+      subscriber.close();
+      publisher.close();
+    }
+  });
 });

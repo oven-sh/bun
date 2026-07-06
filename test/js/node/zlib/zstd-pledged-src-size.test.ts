@@ -46,25 +46,27 @@ describe("zstd pledgedSrcSize", () => {
 
   it("accepts 4 GiB and larger when streaming", async () => {
     const encoder = zlib.createZstdCompress({ pledgedSrcSize: 2 ** 32 });
-    const chunks: Buffer[] = [];
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    encoder.on("data", chunk => chunks.push(chunk));
-    encoder.on("error", reject);
-    encoder.write(input, err => err && reject(err));
-    encoder.flush(() => resolve());
-    await promise;
-    encoder.destroy();
-    expect(frameContentSize(Buffer.concat(chunks))).toBe(4294967296n);
+    try {
+      const chunks: Buffer[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      encoder.on("data", chunk => chunks.push(chunk));
+      encoder.on("error", reject);
+      encoder.on("close", () => reject(new Error("encoder closed before the flush completed")));
+      encoder.write(input, err => err && reject(err));
+      encoder.flush(() => resolve());
+      await promise;
+      expect(frameContentSize(Buffer.concat(chunks))).toBe(4294967296n);
+    } finally {
+      encoder.destroy();
+    }
   });
 
-  it("rejects values that are not a non-negative safe integer", () => {
-    for (const pledgedSrcSize of [Number.MAX_SAFE_INTEGER + 1, -1, 1.5, Infinity]) {
-      expect(() => zlib.createZstdCompress({ pledgedSrcSize })).toThrow(
-        expect.objectContaining({
-          code: "ERR_OUT_OF_RANGE",
-          message: expect.stringContaining('The value of "pledgedSrcSize" is out of range.'),
-        }),
-      );
-    }
+  it.each([Number.MAX_SAFE_INTEGER + 1, -1, 1.5, Infinity, NaN])("rejects %p as pledgedSrcSize", pledgedSrcSize => {
+    expect(() => zlib.createZstdCompress({ pledgedSrcSize })).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: expect.stringContaining('The value of "pledgedSrcSize" is out of range.'),
+      }),
+    );
   });
 });

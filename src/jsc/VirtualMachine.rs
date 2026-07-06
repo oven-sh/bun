@@ -2452,20 +2452,27 @@ impl VirtualMachine {
     /// body queued ahead of a timer that expired while it ran. `uv_run` opens
     /// with `uv__run_timers`, so Node dispatches that timer before either.
     ///
-    /// Node reports unhandled rejections (`processPromiseRejections()`) and
-    /// uncaught exceptions before `uv_run` too, so both still come first. A body
-    /// that threw rejects `evaluation`, and an unreported rejection leaves
-    /// `unhandled_error_counter` set, which is what `is_event_loop_alive()`
-    /// reads to skip the loop entirely: neither reaches a timers phase.
+    /// Node's `processTicksAndRejections` notifies unhandled rejections and
+    /// drains whatever the listener schedules, all before `uv_run`, so that runs
+    /// first here too. A body that threw rejects `evaluation`, and a rejection it
+    /// left unreported bumps `unhandled_error_counter`, which is what
+    /// `is_event_loop_alive()` reads to exit without entering the loop: neither
+    /// reaches a timers phase.
     fn run_entry_point_body(&mut self, evaluation: *mut JSInternalPromise) {
+        // `unhandled_error_counter` is cumulative and is not reset between test
+        // files, so only this body's errors count.
+        let unhandled_before = self.unhandled_error_counter;
         if self.event_loop_mut().drain_microtasks().is_err() {
             return;
         }
         self.global().handle_rejected_promises();
+        if self.event_loop_mut().drain_microtasks().is_err() {
+            return;
+        }
         // SAFETY: `evaluation` is a live JSC heap cell returned by
         // `reload_entry_point*` and kept alive by the module loader.
         let threw = crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected;
-        if threw || self.unhandled_error_counter != 0 {
+        if threw || self.unhandled_error_counter > unhandled_before {
             return;
         }
         self.event_loop_mut().drain_expired_timers();

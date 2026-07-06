@@ -777,8 +777,8 @@ impl CreateCommand {
                 // SAFETY: single-threaded CLI dispatch; no other borrow of the
                 // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
-                let bump = bun_alloc::Arena::new();
-                let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
+                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+                let mut package_json_expr = match JSON::parse_utf8(&source, log, bump) {
                     Ok(e) => e,
                     Err(_) => {
                         if log.errors > 0 {

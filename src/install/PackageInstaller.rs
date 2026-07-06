@@ -346,7 +346,7 @@ impl<'a> LazyPackageDestinationDir<'a> {
 /// anything that could escape `node_modules`: empty names, `.`/`..`
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
-fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.is_empty()
         || alias.len() >= MAX_PATH_BYTES
         || alias.contains(&b'\\')
@@ -645,13 +645,13 @@ impl<'a> PackageInstaller<'a> {
 
                 if let Some(err) = bin_linker.err {
                     if log_level != Options::LogLevel::Silent {
-                        manager.log_mut().add_error_fmt_opts(
-                            format_args!(
-                                "Failed to link <b>{}<r>: {}",
-                                bstr::BStr::new(alias),
-                                err.name(),
-                            ),
-                            Default::default(),
+                        bun_ast::add_error_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "Failed to link <b>{}<r>: {}",
+                            bstr::BStr::new(alias),
+                            err.name(),
                         );
                     }
 
@@ -2007,19 +2007,14 @@ impl<'a> PackageInstaller<'a> {
                                 let dir = match lazy_package_dir.get_dir() {
                                     Ok(d) => d,
                                     Err(err) => {
-                                        Output::err_tag(
+                                        Output::err(
                                             "EACCES",
-                                            format_args!(
-                                                "Permission denied while installing <b>{}<r>",
-                                                bstr::BStr::new(
-                                                    self.names[package_id as usize].slice(
-                                                        self.lockfile()
-                                                            .buffers
-                                                            .string_bytes
-                                                            .as_slice()
-                                                    )
+                                            "Permission denied while installing <b>{}<r>",
+                                            (bstr::BStr::new(
+                                                self.names[package_id as usize].slice(
+                                                    self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
-                                            ),
+                                            ),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2030,19 +2025,14 @@ impl<'a> PackageInstaller<'a> {
                                 let stat = match bun_sys::fstat(dir) {
                                     Ok(s) => s,
                                     Err(err) => {
-                                        Output::err_tag(
+                                        Output::err(
                                             "EACCES",
-                                            format_args!(
-                                                "Permission denied while installing <b>{}<r>",
-                                                bstr::BStr::new(
-                                                    self.names[package_id as usize].slice(
-                                                        self.lockfile()
-                                                            .buffers
-                                                            .string_bytes
-                                                            .as_slice()
-                                                    )
+                                            "Permission denied while installing <b>{}<r>",
+                                            (bstr::BStr::new(
+                                                self.names[package_id as usize].slice(
+                                                    self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
-                                            ),
+                                            ),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2077,14 +2067,12 @@ impl<'a> PackageInstaller<'a> {
                             NODE_MODULES_IS_OK.store(true, Ordering::Relaxed);
                         }
 
-                        Output::err_tag(
+                        Output::err(
                             "EACCES",
-                            format_args!(
-                                "Permission denied while installing <b>{}<r>",
-                                bstr::BStr::new(
-                                    self.names[package_id as usize].slice(string_buf!())
-                                ),
-                            ),
+                            "Permission denied while installing <b>{}<r>",
+                            (bstr::BStr::new(
+                                self.names[package_id as usize].slice(string_buf!()),
+                            ),),
                         );
 
                         self.summary.fail += 1;

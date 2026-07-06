@@ -1490,3 +1490,27 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }
+
+/// C++ (webcore/streams) entries for the deferred task queue: register/unregister a task that
+/// runs right after the current microtask drain (see DeferredTaskQueue.rs). `ctx` identity is
+/// the key; the callee must unregister before `ctx` is freed.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__EventLoop__postDeferredTask(
+    vm: &VirtualMachine,
+    ctx: *mut core::ffi::c_void,
+    task: DeferredRepeatingTask,
+) -> bool {
+    vm.event_loop_ref()
+        .deferred_tasks
+        .post_task(core::ptr::NonNull::new(ctx), task)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__EventLoop__unregisterDeferredTask(
+    vm: &VirtualMachine,
+    ctx: *mut core::ffi::c_void,
+) -> bool {
+    vm.event_loop_ref()
+        .deferred_tasks
+        .unregister_task(core::ptr::NonNull::new(ctx))
+}

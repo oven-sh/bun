@@ -3193,6 +3193,16 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Transfer => {
+                if self.store().is_some_and(|s| !s.has_one_ref()) {
+                    // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
+                    let copied = unsafe {
+                        self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(
+                            global, buf,
+                        )
+                    };
+                    self.detach();
+                    return copied;
+                }
                 if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {

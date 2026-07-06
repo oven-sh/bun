@@ -1075,6 +1075,48 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(result).toEqual(["top/file.txt"]);
   });
 
+  test("** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true })));
+    expect(result).toEqual(["file.txt", "loop/file.txt"]);
+
+    using shared = tempDir("glob-scan-symlink-shared-target", {
+      "realdir/file.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(shared), "linkA"), "dir");
+    fs.symlinkSync("realdir", path.join(String(shared), "linkB"), "dir");
+    const dag = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(shared), followSymlinks: true })));
+    expect(dag).toEqual(["linkA/file.txt", "linkB/file.txt", "realdir/file.txt"]);
+  });
+
+  // Symlinks to the same target in *different* subtrees are not a cycle: a
+  // followed link recorded in one subtree must not suppress its cousin.
+  test("** with followSymlinks descends cousin symlinks that share a target", () => {
+    using dir = tempDir("glob-scan-symlink-cousins", {
+      "shared/file.txt": "x",
+      "a/keep.txt": "x",
+      "b/keep.txt": "x",
+    });
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "a", "link"), "dir");
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "b", "link"), "dir");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(dir), followSymlinks: true })));
+    expect(result).toEqual(["a/keep.txt", "a/link/file.txt", "b/keep.txt", "b/link/file.txt", "shared/file.txt"]);
+  });
+
+  test("async ** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", async () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle-async", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = await Array.fromAsync(new Glob("**/*.txt").scan({ cwd, followSymlinks: true }));
+    expect(norm(result)).toEqual(["file.txt", "loop/file.txt"]);
+  });
+
   test("async scan resolves a literal path through a symlink", async () => {
     using dir = makeTree("glob-scan-symlink-literal-async");
     const result = await Array.fromAsync(

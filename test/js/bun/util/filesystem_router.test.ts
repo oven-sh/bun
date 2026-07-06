@@ -621,6 +621,29 @@ it("decodes percent-encoded path segments and keeps params and pathname stable a
   expect(exitCode).toBe(0);
 });
 
+it(".params decodes percent escapes in a route segment exactly once", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  const spaced = router.match("/posts/a%20b")!;
+  expect(spaced.name).toBe("/posts/[id]");
+  expect(spaced.pathname).toBe("/posts/a b");
+  expect(spaced.params.id).toBe("a b");
+
+  const escaped = router.match("/posts/%252e%252e%252fetc")!;
+  expect(escaped.name).toBe("/posts/[id]");
+  expect(escaped.pathname).toBe("/posts/%2e%2e%2fetc");
+  expect(escaped.params.id).toBe("%2e%2e%2fetc");
+
+  const percent = router.match("/posts/100%2525")!;
+  expect(percent.pathname).toBe("/posts/100%25");
+  expect(percent.params.id).toBe("100%25");
+});
+
 it("caps the number of parsed query string parameters instead of crashing", async () => {
   // A query string with more parameters than the iterator's fixed-size visited
   // bitset (2048 entries) must not be able to take down the process when
@@ -659,16 +682,12 @@ it("caps the number of parsed query string parameters instead of crashing", asyn
 });
 
 it("does not match a dynamic route whose static segment merely collides on length and 32-bit hash", () => {
-  // Route segment matching must compare bytes, not just (length, truncated
-  // 32-bit wyhash). Bun.hash.wyhash(s, 0) is the same hash the router stores
-  // for static route segments, so a birthday search over a few hundred
-  // thousand equal-length candidates finds a colliding pair with overwhelming
-  // probability (expected after ~80k candidates).
+  const low32 = (input: string) => Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(input))));
   const seen = new Map<number, string>();
   let pair: [string, string] | null = null;
   for (let i = 0; i < 600_000; i++) {
     const candidate = "s" + i.toString(36).padStart(9, "0");
-    const h = Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(candidate))));
+    const h = low32(candidate);
     const prev = seen.get(h);
     if (prev !== undefined) {
       pair = [prev, candidate];
@@ -677,9 +696,9 @@ it("does not match a dynamic route whose static segment merely collides on lengt
     seen.set(h, candidate);
   }
   expect(pair).not.toBeNull();
-  const [routeSegment, attackSegment] = pair!;
-  expect(attackSegment).not.toBe(routeSegment);
-  expect(attackSegment.length).toBe(routeSegment.length);
+  const [routeSegment, collidingSegment] = pair!;
+  expect(collidingSegment).not.toBe(routeSegment);
+  expect(collidingSegment.length).toBe(routeSegment.length);
 
   const { dir } = make([`${routeSegment}/[id].tsx`]);
   const router = new Bun.FileSystemRouter({
@@ -687,11 +706,9 @@ it("does not match a dynamic route whose static segment merely collides on lengt
     style: "nextjs",
   });
 
-  // The genuine segment matches its dynamic route.
   expect(router.match(`/${routeSegment}/42`)?.name).toBe(`/${routeSegment}/[id]`);
-  // A different segment that only collides on (length, 32-bit hash) must not.
-  expect(router.match(`/${attackSegment}/42`)).toBeNull();
-});
+  expect(router.match(`/${collidingSegment}/42`)).toBeNull();
+}, 60_000);
 
 it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
   // URLPath::parse assumed the decoded pathname was non-empty and had a leading

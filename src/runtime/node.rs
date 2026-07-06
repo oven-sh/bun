@@ -93,6 +93,7 @@ pub mod fs;
 // fs.watch() / fs.watchFile() backends — declared here so `fs::watch` /
 // `fs::watch_file` can reach the real `Arguments` / `FSWatcher` /
 // `StatWatcher` types instead of opaque local stand-ins.
+#[cfg(not(windows))]
 #[path = "node/path_watcher.rs"]
 pub mod path_watcher;
 #[cfg(windows)]

@@ -444,6 +444,10 @@ mod inherent_bridge {
     bridge_hash!(AnimationName);
     bridge_deep_clone!(AnimationName);
 
+    use crate::properties::animation::Animation;
+    // `CssEql` for `Animation` via `#[derive(CssEql)]` on the struct.
+    bridge_deep_clone!(Animation);
+
     use crate::properties::custom::UAEnvironmentVariable;
     impl CssEql for UAEnvironmentVariable {
         #[inline]
@@ -508,6 +512,18 @@ mod inherent_bridge {
 
     use crate::values::easing::EasingFunction;
     bridge_clone_partialeq!(EasingFunction);
+
+    use crate::properties::animation::{
+        AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
+        AnimationTimeline,
+    };
+    bridge_eql_partialeq!(
+        AnimationIterationCount,
+        AnimationDirection,
+        AnimationPlayState,
+        AnimationFillMode,
+        AnimationTimeline,
+    );
 
     use crate::values::alpha::AlphaValue;
     bridge_clone_partialeq!(AlphaValue);

@@ -16,9 +16,7 @@ use bun_sys as sys;
 use bun_sys::windows::{Win32Error, win_error};
 use bun_threading::Mutex;
 
-// `pub(crate)`: node_fs_watcher's `path_watcher` alias resolves to this module
-// on Windows, so `path_watcher::EventType` must re-export the real one.
-pub(crate) use super::path_watcher::EventType;
+use super::node_fs_watcher::WatchEventKind;
 // The callbacks are *associated functions* on `FSWatcher`, not free fns.
 use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
@@ -153,7 +151,7 @@ pub struct PathWatcher {
 #[derive(Clone, Copy)]
 pub(crate) struct ChangeEvent {
     hash: bun_watcher::HashType,
-    event_type: EventType,
+    event_type: WatchEventKind,
     timestamp: u64,
 }
 
@@ -161,7 +159,7 @@ impl Default for ChangeEvent {
     fn default() -> Self {
         Self {
             hash: 0,
-            event_type: EventType::Change,
+            event_type: WatchEventKind::Change,
             timestamp: 0,
         }
     }
@@ -172,7 +170,7 @@ impl ChangeEvent {
         &mut self,
         hash: bun_watcher::HashType,
         timestamp: u64,
-        event_type: EventType,
+        event_type: WatchEventKind,
     ) -> bool {
         let time_diff = timestamp.saturating_sub(self.timestamp);
         // skip consecutive exact duplicates (same path and event type) only
@@ -282,7 +280,7 @@ impl PathWatcher {
         hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
-        event_type: EventType,
+        event_type: WatchEventKind,
     ) {
         self.emit_in_progress = true;
         #[cfg(debug_assertions)]

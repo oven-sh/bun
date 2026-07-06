@@ -48,7 +48,7 @@ _read_scripts_in_package_json() {
         scripts="${scripts//@(\"|\')/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
-            package_json_compreply+=( "${completion%:*}" );
+            [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
         done
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
@@ -59,9 +59,16 @@ _read_scripts_in_package_json() {
         ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
             ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
     ]] && {
-        local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
-        local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/$re_script//");
-        COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );
+        local filtered_reply=();
+        local reply_word script_name keep;
+        for reply_word in "${COMPREPLY[@]}"; do
+            keep=1;
+            for script_name in "${package_json_compreply[@]}"; do
+                [[ "${reply_word}" == "${script_name}" ]] && { keep=""; break; };
+            done
+            [[ -n "${keep}" ]] && filtered_reply+=( "${reply_word}" );
+        done
+        COMPREPLY=( "${filtered_reply[@]}" );
         replaced_script="${prev}";
     }
 }
@@ -175,8 +182,12 @@ _bun_completions() {
             # the previous word is not part of the allowed completion
             # the previous word is not an argument to the last two option
             [[ -z "${cur_word}" ]] && {
-                declare -A comp_reply_associative="( $(echo ${COMPREPLY[@]} | sed 's/[^ ]*/[&]=&/g') )";
-                [[ -z "${comp_reply_associative[${prev}]}" ]] && {
+                local prev_in_reply="";
+                local reply_word;
+                for reply_word in "${COMPREPLY[@]}"; do
+                    [[ "${reply_word}" == "${prev}" ]] && { prev_in_reply=1; break; };
+                done
+                [[ -z "${prev_in_reply}" ]] && {
                     local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
                     local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
                     [[

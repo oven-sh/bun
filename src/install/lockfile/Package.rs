@@ -117,12 +117,11 @@ fn invalid_trusted_dependencies(
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
 ) -> bun_core::Error {
-    let _ = log.add_error_fmt(
+    let _ = bun_ast::add_error_pretty!(
+        log,
         source,
         loc,
-        format_args!(
-            "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
-        ),
+        "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
     bun_core::err!("InvalidPackageJSON")
 }
@@ -3376,6 +3375,20 @@ pub mod serializer {
                         if !matches!(raw[tag_at], 0..=4) {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid bin tag"
+                            ));
+                        }
+                    }
+                }
+                if matches!(field, PackageField::Scripts) {
+                    // `Scripts.filled` is a `bool`; validate the raw byte the
+                    // same way before the copy.
+                    let stride = mem::size_of::<Scripts>();
+                    let filled_at = mem::offset_of!(Scripts, filled);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[filled_at], 0 | 1) {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid package scripts"
                             ));
                         }
                     }

@@ -406,14 +406,16 @@ const ROOT_DEFAULT_IGNORE_PATTERNS: &[&[u8]] = &[
     b"bun.lock",
 ];
 
-// (pattern, can_override)
+// (pattern, can_override). `can_override == false` mirrors npm-packlist's
+// strict rules (only `.git` and `.npmrc` here; lockfiles live in
+// ROOT_DEFAULT_IGNORE_PATTERNS); everything else `"files"` can re-include.
 const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     (b".*.swp", true),
     (b"._*", true),
     (b".DS_Store", true),
     (b".git", false),
     (b".gitignore", true),
-    (b".hg", false),
+    (b".hg", true),
     (b".npmignore", true),
     (b".npmrc", false),
     (b".lock-wscript", true),
@@ -513,9 +515,6 @@ fn iterate_included_project_tree(
         }
     }
 
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
-    let _ = &mut ignores; // unused in this fn body (declared but not read)
-
     let mut dirs: Vec<DirInfo> = Vec::new();
     dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
@@ -564,6 +563,24 @@ fn iterate_included_project_tree(
                     included = true;
                     is_unconditionally_included = true;
                 }
+            }
+
+            if let Some((pattern, kind)) = is_unconditionally_excluded(entry_name, dir_depth) {
+                if log_level.is_verbose() {
+                    bun_core::prettyln!(
+                        "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
+                        <&str>::from(kind),
+                        bstr::BStr::new(pattern),
+                        bstr::BStr::new(entry_subpath.as_bytes()),
+                        if entry.kind == bun_sys::FileKind::Directory {
+                            "/"
+                        } else {
+                            ""
+                        },
+                    );
+                    Output::flush();
+                }
+                continue;
             }
 
             if !included {
@@ -1600,6 +1617,42 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     false
 }
 
+/// Default ignores that nothing (including an explicit `"files"` entry) can
+/// re-include: the root lockfiles and the `can_override == false` patterns.
+fn is_unconditionally_excluded(
+    entry_name: &[u8],
+    dir_depth: usize,
+) -> Option<(&'static [u8], IgnorePatternsKind)> {
+    if dir_depth == 1 {
+        // check default ignores that only apply to the root project directory
+        for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
+            match glob::r#match(pattern, entry_name) {
+                GlobMatchResult::Match => {
+                    // cannot be reversed
+                    return Some((pattern, IgnorePatternsKind::Default));
+                }
+                GlobMatchResult::NoMatch => {}
+                // default patterns don't use `!`
+                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            }
+        }
+    }
+
+    for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
+        if can_override {
+            continue;
+        }
+        match glob::r#match(pattern, entry_name) {
+            GlobMatchResult::Match => return Some((pattern, IgnorePatternsKind::Default)),
+            GlobMatchResult::NoMatch => {}
+            // default patterns don't use `!`
+            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+        }
+    }
+
+    None
+}
+
 fn is_excluded<'a>(
     entry: &DirIterator::IteratorResult,
     entry_subpath: &'a ZStr,
@@ -1616,19 +1669,10 @@ fn is_excluded<'a>(
         {
             return None;
         }
+    }
 
-        // check default ignores that only apply to the root project directory
-        for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
-            match glob::r#match(pattern, entry_name) {
-                GlobMatchResult::Match => {
-                    // cannot be reversed
-                    return Some((pattern, IgnorePatternsKind::Default));
-                }
-                GlobMatchResult::NoMatch => {}
-                // default patterns don't use `!`
-                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
-            }
-        }
+    if let Some(excluded) = is_unconditionally_excluded(entry_name, dir_depth) {
+        return Some(excluded);
     }
 
     let mut ignore_pattern: &[u8] = &[];
@@ -1639,19 +1683,18 @@ fn is_excluded<'a>(
     let mut ignored = false;
 
     for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
+        if !can_override {
+            continue;
+        }
         match glob::r#match(pattern, entry_name) {
             GlobMatchResult::Match => {
-                if can_override {
-                    ignored = true;
-                    ignore_pattern = pattern;
-                    ignore_kind = IgnorePatternsKind::Default;
+                ignored = true;
+                ignore_pattern = pattern;
+                ignore_kind = IgnorePatternsKind::Default;
 
-                    // break. doesn't matter if more default patterns
-                    // match this path
-                    break;
-                }
-
-                return Some((pattern, IgnorePatternsKind::Default));
+                // break. doesn't matter if more default patterns
+                // match this path
+                break;
             }
             GlobMatchResult::NoMatch => {}
             // default patterns don't use `!`

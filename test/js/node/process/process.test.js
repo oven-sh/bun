@@ -137,6 +137,64 @@ it("process.hrtime.bigint()", () => {
   expect(end > start).toBe(true);
 });
 
+// Runs in a subprocess because passing a non-numeric element used to trip an
+// assertion in the int64 conversion, which aborts assert-enabled builds.
+it("process.hrtime() coerces tuple elements with ToNumber like node", async () => {
+  const fixture = /* js */ `
+    const classify = v => {
+      if (typeof v !== "number") return typeof v;
+      if (Number.isNaN(v)) return "NaN";
+      if (!Number.isFinite(v)) return String(v);
+      if (!Number.isInteger(v)) return "fraction:" + Math.abs(v % 1);
+      return v < 0 ? "negative" : "integer";
+    };
+    const probe = time => {
+      try {
+        return process.hrtime(time).map(classify);
+      } catch (e) {
+        return e.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        strings: probe(["a", "b"]),
+        objects: probe([{}, {}]),
+        sparse: probe(new Array(2)),
+        undefineds: probe([undefined, undefined]),
+        nulls: probe([null, null]),
+        numericStrings: probe(["0", "0"]),
+        fractions: probe([-1, 0.5]),
+        bigints: probe([1n, 2n]),
+        symbols: probe([Symbol("x"), 0]),
+      }),
+    );
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim() || stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      strings: ["NaN", "NaN"],
+      objects: ["NaN", "NaN"],
+      sparse: ["NaN", "NaN"],
+      undefineds: ["NaN", "NaN"],
+      nulls: ["integer", "integer"],
+      numericStrings: ["integer", "integer"],
+      fractions: ["integer", "fraction:0.5"],
+      bigints: "TypeError",
+      symbols: "TypeError",
+    }),
+    exitCode: 0,
+  });
+});
+
 it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
@@ -807,6 +865,43 @@ describe.concurrent(() => {
     it("ownKeys trap windows process.env", () => {
       expect(() => Object.keys(process.env)).not.toThrow();
       expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+    });
+
+    // The get trap used to uppercase every string key, so inherited
+    // Object.prototype methods and own as-is props came back undefined —
+    // node's process-env trace fixture crashed on
+    // `process.env.hasOwnProperty('BAZ')`.
+    it("windows process.env exposes prototype methods and own props alongside case-insensitive vars", () => {
+      process.env.BUN_TEST_ENV_PROXY = "value";
+      try {
+        // Case-insensitive env-var access still wins.
+        expect(process.env.bun_test_env_proxy).toBe("value");
+        expect(process.env.Bun_Test_Env_Proxy).toBe("value");
+        // Inherited Object.prototype methods are callable, like node.
+        expect(typeof process.env.hasOwnProperty).toBe("function");
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY")).toBe(true);
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY_MISSING")).toBe(false);
+        expect(typeof process.env.toString).toBe("function");
+        expect("hasOwnProperty" in process.env).toBe(true);
+        // Own as-is properties (toJSON powers JSON.stringify(process.env)).
+        expect(typeof process.env.toJSON).toBe("function");
+        expect(JSON.parse(JSON.stringify(process.env)).BUN_TEST_ENV_PROXY).toBe("value");
+        // toJSON must keep the original-case key names, not the canonical
+        // UPPERCASE storage keys (children echoing their env over IPC or
+        // JSON.stringify must see the same casing the parent saw).
+        process.env.Bun_Test_Env_Proxy_Mixed = "mixed";
+        try {
+          const json = JSON.parse(JSON.stringify(process.env));
+          expect(json.Bun_Test_Env_Proxy_Mixed).toBe("mixed");
+          expect(json.BUN_TEST_ENV_PROXY_MIXED).toBeUndefined();
+        } finally {
+          delete process.env.Bun_Test_Env_Proxy_Mixed;
+        }
+        // Enumeration still works and sees the var.
+        expect(Object.keys(process.env)).toContain("BUN_TEST_ENV_PROXY");
+      } finally {
+        delete process.env.BUN_TEST_ENV_PROXY;
+      }
     });
   }
 

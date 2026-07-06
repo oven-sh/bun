@@ -3330,6 +3330,13 @@ pub mod default_trusted_dependencies {
 }
 
 impl Lockfile {
+    pub fn in_trusted_dependencies(&self, name: &[u8]) -> bool {
+        let hash = SemverStringBuilder::string_hash(name) as u32;
+        self.trusted_dependencies
+            .as_ref()
+            .is_some_and(|trusted| trusted.contains(&hash))
+    }
+
     pub fn has_trusted_dependency(
         &self,
         alias: &[u8],

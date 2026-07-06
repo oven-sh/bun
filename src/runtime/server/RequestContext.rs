@@ -755,6 +755,9 @@ where
             ctx.render_missing_invalid_response(value);
             return;
         };
+        if ctx.reject_unsendable_response(response) {
+            return;
+        }
         ctx.response_jsvalue = value;
         debug_assert!(!ctx.flags.response_protected());
         ctx.flags.set_response_protected(true);
@@ -864,6 +867,24 @@ where
         ctx_log!("deinit<d> ({:p})<r>", self);
         if cfg!(debug_assertions) {
             debug_assert!(self.flags.has_finalized());
+        }
+
+        // A response body stream suspended inside its `pull()` never settles the promise
+        // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
+        // so a client abort in that state reaches deinit with the sink still owned here.
+        // This is the owner's last exit: release it exactly like the settle paths do.
+        if let Some(wrapper_ptr) = self.sink.take() {
+            // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
+            // the context is the sink's sole owner (see the `sink` field's doc comment).
+            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+            wrapper.sink.finalize();
+            if let Some(sink_global) = wrapper.sink.global_this {
+                ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                    &mut wrapper.sink.signal,
+                    &sink_global,
+                );
+            }
+            Self::destroy_sink(wrapper_ptr);
         }
 
         self.request_body_buf = Vec::new();
@@ -2626,6 +2647,9 @@ where
         // `response_value` is rooted via ensure_still_alive() / protect()
         // below for the duration of the borrow.
         if let Some(response) = unsafe { as_response(response_value) } {
+            if ctx.reject_unsendable_response(response) {
+                return;
+            }
             ctx.response_jsvalue = response_value;
             ctx.response_jsvalue.ensure_still_alive();
             ctx.flags.set_response_protected(false);
@@ -2696,6 +2720,10 @@ where
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     };
+
+                    if ctx.reject_unsendable_response(response) {
+                        return;
+                    }
 
                     ctx.response_jsvalue = fulfilled_value;
                     ctx.response_jsvalue.ensure_still_alive();
@@ -3319,6 +3347,27 @@ where
         self.run_error_handler_with_status_code(value, 500);
     }
 
+    /// `false` when the Response can be written. A status outside `100..=999`
+    /// has no HTTP status line, so the Response can never reach the client:
+    /// report it like a thrown error rather than writing an unparseable one.
+    fn reject_unsendable_response(&mut self, response: &Response) -> bool {
+        let status = response.status_code();
+        if HTTPStatusText::is_sendable(status) {
+            return false;
+        }
+        let Some(server) = self.server else {
+            self.render_production_error(500);
+            return true;
+        };
+        // SAFETY: BACKREF
+        let global_this = (*server).global_this();
+        let err = global_this.create_error_instance(format_args!(
+            "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+        ));
+        self.run_error_handler(err);
+        true
+    }
+
     fn ensure_pathname(&self) -> PathnameFormatter<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3> {
         PathnameFormatter { ctx: self }
     }
@@ -3408,8 +3457,12 @@ where
                     // `result` is GC-rooted by `_keep` (EnsureStillAlive)
                     // across the render() call.
                     } else if let Some(response) = unsafe { as_response(result) } {
-                        self.render(response);
-                        return;
+                        // An unsendable Response from the error handler itself
+                        // falls through to the default error page below.
+                        if HTTPStatusText::is_sendable(response.status_code()) {
+                            self.render(response);
+                            return;
+                        }
                     }
                 }
             }
@@ -3458,6 +3511,11 @@ where
                     ctx.finish_running_error_handler(value, status);
                     return;
                 };
+
+                if !HTTPStatusText::is_sendable(response.status_code()) {
+                    ctx.finish_running_error_handler(value, status);
+                    return;
+                }
 
                 ctx.response_jsvalue = fulfilled_value;
                 ctx.response_jsvalue.ensure_still_alive();

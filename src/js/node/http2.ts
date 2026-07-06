@@ -4763,18 +4763,12 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
       }
     } else {
-      const connectOptions = options
-        ? {
-            host,
-            port: String(port),
-            ALPNProtocols: ["h2"],
-            ...options,
-          }
-        : {
-            host,
-            port: String(port),
-            ALPNProtocols: ["h2"],
-          };
+      const connectOptions = {
+        host,
+        port: String(port),
+        ALPNProtocols: ["h2"],
+        ...options,
+      };
       // node's initializeTLSOptions defaults the h2 client's SNI to the authority
       // host (tls.connect itself never derives one), skipping IP literals because
       // RFC 6066 forbids them in server_name.

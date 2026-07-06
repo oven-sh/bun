@@ -248,8 +248,9 @@ function normalizeServerTls(tls) {
   // native TLS options want the length-prefixed wire format, so normalize it the
   // way tls.connect / tls.createServer do. Absent leaves Bun.serve to apply its
   // http/1.1 default, which is what node's https.Server offers.
-  if (tls.ALPNProtocols != null) {
-    convertALPNProtocols(tls.ALPNProtocols, tls);
+  const { ALPNProtocols } = tls;
+  if (ALPNProtocols != null) {
+    convertALPNProtocols(ALPNProtocols, tls);
   }
   return tls;
 }

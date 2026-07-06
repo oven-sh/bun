@@ -251,8 +251,11 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     ws.onclose = close => resolveClose(close);
 
     const close = await closePromise;
-    expect(close.code).toBe(1002);
-    expect(close.reason).toBe("Missing client protocol");
+    expect({ code: close.code, reason: close.reason, wasClean: close.wasClean }).toEqual({
+      code: 1002,
+      reason: "Server sent no subprotocol",
+      wasClean: false,
+    });
     expect(onopenMock).not.toHaveBeenCalled();
 
     const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers<void>();

@@ -1207,7 +1207,7 @@ test("node:vm SourceTextModule maps import attributes per deduplicated request",
     await m3.link((s, ref, extra) => { seenDefer.push([s, extra?.attributes]); return dep; });
 
     // An export-from wins the dedup race over a later same-specifier import, so
-    // the request keeps the export's (absent) attributes, not the import's.
+    // the request reports the export's type, not the import's.
     const seenExport = [];
     const m4 = new vm.SourceTextModule("export * from 'x' with { type: 'css' }; import 'x' with { type: 'json' };");
     await m4.link((s, ref, extra) => { seenExport.push([s, extra?.attributes]); return dep; });

@@ -4763,22 +4763,25 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
       }
     } else {
-      socket = connectWithProtocol(
-        protocol,
-        options
-          ? {
-              host,
-              port: String(port),
-              ALPNProtocols: ["h2"],
-              ...options,
-            }
-          : {
-              host,
-              port: String(port),
-              ALPNProtocols: ["h2"],
-            },
-        onConnect.bind(this),
-      );
+      const connectOptions = options
+        ? {
+            host,
+            port: String(port),
+            ALPNProtocols: ["h2"],
+            ...options,
+          }
+        : {
+            host,
+            port: String(port),
+            ALPNProtocols: ["h2"],
+          };
+      // node's initializeTLSOptions defaults the h2 client's SNI to the authority
+      // host (tls.connect itself never derives one), skipping IP literals because
+      // RFC 6066 forbids them in server_name.
+      if (protocol !== "http:" && connectOptions.servername === undefined && !net.isIP(host)) {
+        connectOptions.servername = host;
+      }
+      socket = connectWithProtocol(protocol, connectOptions, onConnect.bind(this));
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;

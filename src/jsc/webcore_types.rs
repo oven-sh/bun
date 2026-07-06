@@ -825,20 +825,10 @@ pub mod store {
                     .unwrap_or(0)
         }
 
+        /// `bucket/key` for an `s3://bucket/key` URL, otherwise the path as
+        /// given. S3 object keys are opaque byte strings, so nothing is trimmed.
         pub fn path(&self) -> &[u8] {
-            let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
-            // normalize start and ending
-            if bun_core::strings::ends_with(path_name, b"/") {
-                path_name = &path_name[0..path_name.len()];
-            } else if bun_core::strings::ends_with(path_name, b"\\") {
-                path_name = &path_name[0..path_name.len() - 1];
-            }
-            if bun_core::strings::starts_with(path_name, b"/")
-                || bun_core::strings::starts_with(path_name, b"\\")
-            {
-                path_name = &path_name[1..];
-            }
-            path_name
+            bun_url::URL::parse(self.pathlike.slice()).s3_path()
         }
 
         pub fn init_with_referenced_credentials(

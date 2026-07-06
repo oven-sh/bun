@@ -265,7 +265,10 @@ impl Expansion {
                 if me.is_assignment && matches!(simple, ast::SimpleAtom::Tilde) {
                     let next_is_literal = match atom {
                         ast::Atom::Compound(c) => {
-                            matches!(c.atoms.get((me.word_idx + 1) as usize), Some(ast::SimpleAtom::Text(_)) | None)
+                            matches!(
+                                c.atoms.get((me.word_idx + 1) as usize),
+                                Some(ast::SimpleAtom::Text(_)) | None
+                            )
                         }
                         ast::Atom::Simple(_) => true,
                     };
@@ -360,7 +363,8 @@ impl Expansion {
                                 .iter()
                                 .position(|&b| matches!(b, b'/' | b'\\' | b':'))
                                 .unwrap_or(t.len());
-                            Self::resolve_tilde_prefix(me.base.shell(), &t[..plen]).map(|d| (plen, d))
+                            Self::resolve_tilde_prefix(me.base.shell(), &t[..plen])
+                                .map(|d| (plen, d))
                         });
                         match resolved {
                             Some((plen, dir)) => {

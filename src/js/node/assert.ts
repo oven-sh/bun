@@ -118,7 +118,9 @@ function fail(message?: string | Error): never {
   };
   if (AssertionError === undefined) loadAssertionError();
   const err = new AssertionError(errArgs);
-  err.generatedMessage = internalMessage;
+  if (internalMessage) {
+    err.generatedMessage = true;
+  }
   throw err;
 }
 

@@ -42,13 +42,13 @@ describe("assert.fail", () => {
     });
   });
 
-  it("keeps generatedMessage false for an explicit empty-string message", () => {
+  it("treats a falsy non-Error message as generated (matches AssertionError)", () => {
     expect(capture(() => assert.fail(""))).toEqual({
       message: "",
       actual: undefined,
       expected: undefined,
       operator: "fail",
-      generatedMessage: false,
+      generatedMessage: true,
     });
   });
 

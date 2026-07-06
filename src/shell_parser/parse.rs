@@ -1676,7 +1676,8 @@ impl<'bump> Parser<'bump> {
                             // into `Tilde` atoms. Quoted text never reaches here,
                             // so it correctly stays literal.
                             let txt_value = &txt[eq_idx as usize + 1..];
-                            let left = self.split_value_tildes(txt_value, txtrng.start + eq_idx + 1);
+                            let left =
+                                self.split_value_tildes(txt_value, txtrng.start + eq_idx + 1);
                             if self.delimits(self.peek()) {
                                 let _ = self.expect_delimit();
                                 left

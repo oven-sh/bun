@@ -677,9 +677,9 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      // The sink hands every write it buffers the same promise, so these reactions
-      // run in write order. Park it: a later write the sink accepts outright has to
-      // report completion behind the ones still waiting here.
+      // The sink drains in FIFO order, so what it is still buffering completes before
+      // anything written after it. Park that promise: a write the sink later accepts
+      // outright must report completion behind the callbacks waiting on it.
       this[kBackpressurePromise] = maybePromise;
       maybePromise
         .then(() => {

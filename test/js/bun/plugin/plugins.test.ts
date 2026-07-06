@@ -227,8 +227,17 @@ describe("require", () => {
 });
 
 describe("module", () => {
-  it("throws with require()", () => {
-    expect(() => require("my-virtual-module-async")).toThrow();
+  it("throws ERR_REQUIRE_ASYNC_MODULE with require()", () => {
+    let error: any;
+    try {
+      require("my-virtual-module-async");
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe("ERR_REQUIRE_ASYNC_MODULE");
+    expect(error.message).toContain("my-virtual-module-async");
   });
 
   it("async module works with async import", async () => {

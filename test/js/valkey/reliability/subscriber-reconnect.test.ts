@@ -18,10 +18,31 @@ const HELLO_REPLY =
   `%3${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}` + bulk("version") + bulk("7.4.0");
 
 type Connection = {
-  socket: { write(data: string): number; end(): void } | null;
+  socket: { write(data: Buffer): number; end(): void } | null;
   commands: string[][];
   channels: Set<string>;
+  /** Bytes `socket.write` would not take yet; flushed again on `drain`. */
+  pending: Buffer;
 };
+
+/**
+ * `socket.write` is unbuffered: it returns how many bytes it took, 0 under
+ * backpressure and -1 once the socket is closing. A freshly accepted socket is
+ * not always writable yet, so dropping the remainder silently loses replies.
+ */
+function send(connection: Connection, data: string): void {
+  const chunk = Buffer.from(data, "utf8");
+  connection.pending = connection.pending.length ? Buffer.concat([connection.pending, chunk]) : chunk;
+  flush(connection);
+}
+
+function flush(connection: Connection): void {
+  while (connection.socket && connection.pending.length > 0) {
+    const wrote = connection.socket.write(connection.pending);
+    if (wrote <= 0) return; // backpressure or closing; `drain` retries.
+    connection.pending = connection.pending.subarray(wrote);
+  }
+}
 
 /** Pull every complete RESP array-of-bulk-strings command out of `buffer`. */
 function parseCommands(buffer: Buffer): { commands: string[][]; rest: Buffer } {
@@ -78,7 +99,7 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
     port: 0,
     socket: {
       open(socket) {
-        const connection: Connection = { socket, commands: [], channels: new Set() };
+        const connection: Connection = { socket, commands: [], channels: new Set(), pending: Buffer.alloc(0) };
         connections.push(connection);
         socket.data = { buffer: Buffer.alloc(0), connection };
         for (const waiter of waiters.splice(0)) {
@@ -88,6 +109,9 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
       },
       close(socket) {
         if (socket.data) socket.data.connection.socket = null;
+      },
+      drain(socket) {
+        if (socket.data) flush(socket.data.connection);
       },
       error() {},
       data(socket, chunk) {
@@ -101,18 +125,19 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
 
           switch (command[0].toUpperCase()) {
             case "HELLO":
-              socket.write(HELLO_REPLY);
+              send(state.connection, HELLO_REPLY);
               break;
 
             case "SUBSCRIBE":
               // Redis rejects the whole command once, with no per-channel confirmations.
               if (connections.indexOf(state.connection) >= refuseSubscribeFromConnection) {
-                socket.write(`-NOPERM this user has no permissions to access one of the channels${CRLF}`);
+                send(state.connection, `-NOPERM this user has no permissions to access one of the channels${CRLF}`);
                 break;
               }
               for (const channel of command.slice(1)) {
                 state.connection.channels.add(channel);
-                socket.write(
+                send(
+                  state.connection,
                   `>3${CRLF}` + bulk("subscribe") + bulk(channel) + `:${state.connection.channels.size}${CRLF}`,
                 );
               }
@@ -124,12 +149,13 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
               // in that case with a single nil-channel confirmation. Staying silent here
               // hangs the caller's `await unsubscribe()`.
               if (channels.length === 0) {
-                socket.write(`>3${CRLF}` + bulk("unsubscribe") + `_${CRLF}` + `:0${CRLF}`);
+                send(state.connection, `>3${CRLF}` + bulk("unsubscribe") + `_${CRLF}` + `:0${CRLF}`);
                 break;
               }
               for (const channel of channels) {
                 state.connection.channels.delete(channel);
-                socket.write(
+                send(
+                  state.connection,
                   `>3${CRLF}` + bulk("unsubscribe") + bulk(channel) + `:${state.connection.channels.size}${CRLF}`,
                 );
               }
@@ -137,7 +163,7 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
             }
 
             case "PING":
-              socket.write(`+PONG${CRLF}`);
+              send(state.connection, `+PONG${CRLF}`);
               break;
 
             case "PUBLISH": {
@@ -145,15 +171,15 @@ function startRespServer({ refuseSubscribeFromConnection = Infinity }: ServerOpt
               for (const target of connections) {
                 if (target.socket && target.channels.has(command[1])) {
                   receivers++;
-                  target.socket.write(`>3${CRLF}` + bulk("message") + bulk(command[1]) + bulk(command[2]));
+                  send(target, `>3${CRLF}` + bulk("message") + bulk(command[1]) + bulk(command[2]));
                 }
               }
-              socket.write(`:${receivers}${CRLF}`);
+              send(state.connection, `:${receivers}${CRLF}`);
               break;
             }
 
             default:
-              socket.write(`+OK${CRLF}`);
+              send(state.connection, `+OK${CRLF}`);
           }
         }
       },

@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -343,6 +343,108 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("hasSubscribers is a getter on the prototype", () => {
+    const tc = tracingChannel("tracing-channel1");
+    const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(tc), "hasSubscribers");
+
+    expect(descriptor?.get).toBeFunction();
+    expect(descriptor?.set).toBeUndefined();
+  });
+
+  // test-diagnostics-channel-tracing-channel-has-subscribers.js
+  test("hasSubscribers follows subscribe and unsubscribe", () => {
+    const tc = tracingChannel("tracing-channel2");
+    const handlers = {
+      start: mustNotCall(() => {}),
+      end: mustNotCall(() => {}),
+      asyncStart: mustNotCall(() => {}),
+      asyncEnd: mustNotCall(() => {}),
+      error: mustNotCall(() => {}),
+    };
+
+    expect(tc.hasSubscribers).toBeFalse();
+
+    tc.subscribe(handlers);
+    expect(tc.hasSubscribers).toBeTrue();
+
+    expect(tc.unsubscribe(handlers)).toBeTrue();
+    expect(tc.hasSubscribers).toBeFalse();
+
+    checkCalls();
+  });
+
+  test.each(["start", "end", "asyncStart", "asyncEnd", "error"] as const)(
+    "hasSubscribers is true when only %s has a subscriber",
+    name => {
+      const tc = tracingChannel(`tracing-channel3-${name}`);
+      const subscriber = mustNotCall(() => {});
+
+      expect(tc.hasSubscribers).toBeFalse();
+
+      tc[name].subscribe(subscriber);
+      expect(tc.hasSubscribers).toBeTrue();
+
+      expect(tc[name].unsubscribe(subscriber)).toBeTrue();
+      expect(tc.hasSubscribers).toBeFalse();
+
+      checkCalls();
+    },
+  );
+
+  test("hasSubscribers reads the channels given to tracingChannel()", () => {
+    const tc = tracingChannel({
+      start: channel("tracing-channel4:start"),
+      end: channel("tracing-channel4:end"),
+      asyncStart: channel("tracing-channel4:asyncStart"),
+      asyncEnd: channel("tracing-channel4:asyncEnd"),
+      error: channel("tracing-channel4:error"),
+    });
+    const subscriber = mustNotCall(() => {});
+
+    expect(tc.hasSubscribers).toBeFalse();
+
+    subscribe("tracing-channel4:asyncEnd", subscriber);
+    expect(tc.hasSubscribers).toBeTrue();
+
+    expect(unsubscribe("tracing-channel4:asyncEnd", subscriber)).toBeTrue();
+    expect(tc.hasSubscribers).toBeFalse();
+
+    checkCalls();
+  });
+
+  test("hasSubscribers is true while a store is bound", () => {
+    const tc = tracingChannel("tracing-channel5");
+    const store = new AsyncLocalStorage();
+
+    expect(tc.hasSubscribers).toBeFalse();
+
+    tc.start.bindStore(store);
+    expect(tc.hasSubscribers).toBeTrue();
+
+    expect(tc.start.unbindStore(store)).toBeTrue();
+    expect(tc.hasSubscribers).toBeFalse();
+  });
+
+  test("tracePromise publishes when hasSubscribers is used as a guard", async () => {
+    const tc = tracingChannel("tracing-channel6");
+    const events: string[] = [];
+
+    expect(tc.hasSubscribers).toBeFalse();
+
+    tc.subscribe({
+      start: () => events.push("start"),
+      end: () => events.push("end"),
+      asyncStart: () => events.push("asyncStart"),
+      asyncEnd: () => events.push("asyncEnd"),
+      error: () => events.push("error"),
+    });
+
+    expect(tc.hasSubscribers).toBeTrue();
+    await tc.tracePromise(async () => {});
+
+    expect(events).toEqual(["start", "end", "asyncStart", "asyncEnd"]);
+  });
 });
 
 const mocks = new Map();

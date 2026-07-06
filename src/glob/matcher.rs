@@ -543,7 +543,10 @@ fn match_brace_branch(
     // Clone state
     let mut branch_state = *state;
     branch_state.glob_index = branch_index;
-    branch_state.brace_depth = brace_stack.len();
+    // Open-brace nesting at this position, not the recursion depth: sequential
+    // groups keep their frame on `brace_stack` after closing, so `len()` would
+    // overcount and misroute a literal `,`/`}` after the group as brace syntax.
+    branch_state.brace_depth = state.brace_depth + 1;
 
     let matched = glob_match_impl(
         &mut branch_state,

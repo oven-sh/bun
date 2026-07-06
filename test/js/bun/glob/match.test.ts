@@ -386,6 +386,24 @@ describe("Glob.match", () => {
     expect(new Glob(pastCap).match(Buffer.alloc(257, "a").toString())).toBeFalse();
   });
 
+  test("literal comma or brace after sequential brace groups", () => {
+    // After 2+ sequential groups, a trailing literal `,` or `}` used to be
+    // misrouted as brace syntax (depth tracked recursion frames, not open
+    // braces). These agree with Node's path.matchesGlob.
+    expect(new Glob("{a,b}{c,d},e").match("ac,e")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},e").match("bd,e")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},e").match("ac,x")).toBeFalse();
+    expect(new Glob("{a,b}{c,d}}").match("ac}")).toBeTrue();
+    expect(new Glob("{a,b}{c,d}}").match("bd}")).toBeTrue();
+    expect(new Glob("{a,b}{c,d}}").match("acx")).toBeFalse();
+
+    // Nested braces still match their open-brace depth correctly.
+    expect(new Glob("{a,{b,c}}").match("a")).toBeTrue();
+    expect(new Glob("{a,{b,c}}").match("b")).toBeTrue();
+    expect(new Glob("{a,{b,c}}").match("c")).toBeTrue();
+    expect(new Glob("{a,{b,c}}").match("ac")).toBeFalse();
+  });
+
   test("pathologically deep brace patterns do not overflow the stack", async () => {
     // Each group along a match path adds a native recursion frame; thousands
     // of sequential groups used to segfault. Run in a child so a regression

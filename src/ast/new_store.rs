@@ -134,31 +134,44 @@ macro_rules! new_store {
                     }
                 }
 
-                pub fn try_alloc<T>(block: &mut Block) -> Option<NonNull<T>> {
+                /// Bump-allocate a `T` out of `block`, or `None` if it is full.
+                ///
+                /// Takes `*mut Block`, never `&mut Block`: the `NonNull<T>` it
+                /// returns is an AST node that the caller keeps and later writes
+                /// through, and a `&mut Block` reborrow here would cover the whole
+                /// buffer — so the *next* `try_alloc` on the same block would be a
+                /// foreign access that freezes every node handed out before it.
+                ///
+                /// # Safety
+                /// `block` must point to a live `Block` in the store's chain.
+                pub unsafe fn try_alloc<T>(block: *mut Block) -> Option<NonNull<T>> {
+                    // SAFETY: caller contract — field read through a raw pointer,
+                    // no whole-`Block` reference is formed.
+                    let bytes_used = unsafe { addr_of_mut!((*block).bytes_used).read() } as usize;
                     // Align `bytes_used` forward to `align_of::<T>()`.
-                    let start = ((block.bytes_used as usize) + align_of::<T>() - 1)
-                        & !(align_of::<T>() - 1);
-                    if start + size_of::<T>() > block.buffer.len() {
+                    let start = (bytes_used + align_of::<T>() - 1) & !(align_of::<T>() - 1);
+                    if start + size_of::<T>() > BLOCK_SIZE {
                         return None;
                     }
 
-                    // it's simpler to use a pointer cast, but as a sanity check, we also
-                    // try to compute the slice. Rust will report an out of bounds
-                    // panic if the null detection logic above is wrong
-                    if cfg!(debug_assertions) {
-                        let _ = &block.buffer[block.bytes_used as usize..][..size_of::<T>()];
+                    // SAFETY: caller contract — field write through a raw pointer.
+                    unsafe {
+                        addr_of_mut!((*block).bytes_used)
+                            .write(BlockSize::try_from(start + size_of::<T>()).unwrap());
                     }
 
-                    block.bytes_used =
-                        BlockSize::try_from(start + size_of::<T>()).unwrap();
-
-                    // SAFETY: `start` is in-bounds (checked above) and aligned for T
-                    // (align_forward above). Buffer base alignment must be >= align_of::<T>()
-                    // — guaranteed by `repr(align(16))` on Block plus the
-                    // `LARGEST_ALIGN <= 16` const assert above.
+                    // SAFETY: `start + size_of::<T>() <= BLOCK_SIZE` (checked above)
+                    // and `start` is aligned for `T` (aligned forward above). The
+                    // buffer's base alignment is >= `align_of::<T>()`, guaranteed by
+                    // `repr(align(16))` on `Block` plus the `LARGEST_ALIGN <= 16`
+                    // const assert above. `addr_of_mut!` keeps `block`'s provenance
+                    // over the whole buffer.
                     Some(unsafe {
                         NonNull::new_unchecked(
-                            block.buffer.as_mut_ptr().add(start).cast::<T>(),
+                            addr_of_mut!((*block).buffer)
+                                .cast::<MaybeUninit<u8>>()
+                                .add(start)
+                                .cast::<T>(),
                         )
                     })
                 }
@@ -257,14 +270,18 @@ macro_rules! new_store {
                     // Rewind to the head block; overflow blocks keep their stale
                     // `bytes_used` until `allocate()` advances onto them and
                     // zeroes them then (matches the pre-split behaviour).
+                    //
+                    // The rewind derives `current` from the `Box` and then writes
+                    // `bytes_used` through that raw pointer, rather than through a
+                    // `&mut Block`: every node pointer `allocate()` goes on to hand
+                    // out descends from `current`, so it must not start life under a
+                    // whole-block reborrow that the next one would conflict with.
                     let head_ptr: *mut Block = {
-                        let head = store
-                            .head
-                            .as_deref_mut()
-                            .expect("head is Some — checked above");
-                        head.bytes_used = 0;
-                        ::core::ptr::from_mut(head)
+                        let head = store.head.as_mut().expect("head is Some — checked above");
+                        &raw mut **head
                     };
+                    // SAFETY: `head_ptr` is the live head block; field write.
+                    unsafe { addr_of_mut!((*head_ptr).bytes_used).write(0) };
                     store.current = head_ptr;
                 }
 
@@ -276,39 +293,53 @@ macro_rules! new_store {
                     // would otherwise pay up front (see `init()` / the `head` doc).
                     if store.current.is_null() {
                         debug_assert!(store.head.is_none());
-                        let mut first = Block::new_boxed();
-                        store.current = &raw mut *first;
-                        store.head = Some(first);
+                        // Park the `Box` first, *then* derive `current` from it:
+                        // moving a `Box` retags it, so a pointer taken before the
+                        // move is a stale sibling of the one `head` now owns.
+                        store.head = Some(Block::new_boxed());
+                        let first = store.head.as_mut().expect("just assigned");
+                        store.current = &raw mut **first;
                     }
 
-                    // SAFETY: `current` is non-null (ensured just above, or by a
-                    // prior `allocate()`/`reset()`) and points into the owned
+                    // Raw, never `&mut Block`: every node pointer this store has
+                    // handed out lives in `current`'s buffer, and reborrowing the
+                    // whole block here would freeze all of them (see `try_alloc`).
+                    // `current` is non-null (ensured just above, or by a prior
+                    // `allocate()`/`reset()`) and points into the owned
                     // `head`/`next` chain; the pointee outlives `store`.
-                    let current: &mut Block = unsafe { &mut *store.current };
-                    if let Some(ptr) = Block::try_alloc::<T>(current) {
+                    let current: *mut Block = store.current;
+                    // SAFETY: `current` is live, per the invariant above.
+                    if let Some(ptr) = unsafe { Block::try_alloc::<T>(current) } {
                         return ptr;
                     }
 
                     // The active block is full — advance to the next one,
-                    // allocating it if the chain ends here.
-                    let next_block: *mut Block = match &mut current.next {
+                    // allocating it if the chain ends here. Borrowing just the
+                    // `next` field is fine: it does not overlap the buffer, so no
+                    // node pointer is disturbed.
+                    // SAFETY: `current` is live; this projects one field.
+                    let next_slot: &mut Option<Box<Block>> = unsafe { &mut (*current).next };
+                    let next_block: *mut Block = match next_slot {
                         Some(next) => {
-                            next.bytes_used = 0;
-                            &raw mut **next
+                            let ptr = &raw mut **next;
+                            // SAFETY: `ptr` is the live next block; field write.
+                            unsafe { addr_of_mut!((*ptr).bytes_used).write(0) };
+                            ptr
                         }
                         slot @ None => {
-                            let mut new_block = Block::new_boxed();
-                            let ptr = &raw mut *new_block;
-                            *slot = Some(new_block);
-                            ptr
+                            // As above: link the `Box` in first, then derive.
+                            *slot = Some(Block::new_boxed());
+                            let b = slot.as_mut().expect("just assigned");
+                            &raw mut **b
                         }
                     };
                     store.current = next_block;
 
-                    // SAFETY: a freshly created/reset block always has room for
-                    // at least one `T` (`assert!(LARGEST_ALIGN <= 16)` plus
+                    // SAFETY: `next_block` is live, and a freshly created/reset
+                    // block always has room for at least one `T`
+                    // (`assert!(LARGEST_ALIGN <= 16)` plus
                     // `BLOCK_SIZE = LARGEST_SIZE * count * 2`).
-                    Block::try_alloc::<T>(unsafe { &mut *store.current })
+                    unsafe { Block::try_alloc::<T>(next_block) }
                         .unwrap_or_else(|| unreachable!())
                 }
 
@@ -509,4 +540,110 @@ macro_rules! thread_local_ast_store {
             }
         }
     };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+//
+// Run under Miri (`bun run rust:miri -p bun_ast`): the block store hands out
+// `NonNull<T>` node pointers that the AST holds and reads long after later
+// nodes are appended, so Tree Borrows is what proves a later `append` does not
+// invalidate an earlier node's pointer.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+// `new_store!` emits `pub` items; unreachable from a private test module, which
+// `unreachable_pub` would otherwise flag.
+#[allow(unreachable_pub)]
+mod tests {
+    // A store of its own, so the test does not depend on the AST node set.
+    // `4` keeps `BLOCK_SIZE` small enough that a handful of appends spill into
+    // the next block.
+    crate::new_store!(probe_store, [u64, u32], 4);
+
+    use probe_store::Store;
+
+    /// Every `append` bumps `bytes_used` in the active block. If that write goes
+    /// through a freshly-reborrowed `&mut Block`, it is a foreign write for the
+    /// pointers earlier `append`s handed out — and those pointers *are* the AST
+    /// nodes, read and patched for the whole life of the parse.
+    #[test]
+    fn earlier_nodes_survive_later_appends() {
+        let store = Store::init();
+        // SAFETY: `store` came from `Store::init()` and is not yet destroyed.
+        let s = unsafe { &mut *store };
+
+        // Enough to spill past the first block.
+        let mut ptrs = Vec::new();
+        for i in 0..64u64 {
+            ptrs.push(Store::append::<u64>(s, i));
+        }
+
+        // Read every node back, after all the later appends.
+        for (i, p) in ptrs.iter().enumerate() {
+            // SAFETY: `p` points at a live node in the store's block chain.
+            assert_eq!(unsafe { *p.as_ptr() }, i as u64);
+        }
+
+        // Patch an early node in place, as the parser does.
+        // SAFETY: as above.
+        unsafe { ptrs[0].as_ptr().write(999) };
+        // SAFETY: as above.
+        assert_eq!(unsafe { *ptrs[0].as_ptr() }, 999);
+
+        // SAFETY: `store` is live and not yet destroyed.
+        unsafe { Store::destroy(store) };
+    }
+
+    /// Mixed sizes/alignments go through the same `try_alloc` bump.
+    #[test]
+    fn mixed_types_keep_their_nodes() {
+        let store = Store::init();
+        // SAFETY: `store` came from `Store::init()`.
+        let s = unsafe { &mut *store };
+
+        let a = Store::append::<u64>(s, 0xdead_beef);
+        let b = Store::append::<u32>(s, 0x1234);
+        let c = Store::append::<u64>(s, 0xfeed_face);
+
+        // SAFETY: all three point at live nodes.
+        unsafe {
+            assert_eq!(*a.as_ptr(), 0xdead_beef);
+            assert_eq!(*b.as_ptr(), 0x1234);
+            assert_eq!(*c.as_ptr(), 0xfeed_face);
+        }
+
+        // SAFETY: `store` is live.
+        unsafe { Store::destroy(store) };
+    }
+
+    /// `reset` rewinds to the head block and hands the same addresses back out.
+    #[test]
+    fn reset_rewinds_and_reuses_the_head_block() {
+        let store = Store::init();
+        // SAFETY: `store` came from `Store::init()`.
+        let s = unsafe { &mut *store };
+
+        let first = Store::append::<u64>(s, 1);
+        Store::reset(s);
+        let again = Store::append::<u64>(s, 2);
+        assert_eq!(first.as_ptr(), again.as_ptr(), "reset rewinds to the head");
+        // SAFETY: `again` is the live node.
+        assert_eq!(unsafe { *again.as_ptr() }, 2);
+
+        // SAFETY: `store` is live.
+        unsafe { Store::destroy(store) };
+    }
+
+    /// A store that never allocated must not have materialised a block, and
+    /// `reset` on it must stay a no-op.
+    #[test]
+    fn untouched_store_allocates_no_block() {
+        let store = Store::init();
+        // SAFETY: `store` came from `Store::init()`.
+        let s = unsafe { &mut *store };
+        Store::reset(s);
+        // SAFETY: `store` is live; Miri's leak check proves nothing was allocated.
+        unsafe { Store::destroy(store) };
+    }
 }

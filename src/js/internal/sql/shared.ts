@@ -91,10 +91,10 @@ class SQLResultArray<T> extends PublicArray<T> {
     // match postgres's result array, in this way for in will not list the
     // properties and .map will not return undefined command and count
     Object.defineProperties(this, {
-      count: { value: null, writable: true },
-      command: { value: null, writable: true },
-      lastInsertRowid: { value: null, writable: true },
-      affectedRows: { value: null, writable: true },
+      count: { value: null, writable: true, enumerable: false, configurable: true },
+      command: { value: null, writable: true, enumerable: false, configurable: true },
+      lastInsertRowid: { value: null, writable: true, enumerable: false, configurable: true },
+      affectedRows: { value: null, writable: true, enumerable: false, configurable: true },
     });
   }
 

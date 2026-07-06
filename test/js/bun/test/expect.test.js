@@ -764,7 +764,8 @@ describe("expect()", () => {
     var s1 = new String("a");
     var s2 = new String("a");
     ANY(s1)[f] = "hello";
-    expect(s1).toEqual(s2);
+    expect(s1).not.toEqual(s2);
+    expect(s2).not.toEqual(s1);
 
     class String2 extends String {
       constructor() {
@@ -784,7 +785,8 @@ describe("expect()", () => {
     var s3 = new String2("a");
     var s4 = new String2("a");
     ANY(s3)[f] = "hello";
-    expect(s3).toEqual(s4);
+    expect(s3).not.toEqual(s4);
+    expect(s4).not.toEqual(s3);
 
     var s5 = new String("a");
     var s6 = new String3("a");
@@ -947,6 +949,20 @@ describe("expect()", () => {
         throw null;
       }).toThrow(err);
     }
+  });
+
+  // jest compares float typed array elements with Object.is, unlike node's
+  // assert.deepEqual, which uses ==.
+  test.each([Float16Array, Float32Array, Float64Array])("%p: toEqual uses Object.is on elements", ctor => {
+    expect(new ctor([NaN])).toEqual(new ctor([NaN]));
+    expect(new ctor([1, NaN, 2])).toEqual(new ctor([1, NaN, 2]));
+
+    expect(new ctor([-0])).not.toEqual(new ctor([0]));
+    expect(new ctor([0])).not.toEqual(new ctor([-0]));
+    expect(new ctor([1, -0, 2])).not.toEqual(new ctor([1, 0, 2]));
+
+    expect(new ctor([1.5, 2.5])).toEqual(new ctor([1.5, 2.5]));
+    expect(new ctor([1.5, 2.5])).not.toEqual(new ctor([1.5, 3.5]));
   });
 
   test("deepEquals derived strings and strings", () => {

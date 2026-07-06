@@ -167,7 +167,6 @@ const cases: Case[] = [
     b: () => ({}),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "two null-prototype objects with the same keys",
@@ -510,8 +509,6 @@ const cases: Case[] = [
     b: () => [1],
     strict: false,
     loose: false,
-    strictBug: "reports equal",
-    looseBug: "reports equal",
   },
   { name: "arrays of different length", a: () => [1, 2], b: () => [1], strict: false, loose: false },
   { name: "'a' and ['a']", a: () => "a", b: () => ["a"], strict: false, loose: false },

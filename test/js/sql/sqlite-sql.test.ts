@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -870,6 +870,25 @@ describe("Query Execution", () => {
     const result = await sql`DELETE FROM tasks WHERE done = 1`;
     expect(result.count).toBe(2);
     expect(result.command).toBe("DELETE");
+  });
+
+  test("result metadata is non-enumerable so toEqual matches plain arrays", async () => {
+    await sql`CREATE TABLE meta_check (id INTEGER PRIMARY KEY, name TEXT)`;
+    await sql`INSERT INTO meta_check VALUES (1, 'a'), (2, 'b')`;
+    const result = await sql`SELECT * FROM meta_check ORDER BY id`;
+
+    expect(result.count).toBe(2);
+    expect(result.command).toBe("SELECT");
+
+    for (const key of ["count", "command", "lastInsertRowid", "affectedRows"]) {
+      expect(Object.getOwnPropertyDescriptor(result, key)?.enumerable).toBe(false);
+    }
+    expect(Object.keys(result)).toEqual(["0", "1"]);
+
+    expect(result).toEqual([
+      { id: 1, name: "a" },
+      { id: 2, name: "b" },
+    ]);
   });
 
   test("SELECT with various clauses", async () => {
@@ -2009,7 +2028,9 @@ describe("Memory and resource management", () => {
     }
   });
 
-  test("properly finalizes prepared statements", async () => {
+  // 10k awaited inserts exceed the 5s per-test budget on an -O0 build (~12s
+  // observed); well inside it on release and release+ASAN.
+  test.skipIf(isDebug)("properly finalizes prepared statements", async () => {
     const sql = new SQL("sqlite://:memory:");
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
@@ -4840,7 +4861,9 @@ describe("Query Normalization Fuzzing Tests", () => {
     `;
   });
 
-  test("handles exotic but valid SQL patterns", async () => {
+  // This long series of awaited queries exceeds the 5s per-test budget on an
+  // -O0 build (~13s observed); well inside it on release and release+ASAN.
+  test.skipIf(isDebug)("handles exotic but valid SQL patterns", async () => {
     await sql`SELECT 'text with; semicolon' as str`;
 
     await sql`

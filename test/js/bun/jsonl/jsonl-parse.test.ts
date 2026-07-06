@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 describe("Bun.JSONL", () => {
   test("has Symbol.toStringTag", () => {
@@ -328,12 +329,14 @@ describe("Bun.JSONL", () => {
         expect(Bun.JSONL.parse(JSON.stringify({ s: bigStr }) + "\n")).toStrictEqual([{ s: bigStr }]);
       });
 
-      test("4 GB Uint8Array of null bytes", () => {
+      // Allocating and scanning 4 GB exceeds the 5s per-test budget on an -O0
+      // build (~6s observed); it is well inside it on release and release+ASAN.
+      test.skipIf(isDebug)("4 GB Uint8Array of null bytes", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         expect(() => Bun.JSONL.parse(buf)).toThrow();
       });
 
-      test("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
+      test.skipIf(isDebug)("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         buf[0] = 255;
         expect(() => Bun.JSONL.parse(buf)).toThrow();
@@ -989,7 +992,9 @@ describe("Bun.JSONL", () => {
         expect((result[0] as { s: string }).s).toBe("A".repeat(10000));
       });
 
-      test("repeated parseChunk doesn't leak", () => {
+      // 50k iterations exceeds the 5s per-test budget on an -O0 build (~5.5s
+      // observed); it is well inside it on release and release+ASAN.
+      test.skipIf(isDebug)("repeated parseChunk doesn't leak", () => {
         const input = '{"a":1}\n{"b":2}\n{"c":3}\n';
         for (let i = 0; i < 50000; i++) {
           Bun.JSONL.parseChunk(input);
@@ -997,7 +1002,7 @@ describe("Bun.JSONL", () => {
         expect(true).toBe(true);
       });
 
-      test("repeated parse with typed array doesn't leak", () => {
+      test.skipIf(isDebug)("repeated parse with typed array doesn't leak", () => {
         const buf = new TextEncoder().encode('{"a":1}\n{"b":2}\n');
         for (let i = 0; i < 50000; i++) {
           Bun.JSONL.parse(buf);
@@ -1283,8 +1288,17 @@ describe("Bun.JSONL", () => {
         // Verify no prototype pollution occurred
         expect(({} as any).polluted).toBeUndefined();
         expect(({} as any).bad).toBeUndefined();
-        // The keys should just be normal properties
-        expect(result[0]).toStrictEqual({ __proto__: { polluted: "yes" } });
+        // The __proto__ key becomes a normal own data property, matching JSON.parse.
+        // (An object literal's __proto__ sets the prototype, so it is not a valid expectation here.)
+        expect(result[0]).toStrictEqual(JSON.parse('{"__proto__":{"polluted":"yes"}}'));
+        expect(Object.getOwnPropertyNames(result[0])).toEqual(["__proto__"]);
+        expect(Object.getOwnPropertyDescriptor(result[0], "__proto__")).toEqual({
+          value: { polluted: "yes" },
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+        expect(Object.getPrototypeOf(result[0])).toBe(Object.prototype);
       });
 
       test("prototype pollution via nested __proto__", () => {

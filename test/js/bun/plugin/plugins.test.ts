@@ -692,3 +692,33 @@ it("onResolve can redirect a specifier to a real file in the file namespace", as
   });
   expect(exitCode).toBe(0);
 });
+
+it("a no-op onResolve that returns args.path unchanged is transparent", async () => {
+  using dir = tempDir("plugin-onresolve-no-op", {
+    "preload.js": `
+      Bun.plugin({
+        name: "no-op",
+        setup(build) {
+          build.onResolve({ filter: /\\.js$/ }, args => ({ path: args.path }));
+          build.onResolve({ filter: /\\.ts$/, namespace: "file" }, args => ({ path: args.path, namespace: "file" }));
+        },
+      });
+    `,
+    "dep.ts": `export const value = "dep";`,
+    "entry.js": `
+      import { value } from "./dep.ts";
+      console.log("entry ran:" + value);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() || stderr).toBe("entry ran:dep");
+  expect(exitCode).toBe(0);
+});

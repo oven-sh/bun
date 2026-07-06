@@ -430,6 +430,35 @@ describe("the loader runs once per specifier", () => {
     expect([require(`load-once-falsy-import-first-${label}`), calls]).toEqual([value, 1]);
   });
 
+  // Transpilers emit the marker with Object.defineProperty, leaving it non-enumerable,
+  // so it has to be found by lookup rather than by enumerating the exports object.
+  it("require() unwraps a non-enumerable __esModule default in either order", async () => {
+    let calls = 0;
+    const markedExports = () => {
+      const exports = { default: "world" };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      return exports;
+    };
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-defineprop-import-first", () => {
+          calls++;
+          return { exports: markedExports(), loader: "object" };
+        });
+        builder.module("load-once-defineprop-require-first", () => ({
+          exports: markedExports(),
+          loader: "object",
+        }));
+      },
+    });
+
+    expect(require("load-once-defineprop-require-first")).toBe("world");
+
+    // @ts-expect-error
+    await import("load-once-defineprop-import-first");
+    expect([require("load-once-defineprop-import-first"), calls]).toEqual(["world", 1]);
+  });
+
   it("a namespaced onLoad object loader unwraps the __esModule default after import()", async () => {
     let calls = 0;
     Bun.plugin({

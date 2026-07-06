@@ -45,6 +45,20 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                 hasModuleDotExports = true;
         }
 
+        // Transpilers define __esModule with Object.defineProperty, which leaves it
+        // non-enumerable and therefore absent from the loop above. Fall back to a lookup
+        // so the marker is found wherever handleVirtualModuleResult would have found it.
+        if (!hasESModuleMarker) {
+            JSValue esModuleValue = object->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
+            RETURN_IF_EXCEPTION(throwScope, void());
+            if (esModuleValue)
+                hasESModuleMarker = esModuleValue.toBoolean(globalObject);
+        }
+        if (hasESModuleMarker && !defaultValue) {
+            defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+            RETURN_IF_EXCEPTION(throwScope, void());
+        }
+
         // require() of this module unwraps `default` when __esModule is set (see the
         // commonJSModule branch of handleVirtualModuleResult). Publish it under the
         // name the CJS bridge reads so require() agrees whether or not import() ran

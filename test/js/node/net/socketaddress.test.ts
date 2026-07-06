@@ -105,6 +105,10 @@ describe("SocketAddress constructor", () => {
     ["ipv6", "::ffff:010.1.2.3"],
     ["ipv6", "fe80::1::2"],
     ["ipv6", "zzz"],
+    // more than 4 hex digits per group, even when leading zeros keep the value
+    // in range (libuv's inet_pton6 rejects these)
+    ["ipv6", "::00001"],
+    ["ipv6", "2001:00db8::1"],
   ] as [SocketAddressInitOptions["family"], string][])(
     "new SocketAddress({ family: %p, address: %p }) throws ERR_INVALID_ADDRESS",
     (family, address) => {

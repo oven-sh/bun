@@ -801,6 +801,7 @@ fn parse_ipv6_strict(src: &[u8]) -> Option<[u8; 16]> {
     let mut tp = 0usize;
     let mut colonp: Option<usize> = None;
     let mut saw_xdigit = false;
+    let mut group_digits = 0usize;
     let mut val: u32 = 0;
     let n = src.len();
 
@@ -819,10 +820,13 @@ fn parse_ipv6_strict(src: &[u8]) -> Option<[u8; 16]> {
         i += 1;
 
         if let Some(hx) = hex_digit(ch) {
-            val = (val << 4) | hx as u32;
-            if val > 0xffff {
+            // libuv's inet_pton6 rejects more than 4 hex digits per group, even
+            // when leading zeros keep the value in range (e.g. `::00001`).
+            group_digits += 1;
+            if group_digits > 4 {
                 return None;
             }
+            val = (val << 4) | hx as u32;
             saw_xdigit = true;
             continue;
         }
@@ -844,6 +848,7 @@ fn parse_ipv6_strict(src: &[u8]) -> Option<[u8; 16]> {
             tmp[tp + 1] = (val & 0xff) as u8;
             tp += 2;
             saw_xdigit = false;
+            group_digits = 0;
             val = 0;
             continue;
         }

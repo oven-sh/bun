@@ -249,6 +249,14 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         // scope asked for the termination — an outer `timeout`, or the REPL's
         // Ctrl+C watcher. Only that scope can classify it, so re-raise and let
         // it report.
+        //
+        // Returning here instead of falling through to VM_RETURN_IF_EXCEPTION is
+        // load-bearing: that macro would store the VM's singleton
+        // TerminationException on the module, and re-throwing it once the request
+        // is cleared trips `VM::setException`'s
+        // `!isTerminationException(e) || hasTerminationRequest()` assertion.
+        // `reconcileEvaluationState` settles the status instead, wrapping the
+        // error *value* in a fresh Exception that is safe to re-throw.
         if (!getSigintReceived() && timeout == 0) {
             JSC::throwException(globalObject, scope, vm.ensureTerminationException());
             return {};

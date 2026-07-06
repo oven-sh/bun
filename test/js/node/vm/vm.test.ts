@@ -958,6 +958,52 @@ test("Loader is not defined in vm context", () => {
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
 });
 
+// Re-raising an enclosing scope's termination must not hand the VM's singleton
+// TerminationException to the module: storing it and re-throwing it once the
+// request is cleared trips `VM::setException`'s
+// `!isTerminationException(e) || hasTerminationRequest()` assertion.
+test("a module terminated by an enclosing scope ends up errored without aborting", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("while (true) {}");
+    await m.link(() => {});
+    globalThis.__run = () => {
+      const p = m.evaluate();
+      p.catch(() => {});
+      return p;
+    };
+    try {
+      vm.runInThisContext("__run()", { timeout: 100 });
+      console.log("outer=NO_THROW");
+    } catch (e) {
+      console.log("outer=" + e.code);
+    }
+    console.log("status=" + m.status);
+    try {
+      m.error;
+      console.log("error=readable");
+    } catch (e) {
+      console.log("error=threw:" + e.code);
+    }
+    // Re-evaluating an errored module re-throws the error it stored. That is
+    // where a stored TerminationException trips the assertion.
+    try {
+      const again = m.evaluate();
+      again.catch(() => {});
+      console.log("reeval=ok");
+    } catch (e) {
+      console.log("reeval=threw:" + (e.code ?? e.name));
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["outer=ERR_SCRIPT_EXECUTION_TIMEOUT", "status=errored", "error=readable", "reeval=ok"],
+    exitCode: 0,
+  });
+  capture(stderr);
+});
+
 test("node:vm native Module prototype methods reject non-module receivers", async () => {
   // The native NodeVMModule prototype (reachable via the kNative own-symbol on a
   // vm.SourceTextModule instance) must validate its receiver. Calling its methods

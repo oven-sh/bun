@@ -133,6 +133,43 @@ test.concurrent("Bun.stdin.slice(start) past the end of a piped stdin is empty",
   expect(exitCode).toBe(0);
 });
 
+// Draining the offset empties the pipe, so it has to hand control back to the
+// event loop and re-arm the poll instead of reading an empty pipe. A writer that
+// trickles bytes makes the reader re-arm once per byte of the offset, and then
+// again on the byte that lands exactly on the boundary.
+test.concurrent("Bun.stdin.slice(start, end).stream() handles a writer that trickles bytes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `for await (const chunk of Bun.stdin.slice(5, 10).stream()) process.stdout.write(chunk);`],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  for (const byte of "abcdefghij") {
+    proc.stdin.write(byte);
+    await proc.stdin.flush();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  await proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, exitCode }).toEqual({ stdout: "fghij", exitCode: 0 });
+  expect(stderr).not.toContain("error");
+});
+
+// The writer hangs up with the offset exactly consumed and nothing left over.
+test.concurrent("Bun.stdin.slice(start, end).stream() handles a writer that closes at the offset", async () => {
+  const { stdout, exitCode } = await runWithPipedStdin(
+    `let n = 0; for await (const chunk of Bun.stdin.slice(5, 10).stream()) n += chunk.length; process.stdout.write(String(n));`,
+    "abcde",
+  );
+
+  expect(stdout).toBe("0");
+  expect(exitCode).toBe(0);
+});
+
 // A regular file stdin is seekable, so lseek applies the offset. Guards against
 // the offset being consumed twice.
 test.concurrent("Bun.stdin.slice(start, end) honors start when stdin is a regular file", async () => {

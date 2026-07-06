@@ -724,12 +724,23 @@ impl PosixBufferedReader {
         // `register_poll()`/`on_error()` below is in tail position, so nothing
         // touches `parent` after one can have dispatched it.
         let parent = unsafe { &mut *this };
-        if parent._skip_remaining > 0
-            && !Self::drain_skipped(parent, fd, &|fd, buf, _| sys::read_nonblocking(fd, buf))
-        {
-            return;
-        }
         let mut received_hup = received_hup_initially;
+        if parent._skip_remaining > 0 {
+            if !Self::drain_skipped(parent, fd, &|fd, buf, _| sys::read_nonblocking(fd, buf)) {
+                return;
+            }
+            // This function is only entered once its caller has confirmed the fd
+            // is readable, which is what lets the first read below be a blocking
+            // one. The drain just spent that readiness, so confirm it again.
+            match bun_core::is_readable(fd) {
+                bun_core::Pollable::Ready => {}
+                bun_core::Pollable::Hup => received_hup = true,
+                bun_core::Pollable::NotReady => {
+                    parent.register_poll();
+                    return;
+                }
+            }
+        }
         loop {
             let streaming = parent.vtable.is_streaming_enabled();
             let mut got_retry = false;

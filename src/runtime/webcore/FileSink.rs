@@ -213,9 +213,7 @@ impl Options {
         let base =
             bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
         // Only path opens reach these flags (fd inputs skip the open), so the
-        // truncate option cannot affect stdio/pipe sinks. It previously was
-        // ignored entirely, leaving stale bytes beyond the written range when
-        // overwriting a longer existing file.
+        // truncate option cannot affect stdio/pipe sinks.
         if self.truncate {
             base | bun_sys::O::TRUNC
         } else {

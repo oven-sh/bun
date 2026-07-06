@@ -66,8 +66,12 @@ pub trait PluginResolver {
 pub struct PluginRunner;
 
 impl PluginRunner {
-    /// Returns the `namespace:` prefix of `specifier`, or `b""` if it has none
-    /// (Windows drive-letter prefixes are not namespaces).
+    /// Returns the `namespace:` prefix of `specifier`, or `b""` if it has none.
+    ///
+    /// A Windows drive root (`C:\` / `C:/`) is a path, never a namespace, and
+    /// only on Windows: everywhere else `q:pp` names the namespace `q`. The
+    /// same rule is spelled out in `isWindowsDriveRoot` (ZigGlobalObject.cpp),
+    /// which decides whether a module key is already plugin-resolved.
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
         let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
             return b"";
@@ -75,10 +79,9 @@ impl PluginRunner {
         let colon = colon as usize;
         if cfg!(windows)
             && colon == 1
-            && specifier.len() > 3
+            && specifier.len() > 2
+            && bun_paths::resolve_path::is_drive_letter(specifier[0])
             && bun_paths::resolve_path::is_sep_any(specifier[2])
-            && ((specifier[0] > b'a' && specifier[0] < b'z')
-                || (specifier[0] > b'A' && specifier[0] < b'Z'))
         {
             return b"";
         }

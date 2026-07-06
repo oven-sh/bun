@@ -781,4 +781,77 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     `);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=2", stderr, exitCode: 0 });
   });
+
+  // A namespace registered after clearAll() takes the index of a namespace that
+  // was cleared, so it must not inherit that namespace's callbacks.
+  it("a fresh namespace does not inherit a cleared plugin's callbacks", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const calls = { oldResolve: 0, newResolve: 0, newLoad: 0 };
+
+      Bun.plugin({
+        name: "old",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "aa" }, ({ path }) => {
+            calls.oldResolve++;
+            return { path, namespace: "aa" };
+          });
+          b.onLoad({ filter: /.*/, namespace: "aa" }, () => ({ contents: "export default 'old';", loader: "js" }));
+        },
+      });
+
+      Bun.plugin.clearAll();
+
+      Bun.plugin({
+        name: "new",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "bb" }, ({ path }) => {
+            calls.newResolve++;
+            return { path, namespace: "bb" };
+          });
+          b.onLoad({ filter: /.*/, namespace: "bb" }, () => {
+            calls.newLoad++;
+            return { contents: "export default 'new';", loader: "js" };
+          });
+        },
+      });
+
+      const loaded = (await import("bb:hello")).default;
+      console.log(JSON.stringify({ calls, loaded }));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ calls: { oldResolve: 0, newResolve: 1, newLoad: 1 }, loaded: "new" }),
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  // clearAll() frees the virtual module map, so the flag selecting how that map
+  // is keyed goes with it. A stale flag trips an assertion on the next resolve.
+  it("resets the virtual module lookup mode", async () => {
+    using dir = tempDir("plugin-clear-all-virtual", {
+      "sibling.mjs": `export default 1;`,
+      "entry.mjs": `
+        import { mock } from "bun:test";
+        mock.module(new URL("./virtual-module.js", import.meta.url).href, () => ({ default: 1 }));
+        Bun.plugin.clearAll();
+        await import("./sibling.mjs");
+        console.log("ok");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "ok",
+      stderr: stderr.trim(),
+      exitCode: 0,
+    });
+  });
 });

@@ -417,11 +417,12 @@ describe("Glob.match", () => {
          if (new Bun.Glob(flat).match(Buffer.alloc(n, "a").toString()) !== false) process.exit(2);`,
       ],
       env: bunEnv,
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The depth cap returns false (exit 0); no crash (signalCode null).
-    expect({ exitCode, signalCode: proc.signalCode, stderr }).toMatchObject({ exitCode: 0, signalCode: null });
+    expect({ exitCode, signalCode: proc.signalCode, stdout, stderr }).toMatchObject({ exitCode: 0, signalCode: null });
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

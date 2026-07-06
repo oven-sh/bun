@@ -394,7 +394,7 @@ impl Drop for Formatter<'_> {
                 let data = node.as_mut().data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
                 data.clear();
-                visited::Pool::release(node.as_mut());
+                visited::Pool::release(node.as_ptr());
             }
         }
     }

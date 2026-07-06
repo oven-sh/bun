@@ -432,7 +432,7 @@ describe("delete with prefixed cookie names", () => {
     const map = new Bun.CookieMap("__Host-id=1");
     map.delete("__Host-id");
     expect(map.toSetCookieHeaders()).toEqual([
-      "__Host-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
     ]);
   });
 
@@ -440,7 +440,7 @@ describe("delete with prefixed cookie names", () => {
     const map = new Bun.CookieMap("__Secure-id=1");
     map.delete("__Secure-id");
     expect(map.toSetCookieHeaders()).toEqual([
-      "__Secure-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
+      "__Secure-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
     ]);
   });
 
@@ -449,8 +449,8 @@ describe("delete with prefixed cookie names", () => {
     map.delete("__Host-id");
     map.delete("id");
     expect(map.toSetCookieHeaders()).toEqual([
-      "__Host-id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; Secure; SameSite=Lax",
-      "id=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+      "id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]);
   });
 });

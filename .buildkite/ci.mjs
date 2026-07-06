@@ -1030,9 +1030,11 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
-    agents: {
-      queue: "test-darwin",
-    },
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
     depends_on,
     env: {
       CANARY: revision,

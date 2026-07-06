@@ -1278,7 +1278,7 @@ describe("deno_task", () => {
       .runAsTest("exported vars 2");
 
     // `export NAME` without `=` must export the variable's current value, not
-    // assign an empty string. https://github.com/oven-sh/bun/issues/33430
+    // assign an empty string (which would clobber a live binding).
     TestBuilder.command`T=5; export T; ${BUN} -e ${"console.log(process.env.T)"} && echo shellvar=[$T]`
       .env(bunEnv)
       .stdout("5\nshellvar=[5]\n")

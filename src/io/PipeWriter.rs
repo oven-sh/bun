@@ -887,10 +887,13 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(buf_len);
         }
 
-        self.try_write_newly_buffered_data()
+        self.try_write_newly_buffered_data(buf_len)
     }
 
-    fn try_write_newly_buffered_data(&mut self) -> WriteResult {
+    /// `chunk_len` is the caller's chunk, already appended to `outgoing`.
+    /// `Wrote(n)` reports bytes of *that chunk* accepted, not bytes drained
+    /// from the buffer (older chunks included) — that is `flush()`'s accounting.
+    fn try_write_newly_buffered_data(&mut self, chunk_len: usize) -> WriteResult {
         debug_assert!(!self.is_done);
 
         // Borrow `self.outgoing` only for the syscall. `try_write` takes `&self`
@@ -903,15 +906,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         match rc {
             WriteResult::Wrote(amt) => {
-                if amt == self.outgoing.size() {
-                    self.outgoing.reset();
-                    self.parent_on_write(amt, WriteStatus::Drained);
-                } else {
+                if amt < self.outgoing.size() {
                     self.outgoing.wrote(amt);
                     self.parent_on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
                     return WriteResult::Pending(amt);
                 }
+
+                self.outgoing.reset();
+                self.parent_on_write(amt, WriteStatus::Drained);
+                return WriteResult::Wrote(chunk_len);
             }
             WriteResult::Done(amt) => {
                 self.outgoing.reset();
@@ -957,7 +961,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Err(sys::Error::oom());
             }
 
-            return self.try_write_newly_buffered_data();
+            return self.try_write_newly_buffered_data(buf.len());
         }
 
         let rc = self.try_write(self.force_sync, buf);

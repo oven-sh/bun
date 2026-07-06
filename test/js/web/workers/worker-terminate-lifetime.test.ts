@@ -82,6 +82,66 @@ test(
   timeout,
 );
 
+// Regression: `process.nextTick`, `process.mainModule`, `process.stdin` and
+// `Bun.$` are lazily built by JSC's reifyStaticProperty, which performs no
+// exception check. A terminate() that landed while a builder was entering JS
+// left a TerminationException pending (tryClearException() cannot clear one),
+// and the caller's `EXCEPTION_ASSERT(!scope.exception() || !hasSlot)` aborted.
+//
+// Each worker blocks in Bun.sleepSync so terminate() is requested while the
+// thread sits in native code with no JS safepoint ahead of the property read;
+// the builder then runs with the termination trap armed. A blocking call is
+// the point of the test, not a wait for a condition.
+const lazyProperties = ["process.nextTick", "process.mainModule", "process.stdin", "Bun.$"];
+const blockMs = slow ? 600 : 200;
+
+test(
+  "terminate() while a lazy property builder is entering JS does not abort",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const properties = ${JSON.stringify(lazyProperties)};
+        await Promise.all(
+          properties.map(property => {
+            const w = new Worker(
+              "data:text/javascript," +
+                encodeURIComponent(
+                  'postMessage("go");' +
+                    // Blocks the worker thread in native code; terminate() arms the
+                    // termination trap while we are parked here.
+                    "Bun.sleepSync(${blockMs});" +
+                    // First touch of the lazy property: its builder enters JS and is
+                    // terminated mid-call.
+                    property + ";",
+                ),
+            );
+            const closed = new Promise(resolve => w.addEventListener("close", resolve, { once: true }));
+            w.addEventListener("message", () => w.terminate(), { once: true });
+            return closed;
+          }),
+        );
+        console.log("terminated " + properties.length);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: `terminated ${lazyProperties.length}\n`,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  timeout,
+);
+
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener

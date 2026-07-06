@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSBase.h>
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/DeferTermination.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/JSFunction.h>
@@ -359,6 +360,10 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check. A
+    // TerminationException cannot be cleared, so defer it across the call.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);

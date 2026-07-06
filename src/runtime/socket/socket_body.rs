@@ -4065,10 +4065,12 @@ bitflags::bitflags! {
         const BYPASS_TLS           = 1 << 9;
         const OWNS_HANDLERS        = 1 << 10;
         const HOSTNAME_MISMATCH    = 1 << 11;
-        /// The kernel rejected a `send()` with a non-retryable error
-        /// (EPIPE/ECONNRESET): no later byte can be delivered either. Sticky so
-        /// the drain dispatch can fail the pending JS write instead of
-        /// completing it; cleared when the wrapper is reused for a new connect.
+        /// A `send()` failed with a non-retryable error (EPIPE/ECONNRESET): no
+        /// later byte can be delivered either. Sticky, so the drain dispatch
+        /// fails the pending JS write rather than completing it; cleared when
+        /// the wrapper is reused for a new connect. Only the plain-TCP arm sets
+        /// it (`write_check_error` signals no fatal for SSL/duplex/pipe), so
+        /// `writeBuffered`'s `-1` only ever reaches a node:net handle.
         const FATAL_WRITE_ERROR    = 1 << 12;
     }
 }

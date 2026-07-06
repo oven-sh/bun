@@ -531,11 +531,16 @@ Server.prototype.listen = function () {
     server.once("listening", () => {
       cluster.worker.state = "listening";
       const address = server.address();
+      // Node's `listening` payload is {address, port, addressType}: the bound
+      // address (null when no host was requested, the path for a unix socket)
+      // and its family as 4/6, or -1 for a unix socket.
+      const isUnix = typeof address === "string";
       const message = {
         act: "listening",
-        port: (address && address.port) || port,
+        port: isUnix ? -1 : (address && address.port) || port,
         data: null,
-        addressType: 4,
+        address: isUnix ? address : host && address ? address.address : null,
+        addressType: isUnix ? -1 : host && address && address.family === "IPv6" ? 6 : 4,
       };
       sendHelper(message, null);
     });

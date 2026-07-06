@@ -3247,6 +3247,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let readableAll = false;
   let writableAll = false;
   let fd;
+  // The host the caller asked for, before it is defaulted to the wildcard
+  // address. Cluster workers report an unspecified host to the primary as null.
+  let listenHost;
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -3376,6 +3379,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
+    listenHost = hostname;
     hostname = hostname || "::";
   }
 
@@ -3409,11 +3413,17 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options[kSocketClass] = Socket;
     }
 
+    // Node reports an unspecified host to the primary as address: null / addressType: 4,
+    // and a unix socket as its path with addressType: -1.
+    // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2165
+    const clusterAddress = path ?? listenHost ?? null;
+    const clusterAddressType = path != null ? -1 : clusterAddress && isIPv6(clusterAddress) ? 6 : 4;
+
     listenInCluster(
       this,
-      null,
+      clusterAddress,
       port,
-      4,
+      clusterAddressType,
       backlog,
       fd,
       exclusive,

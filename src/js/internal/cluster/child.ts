@@ -108,6 +108,13 @@ cluster._getServer = function (obj, options, cb) {
     const address = obj.address();
     message.act = "listening";
     message.port = (address && address.port) || options.port;
+    // Node resolves the host before listening, so its message.address already holds
+    // the bound IP. Bun binds in the worker, so read it back off the socket instead.
+    // An unspecified host stays null; a unix socket's address() is already its path.
+    if (message.address != null && address !== null && typeof address === "object") {
+      message.address = address.address;
+      message.addressType = address.family === "IPv6" ? 6 : 4;
+    }
     send(message);
   });
 };

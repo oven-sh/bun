@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isIPv6, joinP, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -185,3 +185,85 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
+
+// The worker binds one server per host, in order, and the primary collects the
+// `listening` payloads off the ordered IPC channel in that same order. node:net and
+// node:http are required only in the worker; loading them in the primary too costs
+// another ~2s of debug-build module loading.
+// https://nodejs.org/api/cluster.html#event-listening-1
+const listeningFixture = /* js */ `
+const cluster = require("node:cluster");
+
+const hosts = JSON.parse(process.env.HOSTS);
+
+if (cluster.isPrimary) {
+  const payloads = [];
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const worker = cluster.fork();
+
+  cluster.on("listening", (listeningWorker, address) => {
+    if (listeningWorker !== worker) {
+      reject(new Error("'listening' came from an unexpected worker"));
+      return;
+    }
+    payloads.push({ address: address.address, addressType: address.addressType, port: typeof address.port });
+    if (payloads.length === hosts.length) resolve();
+  });
+  worker.on("error", reject);
+  worker.on("exit", (code, signal) => {
+    reject(new Error("worker exited before it finished listening (" + code + ", " + signal + ")"));
+  });
+
+  promise.then(
+    () => {
+      console.log(JSON.stringify(payloads));
+      worker.kill();
+      process.exit(0);
+    },
+    error => {
+      console.error(error);
+      process.exit(1);
+    },
+  );
+} else {
+  const { createServer } = require("node:" + process.env.MODULE);
+
+  (async () => {
+    for (const host of hosts) {
+      const server = createServer(() => {});
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        // A listen() with no host must be reported to the primary as address: null.
+        if (host === null) server.listen(0, resolve);
+        else server.listen(0, host, resolve);
+      });
+    }
+  })().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+`;
+
+test.each(["net", "http"])(
+  "cluster 'listening' reports the address a %s server bound",
+  moduleName => {
+    const hosts: (string | null)[] = ["127.0.0.1", null];
+    if (isIPv6()) hosts.push("::1");
+
+    const dir = tempDirWithFiles("cluster-listening", { "fixture.js": listeningFixture });
+    // bunRun is synchronous and rethrows the fixture's stderr on a non-zero exit.
+    const { stdout } = bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName, HOSTS: JSON.stringify(hosts) });
+
+    expect(JSON.parse(stdout)).toEqual(
+      hosts.map(host => ({
+        address: host,
+        addressType: host?.includes(":") ? 6 : 4,
+        port: "number",
+      })),
+    );
+  },
+  // A cluster primary plus a forked worker is two Bun process boots, and requiring
+  // node:http costs ~2s on its own in a debug build. It lands at ~4s of the 5s default.
+  30_000,
+);

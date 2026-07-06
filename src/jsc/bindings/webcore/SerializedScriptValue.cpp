@@ -474,7 +474,9 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 #if ENABLE(WEB_CRYPTO)
 
-const uint32_t currentKeyFormatVersion = 1;
+// Version 2 adds the CryptoKeyAsymmetricTypeSubtag to serialized OKP keys so the
+// public/private distinction survives for curves without a sign usage (X25519).
+const uint32_t currentKeyFormatVersion = 2;
 
 enum class CryptoKeyClassSubtag {
     HMAC = 0,
@@ -729,6 +731,9 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *
  * CryptoKeyRaw :-
  *    CryptoAlgorithmIdentifierTag <keySize:uint32_t> <keyData:byte{keySize}>
+ *
+ * CryptoKeyOKP (keyFormatVersion >= 2) :-
+ *    CryptoAlgorithmIdentifierTag CryptoKeyOKPOpNameTag CryptoKeyAsymmetricTypeSubtag <keySize:uint32_t> <keyData:byte{keySize}>
  *
  * DOMPoint :-
  *        DOMPointReadOnlyTag DOMPointData
@@ -2643,6 +2648,7 @@ private:
             write(CryptoKeyClassSubtag::OKP);
             write(key->algorithmIdentifier());
             write(downcast<CryptoKeyOKP>(*key).namedCurve());
+            write(key->type() == CryptoKey::Type::Public ? CryptoKeyAsymmetricTypeSubtag::Public : CryptoKeyAsymmetricTypeSubtag::Private);
             write(downcast<CryptoKeyOKP>(*key).platformKey());
             break;
         }
@@ -4245,7 +4251,7 @@ private:
         return true;
     }
 
-    bool readOKPKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
+    bool readOKPKey(uint32_t keyFormatVersion, bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
     {
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
@@ -4265,11 +4271,25 @@ private:
                 return false;
             break;
         }
+
+        // Version 1 did not serialize the key type and relied on importRaw
+        // inferring it from the sign usage, which is wrong for X25519.
+        if (keyFormatVersion < 2) {
+            Vector<uint8_t> keyData;
+            if (!read(keyData))
+                return false;
+            result = CryptoKeyOKP::importRaw(algorithm, namedCurve, WTF::move(keyData), extractable, usages);
+            return true;
+        }
+
+        CryptoKeyAsymmetricTypeSubtag type;
+        if (!read(type))
+            return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
 
-        result = CryptoKeyOKP::importRaw(algorithm, namedCurve, WTF::move(keyData), extractable, usages);
+        result = CryptoKeyOKP::create(algorithm, namedCurve, type == CryptoKeyAsymmetricTypeSubtag::Public ? CryptoKeyType::Public : CryptoKeyType::Private, WTF::move(keyData), extractable, usages);
         return true;
     }
 
@@ -4360,7 +4380,7 @@ private:
                 return false;
             break;
         case CryptoKeyClassSubtag::OKP:
-            if (!readOKPKey(extractable, usages, result))
+            if (!readOKPKey(keyFormatVersion, extractable, usages, result))
                 return false;
             break;
         }

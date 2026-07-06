@@ -925,13 +925,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             .into()
     }
 
-    /// `scope.exit()` drains microtasks, during which a synchronous
-    /// reconnect may repoint `self.handlers` at a fresh allocation; only
-    /// null the cell when it still holds the `Handlers` that `exit` freed.
+    /// The event-loop exit drains microtasks, during which a synchronous
+    /// reconnect may repoint `self.handlers` at a fresh allocation (null the
+    /// cell only when it still holds the `Handlers` the scope freed) or
+    /// `upgradeTLS` may transfer the handlers to the raw TLS twin.
     #[inline]
     fn exit_scope(&self, scope: super::handlers::Scope, entered: bun_ptr::BackRef<Handlers>) {
         let captured = entered.as_ptr();
-        if scope.exit() && self.handlers.get().map(|n| n.as_ptr()) == Some(captured) {
+        scope.exit_event_loop();
+        // `upgradeTLS` can transfer client-mode handlers (and their
+        // `OWNS_HANDLERS` free) to the raw TLS twin from inside this callback,
+        // leaving `handlers` None; the twin frees them, so skip to avoid a double-free.
+        if self.handlers.get().is_none() && self.flags.get().contains(Flags::OWNS_HANDLERS) {
+            return;
+        }
+        if scope.mark_inactive() && self.handlers.get().map(|n| n.as_ptr()) == Some(captured) {
             self.handlers.set(None);
         }
     }

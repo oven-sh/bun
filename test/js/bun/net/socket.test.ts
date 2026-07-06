@@ -833,6 +833,71 @@ describe.concurrent("socket", () => {
       client.end();
     }
   });
+  it("does not use-after-free when upgradeTLS is called synchronously inside the open handler", async () => {
+    // https://github.com/oven-sh/bun/issues/33387
+    // Calling upgradeTLS from inside the socket's own open callback transfers
+    // the per-connection Handlers (and its OWNS_HANDLERS free) to the raw TLS
+    // twin while the in-flight open scope still holds that same pointer. The
+    // scope used to free it on exit, then the twin double-freed it at GC.
+    using dir = tempDir("upgrade-tls-in-open", {
+      "fixture.mjs": `
+import net from "node:net";
+
+const server = net.createServer(sock => { sock.on("error", () => {}); sock.on("data", () => {}); });
+await new Promise(res => server.listen(0, "127.0.0.1", res));
+const port = server.address().port;
+
+const TLS = {
+  socket: { open() {}, data() {}, error() {}, close() {}, handshake() {}, end() {}, timeout() {}, drain() {} },
+  tls: { rejectUnauthorized: false, servername: "localhost" },
+};
+
+let done = 0;
+// The UAF fires at the first Bun.gc(true) that finalizes a raw twin whose
+// handlers the open scope freed; a small workload triggers it deterministically
+// (the unfixed binary segfaults well before completing).
+const TOTAL = 64, CONCURRENCY = 16;
+
+function oneCycle() {
+  return new Promise(resolve => {
+    let settled = false;
+    const fin = () => { if (settled) return; settled = true; resolve(); };
+    Bun.connect({
+      hostname: "127.0.0.1", port,
+      socket: {
+        open(sock) {
+          try {
+            const result = sock.upgradeTLS(TLS);
+            if (result) { const [raw, tls] = result; try { tls.end(); } catch {} try { raw.end(); } catch {} }
+          } catch {}
+          try { sock.end(); } catch {}
+          fin();
+        },
+        connectError() { fin(); }, error() { fin(); }, close() { fin(); }, data() {},
+      },
+    });
+  });
+}
+async function worker() { while (done < TOTAL) { done++; await oneCycle(); if (done % 8 === 0) Bun.gc(true); } }
+await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+Bun.gc(true); server.close();
+console.log("completed", done, "cycles without crashing");
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("completed 64 cycles without crashing");
+    expect(exitCode).toBe(0);
+  }, 30_000); // subprocess + debug/ASAN startup is slow
 });
 
 it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {

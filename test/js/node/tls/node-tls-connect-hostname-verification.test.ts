@@ -140,12 +140,14 @@ describe("tls.connect hostname verification without explicit servername", () => 
 
 describe("Bun.connect TLS hostname verification", () => {
   // The server presents the agent1 cert (CN=agent1, no SAN) signed by ca1.
-  // A client that trusts ca1 and connects to "localhost" passes chain
-  // validation, but the certificate is not valid for "localhost", so the
-  // socket must not be reported as authorized.
+  // A client that trusts ca1 and connects to 127.0.0.1 passes chain validation,
+  // but the certificate is not valid for that host, so the socket must not be
+  // reported as authorized. Both ends name the loopback address outright:
+  // "localhost" can resolve to both ::1 and 127.0.0.1, and the listener and the
+  // client do not have to pick the same family.
   test("reports authorized=false when a CA-trusted cert does not match the connected hostname", async () => {
     const listener = Bun.listen({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
       tls: { key: serverKey, cert: serverCert },
       socket: {
@@ -157,10 +159,10 @@ describe("Bun.connect TLS hostname verification", () => {
       },
     });
     try {
-      // Mismatch: connect host "localhost" vs cert CN "agent1".
+      // Mismatch: connect host "127.0.0.1" vs cert CN "agent1".
       const mismatch = Promise.withResolvers<{ flag: boolean; arg: boolean; error: NodeJS.ErrnoException | null }>();
       const badSocket = await Bun.connect({
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: listener.port,
         tls: { ca },
         socket: {
@@ -191,7 +193,7 @@ describe("Bun.connect TLS hostname verification", () => {
       // "agent1", which matches the certificate. Must remain authorized.
       const match = Promise.withResolvers<boolean>();
       const goodSocket = await Bun.connect({
-        hostname: "localhost",
+        hostname: "127.0.0.1",
         port: listener.port,
         tls: { ca, serverName: "agent1" },
         socket: {

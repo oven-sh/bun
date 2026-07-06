@@ -1235,12 +1235,8 @@ impl PathLikeExt for PathLike {
         use jsc::JSType;
         match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = if arguments.will_be_async {
-                    Buffer::from_js_pinned(ctx, arg)
-                        .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg))
-                } else {
-                    Buffer::from_typed_array(ctx, arg)
-                };
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
                 if let Err(err) = Valid::path_buffer(&buffer, ctx)
                     .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
                 {
@@ -1256,12 +1252,8 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::ArrayBuffer => {
-                let mut buffer = if arguments.will_be_async {
-                    Buffer::from_js_pinned(ctx, arg)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg))
-                } else {
-                    Buffer::from_array_buffer(ctx, arg)
-                };
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
                 if let Err(err) = Valid::path_buffer(&buffer, ctx)
                     .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
                 {
@@ -1646,7 +1638,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         )?
     };
 
-    Ok(Some((mode_int & 0o777) as Mode))
+    Ok(Some(mode_int as Mode))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1710,7 +1702,7 @@ impl FileSystemFlags {
     /// Open file for reading. An exception occurs if the file does not exist.
     pub const R: Self = Self(O::RDONLY);
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    pub const W: Self = Self(O::WRONLY | O::CREAT);
+    pub const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
 
     #[inline]
     pub fn as_int(self) -> c_int {

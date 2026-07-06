@@ -26,6 +26,13 @@ pub struct Stream {
     pub state: State,
     pub send_window: SendWindow,
     pub recv_window: RecvWindow,
+    /// A non-informational inbound header block was delivered: the next inbound HEADERS on this
+    /// stream is a trailer section (RFC 9113 §8.1).
+    pub recv_final_headers: bool,
+    /// Declared `content-length` of the inbound message, if any (RFC 9113 §8.1.1).
+    pub content_length: Option<u64>,
+    /// DATA payload bytes (padding excluded) received so far.
+    pub recv_body_bytes: u64,
 }
 
 impl Stream {
@@ -34,8 +41,27 @@ impl Stream {
             state: State::Idle,
             send_window: SendWindow::new(initial_send),
             recv_window: RecvWindow::new(initial_recv),
+            recv_final_headers: false,
+            content_length: None,
+            recv_body_bytes: 0,
         }
     }
+}
+
+/// RFC 9110 §8.6: `content-length` is 1*DIGIT. Anything else, or a value that does not fit
+/// in a u64, is rejected.
+fn parse_content_length(value: &[u8]) -> Option<u64> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut n: u64 = 0;
+    for &c in value {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        n = n.checked_mul(10)?.checked_add(u64::from(c - b'0'))?;
+    }
+    Some(n)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -105,10 +131,12 @@ pub trait Sink {
     // ---- Stream-level (default no-op so simple sinks can ignore them) ----
 
     /// A new stream was created by an inbound HEADERS (the embedder allocates its JS wrapper).
-    /// Returning `false` refuses the stream (node's maxSessionMemory budget): the engine still
-    /// decodes the header block for HPACK sync, then answers RST_STREAM(ENHANCE_YOUR_CALM)
-    /// without surfacing the request.
-    fn on_stream_open(&self, _stream_id: u32) -> bool {
+    fn on_stream_open(&self, _stream_id: u32) {}
+    /// Whether the embedder can afford the state for a new peer-initiated stream (the session
+    /// memory budget, node's maxSessionMemory). `false` refuses the HEADERS with RST_STREAM
+    /// (REFUSED_STREAM) before any stream state is allocated; the header block is still decoded
+    /// for HPACK-table sync (§4.3).
+    fn can_open_stream(&self) -> bool {
         true
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
@@ -221,9 +249,9 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
-    /// The embedder refused the stream in on_stream_open (maxSessionMemory): decode the block for
-    /// HPACK sync, then answer RST_STREAM(ENHANCE_YOUR_CALM) without surfacing the request.
-    header_refused: bool,
+    /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory): the
+    /// block is decoded for HPACK sync (§4.3), then answered with RST_STREAM(REFUSED_STREAM).
+    header_stream_refused: bool,
     /// A locally-detected connection error already tore the session down: ignore further input.
     terminated: bool,
     /// PING/SETTINGS ACKs queued during the current receive() batch (nghttp2's
@@ -270,7 +298,7 @@ impl Connection {
             header_push_parent: 0,
             header_is_request: false,
             header_stream_closed: false,
-            header_refused: false,
+            header_stream_refused: false,
             terminated: false,
             obq_ack_pending: 0,
             enc_buf: Vec::new(),
@@ -897,59 +925,65 @@ impl Connection {
             );
             return true;
         }
-        let cur_state = self
-            .streams
-            .entry(hdr.stream_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init))
-            .state;
-        let ev = if end_stream {
-            stream::Event::RecvHeadersEndStream
-        } else {
-            stream::Event::RecvHeaders
-        };
+        let refused = is_new && self.is_server && !sink.can_open_stream();
         let mut stream_closed = false;
-        match stream::transition(cur_state, ev) {
-            Ok(next) => {
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                    s.state = next;
+        if !refused {
+            let cur_state = self
+                .streams
+                .entry(hdr.stream_id)
+                .or_insert_with(|| Stream::new(send_init, recv_init))
+                .state;
+            let ev = if end_stream {
+                stream::Event::RecvHeadersEndStream
+            } else {
+                stream::Event::RecvHeaders
+            };
+            match stream::transition(cur_state, ev) {
+                Ok(next) => {
+                    if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+                        s.state = next;
+                    }
                 }
-            }
-            Err(stream::TransitionError::Protocol) => {
-                self.send_go_away(
-                    sink,
-                    ErrorCode::ProtocolError,
-                    b"HEADERS in invalid stream state",
-                );
-                return true;
-            }
-            Err(stream::TransitionError::StreamClosed) => {
-                // nghttp2 (session_on_*_headers_received): HEADERS for a stream whose remote half
-                // already ended (half-closed (remote)) is escalated to a CONNECTION error of type
-                // STREAM_CLOSED — node surfaces it as NghttpError "Stream was already closed or
-                // invalid" and tears the session down. A stream that closed for any other reason
-                // (e.g. we reset it and the peer's trailers were already in flight) keeps the
-                // conservative stream-level handling: the block is still decoded for HPACK sync
-                // (§4.3), then refused with RST_STREAM(STREAM_CLOSED) by finish_header_block.
-                if cur_state == State::HalfClosedRemote {
-                    self.local_connection_error(
+                Err(stream::TransitionError::Protocol) => {
+                    self.send_go_away(
                         sink,
-                        ErrorCode::StreamClosed,
-                        wire::lib_error::STREAM_CLOSED,
-                        b"HEADERS: stream closed",
+                        ErrorCode::ProtocolError,
+                        b"HEADERS in invalid stream state",
                     );
                     return true;
                 }
-                stream_closed = true;
+                Err(stream::TransitionError::StreamClosed) => {
+                    // nghttp2 (session_on_*_headers_received): HEADERS for a stream whose remote
+                    // half already ended (half-closed (remote)) is escalated to a CONNECTION error
+                    // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
+                    // closed or invalid" and tears the session down. A stream that closed for any
+                    // other reason (e.g. we reset it and the peer's trailers were already in
+                    // flight) keeps the conservative stream-level handling: the block is still
+                    // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
+                    // by finish_header_block.
+                    if cur_state == State::HalfClosedRemote {
+                        self.local_connection_error(
+                            sink,
+                            ErrorCode::StreamClosed,
+                            wire::lib_error::STREAM_CLOSED,
+                            b"HEADERS: stream closed",
+                        );
+                        return true;
+                    }
+                    stream_closed = true;
+                }
             }
         }
-        let mut refused = false;
         if is_new {
+            // Must advance even for refused streams: §5.1 treats anything at or below the
+            // high-water mark as having existed, so frames a client pipelined behind the
+            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            // The embedder may refuse the new stream (node's maxSessionMemory budget): the block
-            // is still decoded for HPACK sync, then answered with RST_STREAM(ENHANCE_YOUR_CALM).
-            refused = !sink.on_stream_open(hdr.stream_id);
+            if !refused {
+                sink.on_stream_open(hdr.stream_id);
+            }
         }
 
         self.header_block.clear();
@@ -963,7 +997,7 @@ impl Connection {
         // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
         self.header_is_request = self.is_server && is_new;
         self.header_stream_closed = stream_closed;
-        self.header_refused = refused;
+        self.header_stream_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1010,7 +1044,7 @@ impl Connection {
         }
         let block = std::mem::take(&mut self.header_block);
         let stream_closed = std::mem::take(&mut self.header_stream_closed);
-        let refused = std::mem::take(&mut self.header_refused);
+        let stream_refused = std::mem::take(&mut self.header_stream_refused);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -1021,10 +1055,16 @@ impl Connection {
         let max_pairs = self.max_header_list_pairs as usize;
         let mut list_size: usize = 0;
         let mut field_count: usize = 0;
-        // A stream the embedder refused (maxSessionMemory) takes the same RST(ENHANCE_YOUR_CALM)
-        // path as an oversized header list; the block is still decoded for HPACK sync.
-        let mut rejected = refused;
-        let mut malformed = false;
+        // RFC 9113 §8.1: a trailer section is the final header block on the stream — it must
+        // carry END_STREAM and must not contain pseudo-header fields.
+        let is_trailer = push_parent == 0
+            && !stream_closed
+            && self
+                .streams
+                .get(&target)
+                .is_some_and(|s| s.recv_final_headers);
+        let mut rejected = false;
+        let mut malformed = is_trailer && !self.header_end_stream;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
         // Request-block state for the RFC 9113 §8.3.1 checks below (nghttp2's
@@ -1033,6 +1073,8 @@ impl Connection {
         let is_request = self.header_is_request;
         let mut saw_connect = false;
         let mut saw_host = false;
+        let mut informational = false;
+        let mut content_length: Option<u64> = None;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -1045,7 +1087,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed {
+                    if stream_closed || stream_refused {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -1089,16 +1131,18 @@ impl Connection {
                             // RFC 9113 §8.1: pseudo-headers never appear in a trailer section.
                             // nghttp2 (check_pseudo_header) also treats an empty pseudo-header
                             // value as malformed, so `:path: ""` never counts as a present :path.
-                            let in_trailers = self.is_server && !is_request;
                             if seen_regular
                                 || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
                                 || wrong_direction
                                 || protocol_disabled
-                                || in_trailers
+                                || is_trailer
                                 || value_b.is_empty()
                             {
                                 malformed = true;
+                            }
+                            if rest == b"status" && value_b.len() == 3 && value_b[0] == b'1' {
+                                informational = true;
                             }
                             seen_pseudo |= bit;
                             saw_connect |= rest == b"method" && value_b == b"CONNECT";
@@ -1123,6 +1167,12 @@ impl Connection {
                                         malformed = true;
                                     }
                                 }
+                                b"content-length" => match parse_content_length(value_b) {
+                                    Some(n) if content_length.is_none() => {
+                                        content_length = Some(n);
+                                    }
+                                    _ => malformed = true,
+                                },
                                 _ => {}
                             }
                         }
@@ -1145,6 +1195,11 @@ impl Connection {
         self.header_block.clear();
         if fatal {
             return true;
+        }
+        if stream_refused {
+            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            sink.on_stream_rejected(target);
+            return false;
         }
         if stream_closed {
             // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
@@ -1173,6 +1228,22 @@ impl Connection {
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
             };
+        }
+        // RFC 9113 §8.1.1: an inbound request's content-length must be coherent — the declared
+        // value is attached to the stream and, at END_STREAM, must equal the DATA received
+        // (plain CONNECT is exempt).
+        if push_parent == 0 && self.is_server && !malformed && !rejected {
+            if let Some(s) = self.streams.get_mut(&target) {
+                if !saw_connect && s.content_length.is_none() {
+                    s.content_length = content_length;
+                }
+                if self.header_end_stream
+                    && s.content_length
+                        .is_some_and(|declared| declared != s.recv_body_bytes)
+                {
+                    malformed = true;
+                }
+            }
         }
         if malformed && !rejected {
             // node (nghttp2): a malformed promised request is a connection error — the client
@@ -1217,6 +1288,12 @@ impl Connection {
             return false;
         }
         let end_stream = self.header_end_stream;
+        if push_parent == 0
+            && !informational
+            && let Some(s) = self.streams.get_mut(&target)
+        {
+            s.recv_final_headers = true;
+        }
         sink.on_headers_complete(target, end_stream, self.header_flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
@@ -1301,6 +1378,8 @@ impl Connection {
                             b"stream flow-control window exceeded",
                         );
                         return StreamedDataStart::Fatal;
+                    } else {
+                        st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
                     }
                 }
             }
@@ -1328,6 +1407,9 @@ impl Connection {
     /// `handle_data` does for whole frames.
     fn finish_streamed_data(&mut self, sink: &impl Sink, inflight: &DataInFlight) {
         if inflight.end_stream && !inflight.discard {
+            if self.enforce_content_length(sink, inflight.stream_id) {
+                return;
+            }
             let state = match self.streams.get_mut(&inflight.stream_id) {
                 Some(s) => {
                     if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
@@ -1415,6 +1497,7 @@ impl Connection {
                     if s.recv_window.is_overflowed_with(recv_limit) {
                         DataDecision::FlowControlViolation
                     } else {
+                        s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
                         DataDecision::Deliver(0)
                     }
                 }
@@ -1455,6 +1538,9 @@ impl Connection {
         // ignores flow control (sending a whole burst past the window in one batch) undetectable.
 
         if end_stream {
+            if self.enforce_content_length(sink, hdr.stream_id) {
+                return false;
+            }
             let state = match self.streams.get_mut(&hdr.stream_id) {
                 Some(s) => {
                     if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
@@ -1469,6 +1555,28 @@ impl Connection {
             }
         }
         false
+    }
+
+    /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts
+    /// its declared `content-length` is malformed. Resets the stream with PROTOCOL_ERROR instead
+    /// of signalling end-of-stream and returns true if it did so.
+    fn enforce_content_length(&mut self, sink: &impl Sink, stream_id: u32) -> bool {
+        if !self.is_server {
+            return false;
+        }
+        let mismatch = self.streams.get(&stream_id).is_some_and(|s| {
+            s.content_length
+                .is_some_and(|declared| declared != s.recv_body_bytes)
+        });
+        if !mismatch {
+            return false;
+        }
+        self.send_rst_stream(sink, stream_id, ErrorCode::ProtocolError);
+        if let Some(s) = self.streams.get_mut(&stream_id) {
+            s.state = State::Closed;
+        }
+        sink.on_stream_reset(stream_id, ErrorCode::ProtocolError.as_u32());
+        true
     }
 
     /// RFC 9113 §6.4 RST_STREAM.
@@ -1600,7 +1708,7 @@ impl Connection {
         self.header_push_parent = hdr.stream_id;
         self.header_is_request = true;
         self.header_stream_closed = false;
-        self.header_refused = false;
+        self.header_stream_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1908,9 +2016,8 @@ mod tests {
             self.goaway.set(Some((c, l)));
         }
         fn on_window_update(&self, _id: u32, _inc: u32) {}
-        fn on_stream_open(&self, id: u32) -> bool {
+        fn on_stream_open(&self, id: u32) {
             self.opens.borrow_mut().push(id);
-            true
         }
         fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: bool) {
             self.headers

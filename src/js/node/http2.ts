@@ -2529,6 +2529,10 @@ class Http2Stream extends Duplex {
     // empty trailer object (which the compat Http2ServerResponse does
     // unconditionally from onStreamTrailersReady), emit an empty DATA frame
     // with END_STREAM instead — this matches Node's wire output.
+    // Mark before the native call so a re-entrant sendTrailers() from a header-value
+    // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
+    // (no frame is written then) so a corrected retry succeeds like node.
+    this.#sentTrailers = headers;
     this[kSendingTrailers] = true;
     try {
       if (ObjectKeys(headers).length === 0) {
@@ -2536,10 +2540,12 @@ class Http2Stream extends Duplex {
       } else {
         session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
       }
+    } catch (error) {
+      this.#sentTrailers = undefined;
+      throw error;
     } finally {
       this[kSendingTrailers] = false;
     }
-    this.#sentTrailers = headers;
   }
 
   setTimeout(timeout, callback) {
@@ -6027,6 +6033,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   let head = null;
   let headWritten = false;
   let chunked = false;
+  let noBody = false;
+  let closeDelimited = false;
 
   function writeHeadToSocket(contentLength) {
     if (headWritten) return;
@@ -6045,10 +6053,17 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (headers) {
       // ServerResponse drives this handle with renderNativeHeaders(): a flat
       // [name, value, name, value, ...] array with original-case names.
-      for (let i = 0; i + 1 < headers.length; i += 2) {
+      for (let i = 0, end = headers.length - 1; i < end; i += 2) {
         const name = headers[i];
         const value = headers[i + 1];
-        switch (String(name).toLowerCase()) {
+        if (name.length === 1 && name.charCodeAt(0) === 0) {
+          // node:http's NUL-named framing sentinel pair (see NodeHTTP.cpp):
+          // value "2" = no body (HEAD), anything else = close-delimited.
+          if (value === "2") noBody = true;
+          else closeDelimited = true;
+          continue;
+        }
+        switch (name.toLowerCase()) {
           case "content-length":
             hasContentLength = true;
             break;
@@ -6066,7 +6081,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         out += `${name}: ${value}\r\n`;
       }
     }
-    if (!hasContentLength && !hasTransferEncoding) {
+    if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
       if (contentLength === null) {
         chunked = true;
         out += "Transfer-Encoding: chunked\r\n";
@@ -6077,7 +6092,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!hasDate) {
       out += `Date: ${new Date().toUTCString()}\r\n`;
     }
-    if (!hasConnection) {
+    // A close-delimited response with no Connection pair means the user removed
+    // it (Node's _removedConnection): write none rather than inventing
+    // keep-alive on a connection that ends with the body.
+    if (!hasConnection && !closeDelimited) {
       if (shouldKeepAlive) {
         out += `Connection: keep-alive\r\nKeep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
       } else {
@@ -6126,7 +6144,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const originalStatusCode = statusCode;
       statusCode |= 0;
       if (statusCode < 100 || statusCode > 999) {
-        throw $ERR_HTTP_INVALID_STATUS_CODE(String(originalStatusCode));
+        throw $ERR_HTTP_INVALID_STATUS_CODE(`${originalStatusCode}`);
       }
       if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
         throw $ERR_INVALID_CHAR("statusMessage");
@@ -6147,13 +6165,20 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const length = buf ? (buf.byteLength ?? buf.length) : 0;
       writeHeadToSocket(length);
       writeBody(buf);
-      if (chunked) socket.write("0\r\n\r\n");
+      // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
+      // response never writes the terminating chunk, even when the user set
+      // Transfer-Encoding: chunked themselves.
+      if (chunked && !noBody) socket.write("0\r\n\r\n");
       this.ended = true;
       this.finished = true;
       const onfinished = this.onfinished;
       if (onfinished) {
         this.onfinished = null;
         onfinished();
+      }
+      // A close-delimited body ends at EOF, so the response ends the connection.
+      if (closeDelimited && !socket.destroyed) {
+        socket.end();
       }
       return length;
     },
@@ -6244,6 +6269,12 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
+    // node's resOnFinish: release the socket once the response completes so the next
+    // keep-alive request's response can attach (assignSocket throws
+    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    res.on("finish", function onFallbackResponseFinish() {
+      this.detachSocket(socket);
+    });
 
     server.emit("request", req, res);
     return 0;

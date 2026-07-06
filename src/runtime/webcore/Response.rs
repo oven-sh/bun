@@ -618,7 +618,10 @@ impl Response {
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn get_or_create_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<&mut HeadersRef> {
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.

@@ -3118,7 +3118,7 @@ describe("css tests", () => {
       `,
       indoc`
         .foo {
-          background: #af5cae linear-gradient(#c65d07, #00807c);
+          background: #af5cae linear-gradient(#c65d07, #00817d);
           background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
         }
       `,
@@ -7028,6 +7028,46 @@ describe("css tests", () => {
         chrome: Some(95 << 16),
       },
     );
+  });
+
+  describe("animation", () => {
+    // The animation name is serialized last, in canonical order.
+    minify_test(".foo { animation: anim 2s }", ".foo{animation:2s anim}");
+    minify_test(".foo { animation: 0.25s ease-out forwards anim }", ".foo{animation:.25s ease-out forwards anim}");
+    minify_test(".foo { animation: none }", ".foo{animation:none}");
+
+    // Name-less shorthands must keep their components (must NOT collapse to
+    // `none`) — a lone trailing `none` is dropped as redundant.
+    minify_test(".foo { animation: 2s }", ".foo{animation:2s}");
+    minify_test(".foo { animation: 2s ease-in-out }", ".foo{animation:2s ease-in-out}");
+    minify_test(
+      ".foo { animation: 3s linear 1s infinite alternate }",
+      ".foo{animation:3s linear 1s infinite alternate}",
+    );
+    minify_test(".foo { animation: 2s none }", ".foo{animation:2s}");
+    // 0s duration must still be emitted when a nonzero delay follows.
+    minify_test(".foo { animation: 0s 2s foo }", ".foo{animation:0s 2s foo}");
+
+    // Multiple comma-separated animations.
+    minify_test(".foo { animation: spin 1s, 2s slide }", ".foo{animation:1s spin,2s slide}");
+
+    // Vendor-prefixed shorthand.
+    minify_test(".foo { -webkit-animation: spin 1s }", ".foo{-webkit-animation:1s spin}");
+
+    // Timeline component in the shorthand: round-trips a dashed-ident timeline
+    // and drops the default `auto` timeline.
+    minify_test(".foo { animation: 1s spin --my-timeline }", ".foo{animation:1s spin --my-timeline}");
+    minify_test(".foo { animation: 1s spin auto }", ".foo{animation:1s spin}");
+
+    // animation-name longhand.
+    minify_test(".foo { animation-name: foo }", ".foo{animation-name:foo}");
+    minify_test(".foo { animation-name: foo, bar }", ".foo{animation-name:foo,bar}");
+    minify_test('.foo { animation-name: "foo" }', ".foo{animation-name:foo}");
+
+    // CSS-wide keywords must NOT be consumed as an animation name.
+    minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
+    minify_test(".foo { animation: unset }", ".foo{animation:unset}");
+    minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
   });
 
   describe("transform", () => {

@@ -1844,6 +1844,7 @@ pub fn generate_network_task_for_tarball<'a>(
         temp_dir,
         dependency_id,
         skip_verify: false,
+        in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
         url: strings::StringOrTinyString::init_append_if_needed(
             url,

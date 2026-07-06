@@ -104,9 +104,11 @@ test("stdin with 'data' event handler should NOT receive data when paused", asyn
 
   const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
-  expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
+  expect(stdout).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
-  expect(proc.exitCode).toBe(1);
+  // Reusing the already-consumed stdout stream now rejects (the stream is disturbed).
+  await expect(proc.stdout.text()).rejects.toThrow("ReadableStream has already been used");
+  expect(exitCode).toBe(1);
 });
 
 // Drains the child; its stderr joins the comparison only when it failed, so a
@@ -300,4 +302,33 @@ test("stdin should not allow process to exit when not paused", async () => {
   await proc.exited;
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`""`);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
+});
+
+test("pause() and resume() churn while data is in flight never destroys stdin", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let total = 0;
+      process.stdin.on("data", d => { total += d.length; });
+      process.stdin.on("error", err => { console.log("ERROR " + (err?.code || err?.message)); process.exit(1); });
+      process.stdin.on("end", () => { console.log("TOTAL " + total); });
+      const churn = setInterval(() => { process.stdin.pause(); process.stdin.resume(); }, 5);
+      churn.unref();
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  for (let i = 0; i < 20; i++) {
+    proc.stdin.write("x".repeat(1024));
+    await Bun.sleep(10);
+  }
+  await proc.stdin.end();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
+  expect(exitCode).toBe(0);
 });

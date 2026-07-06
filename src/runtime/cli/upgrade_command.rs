@@ -10,6 +10,7 @@ use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
+use bun_install::integrity::{Integrity, Tag as IntegrityTag};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, PathBuffer, SEP_STR};
@@ -69,6 +70,7 @@ pub struct Version {
     pub tag: Box<[u8]>,
     pub buf: MutableString,
     pub size: u32,
+    pub digest: Integrity,
 }
 
 impl Version {
@@ -146,6 +148,27 @@ impl Version {
 
     pub fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()
+    }
+
+    pub fn parse_asset_digest(buf: &[u8]) -> Integrity {
+        const PREFIX: &[u8] = b"sha256:";
+        const HEX_LEN: usize = 64;
+        if buf.len() != PREFIX.len() + HEX_LEN || !strings::starts_with(buf, PREFIX) {
+            return Integrity::default();
+        }
+
+        let mut digest = Integrity {
+            tag: IntegrityTag::SHA256,
+            ..Default::default()
+        };
+        for (i, pair) in buf[PREFIX.len()..].chunks_exact(2).enumerate() {
+            match bun_fmt::hex_pair_value(pair[0], pair[1]) {
+                Some(byte) => digest.value[i] = byte,
+                None => return Integrity::default(),
+            }
+        }
+
+        digest
     }
 
     pub fn export() {
@@ -339,6 +362,7 @@ impl UpgradeCommand {
             tag: Box::default(),
             buf: MutableString::init_empty(),
             size: 0,
+            digest: Integrity::default(),
         };
 
         if !expr.is_object() {
@@ -437,6 +461,12 @@ impl UpgradeCommand {
                         if bun_core::env::IS_DEBUG {
                             bun_core::prettyln!("Found Zip {}", bstr::BStr::new(&*version.zip_url));
                             Output::flush();
+                        }
+
+                        if let Some(digest_) = asset.as_property(b"digest") {
+                            if let Some(digest) = digest_.expr.as_utf8_string_literal() {
+                                version.digest = Version::parse_asset_digest(digest);
+                            }
                         }
 
                         if let Some(size_) = asset.as_property(b"size") {
@@ -631,6 +661,7 @@ impl UpgradeCommand {
                 .into(),
                 size: 0,
                 buf: MutableString::init_empty(),
+                digest: Integrity::default(),
             }
         };
 
@@ -700,6 +731,14 @@ impl UpgradeCommand {
             if bytes.is_empty() {
                 bun_core::pretty_errorln!(
                     "<r><red>error:<r> Failed to download the latest version of Bun. Received empty content"
+                );
+                Global::exit(1);
+            }
+
+            if version.digest.tag.is_supported() && !version.digest.verify(bytes) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>bun upgrade<r> again to retry the download",
+                    bstr::BStr::new(&zip_url_bytes)
                 );
                 Global::exit(1);
             }

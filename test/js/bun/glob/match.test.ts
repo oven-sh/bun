@@ -378,6 +378,19 @@ describe("Glob.match", () => {
     const real = "{packages,apps}/{a,b}/{src,lib}/{x,y}/{u,v}/{p,q}/{c,d}/{e,f}/{g,h}/{i,j}/*.{ts,tsx}";
     expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.ts")).toBeTrue();
     expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.go")).toBeFalse();
+
+    // 200 groups (below the depth cap) still matches.
+    const deep = Array.from({ length: 200 }, () => "{a,b}").join("");
+    expect(new Glob(deep).match(Buffer.alloc(200, "a").toString())).toBeTrue();
+  });
+
+  test("pathologically deep brace patterns do not overflow the stack", () => {
+    // Each group along a match path adds a native recursion frame; thousands
+    // of sequential groups used to segfault. The depth cap returns false
+    // instead of crashing.
+    const n = 5000;
+    const flat = Array.from({ length: n }, () => "{a,b}").join("");
+    expect(new Glob(flat).match(Buffer.alloc(n, "a").toString())).toBeFalse();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

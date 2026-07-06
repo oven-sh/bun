@@ -47,6 +47,13 @@ type BraceStack = SmallList<Brace, 10>;
 /// alternatives. Patterns that exceed this budget fail to match.
 const BRACE_BRANCH_BUDGET: u32 = 10_000;
 
+/// Cap on how deep the `match_brace` -> `match_brace_branch` -> `glob_match_impl`
+/// recursion may go. Each brace group entered along a match path adds one
+/// native frame, so an adversarial pattern of thousands of groups would
+/// otherwise overflow the thread stack. Far above any realistic pattern (a
+/// deep monorepo glob uses tens of groups); patterns beyond it do not match.
+const MAX_BRACE_DEPTH: u32 = 256;
+
 // `pub` because it appears in the signature of `pub fn match` (private-in-public is forbidden).
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MatchResult {
@@ -132,7 +139,8 @@ struct Wildcard {
 /// "{a,b}"
 ///     Match one of the patterns contained in the braces.
 ///     Any of the wildcards listed above can be used in the sub patterns.
-///     Braces may be nested up to 10 levels deep.
+///     Braces may be nested and chained freely; only pathologically deep
+///     patterns (see `MAX_BRACE_DEPTH`) stop matching.
 /// "!"
 ///     Negates the result when at the start of the pattern.
 ///     Multiple "!" characters negate the pattern multiple times.
@@ -522,6 +530,10 @@ fn match_brace_branch(
         return false;
     }
     *brace_budget -= 1;
+
+    if brace_stack.len() >= MAX_BRACE_DEPTH {
+        return false;
+    }
 
     brace_stack.append(Brace {
         open_brace_idx: open_brace_index,

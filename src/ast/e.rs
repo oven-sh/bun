@@ -1341,10 +1341,12 @@ impl Object {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
+            let key = Expr::init(EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
-                    key: Some(Expr::init(EString::init(key), expr.loc)),
+                    flags: own_key_property_flags(&key),
+                    key: Some(key),
                     value: Some(expr),
                     ..G::Property::default()
                 },
@@ -1403,6 +1405,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1415,10 +1418,23 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
         Ok(out)
+    }
+}
+
+/// Data-file parsers (JSON/JSON5/TOML/YAML) define every key as an own
+/// property, so an own `"__proto__"` string key must be marked computed:
+/// a plain `"__proto__":` key in a printed object literal sets the prototype.
+pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
+    match &key.data {
+        crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {
+            crate::flags::Property::IsComputed.into()
+        }
+        _ => crate::flags::PROPERTY_NONE,
     }
 }
 
@@ -1436,6 +1452,7 @@ impl Object {
         VecExt::append(
             &mut self.properties,
             G::Property {
+                flags: own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..G::Property::default()
@@ -1501,6 +1518,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(value_),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
@@ -1556,6 +1574,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1568,6 +1587,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );

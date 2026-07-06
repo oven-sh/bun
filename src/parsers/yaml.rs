@@ -3280,7 +3280,10 @@ impl MappingProps {
         }
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+    pub fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
+        if let Some(key) = &prop.key {
+            prop.flags |= E::own_key_property_flags(key);
+        }
         self.list.push(prop);
         Ok(())
     }
@@ -3345,12 +3348,11 @@ impl MappingProps {
         };
 
         if !is_merge_key {
-            self.list.push(G::Property {
+            return self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
             });
-            return Ok(());
         }
 
         match &value.data {
@@ -3365,14 +3367,11 @@ impl MappingProps {
                 }
                 Ok(())
             }
-            _ => {
-                self.list.push(G::Property {
-                    key: Some(key),
-                    value: Some(value),
-                    ..Default::default()
-                });
-                Ok(())
-            }
+            _ => self.append(G::Property {
+                key: Some(key),
+                value: Some(value),
+                ..Default::default()
+            }),
         }
     }
 

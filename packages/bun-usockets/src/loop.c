@@ -73,6 +73,9 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
+    /* Every read on this loop writes into recv_buf; a NULL here makes each one
+     * fail with EFAULT for the life of the process. */
+    if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);

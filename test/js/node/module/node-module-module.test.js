@@ -301,3 +301,109 @@ describe.concurrent("node-module-module", () => {
     expect(await proc.exited).toBe(0);
   });
 });
+
+// syncBuiltinESMExports() mutates process-global builtin state, so every case
+// runs in its own process. Every value below is reported as a string so that
+// JSON.stringify cannot silently drop an `undefined` and make the check vacuous.
+describe.concurrent("syncBuiltinESMExports", () => {
+  async function runFixture(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("propagates a CommonJS patch to the ESM namespace and named imports", async () => {
+    expect(
+      await runFixture(`
+        import { createRequire, syncBuiltinESMExports } from "node:module";
+        import * as fsNamespace from "node:fs";
+        import { readFileSync } from "node:fs";
+
+        const fs = createRequire(import.meta.url)("fs");
+        fs.readFileSync = () => "patched";
+        syncBuiltinESMExports();
+
+        console.log(
+          JSON.stringify({
+            commonjs: String(fs.readFileSync()),
+            namespace: String(fsNamespace.readFileSync()),
+            namedImport: String(readFileSync()),
+            defaultIsExportsObject: fsNamespace.default === fs,
+          }),
+        );
+      `),
+    ).toEqual({
+      commonjs: "patched",
+      namespace: "patched",
+      namedImport: "patched",
+      defaultIsExportsObject: true,
+    });
+  });
+
+  test("does not touch the ESM namespace until it is called", async () => {
+    expect(
+      await runFixture(`
+        import { createRequire } from "node:module";
+        import * as fsNamespace from "node:fs";
+
+        const fs = createRequire(import.meta.url)("fs");
+        const original = fsNamespace.readFileSync;
+        fs.readFileSync = () => "patched";
+
+        console.log(JSON.stringify({ stillOriginal: fsNamespace.readFileSync === original }));
+      `),
+    ).toEqual({ stillOriginal: true });
+  });
+
+  test("deleted exports become undefined, new properties do not become exports", async () => {
+    expect(
+      await runFixture(`
+        import { createRequire, syncBuiltinESMExports } from "node:module";
+        import * as fsNamespace from "node:fs";
+
+        const fs = createRequire(import.meta.url)("fs");
+        delete fs.readFileSync;
+        fs.brandNewExport = 42;
+        syncBuiltinESMExports();
+
+        console.log(
+          JSON.stringify({
+            deletedValue: typeof fsNamespace.readFileSync,
+            deletedStillExported: "readFileSync" in fsNamespace,
+            added: "brandNewExport" in fsNamespace,
+          }),
+        );
+      `),
+    ).toEqual({ deletedValue: "undefined", deletedStillExported: true, added: false });
+  });
+
+  test("syncs builtins implemented as native modules", async () => {
+    expect(
+      await runFixture(`
+        import { createRequire, syncBuiltinESMExports } from "node:module";
+        import * as bufferNamespace from "node:buffer";
+
+        const buffer = createRequire(import.meta.url)("node:buffer");
+        buffer.isUtf8 = () => "patched";
+        syncBuiltinESMExports();
+
+        console.log(JSON.stringify({ namespace: String(bufferNamespace.isUtf8()) }));
+      `),
+    ).toEqual({ namespace: "patched" });
+  });
+
+  test("returns undefined and is a no-op when no builtin was imported", async () => {
+    expect(
+      await runFixture(`
+        const { syncBuiltinESMExports } = require("node:module");
+        console.log(JSON.stringify({ returned: typeof syncBuiltinESMExports() }));
+      `),
+    ).toEqual({ returned: "undefined" });
+  });
+});

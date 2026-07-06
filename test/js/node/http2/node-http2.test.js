@@ -3187,43 +3187,55 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
-// Drives an Expect: 100-continue POST through the allowHTTP1 fallback and
-// returns the ordered status lines seen on the wire plus the server events.
-async function runHttp1ExpectContinue(server) {
+// Opens a raw TLS/http-1.1 connection to the allowHTTP1 fallback, writes
+// requestText, and resolves with the full response once the socket ends.
+// onData(buf, socket) fires on every chunk so a caller can send the body
+// after seeing a 100 Continue, mirroring an RFC-following uploader.
+async function sendRawHttp1Request(server, requestText, onData) {
   await new Promise(resolve => server.listen(0, resolve));
   try {
     const { promise, resolve, reject } = Promise.withResolvers();
     const socket = tls.connect(
       { host: "127.0.0.1", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
-      () => {
-        socket.write(
-          "POST /x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n",
-        );
-      },
+      () => socket.write(requestText),
     );
     const chunks = [];
-    let bodySent = false;
     socket.on("error", reject);
     socket.on("data", chunk => {
       chunks.push(chunk);
-      // The 100 Continue arriving is the cue to send the body, mirroring an
-      // RFC-following uploader; guard so we only send it once.
-      if (!bodySent && Buffer.concat(chunks).includes("100 Continue")) {
-        bodySent = true;
-        socket.write("hello");
-      }
+      onData?.(Buffer.concat(chunks), socket);
     });
     socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
-    const raw = await promise;
-    const statusLines = raw
-      .split("\r\n\r\n")
-      .map(block => block.split("\r\n")[0])
-      .filter(Boolean);
-    return { statusLines, raw };
+    return await promise;
   } finally {
     server.close();
   }
 }
+
+function statusLinesOf(raw) {
+  return raw
+    .split("\r\n\r\n")
+    .map(block => block.split("\r\n")[0])
+    .filter(Boolean);
+}
+
+function bodyOf(raw) {
+  return raw.slice(raw.lastIndexOf("\r\n\r\n") + 4);
+}
+
+// Sends the body once the 100 Continue line arrives, guarding the double send.
+function sendBodyOnContinue() {
+  let bodySent = false;
+  return (buf, socket) => {
+    if (!bodySent && buf.includes("100 Continue")) {
+      bodySent = true;
+      socket.write("hello");
+    }
+  };
+}
+
+const EXPECT_CONTINUE_REQUEST =
+  "POST /x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n";
 
 it("http2 allowHTTP1 fallback emits checkContinue and writes 100 Continue for Expect: 100-continue", async () => {
   const events = [];
@@ -3239,10 +3251,11 @@ it("http2 allowHTTP1 fallback emits checkContinue and writes 100 Continue for Ex
     req.on("data", () => {});
     req.on("end", () => res.end("cc-done"));
   });
-  const { statusLines, raw } = await runHttp1ExpectContinue(server);
+  const raw = await sendRawHttp1Request(server, EXPECT_CONTINUE_REQUEST, sendBodyOnContinue());
+  const statusLines = statusLinesOf(raw);
   expect(statusLines[0]).toBe("HTTP/1.1 100 Continue");
   expect(statusLines[1]).toStartWith("HTTP/1.1 200 ");
-  expect(raw.slice(raw.lastIndexOf("\r\n\r\n") + 4)).toBe("cc-done");
+  expect(bodyOf(raw)).toBe("cc-done");
   // The request must be dispatched through checkContinue, not straight to 'request'.
   expect(events).toEqual(["checkContinue:hv=1.1"]);
 });
@@ -3255,10 +3268,11 @@ it("http2 allowHTTP1 fallback auto-writes 100 Continue and emits request when no
     req.on("data", () => {});
     req.on("end", () => res.end("done"));
   });
-  const { statusLines, raw } = await runHttp1ExpectContinue(server);
+  const raw = await sendRawHttp1Request(server, EXPECT_CONTINUE_REQUEST, sendBodyOnContinue());
+  const statusLines = statusLinesOf(raw);
   expect(statusLines[0]).toBe("HTTP/1.1 100 Continue");
   expect(statusLines[1]).toStartWith("HTTP/1.1 200 ");
-  expect(raw.slice(raw.lastIndexOf("\r\n\r\n") + 4)).toBe("done");
+  expect(bodyOf(raw)).toBe("done");
   expect(events).toEqual(["request:hv=1.1"]);
 });
 
@@ -3269,27 +3283,12 @@ it("http2 allowHTTP1 fallback answers an unsupported expectation with 417 and no
     events.push("request");
     res.end("should-not-happen");
   });
-  await new Promise(resolve => server.listen(0, resolve));
-  try {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const socket = tls.connect(
-      { host: "127.0.0.1", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
-      () => {
-        socket.write(
-          "POST /x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 5\r\nExpect: something-else\r\n\r\n",
-        );
-      },
-    );
-    const chunks = [];
-    socket.on("error", reject);
-    socket.on("data", chunk => chunks.push(chunk));
-    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
-    const raw = await promise;
-    expect(raw).toStartWith("HTTP/1.1 417 ");
-    expect(events).toEqual([]);
-  } finally {
-    server.close();
-  }
+  const raw = await sendRawHttp1Request(
+    server,
+    "POST /x HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 5\r\nExpect: something-else\r\n\r\n",
+  );
+  expect(raw).toStartWith("HTTP/1.1 417 ");
+  expect(events).toEqual([]);
 });
 
 it("http2 allowHTTP1 fallback ignores Expect: 100-continue on an HTTP/1.0 request", async () => {
@@ -3301,26 +3300,13 @@ it("http2 allowHTTP1 fallback ignores Expect: 100-continue on an HTTP/1.0 reques
     req.on("data", () => {});
     req.on("end", () => res.end("done"));
   });
-  await new Promise(resolve => server.listen(0, resolve));
-  try {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const socket = tls.connect(
-      { host: "127.0.0.1", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
-      () => {
-        // HTTP/1.0 request line: per RFC 7231 5.1.1 the 100-continue
-        // expectation must be ignored and no 100 written.
-        socket.write("POST /x HTTP/1.0\r\nHost: localhost\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello");
-      },
-    );
-    const chunks = [];
-    socket.on("error", reject);
-    socket.on("data", chunk => chunks.push(chunk));
-    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
-    const raw = await promise;
-    expect(raw).not.toContain("100 Continue");
-    expect(raw.slice(raw.lastIndexOf("\r\n\r\n") + 4)).toBe("done");
-    expect(events).toEqual(["request:hv=1.0"]);
-  } finally {
-    server.close();
-  }
+  // HTTP/1.0 request line: per RFC 7231 5.1.1 the 100-continue expectation
+  // must be ignored and no 100 written, so send the body up front.
+  const raw = await sendRawHttp1Request(
+    server,
+    "POST /x HTTP/1.0\r\nHost: localhost\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello",
+  );
+  expect(raw).not.toContain("100 Continue");
+  expect(bodyOf(raw)).toBe("done");
+  expect(events).toEqual(["request:hv=1.0"]);
 });

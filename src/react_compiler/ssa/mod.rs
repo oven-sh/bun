@@ -1,0 +1,14 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    unreachable_pub,
+    reason = "ported from facebook/react upstream; uses std collections by design"
+)]
+
+mod eliminate_redundant_phi;
+pub mod enter_ssa;
+mod rewrite_instruction_kinds_based_on_reassignment;
+
+pub use eliminate_redundant_phi::eliminate_redundant_phi;
+pub use enter_ssa::enter_ssa;
+pub use rewrite_instruction_kinds_based_on_reassignment::rewrite_instruction_kinds_based_on_reassignment;

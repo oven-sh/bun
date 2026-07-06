@@ -41,7 +41,7 @@ impl Default for NameOfSymbol {
 
 pub struct Array {
     pub items: ExprNodeList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -51,7 +51,7 @@ impl Default for Array {
     fn default() -> Self {
         Self {
             items: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -63,7 +63,7 @@ impl Default for Array {
 impl Array {
     pub const EMPTY: Array = Array {
         items: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
@@ -372,7 +372,11 @@ pub struct Arrow {
     pub has_rest_arg: bool,
     /// Use shorthand if true and "Body" is a single return statement
     pub prefer_expr: bool,
+    /// See `flags::Function::HasReactHooksSuppression`.
+    pub has_react_hooks_suppression: bool,
 }
+// The fourth bool fits in existing trailing padding.
+const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
 impl Arrow {
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
@@ -383,6 +387,7 @@ impl Arrow {
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
+        has_react_hooks_suppression: false,
     };
 }
 impl Default for Arrow {
@@ -396,6 +401,7 @@ impl Default for Arrow {
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
+            has_react_hooks_suppression: false,
         }
     }
 }
@@ -688,9 +694,35 @@ impl JSXSpecialProp {
     }
 }
 
+/// `packed(4)` lowers the alignment to 4 so `expr::Data` (and therefore `Expr`)
+/// drop to align 4 and pack into 16 bytes; the `f64` stays a single scalar so
+/// `.value()` is one `movsd`/`ldr`. The field is private because comparisons on
+/// a packed `f64` field would require `&self.value` (an unaligned reference);
+/// callers go through `value()` / `new()` which copy by value.
 #[derive(Clone, Copy)]
+#[repr(C, packed(4))]
 pub struct Number {
-    pub value: f64,
+    value: f64,
+}
+
+const _: () = assert!(core::mem::size_of::<Number>() == 8);
+const _: () = assert!(core::mem::align_of::<Number>() == 4);
+
+impl Number {
+    #[inline(always)]
+    pub const fn new(value: f64) -> Self {
+        Number { value }
+    }
+    #[inline(always)]
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+}
+impl From<f64> for Number {
+    #[inline]
+    fn from(v: f64) -> Self {
+        Number::new(v)
+    }
 }
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
@@ -722,7 +754,7 @@ impl Number {
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
     pub fn to_string(self, bump: &Bump) -> Option<Str> {
-        Self::to_string_from_f64(self.value, bump)
+        Self::to_string_from_f64(self.value(), bump)
     }
 
     pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
@@ -794,7 +826,7 @@ impl Number {
     }
 
     pub fn to<T: NumberCast>(self) -> T {
-        let clamped = self.value.trunc().max(0.0).min(T::MAX_AS_F64);
+        let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
     }
 
@@ -830,9 +862,350 @@ impl BigInt {
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
+// ── immutable JSON nodes ───────────────────────────────────────────────────
+// Compact, read-only object/array nodes: the JSON parser's native output.
+// Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
+
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
+#[derive(Clone, Copy)]
+pub enum JsonValue {
+    Null,
+    Boolean(bool),
+    Number(Number),
+    String(Str),
+    Object(StoreRef<ObjectJSON>),
+    Array(StoreRef<ArrayJSON>),
+}
+
+const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
+const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
+
+impl JsonValue {
+    pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+        match self {
+            JsonValue::Null => hasher.update(&[0]),
+            JsonValue::Boolean(b) => hasher.update(&[1, *b as u8]),
+            JsonValue::Number(n) => {
+                hasher.update(&[2]);
+                hasher.update(&n.value().to_bits().to_le_bytes());
+            }
+            JsonValue::String(s) => {
+                hasher.update(&[3]);
+                hasher.update(s.slice());
+            }
+            JsonValue::Object(o) => {
+                let o = o.get();
+                hasher.update(&[4]);
+                hasher.update(&(o.properties().len() as u32).to_le_bytes());
+                for p in o.properties().iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            JsonValue::Array(a) => {
+                let a = a.get();
+                hasher.update(&[5]);
+                hasher.update(&(a.items().len() as u32).to_le_bytes());
+                for item in a.items().iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> Option<&[u8]> {
+        match self {
+            JsonValue::String(s) => Some(s.slice()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_object(&self) -> Option<&ObjectJSON> {
+        match self {
+            JsonValue::Object(o) => Some(o.get()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_array(&self) -> Option<&ArrayJSON> {
+        match self {
+            JsonValue::Array(a) => Some(a.get()),
+            _ => None,
+        }
+    }
+}
+
+/// One `"key": value` row of an [`ObjectJSON`].
+#[derive(Clone, Copy)]
+pub struct PropertyJSON {
+    pub key: Str,
+    pub key_loc: crate::Loc,
+    pub value: JsonValue,
+}
+
+const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+
+/// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
+#[derive(Clone, Copy)]
+pub enum TapeAlloc {
+    Global,
+    Arena(core::ptr::NonNull<Bump>),
+}
+
+// SAFETY: an arena tape is built and read on the thread that owns the arena.
+unsafe impl Send for TapeAlloc {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for TapeAlloc {}
+
+// SAFETY: both arms forward to allocators that uphold the `Allocator` contract.
+unsafe impl core::alloc::Allocator for TapeAlloc {
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        match self {
+            TapeAlloc::Global => core::alloc::Allocator::allocate(&std::alloc::Global, layout),
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                core::alloc::Allocator::allocate(&arena, layout)
+            }
+        }
+    }
+
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        match self {
+            // SAFETY: forwarding the caller's contract.
+            TapeAlloc::Global => unsafe {
+                core::alloc::Allocator::deallocate(&std::alloc::Global, ptr, layout)
+            },
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                // SAFETY: forwarding the caller's contract to the arena.
+                unsafe { core::alloc::Allocator::deallocate(&arena, ptr, layout) }
+            }
+        }
+    }
+}
+
+/// Everything one parsed JSON document allocates that does not borrow the source.
+pub struct JsonTape {
+    props: Vec<PropertyJSON, TapeAlloc>,
+    items: Vec<JsonValue, TapeAlloc>,
+    prop_value_locs: Vec<crate::Loc, TapeAlloc>,
+    item_locs: Vec<crate::Loc, TapeAlloc>,
+    str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
+    str_used: usize,
+}
+
+// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
+unsafe impl Send for JsonTape {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for JsonTape {}
+
+impl JsonTape {
+    const STR_CHUNK: usize = 4096;
+
+    pub fn empty() -> JsonTape {
+        Self::empty_in(TapeAlloc::Global)
+    }
+
+    pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
+        JsonTape {
+            props: Vec::new_in(alloc),
+            items: Vec::new_in(alloc),
+            prop_value_locs: Vec::new_in(alloc),
+            item_locs: Vec::new_in(alloc),
+            str_chunks: Vec::new_in(alloc),
+            str_used: 0,
+        }
+    }
+
+    #[inline]
+    fn alloc(&self) -> TapeAlloc {
+        *self.props.allocator()
+    }
+
+    #[inline]
+    pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
+        let first = self.props.len() as u32;
+        self.props.extend_from_slice(rows);
+        self.prop_value_locs.extend_from_slice(value_locs);
+        (first, rows.len() as u32)
+    }
+
+    #[inline]
+    pub fn append_items(&mut self, rows: &[JsonValue], item_locs: &[crate::Loc]) -> (u32, u32) {
+        let first = self.items.len() as u32;
+        self.items.extend_from_slice(rows);
+        self.item_locs.extend_from_slice(item_locs);
+        (first, rows.len() as u32)
+    }
+
+    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        let fits = self
+            .str_chunks
+            .last()
+            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+        if !fits {
+            let cap = bytes.len().max(Self::STR_CHUNK);
+            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
+            chunk.resize(cap, 0);
+            self.str_chunks.push(chunk);
+            self.str_used = 0;
+        }
+        let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
+        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
+        out.copy_from_slice(bytes);
+        self.str_used += bytes.len();
+        Str::new(out)
+    }
+
+    #[inline]
+    fn prop_value_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.prop_value_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    #[inline]
+    fn item_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.item_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    #[inline]
+    fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
+        &self.props[first as usize..first as usize + count as usize]
+    }
+
+    #[inline]
+    fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
+        &self.items[first as usize..first as usize + count as usize]
+    }
+}
+
+/// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
+pub struct ObjectJSON {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_brace_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
+unsafe impl Send for ObjectJSON {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for ObjectJSON {}
+
+impl ObjectJSON {
+    /// `tape` must be the document's [`JsonTape`] and outlive this node.
+    #[inline]
+    pub fn new(
+        tape: &JsonTape,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_brace_loc: crate::Loc,
+    ) -> Self {
+        ObjectJSON {
+            tape: core::ptr::NonNull::from(tape),
+            first,
+            count,
+            close_brace_loc,
+            is_single_line,
+        }
+    }
+
+    #[inline]
+    pub fn properties(&self) -> &[PropertyJSON] {
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: per the constructor's contract the tape outlives this node.
+        unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
+    }
+
+    /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
+    #[inline]
+    pub fn value_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `properties`.
+        unsafe { self.tape.as_ref() }.prop_value_locs_span(self.first, self.count)
+    }
+
+    #[inline]
+    pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
+        self.properties()
+            .iter()
+            .find(|p| p.key.slice() == key)
+            .map(|p| &p.value)
+    }
+}
+
+/// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
+pub struct ArrayJSON {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_bracket_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: see `ObjectJSON`.
+unsafe impl Send for ArrayJSON {}
+// SAFETY: see `ObjectJSON`.
+unsafe impl Sync for ArrayJSON {}
+
+impl ArrayJSON {
+    /// `tape` must be the document's [`JsonTape`] and outlive this node.
+    #[inline]
+    pub fn new(
+        tape: &JsonTape,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_bracket_loc: crate::Loc,
+    ) -> Self {
+        ArrayJSON {
+            tape: core::ptr::NonNull::from(tape),
+            first,
+            count,
+            close_bracket_loc,
+            is_single_line,
+        }
+    }
+
+    #[inline]
+    pub fn items(&self) -> &[JsonValue] {
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
+    }
+
+    /// Parallel to [`Self::items`]; `None` unless the parse recorded item locations.
+    #[inline]
+    pub fn item_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.item_locs_span(self.first, self.count)
+    }
+}
+
 pub struct Object {
     pub properties: G::PropertyList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -843,7 +1216,7 @@ impl Default for Object {
     fn default() -> Self {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -922,7 +1295,7 @@ pub struct RopeQuery<'a> {
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
@@ -968,10 +1341,12 @@ impl Object {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
+            let key = Expr::init(EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
-                    key: Some(Expr::init(EString::init(key), expr.loc)),
+                    flags: own_key_property_flags(&key),
+                    key: Some(key),
                     value: Some(expr),
                     ..G::Property::default()
                 },
@@ -1030,6 +1405,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1042,10 +1418,23 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
         Ok(out)
+    }
+}
+
+/// Data-file parsers (JSON/JSON5/TOML/YAML) define every key as an own
+/// property, so an own `"__proto__"` string key must be marked computed:
+/// a plain `"__proto__":` key in a printed object literal sets the prototype.
+pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
+    match &key.data {
+        crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {
+            crate::flags::Property::IsComputed.into()
+        }
+        _ => crate::flags::PROPERTY_NONE,
     }
 }
 
@@ -1063,6 +1452,7 @@ impl Object {
         VecExt::append(
             &mut self.properties,
             G::Property {
+                flags: own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..G::Property::default()
@@ -1128,6 +1518,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(value_),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
@@ -1183,6 +1574,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1195,6 +1587,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
@@ -1329,6 +1722,14 @@ pub struct Spread {
 }
 
 /// JavaScript string literal type
+// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
+// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
+// offset, and a `static EString = EString::from_static(b"...")` then emits an
+// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
+// `data` (the only field needing a static relocation) at offset 0; `align(8)`
+// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
+// in `Expr`), so this does not affect `Expr` size.
+#[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
@@ -1336,7 +1737,6 @@ pub struct EString {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub data: Str,
-    pub prefer_template: bool,
 
     // A very simple rope implementation
     // We only use this for string folding, so this is kind of overkill
@@ -1344,6 +1744,7 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    pub prefer_template: bool,
     pub is_utf16: bool,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
@@ -1442,7 +1843,8 @@ impl EString {
         } else {
             // PERF: transcodes to a heap Vec then copies into the bump
             // arena — profile.
-            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false).expect("unreachable"); // fail_if_invalid=false → never errors
+            // `fail_if_invalid = false` means the only possible error is `OutOfMemory`.
+            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(utf8, false, false));
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
         }
@@ -1585,12 +1987,7 @@ impl EString {
 // Ordering / equality / const-literal / rope-mutation helpers.
 // `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
-    pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");
-    pub const TRUE: EString = EString::from_static(b"true");
-    pub const FALSE: EString = EString::from_static(b"false");
-    pub const NULL: EString = EString::from_static(b"null");
-    pub const UNDEFINED: EString = EString::from_static(b"undefined");
 
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {

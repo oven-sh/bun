@@ -915,3 +915,50 @@ test("FormData.toJSON merges duplicate numeric field names into an array", async
   expect(stdout.trim().split("\n")).toEqual(['{"0":["a","b","c"],"tag":["x","y"]}', '{"0":["first","second"]}']);
   expect(exitCode).toBe(0);
 });
+
+describe("USVString conversion of lone surrogates", () => {
+  const loneHigh = "a\uD800b";
+  const loneLow = "a\uDC00b";
+  const replaced = "a\uFFFDb";
+
+  it("get/getAll/has find an entry appended under a lone surrogate name", () => {
+    const formData = new FormData();
+    formData.append(loneHigh, "1");
+    formData.append(loneHigh, "2");
+
+    expect([...formData.keys()]).toEqual([replaced, replaced]);
+    expect(formData.has(loneHigh)).toBe(true);
+    expect(formData.get(loneHigh)).toBe("1");
+    expect(formData.getAll(loneHigh)).toEqual(["1", "2"]);
+
+    // the converted spelling names the same entry
+    expect(formData.get(replaced)).toBe("1");
+    expect(formData.getAll(replaced)).toEqual(["1", "2"]);
+  });
+
+  it("lone high and lone low surrogates both convert to U+FFFD", () => {
+    const formData = new FormData();
+    formData.append(loneLow, "low");
+    expect(formData.get(loneLow)).toBe("low");
+    expect(formData.get(loneHigh)).toBe("low");
+  });
+
+  it("finds a Blob entry appended under a lone surrogate name", async () => {
+    const formData = new FormData();
+    formData.append(loneHigh, new Blob(["bar"]), "mynameis.txt");
+
+    const entry = formData.get(loneHigh) as File;
+    expect(entry).toBeInstanceOf(Blob);
+    expect(entry.name).toBe("mynameis.txt");
+    expect(await entry.text()).toBe("bar");
+    expect(formData.getAll(loneHigh)).toHaveLength(1);
+  });
+
+  it("leaves valid surrogate pairs alone", () => {
+    const formData = new FormData();
+    formData.append("\u{1F600}", "emoji");
+    expect(formData.get("\u{1F600}")).toBe("emoji");
+    expect(formData.getAll("\u{1F600}")).toEqual(["emoji"]);
+    expect(formData.get("\uFFFD")).toBeNull();
+  });
+});

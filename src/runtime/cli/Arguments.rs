@@ -303,6 +303,21 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--cron-title <STR>               Title for cron execution mode"),
     parse_param!("--cron-period <STR>              Cron period for cron execution mode"),
+    // Node.js trace/diagnostics flags. Intentionally no help text: params with
+    // an empty description are hidden from `--help` (see `simple_help`).
+    // Declaring them (vs. relying on unknown-flag skipping) matters for the
+    // value-taking ones — otherwise the value argument is parsed as the
+    // entrypoint — and for `process.execArgv`'s re-parser, which derives its
+    // value-consuming set from `AUTO_PARAMS`.
+    parse_param!("--trace-events-enabled"),
+    parse_param!("--trace-event-categories <STR>"),
+    parse_param!("--trace-event-file-pattern <STR>"),
+    parse_param!("--trace-env"),
+    parse_param!("--trace-env-js-stack"),
+    parse_param!("--trace-env-native-stack"),
+    parse_param!("--trace-exit"),
+    parse_param!("--expose-internals"),
+    parse_param!("--stack-trace-limit <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -481,6 +496,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
+        ),
+        parse_param!(
+            "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
@@ -1088,6 +1106,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        if args.flag(b"--expose-internals") {
+            // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
+            // sets (VirtualMachine::configure_from_env): allows resolving
+            // `bun:internal-for-testing` / `internal/test/binding` in release
+            // builds. Debug builds always allow them.
+            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
             let depth = match strings::parse_int::<u16>(depth_str, 10) {
@@ -2288,7 +2314,10 @@ fn parse_build_command_options(
 
     if let Some(format_str) = args.option(b"--format") {
         let Some(format) = options::Format::from_string(format_str) else {
-            Output::err_generic("Invalid format - must be esm, cjs, or iife", ());
+            Output::err_generic(
+                "Invalid value for --format: {}. Must be 'esm', 'cjs', or 'iife'.",
+                (bun_core::fmt::quote(format_str),),
+            );
             Global::crash();
         };
 
@@ -2368,6 +2397,10 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-fast-refresh") {
         ctx.bundler_options.react_fast_refresh = true;
+    }
+
+    if args.flag(b"--react-compiler") {
+        ctx.bundler_options.react_compiler = true;
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

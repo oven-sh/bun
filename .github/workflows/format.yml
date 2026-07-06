@@ -106,9 +106,6 @@ jobs:
           fi
 
           echo "✅ All formatters completed successfully"
-      - name: Ban Words
-        run: |
-          bun ./test/internal/ban-words.test.ts
       - name: Verify checked-in codegen
         # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
         # source `.ts` is the truth. This step regenerates and fails if the

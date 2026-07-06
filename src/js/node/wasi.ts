@@ -1094,6 +1094,8 @@ var require_wasi = __commonJS({
           }),
           fd_fdstat_set_rights: wrap((fd, fsRightsBase, fsRightsInheriting) => {
             const stats = CHECK_FD(fd, BigInt(0));
+            fsRightsBase = BigInt.asUintN(64, fsRightsBase);
+            fsRightsInheriting = BigInt.asUintN(64, fsRightsInheriting);
             const nrb = stats.rights.base | fsRightsBase;
             if (nrb > stats.rights.base) {
               return constants_1.WASI_EPERM;
@@ -1250,9 +1252,10 @@ var require_wasi = __commonJS({
                 let position = IS_STDIN || stats.offset === void 0 ? null : Number(stats.offset);
                 let rr = 0;
                 if (IS_STDIN) {
-                  if (this.getStdin != null) {
+                  const getStdin = this.getStdin;
+                  if (getStdin != null) {
                     if (this.stdinBuffer == null) {
-                      this.stdinBuffer = this.getStdin();
+                      this.stdinBuffer = getStdin.$call(this);
                     }
                     if (this.stdinBuffer != null) {
                       rr = this.stdinBuffer.copy(iov);
@@ -1495,8 +1498,8 @@ var require_wasi = __commonJS({
             (dirfd, _dirflags, pathPtr, pathLen, oflags, fsRightsBase, fsRightsInheriting, fsFlags, fdPtr) => {
               try {
                 const stats = CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
-                fsRightsBase = BigInt(fsRightsBase);
-                fsRightsInheriting = BigInt(fsRightsInheriting);
+                fsRightsBase = BigInt.asUintN(64, BigInt(fsRightsBase));
+                fsRightsInheriting = BigInt.asUintN(64, BigInt(fsRightsInheriting));
                 const read =
                   (fsRightsBase & (constants_1.WASI_RIGHT_FD_READ | constants_1.WASI_RIGHT_FD_READDIR)) !== BigInt(0);
                 const write =
@@ -1534,22 +1537,16 @@ var require_wasi = __commonJS({
                   noflags |= nodeFsConstants.O_APPEND;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_DSYNC) !== 0) {
-                  if (nodeFsConstants.O_DSYNC) {
-                    noflags |= nodeFsConstants.O_DSYNC;
-                  } else {
-                    noflags |= nodeFsConstants.O_SYNC;
-                  }
+                  const O_DSYNC = nodeFsConstants.O_DSYNC;
+                  noflags |= O_DSYNC ? O_DSYNC : nodeFsConstants.O_SYNC;
                   neededInheriting |= constants_1.WASI_RIGHT_FD_DATASYNC;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_NONBLOCK) !== 0) {
                   noflags |= nodeFsConstants.O_NONBLOCK;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_RSYNC) !== 0) {
-                  if (nodeFsConstants.O_RSYNC) {
-                    noflags |= nodeFsConstants.O_RSYNC;
-                  } else {
-                    noflags |= nodeFsConstants.O_SYNC;
-                  }
+                  const O_RSYNC = nodeFsConstants.O_RSYNC;
+                  noflags |= O_RSYNC ? O_RSYNC : nodeFsConstants.O_SYNC;
                   neededInheriting |= constants_1.WASI_RIGHT_FD_SYNC;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_SYNC) !== 0) {
@@ -1652,7 +1649,7 @@ var require_wasi = __commonJS({
                 if (e instanceof types_1.WASIError) {
                   return e.errno;
                 }
-                console.error(e);
+                throw e;
               }
               return constants_1.WASI_ESUCCESS;
             },
@@ -1821,13 +1818,14 @@ var require_wasi = __commonJS({
             if (waitTimeNs > 0) {
               waitTimeNs -= Bun.nanoseconds() - timeOrigin;
               if (waitTimeNs >= 1e6) {
-                if (this.sleep == null && !warnedAboutSleep) {
+                const sleep = this.sleep;
+                if (sleep == null && !warnedAboutSleep) {
                   warnedAboutSleep = true;
                   console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
                 }
-                if (this.sleep != null) {
+                if (sleep != null) {
                   const ms = nsToMs(waitTimeNs);
-                  this.sleep(ms);
+                  sleep.$call(this, ms);
                 } else {
                   const end = BigInt(bindings.hrtime()) + waitTimeNs;
                   while (BigInt(bindings.hrtime()) < end) {}
@@ -2002,8 +2000,9 @@ var require_wasi = __commonJS({
         }
       }
       initWasiFdInfo() {
-        if (this.env["WASI_FD_INFO"] != null) {
-          const fdInfo = JSON.parse(this.env["WASI_FD_INFO"]);
+        const env = this.env;
+        if (env["WASI_FD_INFO"] != null) {
+          const fdInfo = JSON.parse(env["WASI_FD_INFO"]);
           for (const wasi_fd in fdInfo) {
             console.log(wasi_fd);
             const fd = parseInt(wasi_fd);

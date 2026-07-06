@@ -39,6 +39,9 @@ namespace WebCore {
 
 static ExceptionOr<Vector<uint8_t>> signEd25519(const Vector<uint8_t>& sk, size_t len, const Vector<uint8_t>& data)
 {
+    if (sk.size() != len || len != ED25519_PRIVATE_KEY_LEN)
+        return Exception { OperationError };
+
     uint8_t newSignature[64];
 
     ED25519_sign(newSignature, data.begin(), data.size(), sk.begin());
@@ -52,6 +55,9 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmEd25519::platformSign(const CryptoKe
 
 static ExceptionOr<bool> verifyEd25519(const Vector<uint8_t>& key, size_t keyLengthInBytes, const Vector<uint8_t>& signature, const Vector<uint8_t> data)
 {
+    if (key.size() != ED25519_PUBLIC_KEY_LEN || keyLengthInBytes != ED25519_PUBLIC_KEY_LEN)
+        return false;
+
     if (signature.size() != keyLengthInBytes * 2)
         return false;
 

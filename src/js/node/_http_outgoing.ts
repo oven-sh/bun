@@ -286,13 +286,13 @@ OutgoingMessage.prototype._send = function _send(data, encoding, callback, byteL
   // This is a shameful hack to get the headers and first body chunk onto
   // the same packet. Future versions of Node are going to take care of
   // this at a lower level and in a more general way.
-  if (!this._headerSent && this._header !== null) {
+  let header;
+  if (!this._headerSent && (header = this._header) !== null) {
     // `this._header` can be null if OutgoingMessage is used without a proper Socket
     // See: /test/parallel/test-http-outgoing-message-inheritance.js
     if (typeof data === "string" && (encoding === "utf8" || encoding === "latin1" || !encoding)) {
-      data = this._header + data;
+      data = header + data;
     } else {
-      const header = this._header;
       this.outputData.unshift({
         data: header,
         encoding: "latin1",
@@ -356,17 +356,18 @@ function _storeHeader(this: any, firstLine, headers) {
         processHeader(this, state, entry[0], entry[1], false);
       }
     } else if (ArrayIsArray(headers)) {
-      if (headers.length && ArrayIsArray(headers[0])) {
-        for (let i = 0; i < headers.length; i++) {
+      const headersLength = headers.length;
+      if (headersLength && ArrayIsArray(headers[0])) {
+        for (let i = 0; i < headersLength; i++) {
           const entry = headers[i];
           processHeader(this, state, entry[0], entry[1], true);
         }
       } else {
-        if (headers.length % 2 !== 0) {
+        if (headersLength % 2 !== 0) {
           throw $ERR_INVALID_ARG_VALUE("headers", headers);
         }
 
-        for (let n = 0; n < headers.length; n += 2) {
+        for (let n = 0; n < headersLength; n += 2) {
           processHeader(this, state, headers[n + 0], headers[n + 1], true);
         }
       }
@@ -414,11 +415,13 @@ function _storeHeader(this: any, firstLine, headers) {
       header += "Connection: close\r\n";
     } else if (shouldSendKeepAlive) {
       header += "Connection: keep-alive\r\n";
-      if (this._keepAliveTimeout && this._defaultKeepAlive) {
-        const timeoutSeconds = MathFloor(this._keepAliveTimeout / 1000);
+      const keepAliveTimeout = this._keepAliveTimeout;
+      if (keepAliveTimeout && this._defaultKeepAlive) {
+        const timeoutSeconds = MathFloor(keepAliveTimeout / 1000);
         let max = "";
-        if (~~this._maxRequestsPerSocket > 0) {
-          max = `, max=${this._maxRequestsPerSocket}`;
+        const maxRequestsPerSocket = this._maxRequestsPerSocket;
+        if (~~maxRequestsPerSocket > 0) {
+          max = `, max=${maxRequestsPerSocket}`;
         }
         header += `Keep-Alive: timeout=${timeoutSeconds}${max}\r\n`;
       }
@@ -434,18 +437,21 @@ function _storeHeader(this: any, firstLine, headers) {
       this.chunkedEncoding = false;
     } else if (!this.useChunkedEncodingByDefault) {
       this._last = true;
-    } else if (!state.trailer && !this._removedContLen && typeof this._contentLength === "number") {
-      header += "Content-Length: " + this._contentLength + "\r\n";
-    } else if (!this._removedTE) {
-      header += "Transfer-Encoding: chunked\r\n";
-      this.chunkedEncoding = true;
     } else {
-      // We should only be able to get here if both Content-Length and
-      // Transfer-Encoding are removed by the user.
-      // See: test/parallel/test-http-remove-header-stays-removed.js
-      // We can't keep alive in this case, because with no header info the body
-      // is defined as all data until the connection is closed.
-      this._last = true;
+      let contentLength;
+      if (!state.trailer && !this._removedContLen && typeof (contentLength = this._contentLength) === "number") {
+        header += "Content-Length: " + contentLength + "\r\n";
+      } else if (!this._removedTE) {
+        header += "Transfer-Encoding: chunked\r\n";
+        this.chunkedEncoding = true;
+      } else {
+        // We should only be able to get here if both Content-Length and
+        // Transfer-Encoding are removed by the user.
+        // See: test/parallel/test-http-remove-header-stays-removed.js
+        // We can't keep alive in this case, because with no header info the body
+        // is defined as all data until the connection is closed.
+        this._last = true;
+      }
     }
   }
 
@@ -484,13 +490,14 @@ function processHeader(self, state, key, value, validate) {
   }
 
   if (ArrayIsArray(value)) {
+    const valueLength = value.length;
     if (
-      (value.length < 2 || !isCookieField(key)) &&
+      (valueLength < 2 || !isCookieField(key)) &&
       (!self[kUniqueHeaders] || !self[kUniqueHeaders].has(key.toLowerCase()))
     ) {
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
-      for (let i = 0; i < value.length; i++) storeHeader(self, state, key, value[i], validate);
+      for (let i = 0; i < valueLength; i++) storeHeader(self, state, key, value[i], validate);
       return;
     }
     value = value.join("; ");
@@ -807,11 +814,12 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   if (msg.strictContentLength) {
     len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
 
+    const contentLength = msg._contentLength;
     if (
       strictContentLength(msg) &&
-      (fromEnd ? msg[kBytesWritten] + len !== msg._contentLength : msg[kBytesWritten] + len > msg._contentLength)
+      (fromEnd ? msg[kBytesWritten] + len !== contentLength : msg[kBytesWritten] + len > contentLength)
     ) {
-      throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(len + msg[kBytesWritten], msg._contentLength);
+      throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(len + msg[kBytesWritten], contentLength);
     }
 
     msg[kBytesWritten] += len;
@@ -836,9 +844,10 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
   }
 
-  if (!fromEnd && msg.socket && !msg.socket.writableCorked) {
-    msg.socket.cork();
-    process.nextTick(connectionCorkNT, msg.socket);
+  let msgSocket;
+  if (!fromEnd && (msgSocket = msg.socket) && !msgSocket.writableCorked) {
+    msgSocket.cork();
+    process.nextTick(connectionCorkNT, msgSocket);
   }
 
   let ret;
@@ -885,8 +894,9 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
 
     // Check if the field must be sent several times
     const isArrayValue = ArrayIsArray(value);
-    if (isArrayValue && value.length > 1 && (!this[kUniqueHeaders] || !this[kUniqueHeaders].has(field.toLowerCase()))) {
-      for (let j = 0, l = value.length; j < l; j++) {
+    const valueLength = isArrayValue ? value.length : 0;
+    if (isArrayValue && valueLength > 1 && (!this[kUniqueHeaders] || !this[kUniqueHeaders].has(field.toLowerCase()))) {
+      for (let j = 0, l = valueLength; j < l; j++) {
         if (checkInvalidHeaderChar(value[j])) {
           throw $ERR_INVALID_CHAR("trailer content", field);
         }
@@ -951,8 +961,9 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
 
   if (typeof callback === "function") this.once("finish", callback);
 
-  if (strictContentLength(this) && this[kBytesWritten] !== this._contentLength) {
-    throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], this._contentLength);
+  let contentLength;
+  if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {
+    throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
   }
 
   const finish = onFinish.bind(undefined, this);

@@ -408,8 +408,8 @@ pub fn find_imported_files_in_css_order<'a>(
                             //
                             // `crate::bun_css::LayerName` (lifetime-erased
                             // shadow) and `::bun_css::LayerName` are distinct nominal
-                            // types until the ungate shadow is removed; cast through
-                            // `NonNull` to satisfy `Layers::borrow`.
+                            // types; cast through `NonNull` to satisfy
+                            // `Layers::borrow`.
                             let layer_names_ptr = core::ptr::NonNull::from(
                                 &css_asts[idx.get() as usize].as_deref().unwrap().layer_names,
                             )

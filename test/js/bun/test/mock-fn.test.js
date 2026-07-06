@@ -796,6 +796,60 @@ describe("mock()", () => {
   });
 });
 
+describe("resetAllMocks", () => {
+  test("removes implementations, not just calls", () => {
+    const fn = jest.fn(() => 42);
+    expect(fn()).toBe(42);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    jest.resetAllMocks();
+
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(fn.mock.results).toEqual([]);
+    expect(fn.getMockImplementation()).toBeUndefined();
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes mockReturnValue", () => {
+    const fn = jest.fn();
+    fn.mockReturnValue("stubbed");
+    expect(fn()).toBe("stubbed");
+
+    jest.resetAllMocks();
+
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes a spy's implementation without restoring the original", () => {
+    const obj = {
+      original() {
+        return "original";
+      },
+    };
+    const spy = spyOn(obj, "original");
+    expect(obj.original()).toBe("original");
+
+    jest.resetAllMocks();
+
+    expect(obj.original()).toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    spy.mockRestore();
+    expect(obj.original()).toBe("original");
+  });
+
+  if (isBun) {
+    test("vi.resetAllMocks removes implementations too", () => {
+      const fn = vi.fn(() => 42);
+      expect(fn()).toBe(42);
+
+      vi.resetAllMocks();
+
+      expect(fn()).toBeUndefined();
+    });
+  }
+});
+
 describe("spyOn", () => {
   test("works on functions", () => {
     var obj = {

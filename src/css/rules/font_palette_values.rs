@@ -80,9 +80,6 @@ pub enum FontPaletteValuesProperty {
 
 impl FontPaletteValuesRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // `FontPaletteValuesProperty`'s variant-walk lands when its enum body
-        // un-gates (properties::{font, custom}); the gated stub above panics
-        // with the blocker named.
         Self {
             name: self.name.deep_clone(bump),
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),

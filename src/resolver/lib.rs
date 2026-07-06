@@ -10,12 +10,10 @@
 // crate::StandaloneModuleGraph trait; HardcodedModule -> bun_resolve_builtins.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is now un-gated as
+// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is mounted as
 // `fs_full`; the inline `pub mod fs` below remains the canonical type surface
 // (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
-// EntriesOption, Implementation) until the body switches to `fs_full::*`
-// wholesale. `fs_full` compiles to validate the port and is link-dead until
-// re-exported.
+// EntriesOption, Implementation) and re-exports from `fs_full`.
 pub mod data_url;
 pub mod dir_info;
 #[path = "fs.rs"]
@@ -56,9 +54,8 @@ pub use result::{
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
-/// Minimal real subset of `fs.rs` so `bun_resolver::fs::X` paths
-/// resolve for downstream crates. The full draft remains in `fs.rs` (gated)
-/// until bun_alloc::BSSStringList / bun_output land.
+/// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
+/// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;
@@ -1058,7 +1055,7 @@ pub mod fs {
         pub entries_mutex: Mutex,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
-        /// `EntriesMap` until bun_alloc un-gates BSSMap.
+        /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
         pub cwd: &'static [u8],
         pub file_limit: usize,
@@ -1308,14 +1305,15 @@ pub mod fs {
             });
 
             // if we get this far, it's a real directory, so we can just store the dir name.
-            let dir: &'static [u8] = if !had_handle {
-                if let Some(existing) = in_place {
-                    // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
-                    // its `dir` field is DirnameStore-interned (&'static).
-                    unsafe { (*existing).dir }
-                } else {
-                    DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
-                }
+            // An in-place refresh always keeps the slot's existing interned name: callers
+            // spell the same directory with and without a trailing slash, and rewriting
+            // `dir` to the other spelling races every unlocked `Entry::dir()` reader.
+            let dir: &'static [u8] = if let Some(existing) = in_place {
+                // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
+                // its `dir` field is DirnameStore-interned (&'static).
+                unsafe { (*existing).dir }
+            } else if !had_handle {
+                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
             } else {
                 // Intern into DirnameStore so the cache entry never dangles —
                 // `append_slice` is a bump-pointer copy, cost is bounded.
@@ -1893,6 +1891,9 @@ pub mod dir_entry_accessor {
     pub struct DirEntryIterResult {
         pub name: DirEntryNameWrapper,
         pub kind: bun_sys::FileKind,
+        /// Resolver-cached real path of a symlink entry's target
+        /// (`Interned::EMPTY` for non-symlinks).
+        pub symlink_target: bun_ptr::Interned,
     }
 
     pub(crate) struct DirEntryNameWrapper {
@@ -1924,6 +1925,10 @@ pub mod dir_entry_accessor {
         fn kind(&self) -> bun_sys::FileKind {
             self.kind
         }
+        fn symlink_target(&self) -> Option<&[u8]> {
+            let target = self.symlink_target.as_bytes();
+            (!target.is_empty()).then_some(target)
+        }
     }
 
     impl AccessorDirIter for DirEntryDirIter {
@@ -1950,6 +1955,9 @@ pub mod dir_entry_accessor {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
                 };
+                // `Entry::kind` resolved through symlinks above; a non-empty
+                // cached realpath is what records the entry as a symlink.
+                let symlink_target = entry.cache().symlink;
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
@@ -1960,6 +1968,7 @@ pub mod dir_entry_accessor {
                         value: bun_ptr::RawSlice::new(&**key),
                     },
                     kind: fskind,
+                    symlink_target,
                 }))
             } else {
                 Ok(None)
@@ -2144,8 +2153,8 @@ pub mod cache {
         }
     }
 
-    /// Optional external destructor (`function(ctx)`) invoked when an entry's
-    /// contents are released; `NONE` when the entry owns its bytes.
+    /// Optional external destructor (`function(ctx)`) for foreign-owned
+    /// source bytes; `NONE` when there is nothing external to free.
     #[repr(C)]
     pub struct ExternalFreeFunction {
         pub ctx: *mut c_void,
@@ -2204,7 +2213,9 @@ pub mod cache {
         /// storage). Caller guarantees the pointee outlives all reads through
         /// this `Entry`. NOT freed on `deinit`.
         SharedBuffer { ptr: *const u8, len: usize },
-        /// Native-plugin memory; freed via `Entry.external_free_function.call()`.
+        /// Externally-owned bytes the producer keeps alive past this `Entry`
+        /// (native-plugin buffers are freed by the bundler's
+        /// `BundleV2.finalizers`); NOT freed on `deinit`.
         External { ptr: *const u8, len: usize },
     }
 
@@ -2217,8 +2228,10 @@ pub mod cache {
                 // SAFETY: FFI/ARENA — single encapsulation point for foreign-
                 // owned bytes. `SharedBuffer` points into the caller-owned
                 // per-thread `MutableString` (reset only after this `Entry` is
-                // dropped); `External` is native-plugin memory kept live until
-                // `external_free_function` runs in `deinit`. In both cases
+                // dropped); `External` is producer-owned memory the producer
+                // keeps alive past the `Entry` (native-plugin buffers are
+                // freed later by the bundler's `BundleV2.finalizers`, via
+                // `ParseTask.external_free_function`). In both cases
                 // `ptr` is non-null, aligned, and `ptr[..len]` is initialized
                 // and valid for shared reads for at least `'_`. Cannot be a
                 // `bun_ptr::RawSlice` field without breaking `src/bundler/`
@@ -2309,9 +2322,6 @@ pub mod cache {
     pub struct Entry {
         pub contents: Contents,
         pub fd: Fd,
-        /// When `contents` comes from a native plugin, this field is populated
-        /// with information on how to free it.
-        pub external_free_function: ExternalFreeFunction,
     }
 
     impl Default for Entry {
@@ -2319,25 +2329,11 @@ pub mod cache {
             Entry {
                 contents: Contents::Empty,
                 fd: Fd::INVALID,
-                external_free_function: ExternalFreeFunction::NONE,
             }
         }
     }
 
     impl Entry {
-        /// Convenience: take ownership of a heap buffer.
-        pub fn new(
-            contents: Box<[u8]>,
-            fd: Fd,
-            external_free_function: ExternalFreeFunction,
-        ) -> Entry {
-            Entry {
-                contents: Contents::from(contents),
-                fd,
-                external_free_function,
-            }
-        }
-
         #[inline]
         pub fn contents(&self) -> &[u8] {
             self.contents.as_slice()
@@ -2347,10 +2343,6 @@ pub mod cache {
         /// explicitly (and frequently hand `contents` off to a `Source` that
         /// outlives the `Entry`).
         pub fn deinit(&mut self) {
-            if let Some(func) = self.external_free_function.function {
-                // SAFETY: ctx/function pair was supplied together by the native plugin.
-                unsafe { func(self.external_free_function.ctx) };
-            }
             self.contents = Contents::Empty;
         }
 
@@ -2455,7 +2447,6 @@ pub mod cache {
             Ok(Entry {
                 contents,
                 fd: if publish_fd { fd } else { Fd::INVALID },
-                external_free_function: ExternalFreeFunction::NONE,
             })
         }
 
@@ -2616,7 +2607,6 @@ pub mod cache {
             Ok(Entry {
                 contents,
                 fd: if publish_fd { fd } else { Fd::INVALID },
-                external_free_function: ExternalFreeFunction::NONE,
             })
         }
     }

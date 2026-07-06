@@ -11,7 +11,7 @@ use crate::jsc::{
     VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
-use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};
+use bun_collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
@@ -53,8 +53,7 @@ bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-// Keys are already wyhash values, so identity hash avoids re-hashing.
-type PreparedStatementsMap = HashMap<u64, *mut PostgresSQLStatement, IdentityContext<u64>>;
+type PreparedStatementsMap = StringHashMap<*mut PostgresSQLStatement>;
 
 pub mod js {
     pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
@@ -616,7 +615,13 @@ impl PostgresSQLConnection {
     }
 
     pub fn set_status(&self, status: Status) {
-        if self.status.get() == status {
+        let current = self.status.get();
+        if current == status {
+            return;
+        }
+        // `Failed` is terminal: `fail_with_js_value` already closed the socket
+        // and rejected every pending request. Nothing may transition out of it.
+        if current == Status::Failed {
             return;
         }
         // reshaped for borrowck — `defer this.updateHasPendingActivity()` moved to explicit calls below.
@@ -2936,7 +2941,7 @@ impl PostgresSQLConnection {
                         );
                         if self
                             .statements
-                            .with_mut(|m| m.remove(&bun_wyhash::hash(&stmt.signature.name)))
+                            .with_mut(|m| m.remove(&stmt.signature.name[..]))
                             .is_some()
                         {
                             // SAFETY: `stmt` is a live `Box`-allocated statement; the
@@ -2952,9 +2957,7 @@ impl PostgresSQLConnection {
                 request.on_js_error(js_err, self.global());
             }
             MessageType::PortalSuspended => {
-                // try reader.eatMessage(&protocol.PortalSuspended);
-                // var request = this.current() orelse return error.ExpectedRequest;
-                // _ = request;
+                reader.skip_message()?;
                 debug!("TODO PortalSuspended");
             }
             MessageType::CloseComplete => {
@@ -2969,11 +2972,12 @@ impl PostgresSQLConnection {
                 self.update_ref();
             }
             MessageType::CopyInResponse => {
+                reader.skip_message()?;
                 debug!("TODO CopyInResponse");
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_notice_internal(reader.reborrow())?;
+                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {
@@ -2987,12 +2991,15 @@ impl PostgresSQLConnection {
                 self.update_ref();
             }
             MessageType::CopyOutResponse => {
+                reader.skip_message()?;
                 debug!("TODO CopyOutResponse");
             }
             MessageType::CopyDone => {
+                reader.skip_message()?;
                 debug!("TODO CopyDone");
             }
             MessageType::CopyBothResponse => {
+                reader.skip_message()?;
                 debug!("TODO CopyBothResponse");
             } // else => @compileError("Unknown message type")
               // const-generic enum match is exhaustive in Rust; no compile error needed.

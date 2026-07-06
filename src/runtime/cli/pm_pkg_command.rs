@@ -161,18 +161,16 @@ impl PmPkgCommand {
         // SAFETY: CLI dispatch is single-threaded; no other borrow of
         // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
-        // The remaining JSONOptions fields are at their defaults (false).
-        let result = match json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&source, log, bump)
-        {
+        let result = match json::parse_package_json_utf8_with_opts(
+            json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..json::PACKAGE_JSON_OPTS
+            },
+            &source,
+            log,
+            bump,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 Output::err_generic("Failed to parse package.json: {s}", (e.name(),));
@@ -441,10 +439,10 @@ impl PmPkgCommand {
             })),
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
-                if n.value.floor() == n.value {
-                    write!(&mut v, "{:.0}", n.value).or_write_failed()?;
+                if n.value().floor() == n.value() {
+                    write!(&mut v, "{:.0}", n.value()).or_write_failed()?;
                 } else {
-                    write!(&mut v, "{}", n.value).or_write_failed()?;
+                    write!(&mut v, "{}", n.value()).or_write_failed()?;
                 }
                 Ok(v.into_boxed_slice())
             }
@@ -569,8 +567,12 @@ impl PmPkgCommand {
         Ok(current)
     }
 
-    fn parse_key_path(key: &[u8]) -> Result<Vec<Box<[u8]>>, Error> {
-        let mut path_parts: Vec<Box<[u8]>> = Vec::new();
+    /// Splits `a.b[0][c]` into `["a", "b", "0", "c"]`. Segments are sub-slices
+    /// of `key`: `E::Object::put` stores keys by reference (no copy into the
+    /// AST arena), so they must outlive the `Expr` tree, which `key` (an argv
+    /// slice) does. Returning owned buffers here would leave dangling keys.
+    fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
+        let mut path_parts: Vec<&[u8]> = Vec::new();
 
         let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
 
@@ -579,8 +581,7 @@ impl PmPkgCommand {
                 let mut remaining_part = part;
 
                 if first_bracket > 0 {
-                    let prop_name = &part[..first_bracket];
-                    path_parts.push(Box::<[u8]>::from(prop_name));
+                    path_parts.push(&part[..first_bracket]);
                     remaining_part = &part[first_bracket..];
                 }
 
@@ -597,7 +598,7 @@ impl PmPkgCommand {
                         return Err(err!("InvalidPath"));
                     }
 
-                    path_parts.push(Box::<[u8]>::from(index_str));
+                    path_parts.push(index_str);
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
                     if remaining_part.is_empty() {
@@ -605,7 +606,7 @@ impl PmPkgCommand {
                     }
                 }
             } else {
-                path_parts.push(Box::<[u8]>::from(part));
+                path_parts.push(part);
             }
         }
 
@@ -617,30 +618,7 @@ impl PmPkgCommand {
             return Err(err!("InvalidRoot"));
         }
 
-        if strings::index_of(key, b"[").is_none() {
-            let mut path_parts: Vec<&[u8]> = Vec::new();
-            for part in key.split(|b| *b == b'.').filter(|s| !s.is_empty()) {
-                path_parts.push(part);
-            }
-
-            if path_parts.is_empty() {
-                return Err(err!("EmptyKey"));
-            }
-
-            if path_parts.len() == 1 {
-                let expr = Self::parse_value(value, parse_json)?;
-                root.data
-                    .e_object_mut()
-                    .unwrap()
-                    .put(dummy_bump(), path_parts[0], expr)?;
-                return Ok(());
-            }
-
-            Self::set_nested_simple(root, &path_parts, value, parse_json)?;
-            return Ok(());
-        }
-
-        let mut path_parts = Self::parse_key_path(key)?;
+        let path_parts = Self::parse_key_path(key)?;
 
         if path_parts.is_empty() {
             return Err(err!("EmptyKey"));
@@ -652,15 +630,15 @@ impl PmPkgCommand {
             root.data
                 .e_object_mut()
                 .unwrap()
-                .put(dummy_bump(), &path_parts[0], expr)?;
+                .put(dummy_bump(), path_parts[0], expr)?;
 
             return Ok(());
         }
 
-        Self::set_nested(root, &mut path_parts, value, parse_json)
+        Self::set_nested(root, &path_parts, value, parse_json)
     }
 
-    fn set_nested_simple(
+    fn set_nested(
         root: &mut Expr,
         path: &[&[u8]],
         value: &[u8],
@@ -672,53 +650,6 @@ impl PmPkgCommand {
 
         let current_key = path[0];
         let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let expr = Self::parse_value(value, parse_json)?;
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, expr)?;
-            return Ok(());
-        }
-
-        let mut nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, new_obj)?;
-            nested_obj = root.get(current_key);
-        }
-
-        if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
-            return Err(err!("ExpectedObject"));
-        }
-
-        let mut nested = nested_obj.unwrap();
-        Self::set_nested_simple(&mut nested, remaining_path, value, parse_json)?;
-        root.data
-            .e_object_mut()
-            .unwrap()
-            .put(dummy_bump(), current_key, nested)?;
-        Ok(())
-    }
-
-    fn set_nested(
-        root: &mut Expr,
-        path: &mut [Box<[u8]>],
-        value: &[u8],
-        parse_json: bool,
-    ) -> Result<(), Error> {
-        if path.is_empty() {
-            return Ok(());
-        }
-
-        let (head, remaining_path) = path.split_first_mut().unwrap();
-        let current_key: &[u8] = head;
 
         if remaining_path.is_empty() {
             let expr = Self::parse_value(value, parse_json)?;
@@ -764,16 +695,11 @@ impl PmPkgCommand {
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(
-                    E::Number {
-                        value: int_val as f64,
-                    },
-                    Loc::EMPTY,
-                ));
+                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
             }
 
             if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number { value: float_val }, Loc::EMPTY));
+                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
             }
 
             let temp_source = Source::init_path_string(b"package.json", value);

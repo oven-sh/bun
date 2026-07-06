@@ -397,7 +397,11 @@ impl PosixBufferedReader {
         self.vtable.on_reader_error(err);
     }
 
-    pub fn register_poll(&mut self) {
+    /// Returns `false` when registration failed and `on_reader_error` was
+    /// dispatched. That callback may drop the last reference to the struct
+    /// embedding `self` (the shell `PipeReader` does exactly that), so the
+    /// caller must not touch `self` again after a `false` return.
+    pub fn register_poll(&mut self) -> bool {
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -407,7 +411,7 @@ impl PosixBufferedReader {
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {
-                return;
+                return true;
             }
             self.handle = PollOrFd::Poll(FilePollRef::init(
                 ev,
@@ -416,7 +420,7 @@ impl PosixBufferedReader {
             ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
-            return;
+            return true;
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
@@ -427,8 +431,9 @@ impl PosixBufferedReader {
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
             sys::Result::Err(err) => {
                 self.vtable.on_reader_error(err);
+                false
             }
-            sys::Result::Ok(()) => {}
+            sys::Result::Ok(()) => true,
         }
     }
 
@@ -547,6 +552,31 @@ impl PosixBufferedReader {
         false
     }
 
+    /// Charges `bytes_read` against the `maxBuffer` budget, returning `true`
+    /// once it is gone. The overflow callback only kills the child, which takes
+    /// effect asynchronously, so the caller must also stop reading.
+    #[inline]
+    fn charge_max_buffer(parent: &mut PosixBufferedReader, bytes_read: usize) -> bool {
+        let Some(maxbuf) = parent.maxbuf else {
+            return false;
+        };
+        if !MaxBuf::on_read_bytes(maxbuf, bytes_read as u64) {
+            return false;
+        }
+        parent.vtable.on_max_buffer_overflow(maxbuf);
+        true
+    }
+
+    /// Closes the handle so the child cannot put more bytes in the pipe, then
+    /// reports what was buffered. Tail position: `done()` may free `parent`.
+    /// Callers must already have handed the overflowing chunk to the consumer.
+    fn stop_for_max_buffer(parent: &mut PosixBufferedReader) {
+        parent.close_without_reporting();
+        if !parent.flags.contains(PosixFlags::IS_DONE) {
+            parent.done();
+        }
+    }
+
     fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
         fn pread_fn(fd1: Fd, buf: &mut [u8], offset: usize) -> sys::Result<usize> {
             sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))
@@ -619,9 +649,12 @@ impl PosixBufferedReader {
         // Shadow-rebind so the local `parent` is no longer the `noalias` arg
         // but a raw-ptr-derived borrow whose loads must reload after each
         // opaque vtable call (precedent: `JSMySQLQuery::resolve`'s guard
-        // re-borrow). The reader struct is an inline field of its parent
-        // (never freed mid-call), so `*this` stays a valid place even if
-        // re-entry calls `done()`/`close()`.
+        // re-borrow). The reader struct is an inline field of its parent;
+        // `on_read_chunk` re-entry never frees it per `BufferedReaderParent`'s
+        // contract, so `*this` stays a valid place even if re-entry calls
+        // `done()`/`close()`. `on_reader_error` MAY free it, and every
+        // `register_poll()`/`on_error()` below is in tail position, so nothing
+        // touches `parent` after one can have dispatched it.
         let parent = unsafe { &mut *this };
         let mut received_hup = received_hup_initially;
         loop {
@@ -631,15 +664,13 @@ impl PosixBufferedReader {
             if parent._buffer.capacity() == 0 {
                 // Use stack buffer for streaming — per-loop scratch buffer;
                 // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
+                let maxbuf = parent.maxbuf;
                 let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
-                        if let Some(l) = parent.maxbuf {
-                            if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                                parent.vtable.on_max_buffer_overflow(l);
-                            }
-                        }
+                        let over_budget = Self::charge_max_buffer(parent, bytes_read);
 
                         if bytes_read == 0 {
                             // EOF - finished and closed pipe
@@ -665,6 +696,11 @@ impl PosixBufferedReader {
                                 ._buffer
                                 .extend_from_slice(&stack_buffer[..bytes_read]);
                         }
+
+                        if over_budget {
+                            Self::stop_for_max_buffer(parent);
+                            return;
+                        }
                     }
                     sys::Result::Err(err) => {
                         if !err.is_retry() {
@@ -676,19 +712,17 @@ impl PosixBufferedReader {
                     }
                 }
             } else {
+                let maxbuf = parent.maxbuf;
                 parent._buffer.reserve(16 * 1024);
                 let buf_len = {
                     // SAFETY: sys::read_nonblocking writes only initialized bytes into
                     // the prefix it reports; commit_spare exposes exactly that prefix.
                     let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+                    let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
                     let buf_len = buf.len();
                     match sys::read_nonblocking(fd, buf) {
                         sys::Result::Ok(bytes_read) => {
-                            if let Some(l) = parent.maxbuf {
-                                if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                                    parent.vtable.on_max_buffer_overflow(l);
-                                }
-                            }
+                            let over_budget = Self::charge_max_buffer(parent, bytes_read);
                             parent._offset += bytes_read;
                             // SAFETY: bytes_read bytes were just initialized by the syscall.
                             unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
@@ -704,16 +738,25 @@ impl PosixBufferedReader {
                             if streaming {
                                 let new_len = parent._buffer.len();
                                 let chunk = &parent._buffer[new_len - bytes_read..new_len];
-                                if !parent.vtable.on_read_chunk(
+                                let keep_going = parent.vtable.on_read_chunk(
                                     chunk,
                                     if received_hup && bytes_read < buf_len {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) {
+                                );
+                                // Closing for `over_budget` outranks the
+                                // consumer asking us to stop: it must still
+                                // happen, or nothing ever caps the pipe.
+                                if !keep_going && !over_budget {
                                     return;
                                 }
+                            }
+
+                            if over_budget {
+                                Self::stop_for_max_buffer(parent);
+                                return;
                             }
                             buf_len
                         }
@@ -808,8 +851,10 @@ impl PosixBufferedReader {
         // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
         // Shadow-rebind so the local `parent` is no longer the `noalias` arg
         // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
-        // The reader struct is an inline field of its parent (never freed
-        // mid-call), so `*this` stays a valid place across re-entry.
+        // The reader struct is an inline field of its parent, which
+        // `on_read_chunk` re-entry never frees per `BufferedReaderParent`'s
+        // contract. `on_reader_error` MAY free it, so nothing below touches
+        // `parent` after dispatching an error (see the EAGAIN arm).
         let parent = unsafe { &mut *this };
         let streaming = parent.vtable.is_streaming_enabled();
 
@@ -823,18 +868,18 @@ impl PosixBufferedReader {
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
                     let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
+                    let buf = MaxBuf::clamp_read_buf(parent.maxbuf, buf);
 
                     match sys_fn(fd, buf, parent._offset) {
                         sys::Result::Ok(bytes_read) => {
-                            if let Some(l) = parent.maxbuf {
-                                if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                                    parent.vtable.on_max_buffer_overflow(l);
-                                }
-                            }
+                            let over_budget = Self::charge_max_buffer(parent, bytes_read);
                             parent._offset += bytes_read;
                             head_start += bytes_read;
 
-                            if bytes_read == 0 {
+                            // `over_budget` is terminal for the same reason EOF
+                            // is: the child was killed and nothing past the cap
+                            // may reach the consumer.
+                            if bytes_read == 0 || over_budget {
                                 parent.close_without_reporting();
                                 if head_start > 0 {
                                     let _ = parent.vtable.on_read_chunk(
@@ -882,8 +927,11 @@ impl PosixBufferedReader {
                                     bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",
                                     );
-                                } else {
-                                    parent.register_poll();
+                                } else if !parent.register_poll() {
+                                    // `on_reader_error` ran and may have freed
+                                    // the struct embedding `parent`; the
+                                    // drained head must not be delivered.
+                                    return;
                                 }
 
                                 if head_start > 0 {
@@ -929,7 +977,9 @@ impl PosixBufferedReader {
             // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
             // Per-loop scratch buffer; single-threaded event loop (see
             // `EventLoopCtx::pipe_read_buffer_mut`).
+            let maxbuf = parent.maxbuf;
             let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+            let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
             // Unlike the block of code following this one, only handle the non-streaming case.
             debug_assert!(!streaming);
@@ -941,14 +991,12 @@ impl PosixBufferedReader {
                             ._buffer
                             .extend_from_slice(&stack_buffer[..bytes_read]);
                     }
-                    if let Some(l) = parent.maxbuf {
-                        if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                            parent.vtable.on_max_buffer_overflow(l);
-                        }
-                    }
+                    let over_budget = Self::charge_max_buffer(parent, bytes_read);
                     parent._offset += bytes_read;
 
-                    if bytes_read == 0 {
+                    // `over_budget` is terminal for the same reason EOF is: the
+                    // child was killed and nothing past the cap may be buffered.
+                    if bytes_read == 0 || over_budget {
                         parent.close_without_reporting();
                         let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
                         if !parent.flags.contains(PosixFlags::IS_DONE) {
@@ -977,22 +1025,22 @@ impl PosixBufferedReader {
         }
 
         loop {
+            let maxbuf = parent.maxbuf;
             parent._buffer.reserve(16 * 1024);
             // SAFETY: writing into spare capacity; commit after syscall reports bytes written.
             let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+            let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
 
             match sys_fn(fd, buf, parent._offset) {
                 sys::Result::Ok(bytes_read) => {
-                    if let Some(l) = parent.maxbuf {
-                        if MaxBuf::on_read_bytes(l, bytes_read as u64) {
-                            parent.vtable.on_max_buffer_overflow(l);
-                        }
-                    }
+                    let over_budget = Self::charge_max_buffer(parent, bytes_read);
                     parent._offset += bytes_read;
                     // SAFETY: bytes_read bytes initialized by sys_fn.
                     unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
 
-                    if bytes_read == 0 {
+                    // `over_budget` is terminal for the same reason EOF is: the
+                    // child was killed and nothing past the cap may be buffered.
+                    if bytes_read == 0 || over_budget {
                         parent.close_without_reporting();
                         let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
                         if !parent.flags.contains(PosixFlags::IS_DONE) {
@@ -1227,13 +1275,21 @@ impl WindowsBufferedReader {
         }
     }
 
-    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
-        if let Some(m) = self.maxbuf {
-            if MaxBuf::on_read_bytes(m, buf.len() as u64) {
-                self.vtable.on_max_buffer_overflow(m);
-            }
+    /// Charges `bytes_read` against the `maxBuffer` budget, returning `true`
+    /// once it is gone. The overflow callback only kills the child, which takes
+    /// effect asynchronously, so the caller must also close the handle.
+    fn charge_max_buffer(&mut self, bytes_read: usize) -> bool {
+        let Some(maxbuf) = self.maxbuf else {
+            return false;
+        };
+        if !MaxBuf::on_read_bytes(maxbuf, bytes_read as u64) {
+            return false;
         }
+        self.vtable.on_max_buffer_overflow(maxbuf);
+        true
+    }
 
+    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
@@ -1293,9 +1349,13 @@ impl WindowsBufferedReader {
         suggested_size: usize,
     ) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
+        // Spare capacity grows well past `suggested_size`, so an unclamped read
+        // overshoots `maxBuffer` by however much the buffer had room for.
+        let maxbuf = self.maxbuf;
         self._buffer.reserve(suggested_size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
-        unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
+        let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
+        MaxBuf::clamp_read_buf(maxbuf, buf)
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1839,6 +1899,8 @@ impl WindowsBufferedReader {
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.
         unsafe { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
 
+        let over_budget = self.charge_max_buffer(amount_result);
+
         let should_continue = self._on_read_chunk(slice, has_more);
 
         // Streaming parents (shell IOReader, subprocess) cannot re-derive
@@ -1853,7 +1915,9 @@ impl WindowsBufferedReader {
             self._buffer.clear();
         }
 
-        if has_more == ReadState::Eof {
+        // `over_budget` is terminal for the same reason EOF is: the child was
+        // killed and nothing past the cap may be buffered.
+        if has_more == ReadState::Eof || over_budget {
             self.close();
         }
     }

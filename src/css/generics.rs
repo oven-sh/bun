@@ -308,14 +308,14 @@ pub use css_eql_partialeq;
 impl CssEql for [u8] {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        bun_core::eql(self, other)
+        bun_core::strings::eql(self, other)
     }
 }
 
 impl CssEql for str {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        bun_core::eql(self.as_bytes(), other.as_bytes())
+        bun_core::strings::eql(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -360,9 +360,8 @@ impl CssEql for () {
     }
 }
 
-// CustomIdent/DashedIdent/Ident wrapper structs are hoisted as data-only stubs
-// in `crate::values::ident` (lib.rs); the full impls live in gated
-// `values/ident.rs` and supersede these on un-gate.
+// `CssEql` impls for `CustomIdent`/`DashedIdent`/`Ident` (defined in
+// `values/ident.rs`, which does not depend on this trait).
 mod ident_eql {
     use super::CssEql;
     use crate::values::ident::{CustomIdent, DashedIdent, Ident};
@@ -373,7 +372,7 @@ mod ident_eql {
                 #[inline]
                 fn eql(&self, other: &Self) -> bool {
                     // `.v()` borrows the parser arena (see `crate::arena_str`).
-                    bun_core::eql(self.v(), other.v())
+                    bun_core::strings::eql(self.v(), other.v())
                 }
             }
         )*};
@@ -445,6 +444,10 @@ mod inherent_bridge {
     bridge_hash!(AnimationName);
     bridge_deep_clone!(AnimationName);
 
+    use crate::properties::animation::Animation;
+    // `CssEql` for `Animation` via `#[derive(CssEql)]` on the struct.
+    bridge_deep_clone!(Animation);
+
     use crate::properties::custom::UAEnvironmentVariable;
     impl CssEql for UAEnvironmentVariable {
         #[inline]
@@ -509,6 +512,18 @@ mod inherent_bridge {
 
     use crate::values::easing::EasingFunction;
     bridge_clone_partialeq!(EasingFunction);
+
+    use crate::properties::animation::{
+        AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
+        AnimationTimeline,
+    };
+    bridge_eql_partialeq!(
+        AnimationIterationCount,
+        AnimationDirection,
+        AnimationPlayState,
+        AnimationFillMode,
+        AnimationTimeline,
+    );
 
     use crate::values::alpha::AlphaValue;
     bridge_clone_partialeq!(AlphaValue);

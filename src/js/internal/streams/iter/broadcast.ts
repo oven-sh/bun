@@ -586,9 +586,10 @@ class BroadcastWriter {
   #resolvePendingWrites() {
     while (this.#pendingWrites.length > 0 && this.#broadcast[kCanWrite]()) {
       const pending = this.#pendingWrites.shift();
-      if (this.#broadcast[kWrite](pending.chunk)) {
-        for (let i = 0; i < pending.chunk.length; i++) {
-          this.#totalBytes += pending.chunk[i].byteLength;
+      const chunk = pending.chunk;
+      if (this.#broadcast[kWrite](chunk)) {
+        for (let i = 0; i < chunk.length; i++) {
+          this.#totalBytes += chunk[i].byteLength;
         }
         pending.resolve();
       } else {

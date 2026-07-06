@@ -4,14 +4,9 @@ sidebarTitle: PM2 with Bun
 mode: center
 ---
 
-[PM2](https://pm2.keymetrics.io/) is a popular process manager that manages and runs your applications as daemons (background processes).
+[PM2](https://pm2.keymetrics.io/) is a process manager that runs your applications as daemons (background processes).
 
-It offers features like process monitoring, automatic restarts, and scaling. Using a process manager is common when deploying a Bun application on a cloud-hosted virtual private server (VPS), as it:
-
-- Keeps your application running continuously.
-- Ensures high availability and reliability of your application.
-- Monitors and manages multiple processes.
-- Simplifies the deployment process.
+It offers process monitoring, automatic restarts, and scaling, and keeps your application running when you deploy it to a cloud-hosted virtual private server (VPS).
 
 ---
 
@@ -19,7 +14,7 @@ You can use PM2 with Bun in two ways: as a CLI option or in a configuration file
 
 ### With `--interpreter`
 
-To start your application with PM2 and Bun as the interpreter, open your terminal and run the following command:
+To start your application with PM2 and Bun as the interpreter, run:
 
 ```bash terminal icon="terminal"
 pm2 start --interpreter ~/.bun/bin/bun index.ts
@@ -29,7 +24,7 @@ pm2 start --interpreter ~/.bun/bin/bun index.ts
 
 ### With a configuration file
 
-Alternatively, you can create a PM2 configuration file. Create a file named `pm2.config.js` in your project directory and add the following content.
+Alternatively, create a file named `pm2.config.js` in your project directory and add the following content.
 
 ```js pm2.config.js icon="file-code"
 module.exports = {
@@ -44,7 +39,7 @@ module.exports = {
 
 ---
 
-After saving the file, you can start your application with PM2
+After saving the file, start your application with PM2.
 
 ```bash terminal icon="terminal"
 pm2 start pm2.config.js
@@ -52,4 +47,4 @@ pm2 start pm2.config.js
 
 ---
 
-That’s it! Your JavaScript/TypeScript web server is now running as a daemon with PM2 using Bun as the interpreter.
+Your JavaScript/TypeScript web server now runs as a daemon with PM2, using Bun as the interpreter.

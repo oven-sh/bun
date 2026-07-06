@@ -639,9 +639,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
 
-    // Node probably doesn't create uninitialized array buffers
-    // but the node-api docs don't specify whether memory is initialized or not.
-    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(byte_length, 1);
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(byte_length, 1);
     if (!arrayBuffer) {
         return napi_set_last_error(env, napi_generic_failure);
     }
@@ -2154,7 +2152,9 @@ extern "C" napi_status napi_create_double(napi_env env, double value,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
-    *result = toNapi(jsNumber(value), toJS(env));
+    // The addon controls every bit of `value`; an impure NaN must not be
+    // NaN-boxed as-is or it decodes as a forged JSValue (see PureNaN.h).
+    *result = toNapi(jsNumber(purifyNaN(value)), toJS(env));
     NAPI_RETURN_SUCCESS(env);
 }
 

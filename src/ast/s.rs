@@ -203,9 +203,9 @@ pub struct Import {
     /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
-    pub default_name: Option<LocRef>,      // = None
-    pub items: StoreSlice<ClauseItem>,     // arena-owned; = &[]
-    pub star_name_loc: Option<crate::Loc>, // = None
+    pub default_name: Option<LocRef>,  // = None
+    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
+    pub star_name_loc: crate::Loc,     // = Loc::EMPTY
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
     /// "import defer * as ns from 'path'" — the TC39 Deferred Module Evaluation
@@ -220,7 +220,7 @@ impl Default for Import {
             namespace_ref: Ref::NONE,
             default_name: None,
             items: StoreSlice::EMPTY,
-            star_name_loc: None,
+            star_name_loc: crate::Loc::EMPTY,
             import_record_index: u32::MAX,
             is_single_line: false,
             phase_defer: false,

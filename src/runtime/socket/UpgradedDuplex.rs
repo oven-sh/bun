@@ -502,7 +502,21 @@ impl UpgradedDuplex {
         // clear the timer
         self.set_timeout(0);
 
-        self.wrapper = None; // Drop runs SSLWrapper teardown
+        // Neuter in place rather than `self.wrapper = None`: `teardown()` can
+        // run re-entrantly from `on_close` while a `SSLWrapper::handle_traffic`
+        // frame is still on the stack with a `*mut Self` into the `Some`
+        // payload. Assigning `None` to the `Option` runs `Drop` (fine -
+        // `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
+        // `Option::None` value over the slot, whose payload bytes are stack
+        // garbage - the in-flight frame's `Self::r(this).ssl` then reads junk
+        // and `flush_pending_events` UAFs into BoringSSL. `deinit()` alone
+        // leaves `ssl = None` / `closed_notified = true` readable so those
+        // guards work; the `Option` is dropped for real when the parent
+        // `DuplexUpgradeContext` frees on the next tick. See WindowsNamedPipe's
+        // WRAPPER_BUSY for the sibling pattern.
+        if let Some(wrapper) = self.wrapper.as_mut() {
+            wrapper.deinit();
+        }
 
         self.origin.deinit();
         if let Some(callback) = self.on_data_callback.get() {

@@ -392,9 +392,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
+    #[cfg(not(windows))]
+    let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
+    let mut uid: Option<u32> = None;
+    let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
@@ -662,6 +666,40 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(detached_val) = args.get(global_this, "detached")? {
                 if detached_val.is_boolean() {
                     detached = detached_val.to_boolean();
+                }
+            }
+
+            // Node semantics: uid/gid are int32s passed through to the OS
+            // (negative values are cast to uid_t/gid_t, matching libuv).
+            if let Some(uid_value) = args.get(global_this, "uid")? {
+                if uid_value != JSValue::NULL {
+                    let uid_int = global_this.validate_integer_range::<i32>(
+                        uid_value,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: i128::from(i32::MIN),
+                            max: i128::from(i32::MAX),
+                            field_name: b"uid",
+                            ..Default::default()
+                        },
+                    )?;
+                    uid = Some(uid_int as u32);
+                }
+            }
+
+            if let Some(gid_value) = args.get(global_this, "gid")? {
+                if gid_value != JSValue::NULL {
+                    let gid_int = global_this.validate_integer_range::<i32>(
+                        gid_value,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: i128::from(i32::MIN),
+                            max: i128::from(i32::MAX),
+                            field_name: b"gid",
+                            ..Default::default()
+                        },
+                    )?;
+                    gid = Some(gid_int as u32);
                 }
             }
 
@@ -1050,6 +1088,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),
         detached,
+        uid,
+        gid,
         stdin: match stdio[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
@@ -1062,7 +1102,21 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
         },
-        extra_fds: core::mem::take(&mut extra_fds).into_boxed_slice(),
+        extra_fds: {
+            // Record which extra-stdio slots are 'socket-fd' so we can
+            // downgrade them from OwnedFd to UnownedFd after all fallible
+            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // SocketFd so every error path's finalize_streams still closes
+            // the bun-created fd; the caller-owns-it contract only begins
+            // once the Subprocess is returned and .stdio[i] is readable.
+            #[cfg(not(windows))]
+            for (j, e) in extra_fds.iter().enumerate() {
+                if matches!(e, SpawnOptionsStdio::SocketFd) {
+                    socket_fd_indices.push(j);
+                }
+            }
+            core::mem::take(&mut extra_fds).into_boxed_slice()
+        },
         argv0,
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
@@ -1660,6 +1714,29 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     **should_close_memfd = false;
+
+    // Every `return Err` above is past; the Subprocess will be returned to
+    // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
+    // finalize_streams (on later GC) skips them and the caller is the sole
+    // owner via .stdio[i]. Placed here (not earlier) because the
+    // Writable::init error arm, the has_exception catch-all, the IPC
+    // open-socket failure, and the stdout/stderr Readable::Pipe .start()
+    // error paths all throw after populating stdio_pipes; on those paths
+    // the caller never receives the Subprocess, so the OwnedFd slot must
+    // remain for the GC'd wrapper's finalize_streams to close.
+    #[cfg(not(windows))]
+    if !socket_fd_indices.is_empty() {
+        subprocess.stdio_pipes.with_mut(|pipes| {
+            for j in &socket_fd_indices {
+                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
+                    let ExtraPipe::OwnedFd(fd) = *slot else {
+                        unreachable!()
+                    };
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
+    }
 
     // Once everything is set up, we can add the abort listener
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted

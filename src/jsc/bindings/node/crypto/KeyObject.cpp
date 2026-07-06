@@ -1349,14 +1349,12 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
-            auto buffer = view->span();
-
             EVPKeyPointer::PrivateKeyEncodingConfig config;
             parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
             RETURN_IF_EXCEPTION(scope, {});
 
             return {
-                .keyDataView = { view, buffer },
+                .keyDataView = { view, view->span() },
                 .formatType = config.format,
                 .encodingType = config.type,
                 .cipher = config.cipher,
@@ -1365,15 +1363,13 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
 
         if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
-            auto* buffer = arrayBuffer->impl();
-            auto data = buffer->span();
-
             EVPKeyPointer::PrivateKeyEncodingConfig config;
             parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
             RETURN_IF_EXCEPTION(scope, {});
 
+            auto* buffer = arrayBuffer->impl();
             return {
-                .keyDataView = { arrayBuffer, data },
+                .keyDataView = { arrayBuffer, buffer->span() },
                 .formatType = config.format,
                 .encodingType = config.type,
                 .cipher = config.cipher,

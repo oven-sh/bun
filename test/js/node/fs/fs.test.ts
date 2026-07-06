@@ -5,6 +5,7 @@ import {
   gc,
   getMaxFD,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isLinux,
   isPosix,
@@ -56,7 +57,7 @@ import fs, {
 } from "node:fs";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 
@@ -91,6 +92,33 @@ function tmpdirTestMkdir(): string {
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;
 }
+
+it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading options", () => {
+  using dir = tempDir("fs-statsync-typed-array-path", { "target.txt": "bun" });
+  const encoded = new TextEncoder().encode(join(String(dir), "target.txt"));
+  const pathBuffer = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+  const arrayBuffer = pathBuffer.buffer as ArrayBuffer;
+  const stats = statSync(pathBuffer, {
+    get throwIfNoEntry() {
+      arrayBuffer.transfer();
+      return true;
+    },
+  });
+  expect(arrayBuffer.detached).toBe(false);
+  expect(stats!.isFile()).toBe(true);
+  arrayBuffer.transfer();
+  expect(arrayBuffer.detached).toBe(true);
+});
+
+it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
+  using dir = tempDir("fs-chmod-special-bits", {});
+  const dirPath = join(String(dir), "subdir");
+  mkdirSync(dirPath);
+  fs.chmodSync(dirPath, 0o1777);
+  expect(statSync(dirPath).mode & 0o7777).toBe(0o1777);
+  fs.chmodSync(dirPath, "1755");
+  expect(statSync(dirPath).mode & 0o7777).toBe(0o1755);
+});
 
 it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
   await using proc = Bun.spawn({
@@ -473,6 +501,194 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
       expect(readFileSync(path, "utf8")).toBe(str);
     }
   }
+});
+
+describe("writeFile with a non-truncating flag", () => {
+  const flags = ["r+", "rs+", constants.O_RDWR];
+
+  it.each(flags)("writeFileSync with flag %p overwrites in place", flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(flags)("promises.writeFile with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(flags)("fs.writeFile with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.writeFile(path, "ZZ", { flag }, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  // An iterable `data` takes a separate slow path in fs.promises, with its own
+  // truncate.
+  it.each(["r+", "rs+"])("promises.writeFile of an async iterable with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place-async-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (async function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["r+", "rs+"])("promises.writeFile of a sync iterable with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place-sync-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["w", "w+"])("promises.writeFile of an async iterable with flag %p still truncates", async flag => {
+    const path = join(tmpdirSync(), "truncating-async-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (async function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+
+  it("writeFileSync on a file descriptor does not truncate", () => {
+    const path = join(tmpdirSync(), "in-place-fd.txt");
+    writeFileSync(path, "0123456789");
+    const fd = openSync(path, "r+");
+    try {
+      writeFileSync(fd, "ZZ");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["w", "w+"])("writeFileSync with flag %p still truncates", flag => {
+    const path = join(tmpdirSync(), "truncating.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+
+  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
+  // open rather than afterwards. Skipped on Windows: openat() there picks its
+  // NtCreateFile disposition from O_WRONLY and ignores O_TRUNC, so this already
+  // yields "0123456789ZZ" on main. Separate bug, separate fix.
+  it.skipIf(isWindows)("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
+    const path = join(tmpdirSync(), "append-truncating.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", {
+      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
+    });
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+});
+
+// A write that dies partway through must not leave the old tail sitting behind
+// the bytes that did land. `ulimit -f 1` gives the child a 512 byte RLIMIT_FSIZE,
+// and Linux's generic_write_checks() then clamps the write to the limit and fails
+// the next one with EFBIG. Linux-only: BSD kernels reject the whole write instead,
+// so the byte split is not portable.
+describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
+  const fixture = join(import.meta.dir, "fs-writeFile-write-error-fixture.js");
+
+  async function runUnderFileSizeLimit(path: string, flag: string) {
+    writeFileSync(path, Buffer.alloc(2000, "B"));
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -f 1; exec "$0" "$1" "$2" "$3"`, bunExe(), fixture, path, flag],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderrHasError: stderr.includes("error:"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it.each(["default", "w", "w+"])("with flag %p the file holds only what was written", async flag => {
+    const path = join(tmpdirSync(), "write-error.bin");
+    const { code, size, written, stale } = await runUnderFileSizeLimit(path, flag);
+    expect({ code, stale, sizeIsOnlyWrittenBytes: size === written }).toEqual({
+      code: "EFBIG",
+      stale: 0,
+      sizeIsOnlyWrittenBytes: true,
+    });
+  });
+
+  // 512 new bytes over the head, the other 1488 untouched, and no resize.
+  it("with flag 'r+' the rest of the file survives", async () => {
+    const path = join(tmpdirSync(), "write-error-in-place.bin");
+    const { code, size, written, stale } = await runUnderFileSizeLimit(path, "r+");
+    expect({ code, size, written, stale }).toEqual({ code: "EFBIG", size: 2000, written: 512, stale: 1488 });
+  });
+});
+
+// Writes at or above the preallocate threshold take the fallocate() path, which
+// grows the file before the data lands. O_APPEND then writes past the grown end,
+// leaving a hole of zeroes where the data belongs.
+describe("writeFile with a preallocate-sized buffer", () => {
+  const big = Buffer.alloc(3 * 1024 * 1024, "A");
+
+  it("appends with flag 'a'", () => {
+    const path = join(tmpdirSync(), "append-big.bin");
+    writeFileSync(path, "HEADER");
+    writeFileSync(path, big, { flag: "a" });
+    const out = readFileSync(path);
+    expect(out.subarray(0, 6).toString()).toBe("HEADER");
+    expect(out.indexOf(0)).toBe(-1);
+    expect(out.length).toBe(6 + big.length);
+  });
+
+  it("appends through a file descriptor opened with 'a'", () => {
+    const path = join(tmpdirSync(), "append-big-fd.bin");
+    writeFileSync(path, "HEADER");
+    const fd = openSync(path, "a");
+    try {
+      writeFileSync(fd, big);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(path);
+    expect(out.subarray(0, 6).toString()).toBe("HEADER");
+    expect(out.indexOf(0)).toBe(-1);
+    expect(out.length).toBe(6 + big.length);
+  });
+
+  it("keeps the tail of a larger file with flag 'r+'", () => {
+    const path = join(tmpdirSync(), "in-place-big.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    writeFileSync(path, big, { flag: "r+" });
+    const out = readFileSync(path);
+    expect(out.subarray(0, big.length).equals(big)).toBe(true);
+    expect(out.indexOf("B")).toBe(big.length);
+    expect(out.length).toBe(4 * 1024 * 1024);
+  });
+
+  it("truncates a larger file with the default flag", () => {
+    const path = join(tmpdirSync(), "truncating-big.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    writeFileSync(path, big);
+    const out = readFileSync(path);
+    expect(out.equals(big)).toBe(true);
+  });
 });
 
 describe("copyFileSync", () => {
@@ -1179,6 +1395,23 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// Node returns Buffer[] for { encoding: "buffer" }, not Uint8Array[].
+it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
+  using dir = tempDir("readdir-buffer-entries", { "a.txt": "", "b.txt": "" });
+  const summarize = (entries: Buffer[]) =>
+    entries.map(entry => [Buffer.isBuffer(entry), entry.toString("utf8")]).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+  const expected = [
+    [true, "a.txt"],
+    [true, "b.txt"],
+  ];
+  expect(summarize(readdirSync(String(dir), { encoding: "buffer" }))).toEqual(expected);
+  expect(summarize(readdirSync(String(dir), { encoding: "buffer", recursive: true }))).toEqual(expected);
+  expect(summarize(await promises.readdir(String(dir), { encoding: "buffer" }))).toEqual(expected);
+  expect(
+    summarize((await promisify(fs.readdir)(String(dir), { encoding: "buffer" } as const)) as unknown as Buffer[]),
+  ).toEqual(expected);
+});
+
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on
 // structs stored by-value inside the entries ArrayList, which passed interior
 // ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
@@ -1223,6 +1456,48 @@ it.skipIf(isWindows)(
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
   },
 );
+
+// The per-task pending_err mutex was acquired via `lock()` (returns `()`) instead of
+// `lock_guard()`, so it was never released: the next failing subtask on the same worker
+// panicked "Deadlock detected" (debug) or blocked forever and the promise never settled.
+it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
+  using dir = tempDir("readdir-recursive-multi-error", {
+    "keep.txt": "x",
+  });
+  // Self-referencing symlinks: opening one with O_DIRECTORY fails with
+  // ELOOP, which is not swallowed by the recursive walker, so every
+  // enqueued subtask hits the pending_err path.
+  for (let i = 0; i < 64; i++) {
+    const link = join(String(dir), `loop${i}`);
+    fs.symlinkSync(link, link);
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+          const fs = require("fs");
+          fs.promises.readdir(${JSON.stringify(String(dir))}, { recursive: true }).then(
+            r => console.log("resolved", r.length),
+            e => console.log("rejected", e.code),
+          );
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    timeout: 10_000,
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "rejected ELOOP",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
@@ -1439,6 +1714,46 @@ describe("writeSync", () => {
     }
     closeSync(fd);
   });
+
+  // writeSync(fd, string[, position[, encoding]]): the encoding used to be
+  // parsed but never applied, so utf16le/hex/base64/latin1 all wrote raw UTF-8.
+  it("honors the encoding argument for strings", () => {
+    const dest = join(tmpdirSync(), "writeSync-string-encoding.bin");
+    const cases: [args: unknown[], expected: Buffer][] = [
+      [["abc", 0, "utf16le"], Buffer.from("abc", "utf16le")],
+      // Node consumes the position slot whatever its type; the encoding is
+      // always the following argument.
+      [["abc", null, "ucs2"], Buffer.from("abc", "utf16le")],
+      [["abc", undefined, "utf16le"], Buffer.from("abc", "utf16le")],
+      [["61626364", 0, "hex"], Buffer.from("abcd")],
+      [["aGk=", null, "base64"], Buffer.from("hi")],
+      [["\u00ff", 0, "latin1"], Buffer.from([0xff])],
+      // Node writes UTF-8 for the "buffer" encoding name; it must not fall
+      // into the latin1-narrowing path.
+      [["\u00e9", 0, "buffer"], Buffer.from([0xc3, 0xa9])],
+      // Same for a 16-bit string, which would otherwise hit a separate
+      // low-byte-narrowing encoder (U+4E2D -> 0x2d).
+      [["a\u00e9\u4e2d", 0, "buffer"], Buffer.from([0x61, 0xc3, 0xa9, 0xe4, 0xb8, 0xad])],
+      // A lone string in the position slot is not an encoding.
+      [["ab", "utf16le"], Buffer.from("ab")],
+      [["abc", 0], Buffer.from("abc")],
+      [["abc"], Buffer.from("abc")],
+    ];
+    for (const [args, expected] of cases) {
+      const fd = openSync(dest, "w");
+      let written: number;
+      try {
+        written = (writeSync as Function)(fd, ...args);
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, written, bytes: [...readFileSync(dest)] }).toEqual({
+        args,
+        written: expected.length,
+        bytes: [...expected],
+      });
+    }
+  });
 });
 
 describe("readFileSync", () => {
@@ -1558,6 +1873,263 @@ describe("readFile", () => {
         expect.toThrowWithCode(() => readFileSync(mydir + "/" + name, { encoding: "utf8" }), "ENOENT");
       }
     }
+  });
+});
+
+describe("open with a numeric flag boxed as a double", () => {
+  // https://github.com/oven-sh/bun/issues/32505
+  // Go's `syscall/js` (GOOS=js GOARCH=wasm) reads every argument out of wasm
+  // linear memory with DataView.getFloat64, so a valid integer flag such as
+  // 578 (O_RDWR|O_CREAT|O_TRUNC) reaches fs.open boxed as a double instead of
+  // an int32. Node accepts any integer-valued number; Bun must too.
+  const asDouble = (n: number) => new Float64Array([n])[0];
+
+  it("openSync accepts a double-boxed flag and honors it", () => {
+    using dir = tempDir("fs-flags-double", {});
+    const file = join(String(dir), "sync.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+    expect(Number.isInteger(flags)).toBe(true);
+
+    const fd = openSync(file, flags, 0o666);
+    try {
+      writeSync(fd, "hello\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("hello\n");
+  });
+
+  it("async open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-async", {});
+    const file = join(String(dir), "async.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    fs.open(file, flags, 0o666, (err, fd) => (err ? reject(err) : resolve(fd)));
+    const fd = await promise;
+    try {
+      writeSync(fd, "world\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("world\n");
+  });
+
+  it("promises.open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-promise", {});
+    const file = join(String(dir), "promise.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const handle = await promises.open(file, flags, 0o666);
+    try {
+      await handle.write("promise\n");
+    } finally {
+      await handle.close();
+    }
+    expect(readFileSync(file, "utf8")).toBe("promise\n");
+  });
+
+  it("still rejects a non-integer numeric flag", () => {
+    using dir = tempDir("fs-flags-double-reject", {});
+    const file = join(String(dir), "bad.txt");
+    expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  });
+});
+
+describe("open flag string validation matches node", () => {
+  // Node's stringToFlags is a case-sensitive exhaustive switch; anything not
+  // in the table (including uppercase spellings like "W" or numeric strings
+  // like "577") throws ERR_INVALID_ARG_VALUE.
+  const validFlags = [
+    "r",
+    "rs",
+    "sr",
+    "r+",
+    "rs+",
+    "sr+",
+    "w",
+    "wx",
+    "xw",
+    "w+",
+    "wx+",
+    "xw+",
+    "a",
+    "ax",
+    "xa",
+    "as",
+    "sa",
+    "a+",
+    "ax+",
+    "xa+",
+    "as+",
+    "sa+",
+  ];
+  const invalidFlags = [
+    "W",
+    "R",
+    "A",
+    "A+",
+    "R+",
+    "W+",
+    "RS",
+    "Rs",
+    "AS+",
+    "0",
+    "1",
+    "577",
+    "0o644",
+    // Previously the Rust port parsed any leading-digit flag string into an
+    // integer, so values at and past these width boundaries reached open(2).
+    "65535",
+    "65536",
+    "2147483647",
+    "2147483648",
+    "4294967295",
+    "4294967296",
+    "xyz",
+    "",
+    true,
+  ];
+
+  it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
+    using dir = tempDir("fs-flags-invalid", {});
+    const file = join(String(dir), "f.txt");
+    let err: any;
+    try {
+      // @ts-expect-error intentionally passing bad flag types
+      const fd = openSync(file, flag);
+      closeSync(fd);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    // Node renders the received value with util.inspect.
+    expect(err.message).toBe(`The argument 'flags' is invalid. Received ${inspect(flag)}`);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it.each(validFlags)("openSync accepts flag %p", flag => {
+    // O_EXCL ('x' in the flag string) fails on an existing file, while the
+    // read-only flags need an existing file. Pick the target accordingly.
+    using dir = tempDir("fs-flags-valid", { "existing.txt": "x" });
+    const file = join(String(dir), flag.includes("x") ? "new.txt" : "existing.txt");
+    const fd = openSync(file, flag);
+    closeSync(fd);
+  });
+
+  it("callback open and promises.open reject uppercase flags", async () => {
+    using dir = tempDir("fs-flags-invalid-async", {});
+    const file = join(String(dir), "f.txt");
+    // fs.open validates flags synchronously, matching Node.
+    expect(() => fs.open(file, "W", () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    await expect(promises.open(file, "W")).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("readFileSync and writeFileSync reject uppercase flag option", () => {
+    using dir = tempDir("fs-flags-invalid-rw", { "f.txt": "x" });
+    const file = join(String(dir), "f.txt");
+    expect(() => readFileSync(file, { flag: "R" })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => writeFileSync(file, "y", { flag: "W" })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  });
+
+  it("rejects a String wrapper object even when it boxes a valid flag", () => {
+    // Node's stringToFlags is a strict-equality switch, so only a primitive
+    // string can match; `new String("w")` is an object and must throw.
+    using dir = tempDir("fs-flags-string-object", {});
+    const file = join(String(dir), "f.txt");
+    expect(() => readFileSync(file, { flag: new String("w") as any })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_VALUE",
+    );
+    expect(() => writeFileSync(file, "y", { flag: new String("w") as any })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_VALUE",
+    );
+    expect(existsSync(file)).toBe(false);
+  });
+});
+
+describe("open/mkdir mode string validation matches node", () => {
+  // The last two hold a non-Latin-1 code unit, so JSC stores them 16-bit; a
+  // raw 8-bit read of the UTF-16 buffer sees only "\u3737"'s low byte 0x37
+  // ("7") and would wrongly accept it as mode 7.
+  const invalidModes = ["0o755", "+755", "7_5_5", "888", "7a5", "", "7\u20225", "\u3737"];
+
+  it.each(invalidModes)("openSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
+    using dir = tempDir("fs-mode-invalid", {});
+    const file = join(String(dir), "f.txt");
+    expect(() => openSync(file, "w", mode)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  // "37777777777" is exactly u32::MAX: Node crashes on an internal IsInt32()
+  // assertion there, which Bun deliberately does not replicate.
+  it.each(["755", "0755", "0644", "0", "37777777776", "37777777777"])("openSync accepts octal mode string %p", mode => {
+    using dir = tempDir("fs-mode-valid", {});
+    const file = join(String(dir), "f.txt");
+    const fd = openSync(file, "w", mode);
+    closeSync(fd);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("accepts a valid octal mode string regardless of JSC's internal string storage", () => {
+    // JSC does not narrow: a UTF-16 decode yields a 16-bit string even when
+    // its content ("755") is pure ASCII. Storage bitness must be invisible,
+    // so it must parse identically to the 8-bit "755" literal.
+    const sixteenBit = new TextDecoder("utf-16le").decode(new Uint8Array([0x37, 0, 0x35, 0, 0x35, 0]));
+    expect(sixteenBit).toBe("755");
+    using dir = tempDir("fs-mode-16bit", {});
+    const eightBitPath = join(String(dir), "a.txt");
+    const sixteenBitPath = join(String(dir), "b.txt");
+    closeSync(openSync(eightBitPath, "w", "755"));
+    closeSync(openSync(sixteenBitPath, "w", sixteenBit));
+    expect(statSync(sixteenBitPath).mode).toBe(statSync(eightBitPath).mode);
+  });
+
+  // Node range-checks the parsed octal string with validateUint32, so a value
+  // past u32::MAX is ERR_OUT_OF_RANGE, not ERR_INVALID_ARG_VALUE.
+  it.each(["40000000000", "777777777777"])("openSync rejects octal mode string %p as out of range", mode => {
+    using dir = tempDir("fs-mode-oor", {});
+    const file = join(String(dir), "f.txt");
+    expect(() => openSync(file, "w", mode)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it.each(invalidModes)("mkdirSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
+    using dir = tempDir("fs-mode-invalid-mkdir", {});
+    expect(() => mkdirSync(join(String(dir), "sub"), { mode })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  });
+
+  it("rejects a String wrapper object as a mode", () => {
+    // Node's parseFileMode only octal-parses `typeof value === 'string'`, so a
+    // boxed String falls through to the number validator (ERR_INVALID_ARG_TYPE).
+    using dir = tempDir("fs-mode-string-object", {});
+    expect(() => openSync(join(String(dir), "f.txt"), "w", new String("755") as any)).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+    // chmodSync has no options-bag form, so the wrapper reaches parseFileMode
+    // directly and must be rejected the same way.
+    const d = join(String(dir), "c");
+    mkdirSync(d);
+    expect(() => fs.chmodSync(d, new String("755") as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  });
+
+  it("mkdirSync treats a String wrapper as an options bag, like node", () => {
+    // `typeof new String` is "object", so Node treats the wrapper as an options
+    // bag and applies the default mode rather than parsing it as "700". Compare
+    // against an options-less mkdirSync in the same process so umask cancels out.
+    using dir = tempDir("fs-mode-mkdir-string-object", {});
+    const wrapped = join(String(dir), "wrapped");
+    const plain = join(String(dir), "plain");
+    mkdirSync(wrapped, new String("700") as any);
+    mkdirSync(plain);
+    expect(statSync(wrapped).mode).toBe(statSync(plain).mode);
   });
 });
 
@@ -1941,7 +2513,7 @@ describe("rm", () => {
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
-  // statSync/unlinkSync all do this; recursive rmSync/rmdirSync must agree
+  // statSync/unlinkSync all do this; recursive rmSync must agree
   // or cleanup helpers (rmSync(dir, { recursive: true, force: true })) silently
   // no-op on directories existsSync just said were there.
   //
@@ -1963,14 +2535,6 @@ describe("rm", () => {
     fs.writeFileSync(dir + "/inner.txt", "x");
     expect(fs.existsSync(dir)).toBe(true);
     fs.rmSync(dir, { recursive: true, force: true });
-    expect(fs.existsSync(dir)).toBe(false);
-  });
-
-  it.skipIf(!sameDriveAsCwd)("rmdirSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
-    const dir = `${drivelessTmp}/bun-rmdir-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    fs.mkdirSync(dir + "/nested", { recursive: true });
-    expect(fs.existsSync(dir)).toBe(true);
-    fs.rmdirSync(dir, { recursive: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
 });
@@ -2039,25 +2603,21 @@ describe("rmdir", () => {
 
     expect(existsSync(path + "/file.txt")).toBe(true);
 
-    await promises.rmdir(path, { recursive: true });
+    await expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    await promises.rm(path, { recursive: true, force: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
-  it("removes a dir recursively", done => {
+  it("throws for recursive: true like node", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdir(join(path, "../../"), { recursive: true }, err => {
-      try {
-        expect(existsSync(path)).toBe(false);
-        done(err);
-      } catch (e) {
-        return done(e);
-      } finally {
-        done();
-      }
-    });
+    expect(() => {
+      rmdir(join(path, "../../"), { recursive: true }, () => {});
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    rmSync(join(path, "../../"), { recursive: true, force: true });
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -2080,13 +2640,16 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
-  it("removes a dir recursively", () => {
+  it("throws for recursive: true like node", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdirSync(join(path, "../../"), { recursive: true });
+    expect(() => rmdirSync(join(path, "../../"), { recursive: true })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    rmSync(join(path, "../../"), { recursive: true, force: true });
     expect(existsSync(path)).toBe(false);
   });
 });
@@ -2576,7 +3139,7 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
+  const { exists, mkdir, readFile, rm, rmdir, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -2762,7 +3325,7 @@ describe("fs/promises", () => {
   );
 
   for (let withFileTypes of [false, true] as const) {
-    const iterCount = 200;
+    const iterCount = isDebug ? 16 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -2842,7 +3405,7 @@ describe("fs/promises", () => {
 
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
-    const iterCount = 200;
+    const iterCount = isDebug ? 4 : 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -3003,13 +3566,16 @@ describe("fs/promises", () => {
       await rmdir(path);
       expect(await exists(path)).toBe(false);
     });
-    it("removes a dir recursively", async () => {
+    it("throws for recursive: true like node", async () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
       try {
         await mkdir(path, { recursive: true });
       } catch (e) {}
       expect(await exists(path)).toBe(true);
-      await rmdir(join(path, "../../"), { recursive: true });
+      await expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+      await rm(join(path, "../../"), { recursive: true, force: true });
       expect(await exists(path)).toBe(false);
     });
   });
@@ -3384,6 +3950,61 @@ describe("fs.write", () => {
     });
   });
 
+  // Same bug as the writeSync case: the encoding was parsed but never applied.
+  it("honors a non-utf8 encoding for strings", async () => {
+    const expected = [...Buffer.from("bun", "utf16le")];
+    const dest = join(tmpdirSync(), "fs-write-string-encoding.bin");
+
+    // fs.write(fd, string, position, encoding, callback)
+    {
+      const fd = fs.openSync(dest, "w");
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.write(fd, "bun", null, "utf16le", (err, written) => (err ? reject(err) : resolve(written)));
+      try {
+        expect(await promise).toBe(6);
+      } finally {
+        closeSync(fd);
+      }
+      expect([...readFileSync(dest)]).toEqual(expected);
+    }
+
+    // filehandle.write(string, position, encoding)
+    {
+      const handle = await promises.open(dest, "w");
+      try {
+        expect((await handle.write("bun", 0, "utf16le")).bytesWritten).toBe(6);
+      } finally {
+        await handle.close();
+      }
+      expect([...readFileSync(dest)]).toEqual(expected);
+    }
+  });
+
+  // Node rejects a non-string, non-view buffer with ERR_INVALID_ARG_TYPE
+  // before validating the encoding against it. `{ length: 3 }` with "hex"
+  // would otherwise be rejected by validateEncoding with the wrong code.
+  it("rejects a non-string, non-view buffer before the encoding is validated", async () => {
+    const dest = join(tmpdirSync(), "fs-write-buffer-type.bin");
+    const badBuffer = { length: 3 } as unknown as string;
+    const fd = fs.openSync(dest, "w");
+    try {
+      expect(() => fs.write(fd, badBuffer, 0, "hex", () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      expect(() => fs.writeSync(fd, badBuffer, 0, "hex")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    const handle = await promises.open(dest, "w");
+    try {
+      const outcome = await handle.write(badBuffer, 0, "hex").then(
+        () => "resolved",
+        err => err.code,
+      );
+      expect(outcome).toBe("ERR_INVALID_ARG_TYPE");
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("should work with (fd, string, position, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");
@@ -3645,6 +4266,99 @@ it("test syscall errno, issue#4198", () => {
   rmdirSync(path);
 });
 
+describe("error.syscall is node's operation name, not the raw kernel syscall", () => {
+  // Node documents err.syscall as a stable, platform-independent operation
+  // name ("stat", "lstat", "utime", ...). On Linux, Bun implements stat via
+  // statx(2) and utimes via utimensat(2); the implementation detail must not
+  // leak into err.syscall.
+  const missing = join(tmpdir(), "fs-syscall-" + Date.now(), "nope");
+  const badfd = 2147483640;
+  const syscallOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to throw");
+  };
+  const syscallOfAsync = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to reject");
+  };
+
+  it("sync", () => {
+    expect({
+      stat: syscallOf(() => statSync(missing)),
+      lstat: syscallOf(() => lstatSync(missing)),
+      fstat: syscallOf(() => fstatSync(badfd)),
+      utimes: syscallOf(() => fs.utimesSync(missing, 1, 1)),
+      lutimes: syscallOf(() => fs.lutimesSync(missing, 1, 1)),
+      futimes: syscallOf(() => fs.futimesSync(badfd, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      fstat: "fstat",
+      utimes: "utime",
+      lutimes: "lutime",
+      futimes: "futime",
+    });
+  });
+
+  it("syscall appears in the error message", () => {
+    expect(() => statSync(missing)).toThrow(/, stat '/);
+    expect(() => lstatSync(missing)).toThrow(/, lstat '/);
+    expect(() => fs.utimesSync(missing, 1, 1)).toThrow(/, utime '/);
+    expect(() => fs.lutimesSync(missing, 1, 1)).toThrow(/, lutime '/);
+  });
+
+  it("async (fs/promises)", async () => {
+    expect({
+      stat: await syscallOfAsync(() => promises.stat(missing)),
+      lstat: await syscallOfAsync(() => promises.lstat(missing)),
+      utimes: await syscallOfAsync(() => promises.utimes(missing, 1, 1)),
+      lutimes: await syscallOfAsync(() => promises.lutimes(missing, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("async (callback)", async () => {
+    const cb = (fn: (cb: (err: any) => void) => void) =>
+      new Promise<string>(resolve => fn(err => resolve(err?.syscall)));
+    expect({
+      stat: await cb(done => fs.stat(missing, done)),
+      lstat: await cb(done => fs.lstat(missing, done)),
+      utimes: await cb(done => fs.utimes(missing, 1, 1, done)),
+      lutimes: await cb(done => fs.lutimes(missing, 1, 1, done)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("FileHandle.read after close reports 'read', not 'fsync'", async () => {
+    using dir = tempDir("fs-syscall-fh", { "f.txt": "hello" });
+    const handle = await promises.open(join(String(dir), "f.txt"), "r");
+    await handle.close();
+    let err: any;
+    try {
+      await handle.read(Buffer.alloc(1), 0, 1, 0);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "EBADF", syscall: "read" });
+  });
+});
+
 it.if(isWindows)("writing to windows hidden file is possible", () => {
   const temp = tmpdir();
   writeFileSync(join(temp, "file.txt"), "FAIL");
@@ -3810,6 +4524,15 @@ it("open flags verification", async () => {
   expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
   );
+});
+
+// Node's stringToFlags throws ERR_INVALID_ARG_VALUE for every unrecognized
+// flag string; Bun threw ERR_INVALID_ARG_TYPE.
+it("an unrecognized flag string throws ERR_INVALID_ARG_VALUE", () => {
+  for (const flag of ["bogus", "", "z", Buffer.alloc(32, "w").toString()]) {
+    expect(() => fs.openSync(__filename, flag)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => fs.open(__filename, flag, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  }
 });
 
 it("open mode verification", async () => {

@@ -31,7 +31,7 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler` / `websocket_deflate`
+//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slots; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
@@ -192,26 +192,11 @@ impl CleanupHook {
     }
 }
 
-/// Erased high-tier slot with paired destructor (e.g. `WebSocketDeflate::RareData`).
-pub struct ErasedBox {
-    pub ptr: NonNull<c_void>,
-    pub dtor: unsafe fn(*mut c_void),
-}
-impl Drop for ErasedBox {
-    fn drop(&mut self) {
-        // SAFETY: `dtor` was supplied by the same high-tier code that allocated `ptr`.
-        unsafe { (self.dtor)(self.ptr.as_ptr()) };
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    /// `bun_http_jsc::WebSocketDeflate::RareData` — erased; lazy-init in
-    /// `bun_http_jsc::WebSocketDeflate::rare_data()`.
-    pub websocket_deflate: Option<ErasedBox>,
     pub boring_ssl_engine: Option<*mut boring::ENGINE>,
 
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
@@ -274,6 +259,10 @@ pub struct RareData {
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
     pub node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
 
+    /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
+    /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
+    pub memory_pressure_watcher: Option<NonNull<c_void>>,
+
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
     /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
@@ -306,7 +295,6 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
-            websocket_deflate: None,
             boring_ssl_engine: None,
             stderr_store: None,
             stderr_mode: 0,
@@ -336,6 +324,7 @@ impl Default for RareData {
             default_client_ssl_ctx: None,
             mime_types: None,
             node_fs_stat_watcher_scheduler: None,
+            memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
@@ -640,10 +629,10 @@ impl RareData {
         &mut self.node_fs_stat_watcher_scheduler
     }
 
-    /// Raw slot — lazy-init body lives in `bun_http_jsc::WebSocketDeflate`.
+    /// Raw slot — lazy-init body lives in `bun_runtime::node::memory_pressure`.
     #[inline]
-    pub fn websocket_deflate_slot(&mut self) -> &mut Option<ErasedBox> {
-        &mut self.websocket_deflate
+    pub fn memory_pressure_watcher_slot(&mut self) -> &mut Option<NonNull<c_void>> {
+        &mut self.memory_pressure_watcher
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────
@@ -1058,9 +1047,9 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / websocket_deflate / tls_default_ciphers:
+        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
+        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
+        // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

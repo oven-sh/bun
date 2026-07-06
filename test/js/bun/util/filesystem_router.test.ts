@@ -706,6 +706,15 @@ it("match() drops the URL fragment from the pathname and the query string", () =
   expect(router.match("/about#")?.name).toBe("/about");
   expect(router.match("/#frag")?.name).toBe("/");
 
+  // Nothing is left of the path once the fragment goes, so these reach the same
+  // empty-pathname guard that a path percent-decoding to nothing does.
+  expect(router.match("#frag")?.name).toBe("/");
+  expect(router.match("#")?.name).toBe("/");
+
+  // A malformed escape inside the fragment is never decoded, so it can no longer
+  // make match() throw DecodingError. This only holds if the cut runs first.
+  expect(router.match("/about#%zz")?.name).toBe("/about");
+
   // The absolute-URL form already went through the URL parser; both forms agree.
   const absolute = router.match("https://example.com/posts/xyz?a=1#top")!;
   expect({ name: absolute.name, pathname: absolute.pathname, params: absolute.params, query: absolute.query }).toEqual({

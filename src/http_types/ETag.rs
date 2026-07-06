@@ -101,7 +101,10 @@ impl<'a> Iterator for EntityTagSplit<'a> {
 }
 
 fn split_entity_tags(list: &[u8]) -> EntityTagSplit<'_> {
-    EntityTagSplit { rest: list, done: false }
+    EntityTagSplit {
+        rest: list,
+        done: false,
+    }
 }
 
 pub fn if_none_match(

@@ -135,7 +135,7 @@ impl<'a> PatchFile<'a> {
                         // (resolving `filedir` against the process CWD would be
                         // inconsistent when `patch_dir != cwd`).
                         if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
+                            sys::mkdir_recursive_at_mode(patch_dir, filedir, 0o755)
                         {
                             return Some(e.without_path());
                         }

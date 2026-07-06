@@ -343,14 +343,47 @@ describe.concurrent("an already-expired timer runs before the first poll and che
     expect(exitCode).toBe(0);
   });
 
-  // An entry point that throws never reaches the loop: Node reports the uncaught
-  // exception and exits without running the timers phase.
-  test("but not when the entry point throws", async () => {
-    using dir = tempDir("timers-phase-order-throw", {
+  // Node reports an unhandled rejection from `processPromiseRejections()`, which
+  // also runs before the loop is entered.
+  test("but after an unhandled rejection is reported", async () => {
+    using dir = tempDir("timers-phase-order-rejection", {
+      "index.js": `
+        const order = [];
+        process.on("unhandledRejection", () => order.push("rejection"));
+        process.on("exit", () => console.log(JSON.stringify(order)));
+        Promise.reject(new Error("boom"));
+        setTimeout(() => order.push("timeout"), 1);
+        ${blockPastTheDeadline}
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(stdout.trim()).toBe(JSON.stringify(["rejection", "timeout"]));
+    expect(exitCode).toBe(0);
+  });
+
+  // An entry point that fails never reaches the loop: Node reports the error and
+  // exits without running the timers phase.
+  test.concurrent.each([
+    ["throws", `throw new Error("boom");`],
+    ["leaves an unhandled rejection nobody reports", `Promise.reject(new Error("boom"));`],
+  ])("but not when the entry point %s", async (_name, failure) => {
+    using dir = tempDir("timers-phase-order-failure", {
       "index.js": `
         setTimeout(() => console.log("timer fired"), 1);
         ${blockPastTheDeadline}
-        throw new Error("boom");
+        ${failure}
       `,
     });
 

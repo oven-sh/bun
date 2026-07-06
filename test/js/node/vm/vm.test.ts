@@ -1177,3 +1177,49 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("node:vm SourceTextModule maps import attributes per deduplicated request", async () => {
+  // JSC deduplicates requestedModules() by specifier, so a repeated import
+  // specifier makes the import statements outnumber the requests. The native
+  // createModuleRecord used to index-align statements with requests, which
+  // aborts debug builds (ASSERTION FAILED: More attributes nodes than requests)
+  // and hands link() the wrong attributes for every later import on release.
+  const fixture = `
+    const vm = require("node:vm");
+    const dep = new vm.SyntheticModule(["default", "a"], function () {
+      this.setExport("default", 1);
+      this.setExport("a", 2);
+    });
+
+    const seen = [];
+    const m = new vm.SourceTextModule(
+      "import 'a'; import 'a'; import j from 'j' with { type: 'json' }; import c from 'c' with { type: 'css' };");
+    await m.link((s, ref, extra) => { seen.push([s, extra?.attributes]); return dep; });
+
+    const seen2 = [];
+    const m2 = new vm.SourceTextModule("import {a} from 'x'; import 'x'; export const v = a;");
+    await m2.link((s, ref, extra) => { seen2.push([s, extra?.attributes]); return dep; });
+
+    console.log(JSON.stringify({ seen, seen2 }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    seen: [
+      ["a", {}],
+      ["j", { type: "json" }],
+      ["c", { type: "css" }],
+    ],
+    seen2: [["x", {}]],
+  });
+  expect(exitCode).toBe(0);
+});

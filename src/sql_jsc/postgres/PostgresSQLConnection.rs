@@ -2644,6 +2644,14 @@ impl PostgresSQLConnection {
                         }
                         debug!("SASLContinue");
 
+                        // RFC 5802 §5.1: a reserved-mext ("m=") in a server message
+                        // MUST fail authentication at a client that doesn't implement
+                        // the signalled mandatory extension (libpq rejects this too).
+                        if cont.data.slice().starts_with(b"m=") {
+                            debug!("SASLContinue mandatory extension not supported");
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
+
                         // RFC 5802 §5.1: the server's combined nonce MUST begin with
                         // the client nonce we sent in the client-first-message.
                         if !cont.r.slice().starts_with(sasl.nonce()) {

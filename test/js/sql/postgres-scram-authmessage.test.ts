@@ -20,10 +20,15 @@ const pgAuthenticationSASLContinue = (msg: string) => pgRaw("R", Buffer.concat([
 // AuthenticationSASLFinal: Byte1('R') Int32(len) Int32(12) Byte[n](server-final-message)
 const pgAuthenticationSASLFinal = (msg: string) => pgRaw("R", Buffer.concat([pgInt32(12), Buffer.from(msg)]));
 
-// Drive a full SCRAM-SHA-256 handshake: `firstExt` is appended to server-first after
-// "i=N", `finalExt` to server-final after "v=<sig>". connect() resolving proves the
-// client accepted the RFC-derived v= signature.
-async function runScramHandshake(firstExt: string, finalExt: string): Promise<void> {
+// Drive a full SCRAM-SHA-256 handshake: `firstPrefix`/`firstExt` wrap server-first
+// ("<prefix>r=...,s=...,i=N<ext>"), `finalExt` is appended to server-final after
+// "v=<sig>". Returns the connect() settlement error, or undefined if it resolved.
+async function runScramHandshake(opts: {
+  firstPrefix?: string;
+  firstExt?: string;
+  finalExt?: string;
+}): Promise<unknown> {
+  const { firstPrefix = "", firstExt = "", finalExt = "" } = opts;
   const {
     promise: gotProofs,
     resolve: resolveProofs,
@@ -77,7 +82,7 @@ async function runScramHandshake(firstExt: string, finalExt: string): Promise<vo
             const salt = randomBytes(18);
             salted = pbkdf2Sync(PASSWORD, salt, ITERS, 32, "sha256");
             serverFirst =
-              `r=${clientNonce}${randomBytes(16).toString("base64")},` +
+              `${firstPrefix}r=${clientNonce}${randomBytes(16).toString("base64")},` +
               `s=${salt.toString("base64")},i=${ITERS}${firstExt}`;
             socket.write(pgAuthenticationSASLContinue(serverFirst));
             saslState = 1;
@@ -120,14 +125,16 @@ async function runScramHandshake(firstExt: string, finalExt: string): Promise<vo
     connectionTimeout: 5,
   });
   try {
-    // Start the handshake first; then await whichever settles: the proof capture
-    // (server saw client-final) or connect() rejecting earlier in the exchange.
-    const connected = db.connect();
-    connected.catch(() => {});
-    const { clientProof, rfcProof } = await Promise.race([gotProofs, connected.then(() => gotProofs)]);
-    expect(clientProof).toBe(rfcProof);
-    // connect() resolving proves the client also accepted the server's RFC v= signature.
-    await connected;
+    gotProofs.catch(() => {});
+    const connectError = await db.connect().then(
+      () => undefined,
+      e => e,
+    );
+    if (connectError === undefined) {
+      const { clientProof, rfcProof } = await gotProofs;
+      expect(clientProof).toBe(rfcProof);
+    }
+    return connectError;
   } finally {
     await db.close({ timeout: 0 });
     await new Promise<void>(r => server.close(() => r()));
@@ -136,18 +143,24 @@ async function runScramHandshake(firstExt: string, finalExt: string): Promise<vo
 
 describe("postgres SCRAM-SHA-256: RFC 5802 extension attributes", () => {
   test("canonical server-first / server-final (no extensions)", async () => {
-    await runScramHandshake("", "");
+    expect(await runScramHandshake({})).toBeUndefined();
   });
 
   test("server-first-message carrying an extension attribute", async () => {
-    await runScramHandshake(",x=future-ext", "");
+    expect(await runScramHandshake({ firstExt: ",x=future-ext" })).toBeUndefined();
   });
 
   test("server-final-message carrying an extension attribute", async () => {
-    await runScramHandshake("", ",x=future-ext");
+    expect(await runScramHandshake({ finalExt: ",x=future-ext" })).toBeUndefined();
   });
 
   test("both server-first and server-final carrying extension attributes", async () => {
-    await runScramHandshake(",x=future-ext", ",x=future-ext");
+    expect(await runScramHandshake({ firstExt: ",x=future-ext", finalExt: ",x=future-ext" })).toBeUndefined();
+  });
+
+  test("server-first-message carrying a reserved-mext ('m=') is rejected", async () => {
+    const err = await runScramHandshake({ firstPrefix: "m=mandatory-ext," });
+    expect(err).toBeInstanceOf(Error);
+    expect((err as any).code).toBe("ERR_POSTGRES_INVALID_MESSAGE");
   });
 });

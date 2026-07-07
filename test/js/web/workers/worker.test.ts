@@ -296,6 +296,20 @@ describe("web worker", () => {
       expect(err.error).toBe(null);
     });
   });
+
+  // A data: URL longer than the filesystem path limit must not be rejected as
+  // an overlong file path: it is resolved by the data-URL resolver.
+  // https://github.com/oven-sh/bun/issues/33596
+  test("runs a long base64 data: URL worker", async () => {
+    const padding = Buffer.alloc(8192, "x").toString();
+    const source = `/* ${padding} */\nself.onmessage = e => postMessage(e.data + 1);\n`;
+    const url = `data:application/javascript;base64,${Buffer.from(source).toString("base64")}`;
+    expect(url.length).toBeGreaterThan(8192);
+
+    const worker = new Worker(url);
+    const result = await waitForWorkerResult(worker, 41);
+    expect(result).toBe(42);
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

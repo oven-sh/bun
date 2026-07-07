@@ -4942,8 +4942,13 @@ unsafe fn resolve_hook(
 
     // Overlong specifier guard. `MAX_PATH_BYTES * 1.5`, truncated:
     // integer `* 3 / 2` is exact for the powers-of-two MAX_PATH_BYTES values.
+    // `data:` URLs are resolved by the data-URL resolver, not the filesystem,
+    // so their length is unbounded by any path limit.
     const MAX_SPECIFIER_LEN: usize = bun_paths::MAX_PATH_BYTES * 3 / 2;
-    if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
+    if is_a_file_path
+        && specifier.length() > MAX_SPECIFIER_LEN
+        && !specifier.has_prefix_comptime(b"data:")
+    {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
         let import_kind = if is_esm {

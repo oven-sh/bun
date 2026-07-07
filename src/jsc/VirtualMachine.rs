@@ -4238,8 +4238,11 @@ impl VirtualMachine {
         is_esm: bool,
         is_user_require_resolve: bool,
     ) -> JsResult<()> {
+        // `data:` URLs are resolved by the data-URL resolver, not the
+        // filesystem, so their length is unbounded by any path limit.
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
-        if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
+        if IS_A_FILE_PATH && specifier.length() > MAX_LEN && !specifier.has_prefix_comptime(b"data:")
+        {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
             let import_kind = if is_esm {

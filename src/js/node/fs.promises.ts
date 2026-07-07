@@ -743,8 +743,16 @@ function asyncWrap(fn: any, name: string) {
             const view = controller.byobRequest.view;
             const { bytesRead } = await handle.read(view, 0, view.byteLength);
 
-            // fh.close() may have cancelled us while the read was in flight.
-            if (done) return;
+            if (done) {
+              // fh.close() fired while the read was in flight; onClose already
+              // closed the controller. Settle any pending BYOB read (the
+              // buffer is now unpinned, so this succeeds where onClose's
+              // attempt may have thrown).
+              try {
+                controller.byobRequest?.respond(0);
+              } catch {}
+              return;
+            }
 
             if (bytesRead === 0) {
               controller.close();

@@ -424,6 +424,20 @@ describe("FileHandle", () => {
     expect(fh.fd).toBe(-1);
   });
 
+  it("FileHandle#readableWebStream BYOB read settles when close() fires mid-read", async () => {
+    using dir = tempDir("fh-rws-byob-midclose", { "a.bin": Buffer.alloc(1_000_000, "Q") });
+    const fh = await fs.promises.open(path.join(String(dir), "a.bin"), "r");
+    const reader = fh.readableWebStream().getReader({ mode: "byob" });
+    await 0;
+    const pending = reader.read(new Uint8Array(65536));
+    const closeP = fh.close();
+    const { done } = await pending;
+    expect(done).toBe(true);
+    await closeP;
+    expect(fh.fd).toBe(-1);
+    expect((await reader.read(new Uint8Array(1))).done).toBe(true);
+  });
+
   it("FileHandle#readableWebStream validates options", async () => {
     using dir = tempDir("fh-rws-validate", { "a.txt": "x" });
     await using fh = await fs.promises.open(path.join(String(dir), "a.txt"), "r");

@@ -1843,8 +1843,10 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
           const line = head[0]!;
           proxyLog.push(line);
           proxyAuth.push(
-            head.find(h => h.toLowerCase().startsWith("proxy-authorization:"))?.slice("proxy-authorization:".length).trim() ??
-              null,
+            head
+              .find(h => h.toLowerCase().startsWith("proxy-authorization:"))
+              ?.slice("proxy-authorization:".length)
+              .trim() ?? null,
           );
           (s as any).buf = "";
           const m = /^GET http:\/\/[^/]+\/r302(?:\?to=([^ ]+))? /.exec(line);

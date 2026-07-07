@@ -349,6 +349,7 @@ const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSubstring = String.prototype.substring;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -1681,9 +1682,10 @@ function connect(...args) {
   const options = normal[0];
   const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
 
-  if ("checkServerIdentity" in options) {
-    // Node validates whenever the key is present - an explicit `undefined`
-    // throws ERR_INVALID_ARG_TYPE (test-tls-basic-validations).
+  // Own key only: Node's spread over its defaults copies own properties, so an
+  // explicit `undefined` throws ERR_INVALID_ARG_TYPE (test-tls-basic-validations)
+  // while an inherited one is invisible.
+  if (ObjectPrototypeHasOwnProperty.$call(options, "checkServerIdentity")) {
     validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
   }
 
@@ -1695,33 +1697,32 @@ function connect(...args) {
     );
   }
 
-  // Node defaults the cipher list to tls.DEFAULT_CIPHERS at secure-context
-  // creation time, so a runtime assignment to tls.DEFAULT_CIPHERS is observed
-  // by the next tls.connect() that omits `ciphers`. Clone before writing — the
-  // options object may be the caller's (e.g. https.Agent computes the
-  // socket-pool key from it, and writing ciphers into it desyncs the pool).
-  let connectOptions = options;
-  if (connectOptions.ciphers == null) {
-    connectOptions = { ...connectOptions, ciphers: getDefaultCiphers() };
-    normal[0] = connectOptions;
+  // Secure by default: only a literal own `false` opts out. Node spreads the
+  // user options over its defaults, so an own `undefined` shadows the env var
+  // and coerces to true while an omitted key falls through to it:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1732-L1781
+  const hasOwnRejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized");
+  const rejectUnauthorized = hasOwnRejectUnauthorized
+    ? options.rejectUnauthorized !== false
+    : rejectUnauthorizedDefault();
+
+  // Node's defaults-then-spread: every option the socket reads is an own key of
+  // the merged object, so an inherited `rejectUnauthorized`/`checkServerIdentity`
+  // can never reach it. The clone also keeps the writes below off the caller's
+  // object - https.Agent keys its socket pool on it.
+  const connectOptions = { checkServerIdentity, ...options, rejectUnauthorized };
+  if (!ObjectPrototypeHasOwnProperty.$call(options, "ciphers") || connectOptions.ciphers == null) {
+    // Read at connect time, so a runtime tls.DEFAULT_CIPHERS assignment is seen.
+    connectOptions.ciphers = getDefaultCiphers();
   }
+  normal[0] = connectOptions;
 
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, connectOptions);
   }
 
   const tlssock = new TLSSocket(connectOptions);
-  // tls.connect() is secure by default - only a literal `false` opts out
-  // (the bare TLSSocket constructor is truthiness-based, per Node's _init).
-  // Node's spread `{rejectUnauthorized: !allowUnauthorized, ...options}` means
-  // an explicit `undefined` overrides the env-derived default and then coerces
-  // to true via `!== false`; only an OMITTED key falls through to the env var:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1732-L1781
-  if (!("rejectUnauthorized" in options)) {
-    tlssock._rejectUnauthorized = rejectUnauthorizedDefault();
-  } else {
-    tlssock._rejectUnauthorized = options.rejectUnauthorized !== false;
-  }
+  tlssock._rejectUnauthorized = rejectUnauthorized;
   // Honor the `timeout` option here: Socket.prototype.connect does not (only
   // the net.createConnection factory does), so tls.connect applies it
   // explicitly, exactly like Node's tls connect.

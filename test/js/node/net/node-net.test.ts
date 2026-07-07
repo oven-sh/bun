@@ -1281,3 +1281,181 @@ it("onread: a false return on the last slice of a redelivered tail stays paused 
     server.close();
   }
 });
+
+describe("net.Socket onread buffer factory", () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L177-L185
+  it.each([
+    ["null", () => null],
+    ["a plain object", () => ({})],
+  ])("keeps reusing the last valid buffer when the factory returns %s", async (_label, bad) => {
+    const bufA = Buffer.alloc(16);
+    let sawFirst = false;
+    const seen: Array<[string, boolean]> = [];
+    const done = Promise.withResolvers<void>();
+    // The client acks the first delivery so the second write is a separate
+    // read: one coalesced segment would never exercise the factory again.
+    const server = createServer(c => {
+      c.on("data", () => c.end("bbbb"));
+      c.write("aaaa");
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, () => {
+        server.off("error", listening.reject);
+        listening.resolve();
+      });
+      await listening.promise;
+      client = createConnection({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        onread: {
+          buffer: () => (sawFirst ? (bad() as any) : bufA),
+          callback(n: number, buf: Buffer) {
+            const wasFirst = !sawFirst;
+            sawFirst = true;
+            seen.push([buf.toString("latin1", 0, n), buf === bufA]);
+            if (wasFirst) client!.write("ok");
+            if (seen.map(s => s[0]).join("") === "aaaabbbb") done.resolve();
+            return true;
+          },
+        },
+      });
+      client.on("error", done.reject);
+      await done.promise;
+      // Two separate reads, both delivered into the one valid buffer.
+      expect(seen).toEqual([
+        ["aaaa", true],
+        ["bbbb", true],
+      ]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("onread: a peer FIN does not redeliver the declined tail before resume()", async () => {
+  // The EOF path's read(0) must not restart a flow the callback paused: Node's
+  // readStop leaves both the tail and the FIN unread until resume().
+  const received: string[] = [];
+  const paused = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  // One 8-byte write plus FIN: data and EOF land together.
+  const server = createServer(c => c.end(Buffer.from("abcdefgh")));
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            paused.resolve();
+            return false;
+          }
+          if (received.length === 2) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await paused.promise;
+
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    expect({ received: [...received], destroyed: client.destroyed }).toEqual({
+      received: ["abcd"],
+      destroyed: false,
+    });
+
+    client.resume();
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: read() redelivers the declined tail without resume()", async () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L779-L789 - Node's
+  // read() calls tryReadStart in onread mode, so it restarts the paused flow.
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => c.end(Buffer.from("abcdefgh")));
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            // Never resume(); only read().
+            setImmediate(() => client!.read(0));
+            return false;
+          }
+          if (received.length === 2) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a buffer factory that never yields a Uint8Array hands the callback `true`", async () => {
+  // Node leaves kBuffer as the literal `true` and passes it through:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L332-L342
+  const seen: unknown[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => c.end("hello"));
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: () => null as any,
+        callback(_n: number, buf: unknown) {
+          seen.push(buf);
+          done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await done.promise;
+    expect(seen).toEqual([true]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});

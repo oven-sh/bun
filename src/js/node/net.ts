@@ -21,6 +21,7 @@
 
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const Duplex = require("internal/streams/duplex");
+const { isUint8Array } = require("node:util/types");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
@@ -163,6 +164,10 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
+// The buffer the callback writes into, and a clean EOF held behind a tail the
+// callback has not taken yet.
+const kOnreadBuffer = Symbol("kOnreadBuffer");
+const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 // Shared pause marker for a fully-consumed slice: a zero-length view of the
 // received chunk would pin its whole ArrayBuffer for as long as the socket
 // stays paused.
@@ -476,6 +481,25 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
+function finishSocketEnd(self) {
+  if (self[kended]) return;
+  self[kended] = true;
+  if (!self.allowHalfOpen) self.write = writeAfterFIN;
+  self.push(null);
+  // Duplex.read, not Socket.read: this only nudges the readable into emitting
+  // 'end'; restarting the kernel flow here would redeliver a paused onread
+  // tail that the callback has not asked for yet.
+  Duplex.prototype.read.$call(self, 0);
+}
+
+// Node's readStop leaves the bytes an onread callback declined - and the FIN
+// behind them - unread in the kernel, so hold the clean EOF until they drain.
+function deferEndForOnreadTail(self) {
+  if (self[kOnreadTail] === undefined || self.destroyed) return false;
+  self[kOnreadPendingEnd] = true;
+  return true;
+}
+
 function SocketEmitEndNT(self, _err?) {
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
@@ -547,14 +571,10 @@ function SocketEmitEndNT(self, _err?) {
     // reading the socket — accepted sockets are no longer force-resumed into
     // flowing mode.
     self.read(0);
-    // An allowHalfOpen=false socket tears down once 'end' fires, but bytes
-    // nobody consumes keep 'end' from firing. Node keeps such a socket (and
-    // the process) alive; Bun deliberately diverges and finishes the FIN
-    // teardown when the connection callback never engaged the readable side —
-    // a Bun native handle holds the loop the same way, and hanging on an
-    // abandoned socket is worse than dropping bytes nothing asked for. The
-    // check is deferred so a nextTick/microtask/setImmediate attach in the
-    // handler still counts as engaging the readable side.
+    // Bytes nobody consumes keep 'end' from firing, and Node then leaves the
+    // socket open forever so server.close() never drains. Bun deliberately
+    // diverges: finish the FIN teardown when the connection callback never
+    // engaged the readable side (deferred, so a late attach still counts).
     if (!self.allowHalfOpen && !self[kReaderInterest]) {
       setImmediate(destroyAbandonedNT, self);
     }
@@ -1136,11 +1156,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   end(socket) {
     $debug("Bun.Socket end");
     const { self } = socket.data;
-    if (self[kended]) return;
-    self[kended] = true;
-    if (!self.allowHalfOpen) self.write = writeAfterFIN;
-    self.push(null);
-    self.read(0);
+    if (deferEndForOnreadTail(self)) return;
+    finishSocketEnd(self);
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -1192,10 +1209,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       }
       return;
     }
-    self[kended] = true;
-    if (!self.allowHalfOpen) self.write = writeAfterFIN;
-    self.push(null);
-    self.read(0);
+    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
@@ -1551,6 +1565,12 @@ function Socket(options?) {
     if (typeof onread.callback !== "function") {
       throw new TypeError("onread.callback must be a function");
     }
+    // Node only engages onread when the buffer is a Uint8Array or a factory;
+    // anything else leaves the socket an ordinary 'data' stream:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L462-L465
+    if (!isUint8Array(onread.buffer) && typeof onread.buffer !== "function") onread = null;
+  }
+  if (onread) {
     // Node's onread writes each chunk into the user-provided buffer (a static
     // Buffer or a function returning one) and invokes the callback with that
     // exact buffer. uSockets shares one 512KB recv_buf across all sockets, so
@@ -1559,17 +1579,30 @@ function Socket(options?) {
     // means a factory sees more calls than Node's one-per-uv_read_cb.
     const onreadBuffer = onread.buffer;
     const onreadCallback = onread.callback;
+    const onreadBufferIsFn = typeof onreadBuffer === "function";
     const self = this;
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
+    // Node's kBuffer: the factory's result once it yields a Uint8Array, and the
+    // literal `true` until then (lib/net.js#L465, initSocketHandle#L332-L342).
+    this[kOnreadBuffer] = onreadBufferIsFn ? true : onreadBuffer;
     this[kOnreadDeliver] = function deliver(buffer) {
       try {
         let offset = 0;
         const total = buffer.length;
         while (offset < total) {
-          const dest = typeof onreadBuffer === "function" ? onreadBuffer() : onreadBuffer;
-          if (!dest) {
-            onreadCallback(total - offset, buffer.subarray(offset));
+          // Node adopts the factory's result only when it is a Uint8Array and
+          // otherwise keeps the previous one - which is `true` until the first
+          // valid buffer (stream_base_commons.js#L177-L185).
+          if (onreadBufferIsFn) {
+            const next = onreadBuffer();
+            if (isUint8Array(next)) self[kOnreadBuffer] = next;
+          }
+          const dest = self[kOnreadBuffer];
+          if (dest === true) {
+            // No buffer to copy into: Node hands the callback the raw `true`
+            // and the bytes of that read are dropped.
+            onreadCallback(total - offset, true);
             return;
           }
           // A zero-length buffer makes libuv report ENOBUFS for the read,
@@ -2147,8 +2180,13 @@ function drainOnreadTail(self) {
       if (socket.isPaused()) return;
       socket[kOnreadTail] = undefined;
       socket[kOnreadDeliver](tail);
-      // Fully consumed without pausing again: let the kernel flow resume.
-      if (socket[kOnreadTail] === undefined && !socket.isPaused()) {
+      if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
+      // Fully consumed: release the EOF the peer already sent, then let the
+      // kernel flow resume.
+      if (socket[kOnreadPendingEnd]) {
+        socket[kOnreadPendingEnd] = false;
+        finishSocketEnd(socket);
+      } else if (!socket.isPaused()) {
         socket._handle?.resume?.();
       }
     }, self);
@@ -2275,7 +2313,7 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
-  } else if (!drainOnreadTail(this)) {
+  } else if (this[kOnreadTail] === undefined) {
     socket?.resume?.();
     // See read() above - the Readable machinery's pull path must also
     // restore the handle's hold on the loop.

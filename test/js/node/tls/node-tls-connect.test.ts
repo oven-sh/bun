@@ -1031,3 +1031,82 @@ it("tls.connect({rejectUnauthorized: undefined}) with NODE_TLS_REJECT_UNAUTHORIZ
     failureDetail: "",
   });
 });
+
+it("an inherited rejectUnauthorized cannot disable certificate verification", async () => {
+  // Node merges the user options with an own-property spread, so a polluted
+  // Object.prototype never reaches the socket and the peer is still verified.
+  const script = `
+    Object.prototype.rejectUnauthorized = false;
+    const tls = require("node:tls");
+    const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, s => s.end());
+    server.listen(0);
+    server.on("listening", () => {
+      const socket = tls.connect({ port: server.address().port });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        socket.destroy();
+        server.close();
+      });
+      socket.on("secureConnect", () => {
+        console.log("secureConnect authorized=" + socket.authorized);
+        socket.end();
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=DEPTH_ZERO_SELF_SIGNED_CERT",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("an inherited checkServerIdentity cannot become the hostname verifier", async () => {
+  // Node installs its own default before spreading the user options, so a
+  // polluted Object.prototype never reaches the socket. Trusting the cert makes
+  // verification succeed, which is the only path that runs the identity check.
+  const script = `
+    let called = false;
+    Object.prototype.checkServerIdentity = () => { called = true; };
+    const tls = require("node:tls");
+    const c = ${JSON.stringify(COMMON_CERT_)};
+    const server = tls.createServer({ key: c.key, cert: c.cert }, s => s.end());
+    server.listen(0, "127.0.0.1", () => {
+      const socket = tls.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        ca: [c.cert],
+        servername: "localhost",
+      });
+      socket.on("secureConnect", () => {
+        console.log("polluted=" + called);
+        socket.end();
+        server.close();
+      });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        socket.destroy();
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "polluted=false",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});

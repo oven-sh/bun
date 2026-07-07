@@ -427,10 +427,8 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    // Strong root keeps the JS histogram alive while monitoring is enabled.
+    js_histogram: bun_jsc::strong::Optional,
     pub event_loop_timer: EventLoopTimer,
     pub resolution_ms: i32,
     pub last_fire_ns: u64,
@@ -439,7 +437,7 @@ pub struct EventLoopDelayMonitor {
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            js_histogram: bun_jsc::strong::Optional::empty(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -455,14 +453,14 @@ impl EventLoopDelayMonitor {
 
     pub(crate) fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
         if self.enabled {
             return;
         }
-        self.js_histogram = histogram;
+        self.js_histogram.set(vm.global(), histogram);
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
@@ -474,8 +472,7 @@ impl EventLoopDelayMonitor {
             nsec: next.nsec,
         };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: single JS thread; nothing `All::insert` touches overlaps
-        // `event_loop_delay`, which `self` aliases.
+        // SAFETY: single JS thread; `self` is a heap allocation disjoint from `All`.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
@@ -484,11 +481,13 @@ impl EventLoopDelayMonitor {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        self.js_histogram.deinit();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        if self.event_loop_timer.in_heap != InHeap::None {
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+            // SAFETY: single JS thread; `self` is a heap allocation disjoint from `All`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -498,7 +497,10 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        let Some(histogram) = self.js_histogram.get() else {
+            return;
+        };
+        if !self.enabled {
             return;
         }
 
@@ -518,7 +520,7 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 
@@ -535,7 +537,7 @@ impl EventLoopDelayMonitor {
             nsec: next.nsec,
         };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
+        // SAFETY: single JS thread; `self` is a heap allocation disjoint from `All`.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 }
@@ -621,7 +623,6 @@ pub struct All {
     pub immediate_ref_count: i32,
     #[cfg(windows)]
     pub uv_idle: bun_sys::windows::libuv::uv_idle_t,
-    pub event_loop_delay: EventLoopDelayMonitor,
     pub fake_timers: FakeTimers,
     pub maps: Maps,
     pub date_header_timer: DateHeaderTimer,
@@ -643,7 +644,6 @@ impl All {
             immediate_ref_count: 0,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
-            event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),

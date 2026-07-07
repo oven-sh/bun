@@ -577,6 +577,14 @@ namespace uWS
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
         static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
+            /* RFC 9112 2.2: a server SHOULD ignore at least one empty line received prior
+             * to the request-line. Node/llhttp skips any run of CR/LF, so match that. */
+            while (data < end && (*data == '\r' || *data == '\n')) [[unlikely]] {
+                data++;
+            }
+            if (data >= end) [[unlikely]] {
+                return ConsumeRequestLineResult::shortRead();
+            }
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */

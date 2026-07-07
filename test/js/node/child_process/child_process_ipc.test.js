@@ -1,7 +1,7 @@
 import { $ } from "bun";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { fork } from "node:child_process";
 import path from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 test("subprocess.channel / process.channel expose ref/unref/refCounted/unrefCounted (node compat)", async () => {
   using dir = tempDir("ipc-channel", {

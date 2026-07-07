@@ -111,7 +111,8 @@ test.skipIf(!isLinux || !cc)(
     expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
 
     // Third run: simulate systemd-tmpfiles sweeping the extracted file. The
-    // cache must self-heal and re-extract instead of passing a deleted path.
+    // next run must re-extract (the lstat on the canonical name misses, so it
+    // writes again) instead of handing dlopen a deleted path.
     for (const p of await findExtractedCopies(extractDir, libBytes)) rmSync(p, { force: true });
     await runOnce();
     expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
@@ -123,8 +124,8 @@ test.skipIf(!isLinux || !cc)(
 // The original #29585 report was specifically about `new Worker()` amplifying
 // the leak — each Worker VM had its own `tmpname_id_number` counter that
 // started at 0, so every Worker re-extracted on its first dlopen. This test
-// verifies Workers share the one extracted file via the per-`File` cache on
-// the shared `StandaloneModuleGraph`.
+// verifies Workers share the one extracted file: they hash the same embedded
+// bytes to the same content-hashed filename, so all dlopens land on one path.
 //
 // Release Linux builds hit a pre-existing shutdown race in the dlopen + Worker
 // teardown path that's unrelated to this PR — skip there until that's fixed.
@@ -143,8 +144,9 @@ test.skipIf(!isLinux || !cc || !isDebug)(
           for (let i = 0; i < 5; i++) {
             const w = new Worker(import.meta.url);
             workers.push(w);
-            const { promise, resolve } = Promise.withResolvers<void>();
+            const { promise, resolve, reject } = Promise.withResolvers<void>();
             w.addEventListener("message", () => resolve(), { once: true });
+            w.addEventListener("error", e => reject(e), { once: true });
             done.push(promise);
           }
           await Promise.all(done);

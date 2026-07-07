@@ -4548,10 +4548,6 @@ unsafe fn transpile_virtual_module(
     }
 }
 
-/// Serializes lazy init of `File.extracted_path` across Worker VMs.
-/// Extraction is rare and off the hot path, so one global lock is fine.
-static EXTRACTED_PATH_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
-
 /// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
 /// `bun build --compile`) to a real on-disk path `dlopen(2)` can open.
 ///
@@ -4563,12 +4559,13 @@ static EXTRACTED_PATH_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 /// The extracted filename is a content hash, so repeated `dlopen()`s of the
 /// same embedded library — within one process, across Worker VMs that share
 /// the graph, and across restarts of the same compiled binary — share one
-/// on-disk file instead of leaking a fresh copy per call (#29585).
+/// on-disk file instead of leaking a fresh copy per call (#29585). The path is
+/// a pure function of the file's contents, so it is recomputed each call (a
+/// re-hash of bytes already in memory plus one `lstat`) rather than cached:
+/// dedup comes from the deterministic name, not from state.
 ///
 /// If another user has squatted the canonical path on a shared `/tmp`, we
-/// fall back to the scratch path we wrote this call — correct, with
-/// within-process dedup via the cached scratch path but no cross-restart
-/// dedup until the squatter releases the canonical name.
+/// fall back to the scratch path we wrote this call.
 ///
 /// Returns `None` when the input is empty, not present in the graph, or a
 /// filesystem step fails.
@@ -4581,51 +4578,15 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return None;
     }
 
-    // Reach the graph via its `UnsafeCell` `*mut` (the `&'static dyn` on
-    // `vm` has read-only provenance — downcasting to `&mut Graph` is
-    // instant UB under Stacked Borrows).
+    // `Graph::get()` hands out a non-unique `*mut` to the process-lifetime
+    // singleton. We only read `file.contents`, so form a shared `&` (never
+    // `&mut`) — matching the read-only-after-init convention the other
+    // `Graph::get()` callers follow, with no lock needed.
     let graph = bun_standalone_graph::Graph::get()?;
-
-    // Acquire the lock BEFORE forming `&mut File` below — two Workers can
-    // reach this concurrently and the `&mut File` lives across blocking
-    // I/O, so forming it inside the locked region is the only way to
-    // serialise its lifetime.
-    let _guard = EXTRACTED_PATH_LOCK.lock();
-
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the process-
-    // lifetime singleton; `EXTRACTED_PATH_LOCK` (just acquired above)
-    // serialises the `&mut File` against other callers of *this function*
-    // across Worker VMs, which are the only ones that write
-    // `file.extracted_path`. Other `Graph::get()` callers
-    // (`load_standalone_sourcemap`, `node_fs`, `Blob`) follow the existing
-    // read-only-after-init convention on the fields they touch.
-    let file = (unsafe { &mut *graph }).find(input_path)?;
+    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the singleton; the
+    // shared `&` below reads only immutable-after-init fields.
+    let file = (unsafe { &*graph }).find_ref(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
-
-    // Fast path: already extracted. Validate the cached path still points at
-    // a file we own with the right size — plain existence isn't enough, a
-    // shared-host squatter could have replaced it after a tmpfiles sweep.
-    // Using lstat rejects an attacker-planted symlink too.
-    if let Some(cached) = file.extracted_path.as_ref() {
-        let cached_z = bun_core::ZStr::from_slice_with_nul(cached);
-        let ok = bun_sys::lstat(cached_z).ok().is_some_and(|st| {
-            let size_ok = st.st_size as usize == file_contents.len();
-            #[cfg(unix)]
-            {
-                size_ok && st.st_uid == extract_owner_uid() && bun_sys::S::ISREG(st.st_mode as u32)
-            }
-            #[cfg(windows)]
-            {
-                size_ok
-            }
-        });
-        if ok {
-            let bytes = &cached[..cached.len() - 1];
-            out_buf[..bytes.len()].copy_from_slice(bytes);
-            return Some(bytes.len());
-        }
-        file.extracted_path = None;
-    }
 
     // Canonical deterministic name: `.bun-{uid}-{wyhash(contents)}.{ext}`.
     // The uid in the filename makes names uid-specific so a multi-user
@@ -4643,12 +4604,11 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
     // If a previous run of this binary already wrote the canonical file
     // and it's still ours with the right size, skip the write — just
-    // resolve the path and cache it.
+    // resolve the path.
     //
     // `lstatat` (not `fstatat`) so an attacker-planted symlink at the
     // canonical name is seen as a symlink (fails the ISREG check) rather
-    // than being followed to its target — matches the fast-path `lstat`
-    // defense above.
+    // than being followed to its target.
     let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
@@ -4658,13 +4618,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {
-            let len = write_absolute(
-                out_buf,
-                Fs::RealFS::tmpdir_path(),
-                canonical_name.as_bytes(),
-            )?;
-            file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
-            return Some(len);
+            return write_absolute(out_buf, Fs::RealFS::tmpdir_path(), canonical_name.as_bytes());
         }
     }
 
@@ -4699,8 +4653,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Try to rename the scratch file to the content-hashed canonical path.
     // On a shared `/tmp` with the sticky bit, this will fail EACCES/EPERM
     // if another user owns a file at the destination — in which case we
-    // just use the scratch file directly. Within-process dedup still works
-    // (we cache the scratch path below); only cross-restart dedup is lost.
+    // just use the scratch file directly.
     let rename_ok = tmpfile.finish(canonical_name).is_ok();
     let _ = bun_sys::close(tmpfile_fd);
 
@@ -4709,14 +4662,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     } else {
         scratch_name
     };
-    let len = write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())?;
-    // Cache both outcomes. The canonical name is dedup-stable across
-    // restarts; the scratch fallback is only stable within this process,
-    // but caching it is what keeps the Worker-amplification case from
-    // re-leaking one scratch file per call when the canonical path is
-    // squatted (the fast-path lstat accepts our scratch file).
-    file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
-    Some(len)
+    write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
 }
 
 /// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
@@ -4764,18 +4710,9 @@ fn format_canonical_name(
     Some(cursor.len)
 }
 
-/// Materialise an absolute path slice into a NUL-terminated boxed buffer
-/// for caching on `File.extracted_path`.
-fn path_to_nul_boxed(path: &[u8]) -> Box<[u8]> {
-    let mut v: Vec<u8> = Vec::with_capacity(path.len() + 1);
-    v.extend_from_slice(path);
-    v.push(0);
-    v.into_boxed_slice()
-}
-
 /// `geteuid` (not `getuid`) on POSIX because `open(2)` sets the owner to
 /// euid — a setuid-compiled binary where euid != ruid would otherwise
-/// create a file whose owner != `getuid()` and fail the fast-path
+/// create a file whose owner != `getuid()` and fail the `lstatat`
 /// ownership check.
 #[cfg(unix)]
 fn extract_owner_uid() -> u32 {

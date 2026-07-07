@@ -156,6 +156,28 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
+    // Read-only twin of `find` (`&self` -> `&File`). The `&mut`-returning
+    // `find` above stays for the runtime's lazy blob / sourcemap caches;
+    // callers that only read `File` (embedded-file extraction) use this so
+    // they can take a shared `&` to the graph singleton.
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            let mut normalized_buf = PathBuffer::uninit();
+            let input = strings::paths::without_nt_prefix::<u8>(name);
+            let normalized =
+                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
+            return self.files.get(normalized);
+        }
+        #[cfg(not(windows))]
+        {
+            self.files.get(name)
+        }
+    }
+
     pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
         let file = self.find(name)?;
         Some(file.stat())
@@ -385,11 +407,6 @@ pub struct File {
     pub bytecode_origin_path: &'static [u8],
     pub module_format: ModuleFormat,
     pub side: FileSide,
-    /// Absolute on-disk path of the extracted tmpfile, once the embedded
-    /// shared library (`.so`/`.node`/`.dylib`/`.dll`) has been materialised
-    /// so libc `dlopen(2)` can open it. Skips the content-hash / stat on
-    /// subsequent calls. NUL-terminated.
-    pub extracted_path: Option<Box<[u8]>>,
 }
 
 impl File {
@@ -640,7 +657,6 @@ impl StandaloneModuleGraph {
                     cached_blob: None,
                     encoding: module.encoding,
                     wtf_string: BunString::empty(),
-                    extracted_path: None,
                 },
             );
         }

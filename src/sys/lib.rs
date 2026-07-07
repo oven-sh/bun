@@ -2662,7 +2662,19 @@ mod posix_impl {
             return Err(err_with(Tag::getcwd));
         }
         // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
-        Ok(unsafe { libc::strlen(p) })
+        let len = unsafe { libc::strlen(p) };
+        // OHOS (hmdfs/tmpfs): the kernel returns the cached path even after
+        // the cwd directory has been deleted via rmdir — getcwd never fails.
+        // A stat(".") probe surfaces ENOENT so callers detect deleted-cwd.
+        #[cfg(target_env = "ohos")]
+        {
+            let mut st: libc::stat = unsafe { core::mem::zeroed() };
+            // SAFETY: "." is a valid NUL-terminated path literal.
+            if unsafe { libc::stat(b".\0".as_ptr().cast(), &mut st) } < 0 {
+                return Err(Error::from_code(E::ENOENT, Tag::getcwd));
+            }
+        }
+        Ok(len)
     }
 
     // ── link/perm/time/access group ──

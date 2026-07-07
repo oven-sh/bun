@@ -2599,6 +2599,17 @@ where
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
+                // HEAD never transmits the body: cancel the stream so the
+                // source's cancel() runs and its resources are released.
+                // SAFETY: sole `&mut Response`; render_metadata's reborrow ended.
+                let response = unsafe { &mut *response_ptr };
+                if let Some(stream) = response.get_body_readable_stream(global_this) {
+                    let _keep = jsc::EnsureStillAlive(stream.value);
+                    response.detach_readable_stream(global_this);
+                    // Unread stream has no reader; `cancel()` would no-op.
+                    stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+                }
+                *response.get_body_value() = Body::Value::Used;
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {

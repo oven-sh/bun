@@ -183,6 +183,71 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
     },
   );
 });
+describe("HEAD request with a ReadableStream body", () => {
+  for (const isAsync of [false, true]) {
+    it(`calls cancel() and releases the stream (${isAsync ? "async" : "sync"} handler)`, async () => {
+      let starts = 0;
+      let cancels = 0;
+      let live = 0;
+      const cancelled = Promise.withResolvers<void>();
+      const enc = new TextEncoder();
+      const makeResponse = () => {
+        let t: ReturnType<typeof setInterval>;
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              starts++;
+              live++;
+              t = setInterval(() => {
+                try {
+                  c.enqueue(enc.encode("data: tick\n\n"));
+                } catch {
+                  clearInterval(t);
+                  live--;
+                }
+              }, 20);
+            },
+            cancel() {
+              cancels++;
+              clearInterval(t);
+              live--;
+              if (cancels === starts) cancelled.resolve();
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      };
+      await using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch: isAsync
+          ? async () => {
+              await 1;
+              return makeResponse();
+            }
+          : () => makeResponse(),
+      });
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.ReadableStream || 0;
+
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(server.url, { method: "HEAD" });
+        expect(res.status).toBe(200);
+        expect(res.headers.get("transfer-encoding")).toBe("chunked");
+        expect(await res.text()).toBe("");
+      }
+      await cancelled.promise;
+
+      expect({ starts, cancels, live }).toEqual({ starts: 8, cancels: 8, live: 0 });
+
+      Bun.gc(true);
+      const after = heapStats().objectTypeCounts.ReadableStream || 0;
+      // Before the fix this leaked one ReadableStream per HEAD (before -> before+8).
+      expect(after).toBeLessThanOrEqual(before + 2);
+    });
+  }
+
+});
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
     it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {

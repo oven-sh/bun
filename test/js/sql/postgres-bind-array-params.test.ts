@@ -140,3 +140,21 @@ test("box[] uses ; as the element delimiter", async () => {
   expect(bind.formatCodes).toEqual([0]);
   expect(text(bind.values[0])).toBe(`{"(0,0),(1,1)";"(2,2),(3,3)"}`);
 });
+
+test("Date elements serialize as ISO strings", async () => {
+  const bind = await captureBind(1185 /* timestamptz_array */, [new Date(Date.UTC(2024, 0, 2, 3, 4, 5))]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"2024-01-02T03:04:05.000Z"}`);
+});
+
+test("object elements in a jsonb[] serialize as JSON", async () => {
+  const bind = await captureBind(3807 /* jsonb_array */, [{ a: 1 }, { b: [2, 3] }]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"{\\"a\\":1}","{\\"b\\":[2,3]}"}`);
+});
+
+test("Buffer elements in a bytea[] serialize as hex", async () => {
+  const bind = await captureBind(1001 /* bytea_array */, [Buffer.from([1, 2, 255]), Buffer.from([0])]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"\\\\x0102ff","\\\\x00"}`);
+});

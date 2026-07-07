@@ -169,8 +169,9 @@ pub fn write_bind<Context: WriterContext>(
             } else {
                 b','
             };
+            let is_bytea = tag == types::Tag::bytea_array;
             let mut buf: Vec<u8> = Vec::new();
-            write_array_literal(&mut buf, value, global, delimiter, 0)?;
+            write_array_literal(&mut buf, value, global, delimiter, is_bytea, 0)?;
             let l = writer.length()?;
             bun_core::scoped_log!(Postgres, "    array literal {} bytes", buf.len());
             writer.write(&buf)?;
@@ -231,11 +232,6 @@ pub fn write_bind<Context: WriterContext>(
                 writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
                 l.write_excluding_self()?;
             }
-            types::Tag::int4_array => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
             types::Tag::float8 => {
                 let l = writer.length()?;
                 writer.f64(value.to_number(global).map_err(js_error_to_postgres)?)?;
@@ -287,14 +283,18 @@ pub fn write_bind<Context: WriterContext>(
 /// `{"a","b"}`, `{1,NULL,3}`). Nested arrays become nested braces. Scalar
 /// elements are double-quoted with `"` and `\` escaped, which postgres accepts
 /// for every element type; `null`/`undefined` become an unquoted `NULL`.
-/// `delimiter` is `;` for `box[]` and `,` for every other type. `depth` guards
-/// against stack overflow from pathologically nested input; postgres itself
-/// rejects more than 6 dimensions.
+/// `delimiter` is `;` for `box[]` and `,` for every other type. `is_bytea`
+/// hex-encodes `Buffer` elements for `bytea[]`. Element text mirrors the
+/// JS-side `serializeArray` (`src/js/internal/sql/postgres.ts`): `Date` ->
+/// ISO string, plain objects -> JSON, everything else -> `toString`. `depth`
+/// guards against stack overflow from pathologically nested input; postgres
+/// itself rejects more than 6 dimensions.
 fn write_array_literal(
     out: &mut Vec<u8>,
     value: JSValue,
     global: &JSGlobalObject,
     delimiter: u8,
+    is_bytea: bool,
     depth: u32,
 ) -> Result<(), AnyPostgresError> {
     const MAX_ARRAY_DEPTH: u32 = 64;
@@ -313,27 +313,58 @@ fn write_array_literal(
         if element.is_empty_or_undefined_or_null() {
             out.extend_from_slice(b"NULL");
         } else if element.is_array() {
-            write_array_literal(out, element, global, delimiter, depth + 1)?;
+            write_array_literal(out, element, global, delimiter, is_bytea, depth + 1)?;
+        } else if element.is_date() {
+            // JSON.stringify of a Date is its ISO string already wrapped in
+            // double quotes, which is a valid quoted array element as-is.
+            let mut str = BunString::empty();
+            element.json_stringify_fast(global, &mut str).map_err(js_error_to_postgres)?;
+            let slice = str.to_utf8_without_ref();
+            out.extend_from_slice(slice.slice());
+        } else if is_bytea && element.is_buffer(global) {
+            let buf = element.as_array_buffer(global);
+            let bytes: &[u8] = buf.as_ref().map(|b| b.byte_slice()).unwrap_or(b"");
+            // `\x<hex>` is bytea's hex input format; write_quoted_element
+            // escapes the backslash so array_in passes it through verbatim.
+            let mut text: Vec<u8> = Vec::with_capacity(2 + bytes.len() * 2);
+            text.extend_from_slice(b"\\x");
+            for &byte in bytes {
+                text.push(HEX[(byte >> 4) as usize]);
+                text.push(HEX[(byte & 0x0f) as usize]);
+            }
+            write_quoted_element(out, &text);
+        } else if element.is_object() && !element.is_buffer(global) {
+            // Plain objects (and jsonb[]/json[] elements) serialize as JSON.
+            let mut str = BunString::empty();
+            element.json_stringify_fast(global, &mut str).map_err(js_error_to_postgres)?;
+            write_quoted_element(out, str.to_utf8_without_ref().slice());
         } else {
-            out.push(b'"');
             let str = bun_core::OwnedString::new(
                 BunString::from_js(element, global).map_err(js_error_to_postgres)?,
             );
             if str.tag() == bun_core::Tag::Dead {
                 return Err(AnyPostgresError::OutOfMemory);
             }
-            let slice = str.to_utf8_without_ref();
-            for &byte in slice.slice() {
-                if byte == b'"' || byte == b'\\' {
-                    out.push(b'\\');
-                }
-                out.push(byte);
-            }
-            out.push(b'"');
+            write_quoted_element(out, str.to_utf8_without_ref().slice());
         }
     }
     out.push(b'}');
     Ok(())
+}
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+/// Append `text` as a double-quoted array element, escaping `"` and `\` the
+/// way PostgreSQL's `array_in` expects.
+fn write_quoted_element(out: &mut Vec<u8>, text: &[u8]) {
+    out.push(b'"');
+    for &byte in text {
+        if byte == b'"' || byte == b'\\' {
+            out.push(b'\\');
+        }
+        out.push(byte);
+    }
+    out.push(b'"');
 }
 
 pub fn write_query<Context: WriterContext>(

@@ -4,114 +4,31 @@ use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
-use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
+use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_core::BoundedArray;
+use bun_core::PathBuffer;
+use bun_core::ZigString;
+use bun_core::ZigStringSlice;
+use bun_core::strings;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
-// `set_time_zone` / `delete_module_registry_entry` take the JSC-side
-// `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
-// JSGlobalObject FFI methods); import that one so the call sites type-check.
-use bun_core::ZigStringSlice;
-use bun_core::strings;
-use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_options_types::context::HotReload;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
+use bun_paths::{self as bun_path};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
 // Debug log scope for test-runner entrypoint loading.
-bun_output::declare_scope!(bun_test, hidden);
+bun_core::declare_scope!(bun_test, hidden);
 
-// ─── coverage façade ────────────────────────────────────────────────────────
-// Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
-// legacy call paths used in `print_code_coverage` below (the adapter
-// dispatches the runtime `enable_ansi_colors` bool to the const generic).
-// Drop once the body is normalised to call `code_coverage::{text,lcov}`
-// directly with `<ENABLE_ANSI_COLORS>`.
-mod coverage {
-    pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
-    };
-
-    /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
-    #[inline]
-    pub(super) fn is_less_than_cmp(
-        a: &&mut ByteRangeMapping,
-        b: &&mut ByteRangeMapping,
-    ) -> core::cmp::Ordering {
-        bun_core::order(a.source_url.slice(), b.source_url.slice())
-    }
-
-    #[allow(non_snake_case)]
-    pub(super) mod Text {
-        use super::*;
-        use bun_sourcemap_jsc::code_coverage::text;
-
-        /// Runtime-bool → const-generic dispatch for `text::write_format`.
-        #[inline]
-        pub(crate) fn write_format(
-            report: &CodeCoverageReport,
-            max_filename_length: usize,
-            fraction: &mut Fraction,
-            base_path: &[u8],
-            writer: &mut impl bun_io::Write,
-            enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
-            if enable_ansi_colors {
-                text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
-            } else {
-                text::write_format::<false>(
-                    report,
-                    max_filename_length,
-                    fraction,
-                    base_path,
-                    writer,
-                )
-            }
-        }
-
-        /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
-        #[inline]
-        pub(crate) fn write_format_with_values(
-            filename: &[u8],
-            max_filename_length: usize,
-            vals: Fraction,
-            failing: Fraction,
-            failed: bool,
-            writer: &mut impl bun_io::Write,
-            indent_name: bool,
-            enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
-            if enable_ansi_colors {
-                text::write_format_with_values::<true>(
-                    filename,
-                    max_filename_length,
-                    vals,
-                    failing,
-                    failed,
-                    writer,
-                    indent_name,
-                )
-            } else {
-                text::write_format_with_values::<false>(
-                    filename,
-                    max_filename_length,
-                    vals,
-                    failing,
-                    failed,
-                    writer,
-                    indent_name,
-                )
-            }
-        }
-    }
-}
-use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
+use bun_options_types::code_coverage_options::Fraction;
+use bun_sourcemap_jsc::code_coverage::{self, ByteRangeMapping, Report as CodeCoverageReport};
 
 // ─── compat shim: map legacy paths onto the test_runner crate ────────────────
 // The body was originally written against `bun_jsc::jest::{bun_test, Snapshots,
@@ -1451,7 +1368,7 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        byte_ranges.sort_by(|a, b| bun::order(a.source_url.slice(), b.source_url.slice()));
 
         self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
             vm,
@@ -1482,7 +1399,7 @@ impl CommandLineReporter {
         if byte_ranges.is_empty() {
             return Ok(());
         }
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        byte_ranges.sort_by(|a, b| bun::order(a.source_url.slice(), b.source_url.slice()));
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let file = match File::openat(
@@ -1525,7 +1442,7 @@ impl CommandLineReporter {
                 continue;
             };
             // report dropped at end of iteration
-            if coverage::Lcov::write_format(&report, relative_dir, writer).is_err() {
+            if code_coverage::lcov::write_format(&report, relative_dir, writer).is_err() {
                 continue;
             }
             drop(report);
@@ -1783,13 +1700,12 @@ impl CommandLineReporter {
 
             if REPORTERS_TEXT {
                 let mut fraction = base_fraction;
-                if coverage::Text::write_format(
+                if code_coverage::text::write_format::<ENABLE_ANSI_COLORS>(
                     &report,
                     max_filepath_length,
                     &mut fraction,
                     relative_dir,
                     console_writer,
-                    ENABLE_ANSI_COLORS,
                 )
                 .is_err()
                 {
@@ -1808,7 +1724,7 @@ impl CommandLineReporter {
 
             if REPORTERS_LCOV {
                 if let Some((_, _, buffered)) = lcov_guard.as_mut() {
-                    if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
+                    if code_coverage::lcov::write_format(&report, relative_dir, buffered).is_err() {
                         continue;
                     }
                 }
@@ -1840,7 +1756,7 @@ impl CommandLineReporter {
                     }
                 };
 
-                coverage::Text::write_format_with_values(
+                code_coverage::text::write_format_with_values::<ENABLE_ANSI_COLORS>(
                     b"All files",
                     max_filepath_length,
                     avg,
@@ -1848,7 +1764,6 @@ impl CommandLineReporter {
                     failing,
                     &mut console,
                     false,
-                    ENABLE_ANSI_COLORS,
                 )?;
 
                 console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d> |<r>\n"))?;
@@ -2086,14 +2001,12 @@ impl TestCommand {
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
+                // Written once by Arguments.rs during CLI parse; kept as a raw
+                // NonNull so `matches()` can write through it without
                 // laundering shared-ref provenance.
-                filter_regex: ctx
-                    .test_options
-                    .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                filter_regex: core::ptr::NonNull::new(
+                    crate::cli::TEST_FILTER_REGEX.load(core::sync::atomic::Ordering::Acquire),
+                ),
                 snapshots: Snapshots {
                     update_snapshots: ctx.test_options.update_snapshots,
                     total: 0,
@@ -2195,7 +2108,7 @@ impl TestCommand {
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
-        vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.transpiler.options.resolve.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -2527,21 +2440,19 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload as u8;
+            vm.hot_reload = ctx.debug.hot_reload;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
             // recorded. The addFileByPathSlow seeding stays after
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
-            if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
-            {
+            if ctx.test_options.changed.is_some() && vm.hot_reload == HotReload::Watch {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
             match vm.hot_reload {
-                jsc::virtual_machine::HOT_RELOAD_HOT => {
+                HotReload::Hot => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2551,7 +2462,7 @@ impl TestCommand {
                         );
                     }
                 }
-                jsc::virtual_machine::HOT_RELOAD_WATCH => {
+                HotReload::Watch => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2918,7 +2829,7 @@ impl TestCommand {
 
         reporter.write_junit_report_if_needed();
 
-        if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+        if vm.hot_reload == HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -3011,7 +2922,24 @@ impl TestCommand {
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             crate::jsc_hooks::close_isolation_handles(vm);
-                            vm.swap_global_for_test_isolation();
+                            #[cfg(unix)]
+                            let skip_process_ipc: *mut bun_uws::SocketGroup =
+                                match crate::ipc::ipc_instance_ptr() {
+                                    // SAFETY: `ipc_instance_ptr` returns the VM's live boxed
+                                    // IPCInstance (see the repoint below).
+                                    Some(inst) => unsafe { (*inst).group },
+                                    None => core::ptr::null_mut(),
+                                };
+                            #[cfg(not(unix))]
+                            let skip_process_ipc: *mut bun_uws::SocketGroup =
+                                core::ptr::null_mut();
+                            let new_global = vm.swap_global_for_test_isolation(skip_process_ipc);
+                            if let Some(inst) = crate::ipc::ipc_instance_ptr() {
+                                // SAFETY: live boxed IPCInstance; repoint so
+                                // Process__emitMessageEvent doesn't dispatch on
+                                // the freed cell (was done inside the VM fn).
+                                unsafe { (*inst).global_this = new_global };
+                            }
                             reporter
                                 .jest
                                 .bun_test_root
@@ -3149,7 +3077,7 @@ impl TestCommand {
                 );
             }
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 bun_test,
                 "loadEntryPointForTestRunner(\"{}\")",
                 bstr::BStr::new(file_path)
@@ -3164,13 +3092,13 @@ impl TestCommand {
                 reporter.summary().files += 1;
             }
 
-            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
+            // S012: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+            match jsc::JSPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
                     // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
                     // `unhandled_rejection(&mut self, ...)` can reborrow.
                     let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
+                    let p = jsc::JSPromise::opaque_mut(promise);
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
                     reporter.summary().fail += 1;

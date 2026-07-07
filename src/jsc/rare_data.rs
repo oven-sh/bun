@@ -1,23 +1,19 @@
 use core::ffi::c_void;
-use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
-use bun_collections::StringArrayHashMap;
+use bun_core::MAX_PATH_BYTES;
+use bun_core::Mutex;
 use bun_core::strings;
-use bun_core::{Mutex, Output};
-use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
-use bun_paths::MAX_PATH_BYTES;
-use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
+use bun_sys::{self as syscall, Fd, FdExt as _};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
-use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
+use crate::SpawnSyncEventLoop::SpawnSyncEventLoop;
+use bun_event_loop::PipeReadBuffer;
 
 use super::uuid::UUID;
 
@@ -25,89 +21,20 @@ use super::uuid::UUID;
 // Layering note (§Dispatch / cycle-break).
 //
 // `RareData` is a bag of lazy-init optional subsystems whose concrete types
-// live in higher-tier crates (`bun_runtime`, `bun_http_jsc`, `bun_sql_jsc`).
+// live in higher-tier crates (`bun_runtime`, `bun_http_jsc`).
 // Per docs/PORTING.md §Dispatch the low tier stores **erased** pointers; the
 // high tier owns the typed accessors:
 //
-//   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
+//   - `mysql_context` / `postgresql_context` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slots; high tier lazy-inits.
+//   - `websocket_deflate`
+//     → typed `*mut WebSocketDeflateSlot` (own heap allocation so handed-out
+//       `NonNull`s keep their provenance); high tier lazy-inits the contents.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
 //     concrete types.
-//   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
-//     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
-//   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
-//     → bodies live in `bun_runtime` (they call high-tier ctors); RareData
-//     keeps only the storage slots.
 // ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// HotMap
-//
-// Low-tier storage: `(tag, ptr)` per docs/PORTING.md §Dispatch (hot path). The
-// concrete payload list (HTTPServer, HTTPSServer, TCPSocket, …) and the typed
-// `get<T>` / `insert<T>` accessors live in `bun_runtime::api::server` — naming
-// those types here would invert the crate DAG. `bun_runtime` matches on `tag`
-// and casts `ptr` itself.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct HotMap {
-    _map: StringArrayHashMap<HotMapEntry>,
-}
-
-/// Erased `(tag, ptr)` payload — concrete variant list lives in `bun_runtime`.
-#[derive(Copy, Clone)]
-pub struct HotMapEntry {
-    pub tag: u8,
-    pub ptr: *mut (),
-}
-impl Default for HotMapEntry {
-    fn default() -> Self {
-        Self {
-            tag: 0,
-            ptr: core::ptr::null_mut(),
-        }
-    }
-}
-
-impl HotMap {
-    pub fn init() -> HotMap {
-        HotMap {
-            _map: StringArrayHashMap::new(),
-        }
-    }
-
-    pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
-        self._map.get(key).copied()
-    }
-
-    /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
-    /// `TaggedPointerUnion` payload list is named.
-    pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
-        let gop = bun_core::handle_oom(self._map.get_or_put(key));
-        if gop.found_existing {
-            panic!("HotMap already contains key");
-        }
-        // `get_or_put` already boxed the key; the map owns its keys.
-        *gop.value_ptr = entry;
-    }
-
-    pub fn remove(&mut self, key: &[u8]) {
-        // The map owns the Box<[u8]> key and `swap_remove` drops it. The
-        // aliasing assert below means the caller must not pass the map's own
-        // key storage. Ordering doesn't matter for HotMap consumers.
-        let Some(i) = self._map.get_index(key) else {
-            return;
-        };
-        let stored = &self._map.keys()[i];
-        let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
-        debug_assert!(!is_same_slice);
-        self._map.swap_remove(key);
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // EntropyCache
@@ -196,25 +123,19 @@ impl CleanupHook {
 // RareData
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Per-VM pooled libdeflate decompressor shared by every WebSocket on this
+/// VM; lazy-init in `bun_http_jsc::WebSocketDeflate`.
+pub type WebSocketDeflateSlot = Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>;
+
 pub struct RareData {
+    /// Separate heap allocation (never inline) so the `NonNull` handed to
+    /// `PerMessageDeflate` keeps its provenance across later `&mut RareData`
+    /// reborrows. Owned by `RareData`; allocated in `websocket_deflate_slot`,
+    /// freed exactly once in `Drop`.
+    websocket_deflate: *mut WebSocketDeflateSlot,
     pub boring_ssl_engine: Option<*mut boring::ENGINE>,
 
-    /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
-    /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
-    /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
-    /// re-stat.
-    pub stderr_store: Option<NonNull<c_void>>,
-    pub stderr_mode: Mode,
-    pub stdin_store: Option<NonNull<c_void>>,
-    pub stdin_mode: Mode,
-    pub stdout_store: Option<NonNull<c_void>>,
-    pub stdout_mode: Mode,
-
     pub entropy_cache: Option<Box<EntropyCache>>,
-
-    pub hot_map: Option<HotMap>,
-    /// `Vec<*mut bun_runtime::api::cron::CronJob>` — only stored/iterated here.
-    pub cron_jobs: Vec<*mut c_void>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
@@ -247,21 +168,17 @@ pub struct RareData {
     pub ws_client_group_: SocketGroup,
     pub ws_client_tls_group: SocketGroup,
 
+    /// Per-VM digest-keyed weak `SSL_CTX*` cache. Only touched from the JS
+    /// thread; its `Drop` clears the ex_data back-pointers it installed.
+    pub ssl_ctx_cache: bun_uws::ssl_context_cache::SSLContextCache,
+
     /// `ssl_ctx_cache.getOrCreate(&.{})` — i.e. the default-trust-store client
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
-    /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
-    /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
+    /// SHA-256 + map lookup. Ref owned here. Lazy-init:
+    /// [`Self::default_client_ssl_ctx_lazy`].
     pub default_client_ssl_ctx: Option<*mut SslCtx>,
 
     pub mime_types: Option<mime_type::Map>,
-
-    /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
-    /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
-
-    /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
-    /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
-    pub memory_pressure_watcher: Option<NonNull<c_void>>,
 
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
@@ -276,7 +193,6 @@ pub struct RareData {
     // was always reached via the main-thread VM, so it was a singleton in
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
-    pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
@@ -295,16 +211,9 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
+            websocket_deflate: core::ptr::null_mut(),
             boring_ssl_engine: None,
-            stderr_store: None,
-            stderr_mode: 0,
-            stdin_store: None,
-            stdin_mode: 0,
-            stdout_store: None,
-            stdout_mode: 0,
             entropy_cache: None,
-            hot_map: None,
-            cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
             file_polls_: None,
             spawn_ipc_group: SocketGroup::default(),
@@ -321,13 +230,11 @@ impl Default for RareData {
             ws_upgrade_tls_group: SocketGroup::default(),
             ws_client_group_: SocketGroup::default(),
             ws_client_tls_group: SocketGroup::default(),
+            ssl_ctx_cache: Default::default(),
             default_client_ssl_ctx: None,
             mime_types: None,
-            node_fs_stat_watcher_scheduler: None,
-            memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
-            s3_default_client: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
@@ -373,15 +280,6 @@ impl PathBuf {
 }
 
 // Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
-
-// ──────────────────────────────────────────────────────────────────────────
-// PipeReadBuffer / constants
-// ──────────────────────────────────────────────────────────────────────────
-
-// Canonical definition lives in the lower-tier `bun_event_loop` crate (shared
-// with `MiniEventLoop`'s scratch buffer). Re-export so `rare_data::PipeReadBuffer`
-// remains a stable path for existing callers.
-pub use bun_event_loop::PipeReadBuffer;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -548,11 +446,6 @@ impl RefCountedEnvValue {
     }
 }
 
-// `AWSSignatureCache` moved DOWN to `bun_s3_signing::credentials` (process
-// static). Re-exported for any out-of-tree callers that named the type via
-// `bun_jsc::rare_data::AWSSignatureCache`.
-pub use bun_s3_signing::credentials::AWSSignatureCache;
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
@@ -622,22 +515,46 @@ macro_rules! for_each_socket_group {
 impl RareData {
     // ── trivial field accessors ────────────────────────────────────────────
 
-    /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`
-    /// (`StatWatcherScheduler::init` is higher-tier).
+    /// Raw slot — lazy-init body lives in `bun_http_jsc::WebSocketDeflate`.
+    /// Lazily heap-allocates the slot; `RareData::drop` is the single free.
     #[inline]
-    pub fn node_fs_stat_watcher_scheduler_slot(&mut self) -> &mut Option<NonNull<c_void>> {
-        &mut self.node_fs_stat_watcher_scheduler
+    pub fn websocket_deflate_slot(&mut self) -> core::ptr::NonNull<WebSocketDeflateSlot> {
+        match core::ptr::NonNull::new(self.websocket_deflate) {
+            Some(slot) => slot,
+            None => {
+                let slot = bun_core::heap::into_raw_nn(Box::new(None));
+                self.websocket_deflate = slot.as_ptr();
+                slot
+            }
+        }
     }
 
-    /// Raw slot — lazy-init body lives in `bun_runtime::node::memory_pressure`.
-    #[inline]
-    pub fn memory_pressure_watcher_slot(&mut self) -> &mut Option<NonNull<c_void>> {
-        &mut self.memory_pressure_watcher
-    }
-
-    // ── lazy-init: hot_map ─────────────────────────────────────────────────
-    pub fn hot_map(&mut self) -> &mut HotMap {
-        self.hot_map.get_or_insert_with(HotMap::init)
+    /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
+    /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
+    /// supply explicit options.
+    pub fn default_client_ssl_ctx_lazy(&mut self) -> *mut SslCtx {
+        if self.default_client_ssl_ctx.is_none() {
+            let mut err = uws::create_bun_socket_error_t::none;
+            // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
+            // each client SSL to VERIFY_PEER + the shared bundled-root store, so
+            // `new WebSocket("wss://…")` (which shares this CTX and defaults to
+            // rejectUnauthorized:true) verifies real servers. Route through the
+            // weak cache so a `tls.connect()` with default options later resolves
+            // to the same CTX rather than building a second one with the same
+            // digest. The +1 ref returned here is held for the VM's lifetime, so
+            // the entry never tombstones.
+            match self
+                .ssl_ctx_cache
+                .get_or_create_opts(&Default::default(), &mut err)
+            {
+                Some(ctx) => self.default_client_ssl_ctx = Some(ctx),
+                None => bun_core::Output::panic(format_args!(
+                    "default client SSL_CTX init failed: {}",
+                    bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
+                )),
+            }
+        }
+        self.default_client_ssl_ctx.unwrap()
     }
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
@@ -722,10 +639,10 @@ impl RareData {
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
-                &mut *boxed,
-                core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
+            // SAFETY: `vm` is the live per-thread VM (`&mut` re-borrow).
+            unsafe {
+                SpawnSyncEventLoop::init(&mut *boxed, core::ptr::from_mut::<VirtualMachine>(vm));
+            }
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
@@ -879,126 +796,6 @@ impl RareData {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// stderr / stdout / stdin
-//
-// Low tier owns the fstat + lazy-init flow; the actual `webcore::blob::Store`
-// allocation goes through `__bun_stdio_blob_store_new` (link-time extern
-// defined in `bun_runtime::webcore::blob`).
-// ──────────────────────────────────────────────────────────────────────────
-
-unsafe extern "Rust" {
-    safe fn __bun_stdio_blob_store_deinit(ptr: *mut ());
-}
-
-impl RareData {
-    #[inline]
-    fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
-        // `__bun_stdio_blob_store_new` is declared `safe fn` in
-        // `bun_event_loop::MiniEventLoop` (all args by-value; allocates a
-        // fresh `Store` with no caller-side precondition).
-        __bun_stdio_blob_store_new(fd, is_atty, mode).cast()
-    }
-
-    /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
-    pub fn stderr(&mut self) -> *mut c_void {
-        bun_analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
-        if self.stderr_store.is_none() {
-            let fd = Fd::from_uv(2);
-            let mode: Mode = match syscall::fstat(fd) {
-                Ok(stat) => stat.st_mode as Mode,
-                Err(_) => 0,
-            };
-            let is_atty =
-                Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            let store = Self::stdio_ctor(fd, is_atty, mode);
-            self.stderr_store = NonNull::new(store);
-            self.stderr_mode = mode;
-        }
-        self.stderr_store
-            .map_or(core::ptr::null_mut(), NonNull::as_ptr)
-    }
-
-    /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
-    pub fn stdout(&mut self) -> *mut c_void {
-        bun_analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
-        if self.stdout_store.is_none() {
-            let fd = Fd::from_uv(1);
-            let mode: Mode = match syscall::fstat(fd) {
-                Ok(stat) => stat.st_mode as Mode,
-                Err(_) => 0,
-            };
-            let is_atty =
-                Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            let store = Self::stdio_ctor(fd, is_atty, mode);
-            self.stdout_store = NonNull::new(store);
-            self.stdout_mode = mode;
-        }
-        self.stdout_store
-            .map_or(core::ptr::null_mut(), NonNull::as_ptr)
-    }
-
-    /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
-    pub fn stdin(&mut self) -> *mut c_void {
-        bun_analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
-        if self.stdin_store.is_none() {
-            let fd = Fd::from_uv(0);
-            let mode: Mode = match syscall::fstat(fd) {
-                Ok(stat) => stat.st_mode as Mode,
-                Err(_) => 0,
-            };
-            // On Windows an invalid stdin handle must short-circuit to false.
-            let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
-            let store = Self::stdio_ctor(fd, is_atty, mode);
-            self.stdin_store = NonNull::new(store);
-            self.stdin_mode = mode;
-        }
-        self.stdin_store
-            .map_or(core::ptr::null_mut(), NonNull::as_ptr)
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// StdinFdType / Bun__Process__getStdinFdType
-// ──────────────────────────────────────────────────────────────────────────
-
-#[repr(i32)]
-pub(crate) enum StdinFdType {
-    File = 0,
-    Pipe = 1,
-    Socket = 2,
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
-    let rare = vm.as_mut().rare_data();
-    // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
-    // alongside the pointer.
-    let mode = match fd {
-        0 => {
-            rare.stdin();
-            rare.stdin_mode
-        }
-        1 => {
-            rare.stdout();
-            rare.stdout_mode
-        }
-        2 => {
-            rare.stderr();
-            rare.stderr_mode
-        }
-        _ => unreachable!(),
-    };
-    // `kind_from_mode` uses hard-coded u32 octal masks so it works on
-    // Windows where libc::S_IFSOCK is undefined and on macOS where the libc
-    // constants are u16.
-    match bun_sys::kind_from_mode(mode) {
-        bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
-        bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
-        _ => StdinFdType::File,
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // TLS default ciphers JS bindings
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1047,34 +844,28 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
-        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
-        // tls_default_ciphers:
+        // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
+        // default_csrf_secret / cleanup_hooks /
+        // path_buf / tls_default_ciphers:
         // all dropped automatically via field Drop.
+
+        if !self.websocket_deflate.is_null() {
+            // SAFETY: allocated by `websocket_deflate_slot`; `RareData` is the sole owner.
+            unsafe { bun_core::heap::destroy(self.websocket_deflate) };
+        }
 
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring::ENGINE_free(engine) };
         }
-        debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
             unsafe { boring::SSL_CTX_free(s) };
         }
         // After the default-ctx free so the tombstone callback still finds a live
-        // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
-
-        for store in [
-            self.stderr_store.take(),
-            self.stdout_store.take(),
-            self.stdin_store.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            __bun_stdio_blob_store_deinit(store.as_ptr().cast());
-        }
+        // map; `ssl_ctx_cache` is the field above — its `Drop` (when `RareData`
+        // drops) clears the ex_data back-pointers.
 
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
@@ -1093,5 +884,3 @@ impl Drop for RareData {
         });
     }
 }
-
-pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;

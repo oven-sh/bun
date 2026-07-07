@@ -1,5 +1,5 @@
 use core::fmt;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 
 use bun_core::env_var;
@@ -78,9 +78,10 @@ pub fn is_enabled() -> bool {
 
 /// This answers, "What parts of bun are people actually using?"
 ///
-/// The feature list is declared once via `define_features!` and that macro
-/// generates the statics, `PACKED_FEATURES_LIST`, `PackedFeatures`,
-/// `packed_features()`, and the `Display` body.
+/// The feature list is declared once via `define_features!`. Storage lives in
+/// `bun_core::Global::features`; that macro generates the per-entry aliases,
+/// `PACKED_FEATURES_LIST`, `PackedFeatures`, `packed_features()`, and the
+/// `Display` body.
 pub mod features {
     use super::*;
 
@@ -102,25 +103,19 @@ pub mod features {
     }
 
     macro_rules! define_features {
-        // Storage for one feature counter. Entries tagged `core = IDENT` alias
-        // the tier-0 `bun_core::Global::features::IDENT` static (the MOVE_DOWN
-        // set written by low-tier crates: dotenv/install/css/todo_panic!/...)
-        // so the crash-report/analytics readers below observe those writes —
-        // a fresh static here would be a split brain that stays forever 0.
-        // Entries with an `export_name` attribute must NOT be `core`-tagged:
-        // the exported symbol has to be the single canonical definition here.
-        (@storage $(#[$doc:meta])* $ident:ident) => {
-            $(#[$doc])*
-            #[allow(non_upper_case_globals)]
-            pub static $ident: AtomicUsize = AtomicUsize::new(0);
-        };
-        (@storage $(#[$doc:meta])* $ident:ident, $core:ident) => {
-            $(#[$doc])*
-            pub use ::bun_core::Global::features::$core as $ident;
-        };
-        ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal $(, core = $core:ident)?) ),* $(,)? ) => {
+        // Storage for every feature counter is canonically tier-0: each entry
+        // is tagged `core = IDENT` and aliases the
+        // `bun_core::Global::features::IDENT` static (written by low-tier
+        // crates: dotenv/install/css/todo_panic!/...) so the
+        // crash-report/analytics readers below observe those writes — a fresh
+        // static here would be a split brain that stays forever 0. This macro
+        // only generates the read side (`PACKED_FEATURES_LIST`,
+        // `PackedFeatures`, `packed_features()`, `Formatter`) plus the
+        // per-entry aliases.
+        ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal, core = $core:ident) ),* $(,)? ) => {
             $(
-                define_features! { @storage $(#[$doc])* $ident $(, $core)? }
+                $(#[$doc])*
+                pub use ::bun_core::Global::features::$core as $ident;
             )*
 
             $(
@@ -276,36 +271,31 @@ pub mod features {
         39 => (virtual_modules, "virtual_modules", core = VIRTUAL_MODULES),
         40 => (workers_spawned, "workers_spawned", core = WORKERS_SPAWNED),
         41 => (workers_terminated, "workers_terminated", core = WORKERS_TERMINATED),
-        #[unsafe(export_name = "Bun__napi_module_register_count")]
-        42 => (napi_module_register, "napi_module_register"),
-        #[unsafe(export_name = "Bun__process_dlopen_count")]
-        43 => (process_dlopen, "process_dlopen"),
-        44 => (postgres_connections, "postgres_connections"),
-        45 => (s3, "s3"),
+        42 => (napi_module_register, "napi_module_register", core = NAPI_MODULE_REGISTER),
+        43 => (process_dlopen, "process_dlopen", core = PROCESS_DLOPEN),
+        44 => (postgres_connections, "postgres_connections", core = POSTGRES_CONNECTIONS),
+        45 => (s3, "s3", core = S3),
         46 => (valkey, "valkey", core = VALKEY),
-        47 => (csrf_verify, "csrf_verify"),
-        48 => (csrf_generate, "csrf_generate"),
-        49 => (unsupported_uv_function, "unsupported_uv_function"),
+        47 => (csrf_verify, "csrf_verify", core = CSRF_VERIFY),
+        48 => (csrf_generate, "csrf_generate", core = CSRF_GENERATE),
+        49 => (unsupported_uv_function, "unsupported_uv_function", core = UNSUPPORTED_UV_FUNCTION),
         50 => (exited, "exited", core = EXITED),
         51 => (yarn_migration, "yarn_migration", core = YARN_MIGRATION),
         52 => (pnpm_migration, "pnpm_migration", core = PNPM_MIGRATION),
         53 => (yaml_parse, "yaml_parse", core = YAML_PARSE),
-        54 => (cpu_profile, "cpu_profile"),
-        #[unsafe(export_name = "Bun__Feature__heap_snapshot")]
-        55 => (heap_snapshot, "heap_snapshot"),
-        #[unsafe(export_name = "Bun__Feature__webview_chrome")]
-        56 => (webview_chrome, "webview_chrome"),
-        #[unsafe(export_name = "Bun__Feature__webview_webkit")]
-        57 => (webview_webkit, "webview_webkit"),
+        54 => (cpu_profile, "cpu_profile", core = CPU_PROFILE),
+        55 => (heap_snapshot, "heap_snapshot", core = HEAP_SNAPSHOT),
+        56 => (webview_chrome, "webview_chrome", core = WEBVIEW_CHROME),
+        57 => (webview_webkit, "webview_webkit", core = WEBVIEW_WEBKIT),
     }
 
-    // C++ declares these as `extern "C" size_t Bun__...;` and
+    // C++ declares some of these as `extern "C" size_t Bun__...;` and
     // reads/increments the value directly, so the exported symbol must BE the
-    // `usize` storage (not a pointer to it). `AtomicUsize` is `#[repr(C)]
-    // usize`-layout-compatible. Handled via `#[unsafe(export_name = "...")]`
-    // on the canonical statics inside `define_features!` above — Rust cannot
-    // alias-export a static under a second symbol name, so the export name is
-    // attached to the single definition.
+    // `usize` storage (not a pointer to it). Handled via
+    // `#[unsafe(export_name = "...")]` on the canonical statics in
+    // `bun_core::Global::features` — Rust cannot alias-export a static under
+    // a second symbol name, so the export name is attached to the single
+    // definition.
 }
 
 pub use features::{

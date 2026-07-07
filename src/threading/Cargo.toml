@@ -24,4 +24,5 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_ptr.workspace = true
 bun_safety.workspace = true
+bun_sync.workspace = true
 bun_sys.workspace = true

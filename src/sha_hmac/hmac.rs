@@ -1,11 +1,11 @@
 use core::ffi::{c_uint, c_void};
 
 use crate::evp::Algorithm;
-use crate::sha::ffi;
+use bun_boringssl_sys as ffi;
 
 /// `#define EVP_MAX_MD_SIZE 64` — re-exported so callers can size their output
 /// buffer without reaching into the private `ffi` module.
-pub const EVP_MAX_MD_SIZE: usize = ffi::EVP_MAX_MD_SIZE;
+pub const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
 
 pub fn generate<'a>(
     key: &[u8],

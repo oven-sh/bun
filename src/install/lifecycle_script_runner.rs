@@ -4,21 +4,23 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::PackageManager;
 use crate::isolated_install::installer::{CompleteState, Installer, Step};
 use crate::isolated_install::store::{EntryColumns, entry};
-use crate::lockfile_real::Scripts as LockfileScripts;
-use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::lockfile::Scripts as LockfileScripts;
+use crate::lockfile::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
 use bun_event_loop::AnyEventLoop;
 use bun_io::BufferedReader;
+#[cfg(unix)]
+use bun_io::PosixFlags;
 use bun_io::heap as io_heap;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags};
+use bun_io::posix_event_loop::Flags;
 
 use bun_core::ZStr;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
+use bun_spawn::{Process, ProcessExit, Rusage, SpawnOptions, Status};
 #[cfg(unix)]
 use bun_sys::Fd;
 // `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
@@ -27,7 +29,7 @@ use bun_sys::Fd;
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
 // `BufferedReaderParent::loop_` expects.
 
-bun_output::declare_scope!(Script, visible);
+bun_core::declare_scope!(Script, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared by `bun run` and lifecycle scripts. `bun_install` is the lower crate
@@ -353,7 +355,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 }
 
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 
 pub type OutputReader = BufferedReader;
 
@@ -578,7 +580,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
             }
 
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 Script,
                 "{} - {} $ {}",
                 bstr::BStr::new(&(*this).package_name),
@@ -728,7 +730,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         Self::reset_output_flags(&mut (*this).stdout, stdout);
                         (*this).stdout.start(stdout, true)?;
                         if let Some(poll) = (*this).stdout.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
+                            poll.set_flag(Flags::Socket);
                         }
                     } else {
                         (*this).stdout.set_parent(this.cast::<c_void>());
@@ -744,7 +746,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         Self::reset_output_flags(&mut (*this).stderr, stderr);
                         (*this).stderr.start(stderr, true)?;
                         if let Some(poll) = (*this).stderr.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
+                            poll.set_flag(Flags::Socket);
                         }
                     } else {
                         (*this).stderr.set_parent(this.cast::<c_void>());
@@ -788,7 +790,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // we hold no live `&mut Self` here, so the synchronous `on_exit`
             // dispatch below may reenter `on_process_exit` through it without
             // aliasing. It outlives `process`.
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
+            (*process).set_exit_handler(ProcessExit::of(this));
 
             if let Err(err) = (*process).watch_or_reap() {
                 if !(*process).has_exited() {
@@ -850,7 +852,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn handle_exit(&mut self, status: Status) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             Script,
             "{} - {} finished {}",
             bstr::BStr::new(&self.package_name),
@@ -1218,10 +1220,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, rusage),
+impl bun_spawn::ProcessExitOps for LifecycleScriptSubprocess<'_> {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: vtable contract — `this` is the live subprocess that armed the handler.
+        unsafe { (*this).on_process_exit(process, status, rusage) }
     }
 }
 

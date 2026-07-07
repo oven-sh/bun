@@ -3,8 +3,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
-use crate::api::bun_process::sync as spawn_sync;
+use ::bun_spawn::process::sync as spawn_sync;
 use bun_clap as clap;
+use bun_core::PathBuffer;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
@@ -13,9 +14,8 @@ use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
-use bun_paths::{OSPathSlice, PathBuffer};
+use bun_paths::OSPathSlice;
 use bun_resolver::fs;
-use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
 use bun_threading::Futex;
@@ -583,7 +583,9 @@ impl CreateCommand {
                 };
 
                 let _ = bun_sys::delete_tree_absolute(destination);
-                let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
+                let destination_dir__ = match bun_sys::Dir::borrow(&bun_sys::Fd::cwd())
+                    .make_open_path(destination, bun_sys::OpenDirOptions::default())
+                {
                     Ok(d) => d,
                     Err(err) => {
                         node.end();
@@ -599,7 +601,7 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf: bun_core::WPathBuffer = bun_core::WPathBuffer::uninit();
                 #[cfg(windows)]
                 let dst_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(destination);
@@ -610,8 +612,7 @@ impl CreateCommand {
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf: bun_core::WPathBuffer = bun_core::WPathBuffer::uninit();
                 #[cfg(windows)]
                 let src_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(abs_template_path);
@@ -622,11 +623,8 @@ impl CreateCommand {
                 }
 
                 let destination_dir = destination_dir__;
-                let mut walker_ = bun_sys::walker_skippable::walk(
-                    bun_sys::Fd::from_std_dir(&template_dir),
-                    SKIP_FILES,
-                    SKIP_DIRS,
-                )?;
+                let mut walker_ =
+                    bun_sys::walker_skippable::walk(template_dir.fd(), SKIP_FILES, SKIP_DIRS)?;
 
                 file_copier_copy(
                     &destination_dir,
@@ -1829,9 +1827,9 @@ fn file_copier_copy(
     node_: &mut ProgressNode,
     progress_: &mut Progress,
     #[cfg(windows)] dst_base_len: usize,
-    #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
+    #[cfg(windows)] dst_buf: &mut bun_core::WPathBuffer,
     #[cfg(windows)] src_base_len: usize,
-    #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
+    #[cfg(windows)] src_buf: &mut bun_core::WPathBuffer,
 ) -> Result<(), bun_core::Error> {
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
@@ -1862,7 +1860,7 @@ fn file_copier_copy(
                         )
                     } == 0
                     {
-                        let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path);
+                        let _ = bun_sys::make_path::make_path_u16(destination_dir_, entry.path);
                     }
                 }
                 bun_sys::FileKind::File => {
@@ -1878,7 +1876,7 @@ fn file_copier_copy(
                     {
                         if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
                             let _ =
-                                bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
+                                bun_sys::make_path::make_path_u16(destination_dir_, entry_dirname);
                             // SAFETY: same NUL-terminated wide strings as above; retry after mkdir.
                             if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
                                 != bun_sys::windows::FALSE
@@ -2283,11 +2281,11 @@ impl Example {
                 )?;
                 headers_buf = crate::cli::cli_dupe(&buf);
                 header_entries.append(bun_http::headers::Entry {
-                    name: bun_http_types::ETag::StringPointer {
+                    name: bun_core::StringPointer {
                         offset: 0,
                         length: u32::try_from(b"Authorization".len()).expect("int cast"),
                     },
-                    value: bun_http_types::ETag::StringPointer {
+                    value: bun_core::StringPointer {
                         offset: u32::try_from(b"Authorization".len()).expect("int cast"),
                         length: u32::try_from(headers_buf.len() - b"Authorization".len())
                             .expect("int cast"),

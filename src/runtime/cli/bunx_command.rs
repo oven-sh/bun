@@ -12,24 +12,25 @@ use crate::run_command::RunCommand as Run;
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
 use bun_bundler::Transpiler;
-use bun_collections::BoundedArray;
+use bun_core::PathBuffer;
+use bun_core::bounded_array::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
+use bun_install_types::dependency::Tag as VersionTag;
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER, PathBuffer};
+use bun_paths::{self, DELIMITER};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
-use bun_sys::{self, Fd, FdDirExt as _, O};
+use bun_sys::{self, Fd, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
 
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::api::bun::process::sync as proc_sync;
 
-bun_output::declare_scope!(bunx, visible);
+bun_core::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
@@ -323,7 +324,7 @@ impl BunxCommand {
                             let bin_name = if name.is_empty() {
                                 name
                             } else {
-                                bun_install::dependency::unscoped_package_name(name)
+                                bun_install_types::dependency::unscoped_package_name(name)
                             };
                             if Self::is_safe_bin_name(bin_name) {
                                 return Ok(Box::<[u8]>::from(bin_name));
@@ -352,7 +353,7 @@ impl BunxCommand {
                             },
                         };
 
-                        if current.kind == bun_sys::EntryKind::File {
+                        if current.kind == bun_core::FileKind::File {
                             if current.name.slice().is_empty() {
                                 entry = iterator.next();
                                 continue;
@@ -664,7 +665,7 @@ impl BunxCommand {
         } else {
             update_request.name
         };
-        bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
+        bun_core::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
@@ -779,7 +780,7 @@ impl BunxCommand {
             }
             break 'brk v;
         };
-        bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
+        bun_core::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
 
         // install_param -> used in command 'bun install {what}'
         // result_package_name -> used for path 'node_modules/{what}/package.json'
@@ -808,8 +809,8 @@ impl BunxCommand {
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
                 (v, initial_bin_name)
             };
-        bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
+        bun_core::scoped_log!(
             bunx,
             "result_package_name: {}",
             BStr::new(result_package_name)
@@ -897,7 +898,7 @@ impl BunxCommand {
         let bunx_cache_dir: &[u8] =
             &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
 
-        bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
+        bun_core::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
@@ -945,7 +946,7 @@ impl BunxCommand {
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;
 
-        bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
+        bun_core::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {
             'try_run_existing: {
                 // Similar to "npx":
@@ -998,7 +999,7 @@ impl BunxCommand {
                         // path); fall through to a fresh install instead. See
                         // `is_trusted_cached_binary` for the full rationale.
                         if !Self::is_trusted_cached_binary(destination, uid) {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 bunx,
                                 "refusing untrusted cached binary: {}",
                                 BStr::new(out)
@@ -1060,7 +1061,7 @@ impl BunxCommand {
                         };
 
                         if is_stale {
-                            bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
+                            bun_core::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
                             if opts.no_install {
                                 bun_core::warn!(
@@ -1073,7 +1074,7 @@ impl BunxCommand {
                         }
                     }
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         bunx,
                         "running existing binary: {}",
                         BStr::new(destination.as_bytes())
@@ -1169,7 +1170,7 @@ impl BunxCommand {
                                     if strings::has_prefix(out, bunx_cache_dir)
                                         && !Self::is_trusted_cached_binary(destination, uid)
                                     {
-                                        bun_output::scoped_log!(
+                                        bun_core::scoped_log!(
                                             bunx,
                                             "refusing untrusted cached binary: {}",
                                             BStr::new(out)
@@ -1225,7 +1226,8 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
+        let bunx_install_dir = bun_sys::Dir::cwd()
+            .make_open_path(bunx_cache_dir, bun_sys::OpenDirOptions::default())?;
 
         'create_package_json: {
             // create package.json, but only if it doesn't exist
@@ -1268,7 +1270,7 @@ impl BunxCommand {
 
         let argv_to_use = args.slice();
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             bunx,
             "installing package: {}",
             bun_core::fmt::fmt_slice(argv_to_use, " "),
@@ -1292,7 +1294,7 @@ impl BunxCommand {
 
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
+                loop_: bun_event_loop::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         // `this_transpiler.env` is the process-lifetime loader
                         // singleton populated during transpiler init.
@@ -1422,11 +1424,7 @@ impl BunxCommand {
                 )?;
                 // run_binary is noreturn
             } else {
-                bun_output::scoped_log!(
-                    bunx,
-                    "refusing untrusted cached binary: {}",
-                    BStr::new(out)
-                );
+                bun_core::scoped_log!(bunx, "refusing untrusted cached binary: {}", BStr::new(out));
             }
         }
 
@@ -1482,7 +1480,7 @@ impl BunxCommand {
                             )?;
                             // run_binary is noreturn
                         } else {
-                            bun_output::scoped_log!(
+                            bun_core::scoped_log!(
                                 bunx,
                                 "refusing untrusted cached binary: {}",
                                 BStr::new(out)

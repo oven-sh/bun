@@ -6,11 +6,13 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boring_sys;
+use bun_core::ZigString;
+use bun_http::ssl_config::SSLConfig;
 use bun_io::KeepAlive;
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
@@ -20,7 +22,6 @@ use crate::api::bun_secure_context::SecureContext;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
-use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
@@ -30,32 +31,17 @@ use crate::node::path as node_path;
 #[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]
+use bun_core::PathBuffer;
+#[cfg(windows)]
 use bun_core::strings;
 #[cfg(windows)]
 use bun_jsc::GlobalRef;
 #[cfg(windows)]
+use bun_libuv_sys as uv;
+#[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
-#[cfg(windows)]
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 
-bun_output::define_scoped_log!(log, Listener, visible);
-
-/// Bridge to the per-VM digest-keyed weak `SSL_CTX*` cache. The
-/// `bun_jsc::rare_data::SSLContextCache` slot is an opaque cycle-break stub;
-/// the concrete cache lives on `crate::jsc_hooks::RuntimeState`.
-#[inline]
-fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "runtime_state() before init_runtime_state"
-    );
-    // SAFETY: `state` is the per-thread `RuntimeState` boxed in
-    // `init_runtime_state`; address-stable until VM teardown.
-    unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
-}
+bun_core::define_scoped_log!(log, Listener, visible);
 
 // Route through the codegen'd `toJS` wrapper so we
 // can hand the C++ side an already-heap-allocated `*mut Listener` (the
@@ -587,7 +573,7 @@ impl Listener {
         listener: &Listener,
         socket: uws::NewSocketHandler<SSL>,
     ) -> *mut NewSocket<SSL> {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         log!("onCreate");
 
         debug_assert!(SSL == listener.ssl);
@@ -681,14 +667,14 @@ impl Listener {
         } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
             let vm = VirtualMachine::get().as_mut();
-            SSLConfig::from_js(vm, global, tls)?
+            crate::socket::ssl_config::from_js(vm, global, tls)?
         } {
             // Note: `cfg` cleanup handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
-            // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache; only
-            // touched from the JS thread so the `&mut` is unique.
-            let cache = unsafe { &mut *vm_ssl_ctx_cache() };
-            match cache.get_or_create(&ssl_config, &mut create_err) {
+            // Per-VM cache; only touched from the JS thread so the `&mut` is
+            // unique.
+            let cache = &mut VirtualMachine::get().as_mut().rare_data().ssl_ctx_cache;
+            match cache.get_or_create_opts(&ssl_config.as_usockets(), &mut create_err) {
                 Some(ctx) => ctx,
                 None => {
                     if create_err != uws::create_bun_socket_error_t::none {
@@ -1206,7 +1192,9 @@ impl Listener {
                         Err(_) => return Ok(promise_value),
                     };
                     tls_ref.socket.set(uws::NewSocketHandler {
-                        socket: uws::InternalSocket::Pipe(named_pipe.cast()),
+                        socket: uws::InternalSocket::Pipe(
+                            crate::socket::windows_named_pipe::named_pipe_handle(named_pipe),
+                        ),
                     });
                 } else {
                     let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
@@ -1294,7 +1282,9 @@ impl Listener {
                         Err(_) => return Ok(promise_value),
                     };
                     tcp_ref.socket.set(uws::NewSocketHandler {
-                        socket: uws::InternalSocket::Pipe(named_pipe.cast()),
+                        socket: uws::InternalSocket::Pipe(
+                            crate::socket::windows_named_pipe::named_pipe_handle(named_pipe),
+                        ),
                     });
                 }
                 return Ok(promise_value);
@@ -1313,10 +1303,10 @@ impl Listener {
                 // `requires_custom_request_ctx` gate is gone; the cache makes the
                 // default-vs-custom distinction by content.
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache field
-                // inside the boxed `RuntimeState`; address-stable until VM teardown.
-                let cache = unsafe { &mut *vm_ssl_ctx_cache() };
-                match cache.get_or_create(ssl_cfg, &mut create_err) {
+                // Per-VM cache field on `RareData`; address-stable until VM
+                // teardown and only touched from the JS thread.
+                let cache = &mut VirtualMachine::get().as_mut().rare_data().ssl_ctx_cache;
+                match cache.get_or_create_opts(&ssl_cfg.as_usockets(), &mut create_err) {
                     Some(ctx) => {
                         *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
                     }
@@ -1617,7 +1607,7 @@ fn connect_finish<const IS_SSL: bool>(
 
 #[bun_jsc::host_fn]
 pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding!();
+    bun_core::mark_binding!();
 
     let arguments = frame.arguments_old::<3>();
     if arguments.len < 3 {
@@ -1878,7 +1868,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     abort_handshake: *mut core::ffi::c_int,
     socket: *mut c_void,
 ) -> *mut c_void {
-    jsc::mark_binding!();
+    bun_core::mark_binding!();
     if ls.is_null() || hostname.is_null() {
         return core::ptr::null_mut();
     }

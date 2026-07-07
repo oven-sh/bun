@@ -2,10 +2,10 @@ use core::ffi::{c_int, c_void};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 // `is_closed`/`is_active`/`fd` are default trait methods on `UvHandle`;
 // the trait must be in scope for method resolution on `Box<Pipe>`/`Tty`.
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_libuv_sys::UvHandle as _;
 // `to_error` on `ReturnCode`/`ReturnCodeI64` lives in `bun_sys` (layering).
 use bun_sys::Fd;
 use bun_sys::ReturnCodeExt as _;

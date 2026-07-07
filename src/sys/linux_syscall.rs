@@ -9,7 +9,7 @@
 //! Return convention: `Result<T, i32>` where the `Err` arm is the *positive*
 //! kernel errno (e.g. `libc::EINTR == 4`). Callers map this straight into
 //! `bun_sys::Error::from_code_int(e, tag)` — same shape as the existing
-//! `Maybe<T>` plumbing, just without the `last_errno()` round-trip.
+//! `Result<T>` plumbing, just without the `last_errno()` round-trip.
 //!
 //! EINTR retry is handled here so callers don't need to loop.
 //!

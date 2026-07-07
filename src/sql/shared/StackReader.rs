@@ -98,7 +98,7 @@ impl<'a> StackReader<'a> {
         }
 
         self.offset.set(offset + count);
-        Ok(Data::Temporary(bun_ptr::RawSlice::new(
+        Ok(Data::Temporary(bun_core::RawSlice::new(
             &self.buffer[offset..offset + count],
         )))
     }
@@ -108,7 +108,9 @@ impl<'a> StackReader<'a> {
         if let Some(zero) = strings::index_of_char(remaining, 0) {
             let zero = zero as usize;
             self.skip(isize::try_from(zero + 1).expect("int cast"));
-            return Ok(Data::Temporary(bun_ptr::RawSlice::new(&remaining[0..zero])));
+            return Ok(Data::Temporary(bun_core::RawSlice::new(
+                &remaining[0..zero],
+            )));
         }
 
         Err(E::SHORT_READ)

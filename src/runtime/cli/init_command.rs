@@ -49,7 +49,7 @@ impl InitCommand {
             });
 
         let mut input: Vec<u8> = Vec::new();
-        Output::buffered_stdin_read_until_delimiter(&mut input, b'\n', 1024)?;
+        bun_sys::stdio::buffered_stdin_read_until_delimiter(&mut input, b'\n', 1024)?;
 
         if strings::ends_with_char(&input, b'\r') {
             let _ = input.pop();

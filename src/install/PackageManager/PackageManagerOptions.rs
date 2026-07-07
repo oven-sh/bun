@@ -1,12 +1,14 @@
 use crate::bun_schema::api as Api;
+use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
-use bun_paths::PathBuffer;
+use bun_install_types::Features;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
+use crate::npm;
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::{Features, Npm};
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
 
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
@@ -23,9 +25,9 @@ pub struct Options {
     pub bin_path: &'static ZStr,
 
     pub did_override_default_scope: bool,
-    pub scope: Npm::registry::Scope,
+    pub scope: npm::registry::Scope,
 
-    pub registries: Npm::registry::Map,
+    pub registries: npm::registry::Map,
     pub cache_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
@@ -85,9 +87,9 @@ pub struct Options {
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
     /// Override CPU architecture for optional dependencies filtering
-    pub cpu: Npm::Architecture,
+    pub cpu: Architecture,
     /// Override OS for optional dependencies filtering
-    pub os: Npm::OperatingSystem,
+    pub os: OperatingSystem,
 
     pub config_version: Option<ConfigVersion>,
 }
@@ -102,8 +104,8 @@ impl Default for Options {
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             // Always assigned in `load()` before read.
-            scope: Npm::registry::Scope::default(),
-            registries: Npm::registry::Map::default(),
+            scope: npm::registry::Scope::default(),
+            registries: npm::registry::Map::default(),
             cache_directory: b"",
             enable: Enable::default(),
             do_: Do::default(),
@@ -150,8 +152,8 @@ impl Default for Options {
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
-            cpu: Npm::Architecture::CURRENT,
-            os: Npm::OperatingSystem::CURRENT,
+            cpu: Architecture::CURRENT,
+            os: OperatingSystem::CURRENT,
             config_version: None,
         }
     }
@@ -236,15 +238,15 @@ impl Options {
     /// Hoisted onto `Options` so callers that already hold a borrow of
     /// `pm.lockfile` can disjointly borrow `pm.options` instead of needing the
     /// whole `&PackageManager`.
-    pub fn scope_for_package_name(&self, name: &[u8]) -> &Npm::registry::Scope {
+    pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
         if name.is_empty() || name[0] != b'@' {
             return &self.scope;
         }
-        let scope_name = Npm::registry::Scope::get_name(name);
+        let scope_name = npm::registry::Scope::get_name(name);
         // Compare the stored scope name, not just its hash: a different scope
         // whose hash collides must not inherit this scope's registry or token.
         // Fall back to the default registry on a mismatch.
-        match self.registries.get(&Npm::registry::Scope::hash(scope_name)) {
+        match self.registries.get(&npm::registry::Scope::hash(scope_name)) {
             Some(scope) if *scope.name == *scope_name => scope,
             _ => &self.scope,
         }
@@ -404,11 +406,11 @@ impl Options {
         }
 
         if base.url.is_empty() {
-            base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
+            base.url = npm::registry::DEFAULT_URL.as_bytes().into();
         }
         // Clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
-        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
+        self.scope = npm::registry::Scope::from_api(b"", base.clone(), env)?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
@@ -425,8 +427,8 @@ impl Options {
                         registry.url.clone_from(&base.url);
                     }
                     self.registries.put(
-                        Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry, env)?,
+                        npm::registry::Scope::hash(name),
+                        npm::registry::Scope::from_api(name, registry, env)?,
                     )?;
                 }
             }
@@ -606,7 +608,7 @@ impl Options {
                                 token,
                                 ..Default::default()
                             };
-                            self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                            self.scope = npm::registry::Scope::from_api(b"", api_registry, env)?;
                             did_set = true;
                         }
                     }
@@ -898,7 +900,7 @@ impl Options {
         }
 
         // moved from `defer { ... }` after scope assignment (see note above).
-        self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
+        self.did_override_default_scope = self.scope.url_hash != *npm::registry::DEFAULT_URL_HASH;
 
         Ok(())
     }

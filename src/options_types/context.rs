@@ -6,13 +6,19 @@
 //! `context_data` storage stay in `cli.rs`.
 
 use crate::schema::api;
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
 use crate::bundle_enums;
 use crate::code_coverage_options::CodeCoverageOptions;
 use crate::compile_target::CompileTarget;
 use crate::global_cache::GlobalCache;
 use crate::offline_mode::OfflineMode;
+
+/// Set once during single-threaded CLI startup by `Command::which()` in
+/// `bun_runtime::cli` when argv[0] basename == "node"; read by the runtime
+/// CLI and by `bun_install`'s RunCommand helpers.
+pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 // Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
 // CLI string: populated once from argv/bunfig during startup and never freed.
@@ -216,7 +222,7 @@ pub struct BundlerOptions {
 
     pub production: bool,
 
-    pub env_behavior: api::DotEnvBehavior,
+    pub env_behavior: bun_dotenv::DotEnvBehavior,
     pub env_prefix: Box<[u8]>,
     pub elide_lines: Option<usize>,
     // Compile options
@@ -267,7 +273,7 @@ impl Default for BundlerOptions {
             bake_debug_dump_server: false,
             bake_debug_disable_minify: false,
             production: false,
-            env_behavior: api::DotEnvBehavior::disable,
+            env_behavior: bun_dotenv::DotEnvBehavior::disable,
             env_prefix: Box::default(),
             elide_lines: None,
             compile: false,
@@ -287,34 +293,41 @@ impl Default for BundlerOptions {
 pub type Context<'a> = &'a mut ContextData;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Process-global CLI context handle.
+// Process-global CLI context.
 //
-// `ContextData` is owned by the CLI crate (storage lives in
-// `bun_runtime::cli::command::CONTEXT_DATA`), but lower-tier crates such as
-// `bun_jsc` need read access to parsed runtime options (e.g.
-// `runtime_options.console_depth`) without taking a forward dep on
-// `bun_runtime`. The CLI publishes its pointer here via `set_global` during
-// single-threaded startup; readers use `try_get`.
-static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+// The storage lives here so lower-tier crates such as `bun_jsc` can read the
+// parsed runtime options (e.g. `runtime_options.console_depth`) without
+// taking a forward dep on `bun_runtime`. The CLI initializes it via
+// `init_global` during single-threaded startup; readers use `try_get`.
+static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+static CONTEXT_INITIALIZED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
-/// Publish the process-global CLI context. Called once from
-/// `bun_runtime::cli::command::create_context_data` during single-threaded
-/// startup.
+/// Initialize the process-global CLI context. Single-threaded startup only;
+/// call once.
 ///
 /// # Safety
-/// `ctx` must outlive the process (it points into a `static`).
-#[inline]
-pub unsafe fn set_global(ctx: *mut ContextData) {
-    GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
+/// Must be called at most once, during single-threaded startup, before any
+/// other thread can observe the context.
+pub unsafe fn init_global() -> &'static mut ContextData {
+    // SAFETY: caller contract above — single-threaded startup, called once, so
+    // the slot is not aliased and the write happens-before any reader.
+    let ctx = unsafe { (*CONTEXT_DATA.get()).write(ContextData::default()) };
+    CONTEXT_INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
+    ctx
 }
 
 /// Raw pointer to the process-global CLI context (null before
-/// `set_global`). Higher-tier crates that need a `&mut` view should go
+/// `init_global`). Higher-tier crates that need a `&mut` view should go
 /// through this single source of truth rather than keeping a parallel static.
 #[inline]
 pub fn global_ptr() -> *mut ContextData {
-    GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire)
+    if CONTEXT_INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
+        CONTEXT_DATA.get().cast::<ContextData>()
+    } else {
+        core::ptr::null_mut()
+    }
 }
 
 /// Read-only handle to the process-global CLI context, or `None` if the CLI
@@ -322,8 +335,8 @@ pub fn global_ptr() -> *mut ContextData {
 /// `bun_runtime::cli::Command::get` from crates below `bun_runtime`.
 #[inline]
 pub fn try_get<'a>() -> Option<&'a ContextData> {
-    let p = GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire);
-    // SAFETY: pointer was published from a process-lifetime `static` in
+    let p = global_ptr();
+    // SAFETY: the storage is a process-lifetime `static`, initialized in
     // single-threaded startup; treated as read-only here.
     unsafe { p.as_ref() }
 }
@@ -380,10 +393,10 @@ pub enum MacroOptions {
     Map(MacroMap),
 }
 
-/// Plain hashmap aliases re-declared here so this
-/// file does not depend on `resolver/`.
-pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
-pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
+/// Canonical macro-remap map aliases; `bun_resolver::package_json` re-exports
+/// these so both crates share one type.
+pub type MacroImportReplacementMap = StringArrayHashMap<Box<[u8]>>;
+pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -410,13 +423,6 @@ pub struct TestOptions {
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
-    /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
-    /// of `jsc/` references. Read via `test_filter_regex()`.
-    // FORWARD_DECL(b0): erased bun_jsc::RegularExpression to break the T3→T6
-    // back-edge. High tier owns construction/destruction; this field only
-    // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
-    // responsible for freeing any previous value.
-    pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
@@ -458,16 +464,6 @@ pub struct Reporters {
     pub junit: bool,
 }
 
-impl TestOptions {
-    /// Returns the erased `*mut bun_jsc::RegularExpression`. Caller (high tier)
-    /// casts back: `unsafe { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
-    #[inline]
-    pub fn test_filter_regex(&self) -> Option<core::ptr::NonNull<()>> {
-        // SAFETY: erased bun_jsc::RegularExpression — see field decl.
-        self.test_filter_regex
-    }
-}
-
 impl Default for TestOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
@@ -490,7 +486,6 @@ impl Default for TestOptions {
             path_ignore_patterns: Vec::new(),
             path_ignore_patterns_from_cli: false,
             test_filter_pattern: None,
-            test_filter_regex: None,
             // Under ASAN every spawned `bun` child is several-× heavier in
             // RSS and ~2× slower to start, so `describe.concurrent` test
             // files that spawn one child per test (e.g. process-stdio,

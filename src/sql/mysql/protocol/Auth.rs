@@ -164,9 +164,9 @@ pub mod caching_sha2_password {
     // `unsafe { &*self.field }` deref triple while keeping the struct
     // lifetime-free per PORTING.md conventions.
     pub struct EncryptedPassword {
-        pub password: bun_ptr::RawSlice<u8>,
-        pub public_key: bun_ptr::RawSlice<u8>,
-        pub nonce: bun_ptr::RawSlice<u8>,
+        pub password: bun_core::RawSlice<u8>,
+        pub public_key: bun_core::RawSlice<u8>,
+        pub nonce: bun_core::RawSlice<u8>,
         pub sequence_id: u8,
     }
 

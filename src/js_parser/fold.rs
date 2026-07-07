@@ -2,10 +2,10 @@
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
-use crate::p::P;
-use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
+use crate::p::{BindingToExprMode, P};
+use crate::parser::{IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
+use bun_ast::{self as js_ast, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -81,11 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut value: Expr = Expr::EMPTY;
         for decl in decls {
-            // Derive `*mut P` from the live `&mut Self` so the trampoline's
-            // `&mut *ctx` reborrows under the active Unique tag (see Binding.rs).
-            let wrapper = p.to_expr_wrapper_hoisted;
-            let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-            let binding = Binding::to_expr(&decl.binding, ctx, wrapper);
+            let binding = p.binding_to_expr(&decl.binding, BindingToExprMode::Hoisting);
             if let Some(decl_value) = decl.value {
                 value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
             } else if mode == RelocateVarsMode::ForInOrForOf {
@@ -515,7 +511,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Inline import.meta properties for Bake
                     if p.options.framework.is_some()
                         || (p.options.bundle
-                            && p.options.output_format == js_parser::options::Format::Cjs)
+                            && p.options.output_format == bun_options_types::Format::Cjs)
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir

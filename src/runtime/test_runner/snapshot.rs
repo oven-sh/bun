@@ -2,13 +2,12 @@ use core::ffi::c_ulong;
 use std::io::Write as _;
 
 use bun_collections::{HashMap, StringHashMap};
-use bun_core::output as bun_output;
+use bun_core::PathBuffer;
 use bun_core::printer as js_printer;
 use bun_core::{self, Error};
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer};
 use bun_sys::{self};
 use bun_wyhash::hash;
 
@@ -166,7 +165,7 @@ impl<'a> Snapshots<'a> {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if crate::cli::ci_info::is_ci() {
+        if bun_core::ci_info::is_ci() {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
                 self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
@@ -214,10 +213,8 @@ impl<'a> Snapshots<'a> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
-        let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
-            bun_ast::Loader::Js,
-        );
+        let opts =
+            js_parser::ParserOptions::init(vm.transpiler.options.resolve.jsx.clone(), bun_ast::Loader::Js);
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -350,10 +347,7 @@ impl<'a> Snapshots<'a> {
         file_id: FileId,
         value: InlineSnapshotToWrite,
     ) -> Result<(), Error> {
-        let list = self
-            .inline_snapshots_to_write
-            .entry(file_id)
-            .or_default();
+        let list = self.inline_snapshots_to_write.entry(file_id).or_default();
         list.push(value);
         Ok(())
     }
@@ -382,7 +376,7 @@ impl<'a> Snapshots<'a> {
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        bun_output::error_writer(),
+                        bun_core::output::error_writer(),
                     ));
                     success.set(false);
                 }
@@ -548,7 +542,7 @@ impl<'a> Snapshots<'a> {
                     lexer.next()?;
                     // `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone(),
+                        vm.transpiler.options.resolve.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // `P::init` takes an out-param

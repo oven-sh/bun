@@ -99,7 +99,7 @@ impl VM {
     // `holdAPILock`/`DeferGC` on the C++ side instead.
 
     pub fn report_extra_memory(&self, size: usize) {
-        crate::mark_binding!();
+        bun_core::mark_binding!();
         JSC__VM__reportExtraMemory(self, size)
     }
 

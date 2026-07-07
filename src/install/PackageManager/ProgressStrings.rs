@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering;
 use bun_core::Output;
 use const_format::concatcp;
 
-use crate::bun_progress::Node as ProgressNode;
+use bun_core::Progress::Node as ProgressNode;
 
 use super::PackageManager;
 

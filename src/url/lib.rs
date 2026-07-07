@@ -8,13 +8,6 @@ use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
-// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
-// (T0, already a dep). Re-exported under `api::` so `QueryStringMap` /
-// `CombinedScanner` field types keep resolving.
-pub mod api {
-    pub use bun_core::StringPointer;
-}
-
 use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
@@ -347,7 +340,7 @@ impl<'a> URL<'a> {
         b""
     }
 
-    /// `"blob:".len + UUID.stringLength` — see `runtime/webcore/ObjectURLRegistry.specifier_len`.
+    /// `"blob:".len + UUID.stringLength` — see `bun_jsc::object_url_registry::SPECIFIER_LEN`.
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + 36;
 
     pub fn is_blob(&self) -> bool {
@@ -889,9 +882,9 @@ impl<'a> URL<'a> {
 
 #[derive(Clone, Copy)]
 pub struct Param {
-    pub name: api::StringPointer,
+    pub name: bun_core::StringPointer,
     pub name_hash: u64,
-    pub value: api::StringPointer,
+    pub value: bun_core::StringPointer,
 }
 
 // Vec<Param> (AoS); SoA would be a perf optimization only.
@@ -958,7 +951,7 @@ impl QueryStringMap {
         Iterator::init(self)
     }
 
-    pub fn str(&self, ptr: api::StringPointer) -> &[u8] {
+    pub fn str(&self, ptr: bun_core::StringPointer) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
         // `self.buffer` or an external query_string the caller keeps alive).
         let slice = unsafe { &*self.slice };
@@ -1489,8 +1482,8 @@ impl PercentEncoding {
 pub struct ScannerResult {
     pub name_needs_decoding: bool,
     pub value_needs_decoding: bool,
-    pub name: api::StringPointer,
-    pub value: api::StringPointer,
+    pub name: bun_core::StringPointer,
+    pub value: bun_core::StringPointer,
 }
 
 impl ScannerResult {
@@ -1541,25 +1534,25 @@ impl<'a> CombinedScanner<'a> {
     }
 }
 
-fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer {
+fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> bun_core::StringPointer {
     if in_.is_empty() || parent.is_empty() {
-        return api::StringPointer::default();
+        return bun_core::StringPointer::default();
     }
 
     if let Some([offset, length]) = bun_core::range_of_slice_in_buffer(in_, parent) {
-        return api::StringPointer { offset, length };
+        return bun_core::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {
             debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
 
-            return api::StringPointer {
+            return bun_core::StringPointer {
                 offset: u32::try_from(i).unwrap(),
                 length: u32::try_from(in_.len()).unwrap(),
             };
         }
     }
 
-    api::StringPointer::default()
+    bun_core::StringPointer::default()
 }
 
 pub struct PathnameScanner<'a> {
@@ -1654,11 +1647,11 @@ impl<'a> Scanner<'a> {
 
             let slice = &self.query_string[self.i..];
             relative_i = 0;
-            let mut name = api::StringPointer {
+            let mut name = bun_core::StringPointer {
                 offset: u32::try_from(self.i).unwrap(),
                 length: 0,
             };
-            let mut value = api::StringPointer {
+            let mut value = bun_core::StringPointer {
                 offset: 0,
                 length: 0,
             };

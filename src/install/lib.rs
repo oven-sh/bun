@@ -1,90 +1,35 @@
 #![allow(nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
 #![feature(adt_const_params)]
 
-// ──────────────────────────────────────────────────────────────────────────
-// Crate aliases — Phase-A drafts use the porting-doc crate names; map them
-// to the real workspace crates here so module bodies stay diff-minimal.
-// ──────────────────────────────────────────────────────────────────────────
-// Self-alias so Phase-A drafts written against `bun_install::…` resolve
-// without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
-// lifecycle_script_runner.rs).
-extern crate bun_sha_hmac as bun_sha;
-extern crate self as bun_install;
-// `bun_output::declare_scope!` / `scoped_log!` — the macros live at
-// `bun_core` crate root (#[macro_export]); alias the crate so the
-// `bun_output::` path resolves.
-extern crate bun_analytics as analytics;
-extern crate bun_core as bun_output;
-
 /// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 pub(crate) mod bun_schema {
     pub(crate) use bun_options_types::schema::api;
 }
 
-/// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
-/// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
-pub(crate) mod bun_json {
-    pub(crate) use bun_ast::{Expr, ExprData, e as E};
-    pub(crate) use bun_parsers::json::*;
-}
-
-/// `bun.fs` namespace — resolver-tier `FileSystem` / `DirEntry` / `Entry`.
-/// `bun_install` depends on `bun_resolver` directly (no cycle), so re-export
-/// the real types instead of routing through any lower-tier shim.
-pub(crate) mod bun_fs {
-    pub(crate) use bun_resolver::fs::*;
-}
-
-/// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
-/// pre-0.13 `std.Progress`). The earlier value-type counter shim was dropped
-/// once `ProgressStrings.rs`, `hoisted_install.rs`, `runTasks.rs` etc. started
-/// touching the full surface (`supports_ansi_escape_codes`, public `root`,
-/// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
-/// type here just bifurcated `Node` identity across the crate.
-pub(crate) mod bun_progress {
-    pub(crate) use bun_core::Progress::{Node, Progress};
-}
-
-/// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
-/// hosts `Arguments::loadConfig` (MOVE_DOWN b0); this local shim only adds the
-/// legacy `Arguments` alias (= `bun_options_types::context`) that
-/// `hoisted_install` / `isolated_install` import for `Transpiler::init`
-/// plumbing. Kept as a local module so those callers don't need updating; the
-/// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
-/// the real crate spell it `::bun_bunfig`.
-pub(crate) mod bun_bunfig {
-
-    pub(crate) use bun_options_types::context as Arguments;
-}
-
 use core::cell::Cell;
 use core::fmt;
+
+use bun_install_types::{DependencyID, PackageID};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod npm;
-#[path = "PackageManifestMap.rs"]
-pub mod package_manifest_map;
-pub mod resolution;
-// Legacy alias kept while callers migrate from the stub/real split.
-pub use resolution as resolution_real;
 pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod dependency;
-#[path = "ExternalSlice.rs"]
-pub mod external_slice;
-pub mod hosted_git_info;
+pub mod npm;
+#[path = "PackageManifestMap.rs"]
+pub mod package_manifest_map;
+pub mod resolution;
+pub use bun_install_types::hosted_git_info;
 pub mod integrity;
 pub mod padding_checker;
 pub mod postinstall_optimizer;
-pub mod versioned_url;
 
 pub mod extract_tarball;
-#[path = "lockfile.rs"]
-pub mod lockfile_real;
+pub mod lockfile;
 #[path = "NetworkTask.rs"]
 pub mod network_task;
 #[path = "PackageManager.rs"]
@@ -93,9 +38,8 @@ pub mod package_manager_real;
 pub mod package_manager_task;
 #[path = "TarballStream.rs"]
 pub mod tarball_stream;
-pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_dependencies};
-#[path = "bin.rs"]
-pub mod bin_real;
+pub use lockfile::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_dependencies};
+pub mod bin;
 pub mod hoisted_install;
 pub mod isolated_install;
 pub mod lifecycle_script_runner;
@@ -106,57 +50,8 @@ pub mod package_install;
 pub mod package_installer;
 pub mod patch_install;
 pub mod pnpm;
-#[path = "repository.rs"]
-pub mod repository_real;
+pub mod repository;
 pub mod yarn;
-
-/// `repository` — re-export of the file-backed `repository_real` module
-/// (src/install/repository.rs). The earlier inline stub duplicated the
-/// `Repository` struct and stubbed `download`/`checkout`/`try_https` with
-/// `Err("RepositoryNotPorted")` / a partial rewrite table; the real module
-/// lives in the same crate with no dep cycle, so re-export it directly.
-pub use repository_real as repository;
-
-/// `bin` — re-export of the file-backed `bin_real` module (src/install/bin.rs).
-pub use bin_real as bin;
-
-/// `lockfile` — re-export of the file-backed `lockfile_real` module
-/// (src/install/lockfile.rs). The earlier inline stub defined a parallel
-/// `Lockfile` struct with column-vec `PackageList` and ~25 no-op/stub methods
-/// (`load_from_dir` returning unpopulated `Ok`, `save_to_disk` building a
-/// buffer and never writing it, `generate_meta_hash` returning `[0;32]`,
-/// `filter` clearing trees without rebuilding, `get_package_id` ignoring the
-/// resolution, …). Stub and real are in the same crate; unify on the real
-/// type so every caller — `PackageManager`, `migration`, `pnpm`/`yarn`,
-/// `PackageInstaller`, `isolated_install` — agrees on a single `Lockfile`.
-pub mod lockfile {
-    pub use crate::lockfile_real::*;
-    // Back-compat aliases for names the inline stub spelled differently.
-    pub use crate::Origin;
-    pub use crate::lockfile_real::LockfileFormat as Format;
-    pub use crate::lockfile_real::Serializer::SerializerLoadResult;
-    pub use crate::lockfile_real::package_index::Entry as PackageIndexEntry;
-    /// Callers pass a `Resolution.Tag` literal when invoking
-    /// `Scripts.createList` for the root package; alias the tag enum here so
-    /// `lockfile::ScriptsListKind::Root` resolves.
-    pub use crate::resolution::Tag as ScriptsListKind;
-    /// `MultiArrayList<Package>.append` row type — the real `PackageList`
-    /// (`package::List<u64>`) takes a `Package` value, so alias the row type
-    /// for callers (e.g. `migration.rs`) that spell it `PackageListEntry`.
-    pub(crate) type PackageListEntry = crate::lockfile_real::Package;
-    pub mod package {
-        pub use crate::lockfile_real::package::meta::{HasInstallScript, Meta};
-        pub use crate::lockfile_real::package::*;
-        pub mod scripts {
-            pub use crate::lockfile_real::package::scripts::*;
-        }
-    }
-    pub use package::{HasInstallScript, Meta};
-    pub mod tree {
-        pub use crate::lockfile_real::tree::IteratorPathStyle as PathStyle;
-        pub use crate::lockfile_real::tree::*;
-    }
-}
 
 /// `UpdateRequest` — mounted directly (sibling of `package_manager_real`) so
 /// `bunx_command` / `outdated_command` can name `bun_install::update_request`.
@@ -192,7 +87,7 @@ pub mod package_manager {
 
     /// `populateManifestCache` `Packages` union.
     pub enum ManifestCacheOptions<'a> {
-        Ids(&'a [crate::PackageID]),
+        Ids(&'a [bun_install_types::PackageID]),
         Names(&'a [&'a [u8]]),
     }
     /// Alias used by `outdated_command.rs`.
@@ -216,42 +111,6 @@ pub mod package_manager {
     pub use crate::package_manager_real::security_scanner;
 }
 
-/// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,
-/// migration.rs, resolvers/folder_resolver.rs) were written against a
-/// `bun_install::install` submodule path. The crate root *is* that module
-/// now, so re-export everything under both names.
-pub(crate) mod install {
-    pub(crate) use crate::*;
-}
-
-/// `.bunx` shim encoder consumed by
-/// `bin::Linker` (Windows only at runtime, but the encoder types are
-/// referenced unconditionally so the module must exist on all targets).
-// `#[path]` inside an inline `mod {}` resolves relative to the
-// synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
-// file-backed module to crate level with an absolute-ish path and re-export
-// through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
-#[path = "windows-shim/BinLinkingShim.rs"]
-pub mod _bin_linking_shim;
-// `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls)
-// that also compiles as a library `mod` (Windows-only) so
-// `run_command.rs` can call `try_startup_from_bun_js` / `FromBunRunContext`
-// directly — the standalone PE entrypoint is gated behind
-// `feature = "shim_standalone"` inside the file, and there is no
-// `#[global_allocator]` in the library configuration.
-#[cfg(windows)]
-#[path = "windows-shim/bun_shim_impl.rs"]
-pub mod _bun_shim_impl;
-pub mod windows_shim {
-    pub use crate::_bin_linking_shim as bin_linking_shim;
-    #[cfg(windows)]
-    pub use crate::_bun_shim_impl as bun_shim_impl;
-    pub use bin_linking_shim::{
-        BinLinkingShim, Decoded, EMBEDDED_EXECUTABLE_DATA, Flags, Shebang,
-        embedded_executable_data, loose_decode,
-    };
-}
-
 #[path = "resolvers/folder_resolver.rs"]
 pub mod _folder_resolver;
 pub mod resolvers {
@@ -265,7 +124,6 @@ pub mod resolvers {
 // re-exports the real definition from its file-backed sibling module.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use npm as Npm;
 pub use resolution::Resolution;
 // D024: PnpmMatcher canonical lives in `bun_install_types::NodeLinker`; the
 // local PnpmMatcher.rs duplicate (4-arg `from_expr`, dead) was deleted.
@@ -274,22 +132,17 @@ pub use bun_install_types::NodeLinker::PnpmMatcher;
 pub use bun_collections::identity_context::ArrayIdentityContext;
 pub use bun_collections::identity_context::IdentityContext;
 
-pub use external::ExternalPackageNameHashList;
-pub use external::ExternalSlice;
-pub use external::ExternalStringList;
-pub use external::ExternalStringMap;
-pub use external::VersionSlice;
-pub use external_slice as external;
+pub use bun_install_types::resolver_hooks::{
+    ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap, VersionSlice,
+};
 
-pub use dependency::Behavior;
-pub use dependency::{Dependency, DependencyExt, TagExt, ValueExt, VersionExt};
+pub use bun_install_types::resolver_hooks::{Behavior, Dependency, DependencyVersionTag};
 pub use integrity::Integrity;
 
 pub use bin::Bin;
-pub use lockfile_real::bun_lock as TextLockfile;
 pub use patch_install as patch;
 
-pub use dependency::Tag as DependencyVersionTag;
+pub use bun_install_types::resolver_hooks::Repository;
 pub use extract_tarball::ExtractTarball;
 pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
@@ -297,8 +150,7 @@ pub use package_manager::{
     GetJsonOptions, GetJsonResult, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
     WorkspaceFilter, WorkspacePackageJsonCacheEntry,
 };
-pub use repository::{Repository, RepositoryExt};
-pub use resolution::Tag as ResolutionTag;
+pub use repository::RepositoryExt;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
 pub use _folder_resolver::FolderResolution;
@@ -326,12 +178,6 @@ pub use package_manager_real::{
     Subcommand,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// Back-compat type aliases — `*Stub` names that other files still reference
-// during the port now resolve to the real types. Once every call site is
-// migrated these aliases drop.
-// ──────────────────────────────────────────────────────────────────────────
-pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
 /// Callback bundle passed to `PackageManager.runTasks`. Generic over each
@@ -357,49 +203,6 @@ impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbac
             progress_bar: false,
             manifests_only: false,
         }
-    }
-}
-
-/// MOVE_DOWN: `bun_resolver::package_json::PackageJSON` — the resolver crate
-/// depends on `bun_install` (for `Dependency`), so re-importing `PackageJSON`
-/// from there would create a cycle. Mounted here with the install-side field
-/// surface (`name`/`version`/`dependencies`/`arch`/`os`) so
-/// `lockfile::Package::from_package_json` can type-check; the resolver-only
-/// fields (`browser_map`, `exports`, …) stay in `bun_resolver` until the type
-/// is split into install-layer / resolver-layer halves.
-#[derive(Default)]
-pub struct PackageJSON {
-    pub name: Box<[u8]>,
-    pub version: Box<[u8]>,
-    pub arch: npm::Architecture,
-    pub os: npm::OperatingSystem,
-    pub package_manager_package_id: PackageID,
-    pub dependencies: PackageJSONDependencyMap,
-}
-
-#[derive(Default)]
-pub struct PackageJSONDependencyMap {
-    pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
-    // Erased borrow of the package.json source contents (mirrors
-    // `bun_resolver::package_json::DependencyMap::source_buf`, which is
-    // likewise `'static`-erased); kept alive by the originating
-    // `PackageJSON::source_contents` for the lifetime of the map.
-    pub source_buf: &'static [u8],
-}
-
-/// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
-/// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the
-/// CI-probe table itself is generated at build time in `bun_runtime` and is
-/// not reachable from this tier, so the shim returns the `CI` env var name
-/// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
-pub mod ci_info {
-    pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
-        // The per-vendor probes live in `bun_runtime` (T6) and are wired in
-        // there; install only needs *some* answer for the user-agent string.
-        if bun_core::env_var::CI::get().is_some() {
-            return Some(b"ci");
-        }
-        None
     }
 }
 
@@ -448,15 +251,6 @@ pub mod ShellCompletions {
 // ──────────────────────────────────────────────────────────────────────────
 pub struct RunCommand;
 
-/// Canonical `PRETEND_TO_BE_NODE` flag.
-/// Set once during single-threaded startup by `Command::which()`
-/// in `bun_runtime::cli` when argv[0] basename == "node"; read by both the
-/// runtime CLI and the install-tier `RunCommand` helpers below. Lives in
-/// `bun_install` (not `bun_runtime`) so both crates can address the SAME
-/// static without a dep-cycle — `bun_runtime::cli` re-exports it.
-pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-
 use bun_core::ZStr;
 
 impl RunCommand {
@@ -492,7 +286,7 @@ impl RunCommand {
     };
 
     fn find_shell_impl<'a>(
-        buf: &'a mut bun_paths::PathBuffer,
+        buf: &'a mut bun_core::PathBuffer,
         path: &[u8],
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
@@ -545,7 +339,7 @@ impl RunCommand {
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
         ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::PathBuffer::uninit();
+            let mut scratch = bun_core::PathBuffer::uninit();
             let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
@@ -567,7 +361,9 @@ impl RunCommand {
         optional_bun_path: &mut &[u8],
     ) -> Result<(), bun_core::Error> {
         // If we are already running as "node", the path should exist
-        if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
+        if bun_options_types::context::PRETEND_TO_BE_NODE
+            .load(core::sync::atomic::Ordering::Relaxed)
+        {
             return Ok(());
         }
 
@@ -653,7 +449,7 @@ impl RunCommand {
                             // would make every `--bun` child of the SECOND
                             // binary silently exec the FIRST. Verify the target
                             // before reusing; replace it once if stale.
-                            let mut buf = bun_paths::PathBuffer::uninit();
+                            let mut buf = bun_core::PathBuffer::uninit();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())
                                 .unwrap_or(false);
@@ -685,7 +481,7 @@ impl RunCommand {
             use bun_core::strings;
             use bun_sys::windows as win;
 
-            let mut target_path_buffer = bun_paths::WPathBuffer::default();
+            let mut target_path_buffer = bun_core::WPathBuffer::default();
             let prefix: &[u16] = strings::w!("\\??\\");
 
             // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
@@ -793,56 +589,34 @@ impl RunCommand {
     }
 }
 
-/// Process-lifetime arena for the install-tier `Transpiler` constructed in
-/// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
-/// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
-/// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
-/// `Box::leak`).
-fn install_runner_arena() -> &'static bun_alloc::Arena {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
-    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
-        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
-    ONCE.call_once(|| {
-        // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
-    });
-    // SAFETY: initialized exactly once above. `configure_env_for_run` is only
-    // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
-    // never observed concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
-}
-
 impl RunCommand {
     /// DEP-CYCLE NOTE: the full implementation walks `bun_resolver::DirInfo`
     /// and reads `package.json` via the resolver — T6 work that lives in
     /// `bun_runtime::cli::RunCommand::configure_env_for_run`. The install
     /// tier needs the *Transpiler-initialisation* half of that contract
     /// because callers (`configure_env_for_scripts_run`) `assume_init()` the
-    /// out-param. This shim performs the init + the env-var seeding that has
-    /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
-    /// (opaque to install — every caller discards it).
+    /// out-param. This shim performs the init plus the npm env seeding shared
+    /// with the T6 impl via `bun_bundler::transpiler::seed_npm_runner_env`;
+    /// the DirInfo walk + `npm_package_*` seeding remain T6-only.
     pub fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
-        this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
+        this_transpiler: &mut ::core::mem::MaybeUninit<
+            bun_bundler::transpiler::Transpiler<'static>,
+        >,
         env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut (), bun_core::Error> {
-        use bun_core::Global;
-
+    ) -> Result<(), bun_core::Error> {
         let args = ctx.args.clone();
-        this_transpiler.write(bun_transpiler::Transpiler::init(
-            install_runner_arena(),
+        this_transpiler.write(bun_bundler::transpiler::Transpiler::init(
+            bun_bundler::transpiler::runner_arena(),
             ctx.log,
             args,
             env,
         )?);
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        this_transpiler.options.env.behavior =
-            bun_options_types::schema::api::DotEnvBehavior::load_all;
+        this_transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::load_all;
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;
@@ -851,48 +625,9 @@ impl RunCommand {
         // Stacked-Borrows overlap with `run_env_loader`).
         let env_loader = this_transpiler.env_mut();
 
-        // Propagate --no-orphans / [run] noOrphans to the script's env so any
-        // Bun process the script spawns enables its own watchdog. The env
-        // loader snapshots `environ` before flag parsing runs, so the
-        // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::parent_death_watchdog::is_enabled() {
-            let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
-        }
+        bun_bundler::transpiler::seed_npm_runner_env(env_loader);
 
-        // we have no way of knowing what version they're expecting without
-        // running the node executable; running the node executable is too
-        // slow, so we will just hardcode it to LTS
-        let _ = env_loader.map.put_default(
-            b"npm_config_user_agent",
-            // the use of npm/? is copying yarn
-            // e.g.
-            // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            const_format::concatcp!(
-                "bun/",
-                Global::package_json_version,
-                " npm/? node/v",
-                bun_core::env::REPORTED_NODEJS_VERSION,
-                " ",
-                Global::os_name,
-                " ",
-                Global::arch_name,
-            )
-            .as_bytes(),
-        );
-
-        if env_loader.get(b"npm_execpath").is_none() {
-            // we don't care if this fails
-            if let Ok(self_exe) = bun_core::self_exe_path() {
-                let _ = env_loader
-                    .map
-                    .put_default(b"npm_execpath", self_exe.as_bytes());
-            }
-        }
-
-        // DirInfo walk / npm_package_* seeding is performed by the T6 impl
-        // (`bun_runtime::cli::RunCommand::configure_env_for_run`); install
-        // callers discard the return value.
-        Ok(core::ptr::null_mut())
+        Ok(())
     }
 }
 
@@ -1023,18 +758,6 @@ pub(crate) fn initialize_mini_store() {
     });
 }
 
-// MOVE_DOWN: identity/sentinel scalar aliases live in `bun_install_types::resolver_hooks`
-// (single canonical definition shared with `bun_resolver`). Re-exported here so existing
-// `bun_install::PackageID` / `INVALID_PACKAGE_ID` / etc. paths continue to resolve.
-pub use bun_install_types::{
-    DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
-    TruncatedPackageNameHash,
-};
-// Phase-A drafts use the field-style lowercase names; alias both spellings.
-pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
-pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
-pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
-
 pub(crate) type PackageNameAndVersionHash = u64;
 
 pub(crate) struct Aligner;
@@ -1086,12 +809,6 @@ pub enum Origin {
     Npm = 1,
     Tarball = 2,
 }
-
-// MOVE_DOWN: `Features` and `PreinstallState` now live in
-// `bun_install_types::resolver_hooks` so `Behavior::is_enabled` (also moved
-// down) can name a single shared `Features` without a `bun_install` upward
-// edge. Re-exported here for existing `crate::Features` callers.
-pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
 pub struct ExtractDataJson {

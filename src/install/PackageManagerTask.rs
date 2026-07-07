@@ -1,6 +1,7 @@
 //! Schedule long-running callbacks for a task
 //! Slow stuff is broken into tasks, each can run independently without locks
 
+use bun_install_types::{DependencyID, PackageID};
 use core::mem::ManuallyDrop;
 
 use bun_ast::{Loc, Log};
@@ -13,8 +14,8 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageID, PackageManager, PatchTask,
-    Repository, RepositoryExt as _, Resolution,
+    ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
+    RepositoryExt as _, Resolution,
 };
 
 use bun_dotenv as dot_env;
@@ -112,7 +113,7 @@ impl Id {
         hasher.update(b"@");
         // SAFETY: reading raw bytes of a POD value for hashing
         hasher.update(unsafe {
-            bun_core::ffi::slice(
+            bun_opaque::ffi::slice(
                 (&raw const package_version).cast::<u8>(),
                 core::mem::size_of::<semver::Version>(),
             )
@@ -602,7 +603,7 @@ fn read_and_extract(
         // through here from the install crate's `FileSystem` shim.
         File::read_from_user_input(
             Fd::cwd(),
-            crate::bun_fs::FileSystem::instance().top_level_dir(),
+            bun_resolver::fs::FileSystem::instance().top_level_dir(),
             tarball_path,
         )?
     } else {

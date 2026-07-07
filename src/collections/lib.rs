@@ -13,15 +13,10 @@
 #![warn(unused_must_use)]
 
 pub mod hive_array;
-pub mod multi_array_list;
-pub mod vec_ext;
-// `bounded_array` moved down to `bun_core` (cycle-break for the
-// `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
-// Re-exported here unchanged so existing `bun_collections::BoundedArray` /
-// `bun_collections::bounded_array::*` paths keep resolving.
-pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
+pub mod multi_array_list;
+pub mod vec_ext;
 
 pub mod bit_set;
 pub mod pool;
@@ -29,8 +24,9 @@ pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
 #[path = "StaticHashMap.rs"]
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
+pub mod stream_buffer;
+pub use stream_buffer::{StreamBuffer, WriteKind};
 
-pub use bounded_array::BoundedArray;
 pub use hive_array::{
     Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
 };
@@ -44,10 +40,6 @@ pub use bit_set::{
     AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
     StaticBitSet,
 };
-
-// Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import
-// from here); canonical impl lives in `bun_core::strings`.
-pub use bun_core::strings::{const_bytes_eq, const_str_eq};
 
 /// Namespace alias for the bit-set types.
 pub mod dynamic_bit_set {
@@ -175,12 +167,13 @@ pub use string_map::StringMap;
 
 // Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
-pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
+pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
 // crates that already depend on `bun_collections` (logger, css, js_parser,
 // crash_handler, watcher, http_types) can route the borrowck-dodge through
 // one centralised `unsafe fn` instead of open-coding the lifetime cast.
-pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
+pub use bun_core::RawSlice;
+pub use bun_ptr::{detach_lifetime, detach_ref};
 
 // ──────────────────────────────────────────────────────────────────────────
 // SmallList

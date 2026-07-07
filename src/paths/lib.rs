@@ -9,8 +9,8 @@
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
 pub mod w_path_buffer_pool {
-    use super::WPathBuffer;
     use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
+    use bun_core::WPathBuffer;
     pub type Guard = PoolGuard<WPathBuffer>;
     #[inline]
     pub fn get() -> PoolGuard<WPathBuffer> {
@@ -44,14 +44,14 @@ pub mod strings {
     pub use super::string_paths::from_w_path as from_wpath;
     pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
     pub use super::string_paths::{
-        basename, is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
-        starts_with_windows_drive_letter_t, without_trailing_slash,
+        basename, remove_leading_dot_slash, starts_with_windows_drive_letter_t,
+        without_trailing_slash,
     };
+    pub use bun_core::strings::is_windows_absolute_path_missing_drive_letter;
 }
 
 // Native separator re-exports (PORTING.md §Crate map: never std::path).
-pub use bun_alloc::SEP;
-pub use bun_alloc::SEP_STR;
+pub use bun_ascii::{SEP, SEP_STR};
 
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
 /// a path passes through a `node_modules` directory.
@@ -302,14 +302,6 @@ pub fn stem(p: &[u8]) -> &[u8] {
     }
 }
 
-// LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
-// are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
-// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
-// etc. accept a buffer obtained from this crate without a pointer cast.
-pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
-/// Alias for [`PATH_MAX_WIDE`].
-pub const MAX_WPATH: usize = PATH_MAX_WIDE;
-
 #[cfg(windows)]
 pub type OSPathChar = u16;
 #[cfg(not(windows))]
@@ -324,9 +316,9 @@ pub type OSPathSliceZ = bun_core::ZStr;
 pub type OSPathSlice = [OSPathChar];
 
 #[cfg(windows)]
-pub type OSPathBuffer = WPathBuffer;
+pub type OSPathBuffer = bun_core::WPathBuffer;
 #[cfg(not(windows))]
-pub type OSPathBuffer = PathBuffer;
+pub type OSPathBuffer = bun_core::PathBuffer;
 
 pub mod path_buffer_pool;
 
@@ -512,113 +504,66 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering};
     use std::io::Write as _;
-    use std::sync::OnceLock;
 
     use bun_core::ZStr;
 
     use crate::resolve_path::{is_sep_any, last_index_of_sep};
 
-    /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The dir-entry
-    /// cache and filename arenas remain in `bun_resolver` and reach back here
-    /// for the cwd string.
-    ///
-    /// Concurrency: init-once via `OnceLock<FileSystem>`.
-    pub struct FileSystem {
-        // Stored as raw bytes (not `String`): POSIX paths are arbitrary byte
-        // sequences, not guaranteed UTF-8, and every reader
-        // (`top_level_dir()`, resolve_path.rs) wants `&[u8]`.
-        top_level_dir: Vec<u8>,
-    }
-
-    static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
-    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load.
-    static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
-
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-    impl FileSystem {
-        #[inline]
-        pub fn instance_loaded() -> bool {
-            INSTANCE_LOADED.load(Ordering::Relaxed)
-        }
+    /// Reads the canonical writable storage in `bun_core::TOP_LEVEL_DIR`
+    /// (updated by `bun_resolver::FileSystem::set_top_level_dir`), so
+    /// `Path::init_top_level_dir` observes the post-chdir value.
+    #[inline]
+    pub fn top_level_dir() -> &'static [u8] {
+        // Same contract as the old `FileSystem.instance accessed before init`
+        // panic: `bun_resolver`'s fs init seeds this before any caller.
+        assert!(
+            bun_core::top_level_dir_loaded(),
+            "top_level_dir accessed before init"
+        );
+        bun_core::top_level_dir()
+    }
 
-        /// Panics if `init` has not been called.
-        #[inline]
-        pub fn instance() -> &'static FileSystem {
-            INSTANCE
-                .get()
-                .expect("FileSystem.instance accessed before init")
+    /// The top-level dir with any single trailing separator stripped
+    /// (the root `/` is left intact).
+    pub fn top_level_dir_without_trailing_slash() -> &'static [u8] {
+        let d = top_level_dir();
+        if d.len() > 1 && d.last() == Some(&crate::SEP) {
+            &d[..d.len() - 1]
+        } else {
+            d
         }
+    }
 
-        /// Higher-tier `bun_resolver::fs` calls this during its own `initWithForce` after it
-        /// resolves the cwd. Takes raw bytes — POSIX cwd is not guaranteed UTF-8.
-        pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
-            let _ = INSTANCE.set(FileSystem {
-                top_level_dir: top_level_dir.to_vec(),
-            });
-            INSTANCE_LOADED.store(true, Ordering::Release);
-            INSTANCE.get().unwrap()
+    /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
+    /// the NUL-terminated borrow.
+    pub fn tmpname<'b>(
+        extname: &[u8],
+        buf: &'b mut [u8],
+        hash: u64,
+    ) -> Result<&'b mut ZStr, bun_core::Error> {
+        let hex_value: u64 = (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
+
+        let len = buf.len();
+        let mut cursor = &mut buf[..];
+        // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
+        write!(
+            &mut cursor,
+            ".{:016x}-{:08X}.{}",
+            hex_value,
+            TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+            bun_core::fmt::s(extname),
+        )
+        .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+        let written = len - cursor.len();
+        if written >= len {
+            return Err(bun_core::err!("NoSpaceLeft"));
         }
-
-        /// `PackageManager.init` reassigns the top-level dir after walking up
-        /// to the workspace root. The canonical
-        /// writable storage lives in `bun_core::TOP_LEVEL_DIR` (updated by
-        /// `bun_resolver::FileSystem::set_top_level_dir`). Delegate the read
-        /// there so `Path::init_top_level_dir` observes the post-chdir value
-        /// instead of the `OnceLock` snapshot taken at process start.
-        #[inline]
-        pub fn top_level_dir(&self) -> &[u8] {
-            let d = bun_core::top_level_dir();
-            // Fallback to the seeded value only if `bun_core` was never set
-            // (unit tests that init this module directly).
-            if d == b"." {
-                self.top_level_dir.as_slice()
-            } else {
-                d
-            }
-        }
-
-        /// The top-level dir with any single trailing separator stripped
-        /// (the root `/` is left intact).
-        pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
-            let d = self.top_level_dir();
-            if d.len() > 1 && d.last() == Some(&crate::SEP) {
-                &d[..d.len() - 1]
-            } else {
-                d
-            }
-        }
-
-        /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
-        /// the NUL-terminated borrow. Static (no `&self`).
-        pub fn tmpname<'b>(
-            extname: &[u8],
-            buf: &'b mut [u8],
-            hash: u64,
-        ) -> Result<&'b mut ZStr, bun_core::Error> {
-            let hex_value: u64 =
-                (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
-
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
-            // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
-            write!(
-                &mut cursor,
-                ".{:016x}-{:08X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bun_core::fmt::s(extname),
-            )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(bun_core::err!("NoSpaceLeft"));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
-        }
+        buf[written] = 0;
+        Ok(ZStr::from_buf_mut(buf, written))
     }
 
     /// Parsed (dir, base, ext,
@@ -861,6 +806,46 @@ pub mod fs {
             is_symlink: false,
         };
 
+        /// Mirrors `src/resolver/fs.rs::Path::packageName`.
+        pub fn package_name(&self) -> Option<&'a [u8]> {
+            let mut name_to_use = self.pretty;
+            if let Some(node_modules) =
+                bun_core::strings::last_index_of(self.text, crate::NODE_MODULES_NEEDLE)
+            {
+                name_to_use = &self.text[node_modules + crate::NODE_MODULES_NEEDLE.len()..];
+            }
+
+            let pkgname = {
+                let str = name_to_use;
+                'brk: {
+                    if str.is_empty() {
+                        break 'brk str;
+                    }
+                    if str[0] == b'@' {
+                        if let Some(first_slash) = bun_core::strings::index_of_char(&str[1..], b'/')
+                        {
+                            let first_slash = first_slash as usize;
+                            let remainder = &str[1 + first_slash + 1..];
+                            if let Some(last_slash) =
+                                bun_core::strings::index_of_char(remainder, b'/')
+                            {
+                                let last_slash = last_slash as usize;
+                                break 'brk &str[0..first_slash + 1 + last_slash + 1];
+                            }
+                        }
+                    }
+                    if let Some(first_slash) = bun_core::strings::index_of_char(str, b'/') {
+                        break 'brk &str[0..first_slash as usize];
+                    }
+                    str
+                }
+            };
+            if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
+                return None;
+            }
+            Some(pkgname)
+        }
+
         /// Parsed (dir/base/ext/filename) view of `text`. Computed on demand —
         /// the four slices borrow `text`, so the returned `PathName` carries
         /// lifetime `'a` (same as the old stored field).
@@ -1048,7 +1033,7 @@ pub mod fs {
     }
 
     /// A resolved path together with the file contents loaded from it.
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone, Copy, Default)]
     pub struct PathContentsPair<'a> {
         pub path: Path<'a>,
         pub contents: &'a [u8],

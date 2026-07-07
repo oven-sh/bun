@@ -12,30 +12,12 @@ use crate::node::StringOrBuffer;
 use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
 
-// `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
-// (tier-6), not on `bun_core::String` itself.
-#[inline]
-fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
-}
-
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
     arr.push(global, item)
 }
 
-/// Map a host-fn `JsError` back into the parser's error enum so it can
-/// bubble through `md::render_with_renderer` and be re-thrown at the top.
-#[inline]
-fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
-    match e {
-        bun_jsc::JsError::Thrown => ParserError::JSError,
-        bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
-        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
-    }
-}
-
-/// Throw the JS exception for a `ParserError` returned by `bun_md`.
+/// Throw/translate a ParserError at the JS boundary.
 /// `input_len` is the byte length of the rendered input, reported back by the
 /// `InputTooLarge` range error.
 #[cold]
@@ -47,9 +29,9 @@ fn parser_err_to_js(
     match err {
         // A renderer callback threw (or the VM is terminating); the exception
         // is already pending on the VM.
-        ParserError::JSError => bun_jsc::JsError::Thrown,
-        ParserError::JSTerminated => bun_jsc::JsError::Terminated,
-        ParserError::OutOfMemory => global_this.throw_out_of_memory(),
+        ParserError::Js(bun_jsc::JsError::Thrown) => bun_jsc::JsError::Thrown,
+        ParserError::Js(bun_jsc::JsError::Terminated) => bun_jsc::JsError::Terminated,
+        ParserError::Js(bun_jsc::JsError::OutOfMemory) => global_this.throw_out_of_memory(),
         ParserError::StackOverflow => global_this.throw_stack_overflow(),
         ParserError::InputTooLarge => global_this.throw_range_error(
             input_len as i64,
@@ -63,7 +45,7 @@ fn parser_err_to_js(
         // block offsets, so an `input.byteLength` bound would be misleading.
         ParserError::TooManyBlocks => global_this
             .err(
-                bun_jsc::ErrCode::OUT_OF_RANGE,
+                bun_jsc::ErrorCode::OUT_OF_RANGE,
                 format_args!(
                     "markdown input requires more block metadata than the parser can address (4 GiB)"
                 ),
@@ -198,7 +180,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
 #[bun_jsc::host_fn]
@@ -231,7 +213,7 @@ pub(crate) fn render_to_html(
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
@@ -350,7 +332,7 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     // Return accumulated result
     let result = js_renderer.get_result();
-    create_utf8_for_js(global_this, result)
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, result)
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
@@ -550,27 +532,28 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
         block_type: md::BlockType,
         data: u32,
         flags: u32,
-    ) -> md::types::JsResult<()> {
+    ) -> md::types::ParserResult<()> {
         self.enter_block_impl(block_type, data, flags)
-            .map_err(js_to_parser_err)
+            .map_err(ParserError::from)
     }
-    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
+    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::ParserResult<()> {
         self.leave_block_impl(block_type, data)
-            .map_err(js_to_parser_err)
+            .map_err(ParserError::from)
     }
     fn enter_span(
         &mut self,
         span_type: md::SpanType,
         detail: md::SpanDetail<'_>,
-    ) -> md::types::JsResult<()> {
+    ) -> md::types::ParserResult<()> {
         self.enter_span_impl(span_type, detail)
-            .map_err(js_to_parser_err)
+            .map_err(ParserError::from)
     }
-    fn leave_span(&mut self, span_type: md::SpanType) -> md::types::JsResult<()> {
-        self.leave_span_impl(span_type).map_err(js_to_parser_err)
+    fn leave_span(&mut self, span_type: md::SpanType) -> md::types::ParserResult<()> {
+        self.leave_span_impl(span_type).map_err(ParserError::from)
     }
-    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
-        self.text_impl(text_type, content).map_err(js_to_parser_err)
+    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::ParserResult<()> {
+        self.text_impl(text_type, content)
+            .map_err(ParserError::from)
     }
 }
 
@@ -808,7 +791,11 @@ impl<'a> ParseRenderer<'a> {
         match block_type {
             md::BlockType::H => {
                 if let Some(s) = slug {
-                    props.put(g, b"id", create_utf8_for_js(g, &s)?);
+                    props.put(
+                        g,
+                        b"id",
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(g, &s)?,
+                    );
                 }
             }
             md::BlockType::Ol => {
@@ -828,14 +815,22 @@ impl<'a> ParseRenderer<'a> {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
                     let lang = extract_language(self.src_text, entry.data);
                     if !lang.is_empty() {
-                        props.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        props.put(
+                            g,
+                            b"language",
+                            bun_jsc::bun_string_jsc::create_utf8_for_js(g, lang)?,
+                        );
                     }
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(g, b"align", create_utf8_for_js(g, align_str)?);
+                    props.put(
+                        g,
+                        b"align",
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(g, align_str)?,
+                    );
                 }
             }
             _ => {}
@@ -926,19 +921,39 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"href",
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
                 if !entry.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
+                    props.put(
+                        g,
+                        b"title",
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Img => {
-                props.put(g, b"src", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"src",
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
                 if !entry.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
+                    props.put(
+                        g,
+                        b"title",
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, b"target", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"target",
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
             }
             md::SpanType::LatexmathDisplay => {
                 props.put(g, b"display", JSValue::TRUE);
@@ -965,7 +980,11 @@ impl<'a> ParseRenderer<'a> {
                     }
                 }
                 if !alt_buf.is_empty() {
-                    props.put(g, b"alt", create_utf8_for_js(g, &alt_buf)?);
+                    props.put(
+                        g,
+                        b"alt",
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(g, &alt_buf)?,
+                    );
                 }
             }
         } else {
@@ -1015,12 +1034,12 @@ impl<'a> ParseRenderer<'a> {
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
-                let str = create_utf8_for_js(g, b"\n")?;
+                let str = bun_jsc::bun_string_jsc::create_utf8_for_js(g, b"\n")?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             md::TextType::NullChar => {
-                let str = create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
+                let str = bun_jsc::bun_string_jsc::create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1028,12 +1047,12 @@ impl<'a> ParseRenderer<'a> {
                 let mut buf = [0u8; 8];
                 let decoded =
                     md::helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
-                let str = create_utf8_for_js(g, decoded)?;
+                let str = bun_jsc::bun_string_jsc::create_utf8_for_js(g, decoded)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             _ => {
-                let str = create_utf8_for_js(g, content)?;
+                let str = bun_jsc::bun_string_jsc::create_utf8_for_js(g, content)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1117,27 +1136,28 @@ impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
         block_type: md::BlockType,
         data: u32,
         flags: u32,
-    ) -> md::types::JsResult<()> {
+    ) -> md::types::ParserResult<()> {
         self.enter_block_impl(block_type, data, flags)
-            .map_err(js_to_parser_err)
+            .map_err(ParserError::from)
     }
-    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
+    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::ParserResult<()> {
         self.leave_block_impl(block_type, data)
-            .map_err(js_to_parser_err)
+            .map_err(ParserError::from)
     }
     fn enter_span(
         &mut self,
         span_type: md::SpanType,
         detail: md::SpanDetail<'_>,
-    ) -> md::types::JsResult<()> {
+    ) -> md::types::ParserResult<()> {
         self.enter_span_impl(span_type, detail)
-            .map_err(js_to_parser_err)
+            .map_err(ParserError::from)
     }
-    fn leave_span(&mut self, span_type: md::SpanType) -> md::types::JsResult<()> {
-        self.leave_span_impl(span_type).map_err(js_to_parser_err)
+    fn leave_span(&mut self, span_type: md::SpanType) -> md::types::ParserResult<()> {
+        self.leave_span_impl(span_type).map_err(ParserError::from)
     }
-    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
-        self.text_impl(text_type, content).map_err(js_to_parser_err)
+    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::ParserResult<()> {
+        self.text_impl(text_type, content)
+            .map_err(ParserError::from)
     }
 }
 
@@ -1236,7 +1256,8 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = create_utf8_for_js(self.global_object, children)?;
+        let children_js =
+            bun_jsc::bun_string_jsc::create_utf8_for_js(self.global_object, children)?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1390,7 +1411,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        let text_js = create_utf8_for_js(self.global_object, content)?;
+        let text_js = bun_jsc::bun_string_jsc::create_utf8_for_js(self.global_object, content)?;
         let result =
             self.callbacks
                 .text
@@ -1508,7 +1529,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 let obj = JSValue::create_empty_object(g, field_count);
                 obj.put(g, b"level", JSValue::js_number(data as f64));
                 if let Some(s) = slug {
-                    obj.put(g, b"id", create_utf8_for_js(g, s)?);
+                    obj.put(g, b"id", bun_jsc::bun_string_jsc::create_utf8_for_js(g, s)?);
                 }
                 Ok(Some(obj))
             }
@@ -1535,7 +1556,11 @@ impl<'a> JsCallbackRenderer<'a> {
                     let lang = extract_language(self.src_text, data);
                     if !lang.is_empty() {
                         let obj = JSValue::create_empty_object(g, 1);
-                        obj.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        obj.put(
+                            g,
+                            b"language",
+                            bun_jsc::bun_string_jsc::create_utf8_for_js(g, lang)?,
+                        );
                         return Ok(Some(obj));
                     }
                 }
@@ -1544,7 +1569,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    create_utf8_for_js(g, align_str)?
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(g, align_str)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1597,9 +1622,9 @@ impl<'a> JsCallbackRenderer<'a> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, href)?;
+                let href = bun_jsc::bun_string_jsc::create_utf8_for_js(g, href)?;
                 let title = if !title.is_empty() {
-                    create_utf8_for_js(g, title)?
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(g, title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1612,9 +1637,17 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, b"src", create_utf8_for_js(g, href)?);
+                obj.put(
+                    g,
+                    b"src",
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(g, href)?,
+                );
                 if !title.is_empty() {
-                    obj.put(g, b"title", create_utf8_for_js(g, title)?);
+                    obj.put(
+                        g,
+                        b"title",
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(g, title)?,
+                    );
                 }
                 Ok(Some(obj))
             }

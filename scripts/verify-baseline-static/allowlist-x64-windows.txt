@@ -870,6 +870,7 @@ sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
 strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
+strspn                      [AVX]         # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]

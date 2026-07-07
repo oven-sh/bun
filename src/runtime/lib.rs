@@ -5,13 +5,6 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(adt_const_params)]
 
-/// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
-/// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to
-/// resolve unchanged.
-pub mod jsc {
-    pub use bun_jsc::*;
-}
-
 // ─── runtime submodules ──────────────────────────────────────────────────
 pub mod allocators; // moved from bun_alloc (tier-0 → bun_core/sys/runtime back-edge)
 pub mod crypto;
@@ -34,19 +27,18 @@ pub mod shell;
 #[path = "api.rs"]
 pub mod api;
 pub mod dispatch;
+pub mod generated_classes_list;
 pub mod hw_exports;
+pub mod ipc;
 pub mod ipc_host;
 pub mod jsc_hooks;
 pub mod linear_fifo_testing;
+pub mod macro_runner;
 pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;
-pub mod timer;
-// `generated_classes_list.rs` lives under `src/jsc/` but every type it
-// aliases is defined in this crate (api/webcore/test_runner/bake) or a
-// same-tier dep, so it is `#[path]`-mounted here to avoid a bun_jsc cycle.
-#[path = "../jsc/generated_classes_list.rs"]
-pub mod generated_classes_list;
+#[path = "timer/WTFTimer.rs"]
+pub mod wtf_timer;
 pub use generated_classes_list::Classes as GeneratedClassesList;
 pub mod ffi_imports;
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
@@ -56,6 +48,7 @@ pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub mod dns_jsc;
 pub mod image;
+pub mod sql_jsc;
 pub mod test_runner;
 pub mod valkey_jsc;
 

@@ -1,9 +1,9 @@
+use bun_core::errno::uv_e;
 use bun_core::strings::EncodingNonAscii;
 use bun_core::{self as bstr, OwnedString, String as BunString, ZigString, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
-use bun_sys::UV_E;
 
-use crate::node::types::Encoding;
+use crate::node::types::{Encoding, EncodingExt as _};
 use crate::node::util::validators;
 use bun_dotenv::env_loader as envloader;
 
@@ -16,7 +16,7 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
     }
 
     let err_int = arguments[0].to_int32();
-    if let Some(name) = UV_E::name(err_int) {
+    if let Some(name) = uv_e::name(err_int) {
         return BunString::static_(name).to_js(global);
     }
     let mut fmtstring = BunString::create_format(format_args!("Unknown system error {}", err_int));
@@ -28,7 +28,7 @@ pub(crate) fn etimedout_error_code(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    Ok(JSValue::js_number_from_int32(-UV_E::TIMEDOUT))
+    Ok(JSValue::js_number_from_int32(-uv_e::TIMEDOUT))
 }
 
 #[bun_jsc::host_fn]
@@ -36,7 +36,7 @@ pub(crate) fn enobufs_error_code(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
+    Ok(JSValue::js_number_from_int32(-uv_e::NOBUFS))
 }
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.

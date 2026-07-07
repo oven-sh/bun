@@ -7,10 +7,10 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, err};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
 use bun_sys::{self, Fd, File, O};
 
@@ -233,7 +233,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         });
         let mut path_buf = PathBuffer::uninit();
         let out_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_paths::fs::top_level_dir(),
             &mut path_buf.0,
             &[&opts.reports_directory, b"lcov.info"],
         );

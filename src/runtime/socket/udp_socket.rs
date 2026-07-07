@@ -4,6 +4,7 @@ use core::ffi::{c_char, c_int, c_void};
 use bun_core::{String as BunString, ZigStringSlice};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -26,7 +27,7 @@ use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 use crate::api::SocketAddress;
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
 
-bun_output::declare_scope!(UdpSocket, visible);
+bun_core::declare_scope!(UdpSocket, visible);
 
 /// Local errno-classification shim — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
@@ -497,7 +498,7 @@ impl UDPSocket {
     }
 
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
-        bun_output::scoped_log!(UdpSocket, "udpSocket");
+        bun_core::scoped_log!(UdpSocket, "udpSocket");
 
         let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
@@ -1695,7 +1696,7 @@ impl UDPSocket {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
+        bun_core::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
         self.this_value.with_mut(|r| r.finalize());
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
         // back so its existing raw-ptr teardown path stays intact.

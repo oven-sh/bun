@@ -1,6 +1,7 @@
+use bun_core::IntrusiveField as _;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
-use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
+use bun_threading::{WorkPoolTask, work_pool::WorkPool};
 
 use crate::event_loop::EventLoop;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
@@ -13,7 +14,7 @@ use bun_ptr::BackRef;
 /// - `then(&mut self, &mut JSPromise)` — resolves the promise with the result on the JS thread
 pub trait ConcurrentPromiseTaskContext: Sized {
     /// Tag this `ConcurrentPromiseTask<Self>` carries when enqueued back onto the
-    /// JS event loop's concurrent queue (`task_tag::*`).
+    /// JS event loop's concurrent queue (`TaskTag`).
     const TASK_TAG: TaskTag;
 
     fn run(&mut self);
@@ -80,9 +81,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that
-        // field, so `from_task_ptr` recovers the live heap `Self` parent,
+        // field, so `from_field_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
-        let this = unsafe { Self::from_task_ptr(task) };
+        let this = unsafe { Self::from_field_ptr(task) };
         // SAFETY: `this` is alive for the duration of the thread-pool callback;
         // exclusively owned by the work pool at this point.
         unsafe { (*this).ctx.run() };

@@ -27,26 +27,6 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
-/// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
-/// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
-/// need to name `crate::server::server_config::SSLConfig`). The body is the
-/// same `as_usockets() → init_from_options()` round-trip the old local copy
-/// did; the duplicate module file is gone.
-pub mod ssl_wrapper {
-    pub use bun_uws::ssl_wrapper::*;
-
-    /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
-    /// tier can keep passing `&SSLConfig` directly.
-    pub fn init<T: Copy>(
-        ssl_options: &crate::server::server_config::SSLConfig,
-        is_client: bool,
-        handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, bun_core::Error> {
-        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
-            .map_err(bun_core::Error::from)
-    }
-}
-
 // `tls_socket_functions.rs` is `#[path]`-included from `socket_body.rs` (where
 // the functions are actually used); a second top-level include here was only
 // there for type-check parity.
@@ -65,7 +45,6 @@ pub mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub mod ssl_config;
-pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real

@@ -459,7 +459,7 @@ pub fn find_imported_files_in_css_order<'a>(
             // `RawSlice` (vs raw `*const [_]`) so reads go through safe
             // `.slice()` under the back-reference invariant: the borrowed
             // storage (`css_asts` arena / `Layers` Vec) outlives this loop.
-            layers: bun_ptr::RawSlice<LayerName>,
+            layers: bun_core::RawSlice<LayerName>,
             indices: Vec<u32>,
         }
         let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
@@ -600,7 +600,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 // This is the first time we've seen this combination of layer names.
                 // Allocate a new set of duplicate indices to track this combination.
                 layer_duplicates.push(DuplicateEntry {
-                    layers: bun_ptr::RawSlice::new(layers_key),
+                    layers: bun_core::RawSlice::new(layers_key),
                     indices: Vec::new(),
                 });
             }

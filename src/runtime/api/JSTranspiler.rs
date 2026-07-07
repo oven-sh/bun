@@ -10,17 +10,19 @@ use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
+use bun_bundler::transpiler::{ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
 use bun_core::Error;
+use bun_core::ZigString as JscZigString;
+use bun_js_parser::Macro::MacroJSCtx;
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
+use bun_js_printer::Format as PrintFormat;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
@@ -680,7 +682,7 @@ pub(crate) type AsyncTransformTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, TransformTask<'a>>;
 
 impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncTransformTask;
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::AsyncTransformTask;
     fn run(&mut self) {
         TransformTask::run(self)
     }
@@ -784,8 +786,8 @@ impl<'a> TransformTask<'a> {
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match self.tsconfig {
-            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
-            None => self.transpiler.options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.options.resolve.jsx.clone()),
+            None => self.transpiler.options.resolve.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
@@ -833,18 +835,17 @@ impl<'a> TransformTask<'a> {
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        let printed = match self.transpiler.print(
-            &arena,
-            parse_result,
-            &mut printer,
-            Transpiler::transpiler::PrintFormat::EsmAscii,
-        ) {
-            Ok(n) => n,
-            Err(err) => {
-                self.err = Some(err);
-                return;
-            }
-        };
+        let printed =
+            match self
+                .transpiler
+                .print(&arena, parse_result, &mut printer, PrintFormat::EsmAscii)
+            {
+                Ok(n) => n,
+                Err(err) => {
+                    self.err = Some(err);
+                    return;
+                }
+            };
 
         if printed > 0 {
             buffer_writer = printer.ctx;
@@ -858,7 +859,7 @@ impl<'a> TransformTask<'a> {
 
     pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
         // After `then` returns, the dispatcher
-        // (`run_then_destroy!` for `task_tag::AsyncTransformTask` in
+        // (`run_then_destroy!` for `TaskTag::AsyncTransformTask` in
         // runtime/dispatch.rs) unconditionally calls
         // `ConcurrentPromiseTask::destroy`, dropping the owned `ctx`
         // (this `TransformTask`) and running its `Drop` (transpiler deref etc.).
@@ -1084,11 +1085,11 @@ impl JSTranspiler {
             transpiler.options.minify_identifiers = true;
         }
 
-        transpiler.options.transform_only = !transpiler.options.allow_runtime;
+        transpiler.options.transform_only = !transpiler.options.resolve.allow_runtime;
 
-        transpiler.options.tree_shaking = config.tree_shaking;
+        transpiler.options.resolve.tree_shaking = config.tree_shaking;
         transpiler.options.trim_unused_imports = config.trim_unused_imports;
-        transpiler.options.allow_runtime = config.runtime.allow_runtime;
+        transpiler.options.resolve.allow_runtime = config.runtime.allow_runtime;
         transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
         transpiler.options.inlining = config.runtime.inlining;
         transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
@@ -1271,8 +1272,8 @@ impl JSTranspiler {
             arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.resolve.jsx.clone()),
+            None => self.transpiler.get().options.resolve.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
@@ -1593,7 +1594,7 @@ impl JSTranspiler {
             &arena,
             parse_result,
             &mut printer,
-            Transpiler::transpiler::PrintFormat::EsmAscii,
+            PrintFormat::EsmAscii,
         ) {
             self.buffer_writer.set(Some(printer.ctx));
             return Err(global.throw_error(err, "Failed to print code"));
@@ -1752,8 +1753,8 @@ impl JSTranspiler {
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.resolve.jsx.clone()),
+            None => self.transpiler.get().options.resolve.jsx.clone(),
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
@@ -1771,13 +1772,8 @@ impl JSTranspiler {
         // the parser borrows it for the arena lifetime.
         let define = &*transpiler.options.define;
 
-        // NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
-        // resolver-side `cache::JavaScript` is a fieldless shell with
-        // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
-        // Both are stateless unit structs, so calling the bundler-crate one
-        // directly is equivalent.
         // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
-        let scan_result = bun_bundler::cache::JavaScript::init().scan(
+        let scan_result = transpiler.resolver.caches.js.scan(
             &arena,
             unsafe { self.scan_pass_result.get_mut() },
             opts,

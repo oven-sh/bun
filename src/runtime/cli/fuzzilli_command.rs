@@ -103,7 +103,7 @@ impl FuzzilliCommand {
     }
 
     #[cfg(unix)]
-    fn verify_fd(fd: c_int) -> sys::Maybe<()> {
+    fn verify_fd(fd: c_int) -> sys::Result<()> {
         // Routed through `bun_sys` to preserve syscall-tagged error info.
         let _stat = sys::fstat(Fd::from_native(fd))?;
         Ok(())

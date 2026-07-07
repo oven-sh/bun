@@ -34,7 +34,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     unsafe impl Sync for ZoneTable {}
     static LOCK: crate::Mutex = crate::Mutex::new();
     static ZONES: ZoneTable = ZoneTable(UnsafeCell::new(Vec::new()));
-    let _guard = LOCK.lock();
+    let _guard = LOCK.lock_guard();
     // SAFETY: exclusive access — `ZONES.0` is only dereferenced while `LOCK`
     // is held, and `_guard` is live for the rest of this function.
     let zones = unsafe { &mut *ZONES.0.get() };
@@ -140,10 +140,6 @@ impl Zone {
         Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
     }
 
-    pub fn allocator(&'static self) -> &'static dyn crate::Allocator {
-        self
-    }
-
     /// Create a single-item pointer with initialized data.
     #[inline]
     pub fn create<T>(&self, data: T) -> *mut T {
@@ -180,19 +176,7 @@ impl Zone {
         // this same zone.
         unsafe { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
     }
-
-    /// Implemented as a `TypeId`
-    /// identity check via the `Allocator::type_id()` hook.
-    pub fn is_instance(allocator_: &dyn crate::Allocator) -> bool {
-        allocator_.is::<Self>()
-    }
 }
-
-// `crate::Allocator` is a marker trait carrying `type_id()`; the allocation
-// methods (`alloc`/`resize`/`free`) are inherent on `Zone` above (`raw_alloc`,
-// `resize`, `raw_free`). This impl makes `Zone` usable as `&dyn Allocator`
-// for `is_instance` identity checks.
-impl crate::Allocator for Zone {}
 
 // macOS-only libmalloc symbols, kept here (gated on `target_os = "macos"`)
 // since heap_breakdown is their only consumer.

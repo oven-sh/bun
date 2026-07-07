@@ -48,7 +48,6 @@ use bun_resolver::fs::FileSystem;
 use crate::Graph::Graph;
 use crate::chunk::{Content, Flags};
 use crate::options::{Loader, OutputKind};
-use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
 #[derive(Clone, Copy)]
@@ -117,7 +116,7 @@ fn write_entry_item<W: Write + ?Sized>(
     }
 
     // Valid mime types are valid headers, which do not need to be escaped in JSON.
-    let mime = loader.to_mime_type(&[path]);
+    let mime = bun_http_types::MimeType::MimeType::from_loader(loader, &[path]);
     writer.write_all(b"\"content-type\":\"")?;
     writer.write_all(&mime.value)?;
     writer.write_all(b"\"")?;
@@ -184,8 +183,8 @@ pub fn write<W: Write + ?Sized>(
     let options = &bv2.transpiler().options;
     let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len())?;
 
-    let root_dir: &[u8] = if !options.root_dir.is_empty() {
-        &options.root_dir[..]
+    let root_dir: &[u8] = if !options.resolve.root_dir.is_empty() {
+        &options.resolve.root_dir[..]
     } else {
         // SAFETY: FileSystem singleton is initialized before bundling.
         FileSystem::get().top_level_dir
@@ -193,9 +192,9 @@ pub fn write<W: Write + ?Sized>(
 
     writer.write_all(b"{")?;
 
-    let inject_compiler_filesystem_prefix = options.compile;
+    let inject_compiler_filesystem_prefix = options.resolve.compile;
     // Use the server-side public path here.
-    let public_path: &[u8] = &options.public_path;
+    let public_path: &[u8] = &options.resolve.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
 
     for ch in chunks.iter() {

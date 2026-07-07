@@ -15,7 +15,7 @@ pub(crate) extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 
     // The cwd is the FileSystem singleton's top_level_dir (resolver_jsc.rs
     // uses the same backing storage).
-    let cwd: &[u8] = bun_paths::fs::FileSystem::instance().top_level_dir();
+    let cwd: &[u8] = bun_paths::fs::top_level_dir();
     let _ = global_object; // bun_vm() retained for future direct field access
 
     // The input is user-controlled and may be arbitrarily long. The

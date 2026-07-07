@@ -11,12 +11,7 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
-// Canonical `<mach-o/loader.h>` POD layouts live in `bun_sys::macho` (lower-tier
-// crate, also consumed by `crash_handler`). Re-export so `exe_format::macho`
-// keeps its existing `macho::segment_command_64` etc. paths.
-pub use bun_sys::macho::{
-    cpu_subtype_t, cpu_type_t, load_command, mach_header_64, segment_command_64, vm_prot_t,
-};
+use bun_sys::macho::{cpu_type_t, vm_prot_t};
 
 pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
 

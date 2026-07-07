@@ -1,6 +1,5 @@
-// The md crate sits below `bun_jsc` in the layering, so `bun_jsc::JsResult`
-// is unreachable here; this local alias plays the same role.
-pub type JsResult<T> = Result<T, crate::parser::ParserError>;
+/// Result alias used by the parser and renderers, over the md-local [`crate::parser::ParserError`].
+pub type ParserResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.
 pub type OFF = u32;
@@ -143,32 +142,37 @@ pub struct Renderer<'a> {
 
 /// Trait backing the `Renderer` fat pointer.
 pub trait RendererImpl {
-    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()>;
-    fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()>;
-    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()>;
-    fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
-    fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
+    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> ParserResult<()>;
+    fn leave_block(&mut self, block_type: BlockType, data: u32) -> ParserResult<()>;
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> ParserResult<()>;
+    fn leave_span(&mut self, span_type: SpanType) -> ParserResult<()>;
+    fn text(&mut self, text_type: TextType, content: &[u8]) -> ParserResult<()>;
 }
 
 impl<'a> Renderer<'a> {
     #[inline]
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+    pub fn enter_block(
+        &mut self,
+        block_type: BlockType,
+        data: u32,
+        flags: u32,
+    ) -> ParserResult<()> {
         self.ptr.enter_block(block_type, data, flags)
     }
     #[inline]
-    pub fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+    pub fn leave_block(&mut self, block_type: BlockType, data: u32) -> ParserResult<()> {
         self.ptr.leave_block(block_type, data)
     }
     #[inline]
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> ParserResult<()> {
         self.ptr.enter_span(span_type, detail)
     }
     #[inline]
-    pub fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
+    pub fn leave_span(&mut self, span_type: SpanType) -> ParserResult<()> {
         self.ptr.leave_span(span_type)
     }
     #[inline]
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+    pub fn text(&mut self, text_type: TextType, content: &[u8]) -> ParserResult<()> {
         self.ptr.text(text_type, content)
     }
 }

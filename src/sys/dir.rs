@@ -50,35 +50,35 @@ impl Dir {
     }
     /// Open `path` relative to cwd. `O_DIRECTORY | O_RDONLY | O_CLOEXEC`.
     #[inline]
-    pub fn open(path: &[u8]) -> Maybe<Self> {
+    pub fn open(path: &[u8]) -> Result<Self> {
         open_dir_at(Fd::cwd(), path).map(Self::from_fd)
     }
     /// Open `path` relative to cwd with explicit flags. `O_DIRECTORY` is
     /// always added.
     #[inline]
-    pub fn open_with(path: &[u8], flags: i32) -> Maybe<Self> {
+    pub fn open_with(path: &[u8], flags: i32) -> Result<Self> {
         openat_a(Fd::cwd(), path, flags | O::DIRECTORY, 0).map(Self::from_fd)
     }
     /// Open `sub_path` relative to this dir.
     #[inline]
-    pub fn open_at(&self, sub_path: &[u8]) -> Maybe<Self> {
+    pub fn open_at(&self, sub_path: &[u8]) -> Result<Self> {
         open_dir_at(self.fd, sub_path).map(Self::from_fd)
     }
     /// Open `sub_path` relative to this dir with explicit flags. `O_DIRECTORY`
     /// is always added.
     #[inline]
-    pub fn open_at_with(&self, sub_path: &[u8], flags: i32) -> Maybe<Self> {
+    pub fn open_at_with(&self, sub_path: &[u8], flags: i32) -> Result<Self> {
         openat_a(self.fd, sub_path, flags | O::DIRECTORY, 0).map(Self::from_fd)
     }
     /// Open `sub_path` relative to this dir as a [`File`].
     #[inline]
-    pub fn open_file(&self, sub_path: &[u8], flags: i32, mode: Mode) -> Maybe<File> {
+    pub fn open_file(&self, sub_path: &[u8], flags: i32, mode: Mode) -> Result<File> {
         File::openat(self.fd, sub_path, flags, mode)
     }
     /// Resolve this dir's absolute path via `/proc/self/fd` (Linux),
     /// `F_GETPATH` (macOS), or `GetFinalPathNameByHandle` (Windows).
     #[inline]
-    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
+    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_core::PathBuffer) -> Result<&'b mut [u8]> {
         get_fd_path(self.fd, buf)
     }
     /// Close now. Equivalent to dropping `self` but discards the syscall
@@ -152,7 +152,7 @@ impl Dir {
 
         'process_stack: while let Some(top) = stack.last_mut() {
             while let Some(entry) = top.iter.next().map_err(bun_core::Error::from)? {
-                let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
+                let mut treat_as_dir = matches!(entry.kind, FileKind::Directory);
                 'handle_entry: loop {
                     if treat_as_dir {
                         let new_dir = match openat_a(
@@ -303,14 +303,14 @@ pub const AT_REMOVEDIR: i32 = 0x200;
 
 /// `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
 #[inline]
-pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
+pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Result<()> {
     let dirfd = dirfd.as_fd();
     unlinkat_with_flags(dirfd, path, AT_REMOVEDIR)
 }
 
 /// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
-fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
-    let mut buf = bun_paths::PathBuffer::default();
+fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Result<()> {
+    let mut buf = bun_core::PathBuffer::default();
     let len = path.len().min(buf.0.len() - 1);
     buf.0[..len].copy_from_slice(&path[..len]);
     buf.0[len] = 0;
@@ -333,7 +333,7 @@ impl Dir {
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `error.PathAlreadyExists` for callers to branch on.
     pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_core::PathBuffer::default();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
         buf.0[len] = 0;
@@ -356,14 +356,14 @@ impl Dir {
         link_name: &[u8],
         _is_directory: bool,
     ) -> core::result::Result<(), bun_core::Error> {
-        let mut tbuf = bun_paths::PathBuffer::default();
+        let mut tbuf = bun_core::PathBuffer::default();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
         tbuf.0[tlen] = 0;
         // SAFETY: NUL-terminated above.
         let tz = ZStr::from_buf(&tbuf.0[..], tlen);
 
-        let mut lbuf = bun_paths::PathBuffer::default();
+        let mut lbuf = bun_core::PathBuffer::default();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
         lbuf.0[llen] = 0;
@@ -484,29 +484,6 @@ impl Dir {
                 .map(Dir::from_fd)
                 .map_err(Into::into)
         }
-    }
-}
-
-// `Fd` parity: `Fd::cwd().make_open_path(..)` / `.make_path(..)` are used by
-// `bun_install` and `bun_bundler` directly on `Fd`. Extension trait so we
-// don't fight with `bun_core`'s inherent impl.
-pub trait FdDirExt: Copy {
-    fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error>;
-    fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error>;
-    fn from_std_dir(dir: &Dir) -> Self;
-}
-impl FdDirExt for Fd {
-    #[inline]
-    fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-        mkdir_recursive_at(self, sub_path).map_err(Into::into)
-    }
-    #[inline]
-    fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
-        Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())
-    }
-    #[inline]
-    fn from_std_dir(dir: &Dir) -> Fd {
-        dir.fd
     }
 }
 

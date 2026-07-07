@@ -193,7 +193,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let len = c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { bun_core::ffi::slice(ptr, len) };
+        let src = unsafe { bun_opaque::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
         &mut buf[..len]
     }
@@ -388,21 +388,21 @@ impl AnyWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> SendStatus {
-        // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
+        // S012: `App<SSL>` is a ZST opaque — route the `*mut → &mut` deref
         // through `bun_opaque::opaque_deref_mut` (caller still vouches that
         // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
         // const-generic instantiation).
         if ssl {
-            uws::NewApp::<true>::publish_with_options(
-                bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
+            uws::App::<true>::publish_with_options(
+                bun_opaque::opaque_deref_mut(app.cast::<uws::App<true>>()),
                 topic,
                 message,
                 opcode,
                 compress,
             )
         } else {
-            uws::NewApp::<false>::publish_with_options(
-                bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<false>>()),
+            uws::App::<false>::publish_with_options(
+                bun_opaque::opaque_deref_mut(app.cast::<uws::App<false>>()),
                 topic,
                 message,
                 opcode,
@@ -421,7 +421,7 @@ impl AnyWebSocket {
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let len = c::uws_ws_get_remote_address(ssl_flag, ws, &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { bun_core::ffi::slice(ptr, len) };
+        let src = unsafe { bun_opaque::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
         &mut buf[..len]
     }
@@ -542,7 +542,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// `id != 0`.
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws::NewAppResponse<SSL>,
+        res: *mut uws::Response<SSL>,
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
@@ -662,7 +662,7 @@ where
         unsafe {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
-                res.cast::<uws::NewAppResponse<SSL>>(),
+                res.cast::<uws::Response<SSL>>(),
                 thunk::handle_mut(req),
                 thunk::handle_mut(context),
                 id,

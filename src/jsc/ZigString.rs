@@ -1,24 +1,16 @@
 //! Prefer using bun.String instead of ZigString in new code.
 //!
-//! DEDUP NOTE: this module formerly defined a second `#[repr(C)] struct ZigString`
-//! mirror with ~70 inherent methods that duplicated `bun_core::ZigString`. The
-//! struct definition and all pure (non-JSC) methods now live canonically in
-//! `bun_core`; this file re-exports the type and surfaces the JSC-only
-//! conversions (`to_js`, `to_*_error_instance`, `to_external_value`, …) via the
-//! [`crate::ZigStringJsc`] extension trait. Both crates share the identical
-//! `#[repr(C)] { *const u8, usize }` layout, so the `extern "C"` `ZigString__*`
-//! shims remain ABI-valid.
+//! DEDUP NOTE: `ZigString` lives canonically in `bun_core`; this file surfaces
+//! the JSC-only conversions via the [`crate::ZigStringJsc`] extension trait.
 
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
+use bun_core::ZigString;
 
 /// `ZigString.as_()` return type — re-exported alongside the struct.
 pub use bun_core::ByteString;
-/// Canonical `ZigString` lives in `bun_core`; re-exported here so existing
-/// `bun_jsc::zig_string::ZigString` import paths keep resolving.
-pub use bun_core::ZigString;
 /// `ZigString.githubAction()` return type — re-exported for parity with the
 /// pre-dedup local `GithubActionFormatter` struct.
 pub use bun_core::ZigStringGithubActionFormatter as GithubActionFormatter;
@@ -96,7 +88,7 @@ pub(crate) unsafe extern "C" fn ZigString__free(
     // headers-handwritten.h (helpers.h frees via `ZigString__freeGlobal`).
     let _ = allocator_;
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
-    let s = unsafe { bun_core::ffi::slice(raw, len) };
+    let s = unsafe { bun_opaque::ffi::slice(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
     if bun_alloc::USE_MIMALLOC {
         // SAFETY: read-only heap-region probe.
@@ -112,7 +104,7 @@ pub(crate) unsafe extern "C" fn ZigString__free(
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
-    let s = unsafe { bun_core::ffi::slice(ptr, len) };
+    let s = unsafe { bun_opaque::ffi::slice(ptr, len) };
     let untagged = ZigString::init(s)
         .slice()
         .as_ptr()

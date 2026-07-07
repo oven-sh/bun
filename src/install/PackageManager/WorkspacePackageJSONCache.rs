@@ -1,24 +1,18 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
+use bun_ast::Expr;
 use bun_collections::StringHashMap;
 use bun_core::Error;
-// `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
-// exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
-// — that lives in a higher-tier crate and is a distinct type. Consumers of
-// `MapEntry.root` (e.g. `Package::parse_with_json`) take the lower-tier
-// `bun_json::Expr`, so storing the parser-crate type here would create a
-// cross-tier mismatch.
-use crate::bun_json::Expr;
 // LAYERING: `Indentation` lives in `bun_ast::js_printer` (T2, MOVE_DOWN from
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
 use bun_ast::Indentation;
 use bun_ast::{Log, Source};
 #[cfg(windows)]
-use bun_paths::PathBuffer;
+use bun_core::PathBuffer;
 use bun_paths::is_absolute;
 
-use crate::bun_json as json;
 use crate::initialize_store;
+use bun_parsers::json;
 
 pub struct MapEntry {
     pub root: Expr,

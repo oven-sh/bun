@@ -16,10 +16,10 @@ use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive};
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
+use bun_libuv_sys as uv;
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-use bun_sys::{self, Fd, Maybe};
+use bun_sys::ReturnCodeExt as _;
+use bun_sys::{self, Fd};
 #[cfg(windows)]
 use uv::{UvHandle as _, UvStream as _};
 
@@ -37,34 +37,16 @@ pub struct WaitPidResult {
     pub status: c_int,
 }
 
-/// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
-/// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
-/// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
-/// keep their `bun_spawn::process::spawn_sys::*` import path.
-pub mod spawn_sys {
-    // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
-    // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
-    // no-op since Win32 handles default to non-inheritable). Gated so the
-    // re-export resolves without `bun_sys` having to ship Windows stubs.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
-    #[cfg(unix)]
-    pub use bun_sys::{can_use_memfd, set_close_on_exec};
-}
-
 bun_core::declare_scope!(PROCESS, visible);
 
-// ─── Re-exports from `bun_spawn_sys` ─────────────────────────────────────────
-// The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
-// moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
-// Re-export here so existing `bun_spawn::process::*` paths keep resolving.
-pub use bun_spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
 #[cfg(windows)]
-pub use bun_spawn_sys::uv_getrusage;
-pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, FdT, PidFdType, PidT, PosixSpawnOptions,
-    PosixSpawnResult, PosixStdio, Rusage, StdioKind,
-};
+use bun_spawn_sys::Dup2;
+use bun_spawn_sys::spawn_process::rusage_zeroed;
+#[cfg(windows)]
+use bun_spawn_sys::uv_getrusage;
+use bun_spawn_sys::{Argv, Envp, PidFdType, PidT, Rusage};
+#[cfg(unix)]
+use bun_spawn_sys::{PosixSpawnOptions, PosixSpawnResult, PosixStdio};
 
 /// Whether the process-exit poll should be registered one-shot.
 ///
@@ -93,7 +75,7 @@ pub use bun_spawn_sys::{
 #[cfg(unix)]
 const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "android"));
 
-pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
+pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitOps};
 
 // `opaque_ffi!` emits an inherent `impl` that doesn't carry inner `#[cfg]`
 // attrs, so gate the whole macro invocation rather than the struct alone.
@@ -328,6 +310,19 @@ impl Process {
         unsafe { (*this).wait(false) };
     }
 
+    /// `Owner.on_update` entry for the pid poll (was the PROCESS arm). Keeps
+    /// raw provenance end-to-end — the trailing deref may free the `Process`.
+    #[cfg(unix)]
+    unsafe fn run_file_poll(
+        owner: *mut (),
+        _poll: *mut bun_io::FilePoll,
+        _size_or_offset: i64,
+        _hup: bool,
+    ) {
+        // SAFETY: `owner` carries the +1 ref taken at queue time; this drops it.
+        unsafe { Process::on_wait_pid_from_event_loop_task(owner.cast::<Process>()) };
+    }
+
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
@@ -429,8 +424,8 @@ impl Process {
                     Fd::from_native(watchfd),
                     bun_io::file_poll::FlagsSet::default(),
                     bun_io::Owner::new(
-                        bun_io::posix_event_loop::poll_tag::PROCESS,
                         std::ptr::from_mut::<Process>(self).cast(),
+                        Process::run_file_poll,
                     ),
                 )
             };
@@ -444,7 +439,11 @@ impl Process {
 
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
+            match fd.register(
+                loop_,
+                bun_io::posix_event_loop::Flags::Process,
+                PROCESS_POLL_ONE_SHOT,
+            ) {
                 Ok(()) => {
                     self.ref_();
                     Ok(())
@@ -475,7 +474,11 @@ impl Process {
         if let Some(fd) = self.poller.fd_poll_mut() {
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
+            let maybe = fd.register(
+                loop_,
+                bun_io::posix_event_loop::Flags::Process,
+                PROCESS_POLL_ONE_SHOT,
+            );
             if maybe.is_ok() {
                 self.ref_();
             }
@@ -521,7 +524,7 @@ impl Process {
                 None
             };
 
-        bun_sys::windows::libuv::log!(
+        bun_libuv_sys::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
             _pid,
             exit_code,
@@ -567,7 +570,7 @@ impl Process {
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
         let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
+        bun_libuv_sys::log!("Process.onClose({})", _pid);
         // SAFETY: `_g` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {
@@ -645,7 +648,7 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
-    pub fn kill(&mut self, signal: u8) -> Maybe<()> {
+    pub fn kill(&mut self, signal: u8) -> bun_sys::Result<()> {
         #[cfg(unix)]
         {
             // Detached is a deliberate no-op: spawnSync's `read_all()` runs
@@ -732,7 +735,7 @@ impl Status {
     }
 
     #[cfg(unix)]
-    pub fn from(pid: PidT, waitpid_result: &Maybe<WaitPidResult>) -> Option<Status> {
+    pub fn from(pid: PidT, waitpid_result: &bun_sys::Result<WaitPidResult>) -> Option<Status> {
         let mut exit_code: Option<u8> = None;
         let mut signal: Option<u8> = None;
 
@@ -977,7 +980,6 @@ pub mod waiter_thread_posix {
     use super::*;
     use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
-    use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
 
     pub struct WaiterThreadPosix {
@@ -1039,7 +1041,7 @@ pub mod waiter_thread_posix {
     pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
 
     /// Posted to the JS event loop from the waiter thread when a `wait4()`
-    /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
+    /// resolves. Maps to `TaskTag::ProcessWaiterThreadTask` in `jsc::Task`.
     pub struct ResultTask<T: 'static> {
         pub result: bun_sys::Result<WaitPidResult>,
         pub subprocess: *mut T,
@@ -1118,7 +1120,7 @@ pub mod waiter_thread_posix {
     }
 
     impl ProcessLike for Process {
-        const TASK_TAG: TaskTag = task_tag::ProcessWaiterThreadTask;
+        const TASK_TAG: TaskTag = TaskTag::ProcessWaiterThreadTask;
         #[inline]
         fn pid(&self) -> PidT {
             self.pid
@@ -2477,7 +2479,7 @@ mod spawn_process_body {
                     // do **not** map 1:1 onto `bun_sys::E` discriminants, so an
                     // unchecked `E::from_raw(err_enum())` would be UB for any
                     // unmapped value.
-                    let e = bun_sys::windows::translate_uv_error_to_e(nreads as core::ffi::c_int);
+                    let e = bun_core::errno::translate_uv_error_to_e(nreads as core::ffi::c_int);
                     Self::on_error(this, e);
                 } else {
                     // SAFETY: libuv guarantees `base[..nreads]` is the slice we
@@ -2518,7 +2520,7 @@ mod spawn_process_body {
                 on_done_callback(context, tag, chunks, err);
             }
 
-            pub fn start(self: Box<Self>) -> Maybe<()> {
+            pub fn start(self: Box<Self>) -> bun_sys::Result<()> {
                 // Single-pointer ownership: `heap::alloc` is the *only* root for
                 // this allocation. Every subsequent access (including the libuv
                 // callbacks and the `heap::take` in `on_close`) goes through
@@ -2648,7 +2650,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<bun_sys::Result<Result>, bun_core::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
@@ -2692,7 +2694,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<bun_sys::Result<Result>, bun_core::Error> {
             let loop_: EventLoopHandle = options.windows.loop_;
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
@@ -2721,7 +2723,7 @@ mod spawn_process_body {
                 p.ref_();
                 // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
                 // caller's stack; `p` is owned by it and dropped before return.
-                p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
+                p.set_exit_handler(ProcessExit::of::<SyncWindowsProcess>(this_ptr));
                 p.enable_keeping_event_loop_alive();
             }
 
@@ -2800,7 +2802,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<bun_sys::Result<Result>, bun_core::Error> {
             #[cfg(windows)]
             {
                 if options.stdin != SyncStdio::Buffer
@@ -2816,7 +2818,9 @@ mod spawn_process_body {
             spawn_posix(options, argv, envp)
         }
 
-        pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        pub fn spawn(
+            options: &Options,
+        ) -> core::result::Result<bun_sys::Result<Result>, bun_core::Error> {
             // SAFETY: `bun_sys::environ_ptr` returns the live, NULL-terminated C
             // `environ` array when no envp override is provided.
             let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
@@ -3007,7 +3011,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<bun_sys::Result<Result>, bun_core::Error> {
             // --no-orphans: put the script in its own process group so we can
             // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is
             // inherited recursively and survives reparenting to launchd/init, so
@@ -3222,7 +3226,7 @@ mod spawn_process_body {
                 {
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
                     #[cfg(target_os = "macos")]
-                    let r: Option<Maybe<Status>> = wait_mac_kqueue(
+                    let r: Option<bun_sys::Result<Status>> = wait_mac_kqueue(
                         process.pid,
                         ppid,
                         &*_jc,
@@ -3232,7 +3236,7 @@ mod spawn_process_body {
                         &mut out_fds,
                     );
                     #[cfg(any(target_os = "linux", target_os = "android"))]
-                    let r: Option<Maybe<Status>> = wait_linux_signalfd(
+                    let r: Option<bun_sys::Result<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
                         no_orphans,
@@ -3246,7 +3250,7 @@ mod spawn_process_body {
                         target_os = "android",
                         target_os = "macos"
                     )))]
-                    let r: Option<Maybe<Status>> = {
+                    let r: Option<bun_sys::Result<Status>> = {
                         let _ = ppid;
                         None
                     };
@@ -3392,7 +3396,7 @@ mod spawn_process_body {
             out: &mut [Vec<u8>; 2],
             out_fds_to_wait_for: &mut [Fd; 2],
             out_fds: &mut [Fd; 2],
-        ) -> Option<Maybe<Status>> {
+        ) -> Option<bun_sys::Result<Status>> {
             // kqueue() failed in spawnPosix (EMFILE/ENOMEM): let the caller's
             // plain `poll()` loop drain `.buffer` stdio and reap. The spawnPosix
             // defers (pgroup-kill, killTracked() — empty set) still run.
@@ -3632,7 +3636,7 @@ mod spawn_process_body {
             out: &mut [Vec<u8>; 2],
             out_fds_to_wait_for: &mut [Fd; 2],
             out_fds: &mut [Fd; 2],
-        ) -> Option<Maybe<Status>> {
+        ) -> Option<bun_sys::Result<Status>> {
             // Child-exit: signalfd(SIGCHLD). Works everywhere pidfd doesn't
             // (gVisor, ancient kernels). Subreaper means orphaned grandchildren
             // also reparent to us and fire SIGCHLD here — drain them with

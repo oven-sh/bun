@@ -1,21 +1,22 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use core::mem::ManuallyDrop;
 
 use bun_core::Output;
+use bun_core::PathBuffer;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
-use crate::dependency;
+use crate::Resolution;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
+use bun_install_types::dependency;
 
 use super::PackageManager;
-use super::options::LogLevel;
+use super::package_manager_options::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free-function re-export surface. Thin shims over the
@@ -170,8 +171,8 @@ impl PackageManager {
                     return Err(e.into());
                 }
             };
-            if entry.kind != bun_sys::EntryKind::Directory
-                && entry.kind != bun_sys::EntryKind::SymLink
+            if entry.kind != bun_core::FileKind::Directory
+                && entry.kind != bun_core::FileKind::SymLink
             {
                 continue;
             }
@@ -303,7 +304,7 @@ impl PackageManager {
                 (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
             );
             debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
+            // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == INVALID_PACKAGE_ID);
         }
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
@@ -326,7 +327,7 @@ impl PackageManager {
             debug_assert!((package_id as usize) < self.lockfile.packages.len());
             debug_assert!(
                 self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
-                    == invalid_package_id
+                    == INVALID_PACKAGE_ID
             );
         }
         let buffers = &mut self.lockfile.buffers;

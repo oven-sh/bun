@@ -7,6 +7,7 @@ use core::ffi::c_int;
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
+use bun_jsc::SystemErrorJsc as _;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
 };
@@ -708,13 +709,13 @@ impl ErrorDeferred {
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
-            fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
+            // `fn(*mut T) -> bun_core::JsResult<()>`.
+            fn callback(this: *mut Context) -> bun_core::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
-                this.deferred.reject(global).map_err(Into::into)
+                this.deferred.reject(global)
             }
         }
 
@@ -824,7 +825,7 @@ pub(crate) fn bun_canonicalize_ip(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
 
     let arguments = callframe.arguments();
 

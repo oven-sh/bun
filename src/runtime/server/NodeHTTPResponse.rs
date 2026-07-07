@@ -14,6 +14,7 @@ use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
+use crate::node::types::EncodingExt as _;
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
@@ -280,7 +281,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 /// to `AnyServerTag` here.
 #[inline]
 fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPointer::from(packed);
+    let repr = bun_ptr::TaggedPtr::from(packed);
     let tag = match repr.data() {
         1024 => AnyServerTag::HTTPServer,
         1023 => AnyServerTag::HTTPSServer,

@@ -40,77 +40,11 @@ mod darwin_spawn_np {
     }
 }
 
-// `bun_sys::posix` currently exposes only `mode_t`/`S`/`E`/`errno()` (the
-// MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
-// is self-contained; delete in favour of `bun_sys::posix::*` once that module
-// widens.
 #[cfg(unix)]
-use self::posix_compat::{Errno, errno};
+use bun_sys::posix::{Errno, errno_from_rc};
 #[cfg(target_os = "macos")]
-use self::posix_compat::{errno_from_posix_spawn, mode_t};
-use self::posix_compat::{fd_t, pid_t, to_posix_path};
-
-#[allow(non_camel_case_types)]
-mod posix_compat {
-    use bun_core::{Error, err};
-    #[cfg(unix)]
-    use core::ffi::c_int;
-    use std::ffi::CString;
-
-    /// Native fd backing int.
-    // posix_spawn file actions use libc `int` fds on the C side
-    // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
-    // `FdNative` is HANDLE, but this code path is unreachable there — keep
-    // the C-ABI type so the struct compiles unchanged.
-    pub(super) type fd_t = core::ffi::c_int;
-    /// Native process id type.
-    #[cfg(unix)]
-    pub(super) type pid_t = libc::pid_t;
-    #[cfg(not(unix))]
-    pub(super) type pid_t = i32;
-    #[cfg(target_os = "macos")]
-    pub(super) use bun_sys::posix::mode_t;
-
-    /// Errno enum with **unprefixed** variant names. The real
-    /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
-    /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
-    #[cfg(unix)]
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    #[repr(transparent)]
-    pub(super) struct Errno(pub c_int);
-    #[cfg(unix)]
-    impl Errno {
-        pub(super) const SUCCESS: Errno = Errno(0);
-        #[cfg(target_os = "macos")]
-        pub(super) const INVAL: Errno = Errno(libc::EINVAL);
-        pub(super) const INTR: Errno = Errno(libc::EINTR);
-    }
-    /// Decode a syscall return: with libc, `rc == -1 ⇒ read __errno`,
-    /// else `.SUCCESS`. For syscalls using the conventional return style
-    /// (`wait4`, etc.) — NOT for `posix_spawn*`, which returns the errno
-    /// directly; use [`errno_from_posix_spawn`] there.
-    #[cfg(unix)]
-    #[inline]
-    pub(super) fn errno(rc: c_int) -> Errno {
-        if rc == -1 {
-            return Errno(bun_sys::posix::errno());
-        }
-        Errno::SUCCESS
-    }
-
-    /// The `posix_spawn*` family returns the errno **directly** (0 on
-    /// success, nonzero errno on failure — never -1/`__errno`).
-    #[cfg(target_os = "macos")]
-    #[inline]
-    pub(super) fn errno_from_posix_spawn(rc: c_int) -> Errno {
-        Errno(rc)
-    }
-
-    /// Copy a path into a NUL-terminated buffer.
-    pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
-        CString::new(path).map_err(|_| err!("Unexpected"))
-    }
-}
+use bun_sys::posix::{errno_from_posix_spawn, mode_t};
+use bun_sys::posix::{fd_t, pid_t, to_posix_path};
 
 // MOVE_DOWN: this file was `src/runtime/api/bun/spawn.rs`; the `stdio`
 // submodule (which depends on the JSC-tier `Subprocess`) stays in
@@ -771,7 +705,7 @@ pub mod posix_spawn {
                     usage_ptr,
                 )
             };
-            match errno(rc) {
+            match errno_from_rc(rc) {
                 Errno::SUCCESS => {
                     return sys::Result::Ok(WaitPidResult {
                         pid: pid_t::try_from(rc).expect("int cast"),

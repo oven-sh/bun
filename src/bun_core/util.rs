@@ -514,7 +514,7 @@ impl WStr {
             return Self::EMPTY;
         }
         // SAFETY: non-null and NUL-terminated per caller contract.
-        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
+        unsafe { Self::from_raw(p, bun_opaque::ffi::wcslen(p)) }
     }
     #[inline]
     pub const fn as_slice(&self) -> &[u16] {
@@ -600,97 +600,20 @@ macro_rules! zstr {
     }};
 }
 
-/// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
-/// struct whose address is the only thing Rust ever observes.
-///
-/// `_p: UnsafeCell<[u8; 0]>` makes the type `!Freeze`, so a `&T` does **not**
-/// carry `readonly`/`noalias` at the ABI boundary — the C side mutates through
-/// these handles regardless of whether Rust holds `&` or `&mut`, and a
-/// `readonly` attribute would license LLVM to cache loads across the FFI call.
-/// `PhantomData<(*mut u8, PhantomPinned)>` makes the type `!Send + !Sync +
-/// !Unpin`, matching the conservative defaults for foreign-owned state.
-///
-/// Thin re-export of [`bun_opaque::opaque_ffi!`] under the legacy name. The
-/// canonical macro lives in the zero-dep `bun_opaque` crate so tier-0 `*_sys`
-/// leaves (`mimalloc_sys`, `brotli_sys`, …) can reach it without pulling
-/// `bun_core` into their build graph; this alias just keeps existing
-/// `bun_core::opaque_extern!(...)` callers compiling.
-#[macro_export]
-macro_rules! opaque_extern {
-    ($($t:tt)*) => { ::bun_opaque::opaque_ffi!($($t)*); };
-}
-
-// ─── Mutex / RwLock (poison-free std::sync wrappers) ──────────────────────
+// ─── RwLock (poison-free std::sync wrapper) ───────────────────────────────
 //
 // LAYERING: `bun_core` sits *below* `bun_threading` in the crate graph, so it
-// cannot use the futex-backed `Guarded<T>` / `RwLock<T>` defined there. The
+// cannot use the futex-backed `RwLock<T>` defined there. The
 // handful of low-tier call sites (this crate, `bun_ptr`, `bun_alloc`) instead
-// get thin newtype wrappers around `std::sync` that strip the poisoning API —
+// get a thin newtype wrapper around `std::sync` that strips the poisoning API —
 // Bun aborts on panic, so a poisoned lock is unreachable in practice and the
 // `LockResult` ceremony is pure noise. Higher-tier crates should use
-// `bun_threading::Guarded` / `bun_threading::RwLock` directly.
+// `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
-// `Default`.
+// `.read()` / `.write()` → guard (no `Result`), `.get_mut()`, `Default`.
 
-/// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
-/// this is not `bun_threading::Guarded<T>`.
-pub struct Mutex<T>(std::sync::Mutex<T>);
-
-/// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
-/// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
-pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
-
-/// Alias for [`Mutex`].
-pub type Guarded<T> = Mutex<T>;
-
-impl<T> Mutex<T> {
-    #[inline]
-    pub const fn new(value: T) -> Self {
-        Self(std::sync::Mutex::new(value))
-    }
-
-    #[inline]
-    pub fn lock(&self) -> MutexGuard<'_, T> {
-        // Poisoning is unreachable (Bun aborts on panic); recover the guard if
-        // it ever happens rather than propagating a `Result`.
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        match self.0.try_lock() {
-            Ok(g) => Some(g),
-            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.0
-            .into_inner()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-impl<T: Default> Default for Mutex<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
-/// Poison-free `std::sync::RwLock<T>` wrapper. See module note on [`Mutex`].
+/// Poison-free `std::sync::RwLock<T>` wrapper. See module note above.
 pub struct RwLock<T>(std::sync::RwLock<T>);
 
 pub type RwLockReadGuard<'a, T> = std::sync::RwLockReadGuard<'a, T>;
@@ -755,13 +678,11 @@ pub type OSPathSliceZ = WStr;
 #[cfg(not(windows))]
 pub type OSPathSliceZ = ZStr;
 
-pub use bun_alloc::SEP;
+pub use bun_ascii::SEP;
 
 /// `[u8; MAX_PATH_BYTES]` stack buffer for path syscalls.
 ///
-/// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
-/// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
-/// `bun_core::getcwd`/`which` without a pointer cast.
+/// Canonical definition shared by every path-handling crate.
 ///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
@@ -1618,7 +1539,7 @@ pub mod fd {
         // handle fields are at fixed asserted offsets (`windows_sys`). Reading
         // a `*mut c_void` is `Copy` and atomic on x64.
         unsafe {
-            let pp = (*crate::windows_sys::peb()).ProcessParameters;
+            let pp = (*bun_windows_sys::peb()).ProcessParameters;
             ProcessParametersStdio {
                 hStdInput: (*pp).hStdInput as *mut c_void,
                 hStdOutput: (*pp).hStdOutput as *mut c_void,
@@ -1635,7 +1556,7 @@ pub mod fd {
         // SAFETY: PEB and ProcessParameters are process-lifetime; raw-pointer
         // read because the OS mutates the struct out-of-band (see `peb()` doc).
         unsafe {
-            let pp = (*crate::windows_sys::peb()).ProcessParameters;
+            let pp = (*bun_windows_sys::peb()).ProcessParameters;
             (*pp).CurrentDirectory.Handle
         }
     }
@@ -1653,8 +1574,8 @@ pub type Mode = u32; // POSIX `mode_t`
 /// like `S::IRUSR | S::IWUSR` and `(st_mode as u32) & S::IFMT` compile
 /// uniformly; the libc-boundary cast to native `mode_t` happens in `bun_sys`.
 ///
-/// Canonical home for the per-OS `bun_errno::posix::S` re-exports (errno
-/// depends on bun_core, not vice-versa).
+/// Canonical home for the per-OS `bun_core::errno::posix::S` re-exports (the
+/// errno modules re-export from here, not vice-versa).
 #[allow(non_snake_case)]
 pub mod S {
     use super::Mode;
@@ -1745,32 +1666,76 @@ pub fn kind_from_mode(mode: Mode) -> FileKind {
     }
 }
 
-// ─── io::Writer (from bun_io) ─────────────────────────────────────────────
-// TYPE_ONLY: output.rs holds `*mut io::Writer` opaquely (erased adapter head);
-// real write/flush/print dispatch lives in bun_sys via the OutputSinkVTable.
+// ─── io::WriterHandle (from bun_io) ───────────────────────────────────────
 pub mod io {
-    /// Opaque writer interface header. bun_sys guarantees this is the first
-    /// `repr(C)` field of every concrete adapter, so `&mut Adapter as &mut Writer`
-    /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
-    #[repr(C)]
-    pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> Result<(), crate::Error>,
-        pub flush: unsafe fn(*mut Writer) -> Result<(), crate::Error>,
+    /// Vtable for a [`WriterHandle`]: each fn receives the raw adapter pointer
+    /// the handle was built from (never a `&mut` to the adapter).
+    pub struct WriterVTable {
+        pub write_all: unsafe fn(*mut (), &[u8]) -> Result<(), crate::Error>,
+        pub flush: unsafe fn(*mut ()) -> Result<(), crate::Error>,
     }
-    impl Writer {
+    /// Raw-dispatch writer handle: dispatch never forms `&mut` over the adapter,
+    /// so re-entrant writes from inside Display impls stay sound (see output.rs).
+    #[derive(Copy, Clone)]
+    pub struct WriterHandle {
+        pub ptr: *mut (),
+        pub vtable: &'static WriterVTable,
+    }
+    /// Implemented by concrete writer adapters. Methods take `*mut Self` so a
+    /// re-entrant write never aliases an outstanding `&mut` to the adapter.
+    pub trait RawWrite: Sized {
+        /// # Safety
+        /// `this` must point to a live adapter for the duration of the call.
+        unsafe fn write_all(this: *mut Self, bytes: &[u8]) -> Result<(), crate::Error>;
+        /// # Safety
+        /// `this` must point to a live adapter for the duration of the call.
+        unsafe fn flush(this: *mut Self) -> Result<(), crate::Error>;
+        /// Dispatch table used by [`WriterHandle::of`].
+        const VTABLE: WriterVTable = WriterVTable {
+            write_all: ww::<Self>,
+            flush: wf::<Self>,
+        };
+    }
+    unsafe fn ww<T: RawWrite>(p: *mut (), b: &[u8]) -> Result<(), crate::Error> {
+        // SAFETY: `p` was produced by `WriterHandle::of::<T>` from a `*mut T`.
+        unsafe { T::write_all(p.cast::<T>(), b) }
+    }
+    unsafe fn wf<T: RawWrite>(p: *mut ()) -> Result<(), crate::Error> {
+        // SAFETY: `p` was produced by `WriterHandle::of::<T>` from a `*mut T`.
+        unsafe { T::flush(p.cast::<T>()) }
+    }
+    unsafe fn noop_write_all(_: *mut (), _: &[u8]) -> Result<(), crate::Error> {
+        Ok(())
+    }
+    unsafe fn noop_flush(_: *mut ()) -> Result<(), crate::Error> {
+        Ok(())
+    }
+    const NOOP_VTABLE: WriterVTable = WriterVTable {
+        write_all: noop_write_all,
+        flush: noop_flush,
+    };
+    impl WriterHandle {
+        /// Const placeholder that discards writes; overwritten before use.
+        pub const NOOP: WriterHandle = WriterHandle {
+            ptr: core::ptr::null_mut(),
+            vtable: &NOOP_VTABLE,
+        };
+        pub fn of<T: RawWrite>(ptr: *mut T) -> WriterHandle {
+            WriterHandle {
+                ptr: ptr.cast(),
+                vtable: &T::VTABLE,
+            }
+        }
         #[inline]
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
-            // (see type doc); `self` was produced by upcasting `&mut Adapter`,
-            // so the vtable fn receives the same pointer it was registered with.
-            unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
+            // SAFETY: `ptr` was produced by `WriterHandle::of` from a live
+            // adapter; the vtable fn casts it back to the concrete type.
+            unsafe { (self.vtable.write_all)(self.ptr, bytes) }
         }
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
-            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
-            // `self` is the same pointer the adapter registered its vtable with,
-            // so the callee's downcast back to the concrete type is sound.
-            unsafe { (self.flush)(std::ptr::from_mut(self)) }
+            // SAFETY: see `write_all`.
+            unsafe { (self.vtable.flush)(self.ptr) }
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
@@ -1780,8 +1745,8 @@ pub mod io {
         #[inline]
         pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
             use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, Result<(), crate::Error>);
-            impl core::fmt::Write for A<'_> {
+            struct A(WriterHandle, Result<(), crate::Error>);
+            impl core::fmt::Write for A {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
                     self.1 = self.0.write_all(s.as_bytes());
                     if self.1.is_err() {
@@ -1791,11 +1756,12 @@ pub mod io {
                     }
                 }
             }
-            let mut a = A(self, Ok(()));
+            let mut a = A(*self, Ok(()));
             let _ = a.write_fmt(args);
             a.1
         }
     }
+    pub type Writer = WriterHandle;
     /// WASM-only StreamType (output.rs `#[cfg(wasm32)]`).
     #[repr(C)]
     pub struct FixedBufferStream {
@@ -1977,20 +1943,16 @@ pub mod io {
         }
     }
 
-    /// Bridge the type-erased vtable header into the generic `Write` trait so
+    /// Bridge the type-erased handle into the generic `Write` trait so
     /// printers taking `W: io::Write` accept process stdout/stderr sinks.
-    impl Write for Writer {
+    impl Write for WriterHandle {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
+            WriterHandle::write_all(self, buf)
         }
         #[inline]
         fn flush(&mut self) -> Result<(), crate::Error> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.flush)(core::ptr::from_mut(self)) }
+            WriterHandle::flush(self)
         }
     }
 
@@ -2019,9 +1981,11 @@ pub mod io {
     );
 }
 
-// ─── Version (from bun_semver, TYPE_ONLY for env.rs::VERSION const) ───────
-// Only the scalar fields env.rs reads (major/minor/patch). Full Version with
-// tag/pre/build stays in bun_semver.
+// ─── Version — canonical scalar (major, minor, patch) triple ──────────────
+// Used for Bun's own version (env.rs::VERSION, build_options) and OS/kernel
+// version probes. Distinct from `bun_semver::VersionType`, which carries
+// prerelease/build tags and a lockfile-serialized layout; semver does not
+// mirror this type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Version {
     pub major: u32,
@@ -2073,73 +2037,8 @@ impl Version {
 }
 
 // ─── RacyCell ─────────────────────────────────────────────────────────────
-/// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
-/// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.
-///
-/// This exists to replace `static mut` (banned per docs/PORTING.md §Global
-/// mutable state). Unlike `static mut`, taking `&RACY` does not assert
-/// uniqueness; callers stay in raw-ptr land via `.get()` and only deref for
-/// the duration of a single statement.
-///
-/// **Invariant the caller upholds:** all access is either single-threaded
-/// (e.g. HTTP-thread-only buffers, main-thread-only CLI state) or externally
-/// synchronized. For anything actually shared across threads, use
-/// `Atomic*` / `OnceLock` / `Mutex` instead — `RacyCell` is the last resort
-/// for scratch buffers and FFI-shaped globals with proven thread-affinity.
-#[repr(transparent)]
-pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
-// SAFETY: by construction, callers promise external synchronization or
-// single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
-// `Sync` on `T: Sync`), this impl is intentionally unconditional: many
-// payloads ported from `static mut` are `!Sync` only by auto-trait inference
-// (raw pointers, `MaybeUninit<T>` over FFI handles) yet are sound to share
-// because all access is single-threaded or externally synchronized — the
-// exact contract `static mut` already imposed. **Do not** wrap *payloads*
-// whose `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
-// `thread_local!` or a real lock for those. (The inner storage here is
-// `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
-// hazard is fully accounted for by this `unsafe impl Sync`.)
-unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
-// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
-// another thread is sound exactly when sending `T` itself is (`T: Send`).
-unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
-
-impl<T> RacyCell<T> {
-    #[inline]
-    pub const fn new(value: T) -> Self {
-        Self(core::cell::Cell::new(value))
-    }
-    /// Raw pointer to the contained value. Never produces a reference; callers
-    /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
-    #[inline]
-    pub const fn get(&self) -> *mut T {
-        self.0.as_ptr()
-    }
-    /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
-    ///
-    /// # Safety
-    /// Caller guarantees no concurrent writer on another thread.
-    #[inline]
-    pub unsafe fn read(&self) -> T
-    where
-        T: Copy,
-    {
-        self.0.get()
-    }
-    /// Convenience: overwrite the value.
-    ///
-    /// # Safety
-    /// Caller guarantees no concurrent reader/writer on another thread.
-    #[inline]
-    pub unsafe fn write(&self, value: T) {
-        self.0.set(value)
-    }
-}
-impl<T: Default> Default for RacyCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
+// Canonical def in `bun_opaque` (shared with the freestanding windows shim).
+pub use bun_opaque::RacyCell;
 
 // ─── ThreadLock (from bun_safety) ─────────────────────────────────────────
 // Debug-only re-entrancy guard. Release builds compile to a ZST.
@@ -2711,8 +2610,8 @@ impl Pollable {
     }
 }
 
-// bun_core sits below bun_sys, so we re-declare the scope locally instead of
-// pulling `bun_sys::syslog!` (tier inversion). Same `[sys]` tag at runtime.
+// Canonical `[sys]` debug-log scope; bun_sys re-exports this static for its
+// `syslog!` macro.
 crate::declare_scope!(SYS, visible);
 
 /// Non-blocking poll for readability. POSIX-only.
@@ -3785,7 +3684,7 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
+// `bun.hash` (Wyhash) is `bun_hash::RapidHash`; this module adds
 // the xxhash64 entry point that ETag/bundler need.
 pub mod hash {
     pub use bun_hash::XxHash64;
@@ -3797,7 +3696,7 @@ pub mod hash {
     /// Wyhash one-shot (`bun.hash`).
     #[inline]
     pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
+        bun_hash::RapidHash::hash(0, bytes)
     }
 }
 
@@ -4013,7 +3912,7 @@ fn argv_storage() -> &'static [ZBox] {
                     .map(|&p| {
                         // SAFETY: each entry is a NUL-terminated UTF-16 string
                         // owned by the `CommandLineToArgvW` allocation.
-                        let arg = unsafe { crate::ffi::wstr_units(p) };
+                        let arg = unsafe { bun_opaque::ffi::wstr_units(p) };
                         ZBox::from_vec(crate::strings::to_utf8_alloc(arg))
                     })
                     .collect();
@@ -4409,14 +4308,21 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
 // callers import `bun_which::which` directly. See `src/bun.rs` for the
 // `bun::which` re-export.
 //
-// A POSIX-only copy is kept here because `spawn_sync_inherit` (below) needs
-// PATH resolution at tier-0 and cannot reach up to `bun_which`. This is a
-// load-bearing duplicate; do NOT dedup against `src/which/lib.rs`.
-/// Tier-0 POSIX `which`. Resolves `bin` against `cwd` and each `PATH` entry
-/// for an executable named `bin`; returns the NUL-terminated match written
-/// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
-/// `bun_which` (tier-2).
-pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+// A POSIX-only walk is kept here because `spawn_sync_inherit` (below) needs
+// PATH resolution at tier-0 and cannot reach up to `bun_which`. Single
+// PATH-walk implementation; `bun_which` supplies its own probe via
+// `which_with`.
+/// Tier-0 POSIX `which` walk, parameterized by the executability probe.
+/// Resolves `bin` against `cwd` and each `PATH` entry for an executable named
+/// `bin`; returns the NUL-terminated match written into `buf`. POSIX
+/// semantics; Windows `PATHEXT` handling stays in `bun_which` (tier-2).
+pub fn which_with<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+    is_executable: fn(&ZStr) -> bool,
+) -> Option<&'a ZStr> {
     if bin.is_empty() {
         return None;
     }
@@ -4441,35 +4347,30 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
         buf.0[n] = 0;
-        #[cfg(unix)]
-        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
-        // valid NUL-terminated C string for `access(2)`.
-        unsafe {
-            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
-                return Some(n);
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            // No X_OK probe here: this tier-0 helper is only reached from the
-            // linux/freebsd `spawn_sync_inherit` path. Windows callers resolve
-            // executables via `bun_which` (PATHEXT-aware) instead.
+        let candidate = ZStr::from_buf(&buf.0, n);
+        if is_executable(candidate) {
+            return Some(n);
         }
         None
     };
-    // Absolute `bin` → probe it directly without joining `cwd`.
+    // Absolute `bin` → probe it directly without joining `cwd`; never falls
+    // back to `$PATH`.
     if crate::path_sep::is_absolute_native(bin) {
         return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     if has_sep {
         // Relative with separator → resolve against cwd only; trim
-        // trailing '/' from cwd and strip a leading "./" from bin.
+        // trailing '/' from cwd (keeping the root) and strip a leading
+        // "./" from bin.
+        if cwd.is_empty() {
+            return None;
+        }
         let cwd = {
             let mut c = cwd;
             while let [rest @ .., b'/'] = c {
                 c = rest;
             }
-            c
+            if c.is_empty() { b"/".as_slice() } else { c }
         };
         let bin = bin.strip_prefix(b"./").unwrap_or(bin);
         return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
@@ -4485,6 +4386,27 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
     }
     None
+}
+
+/// Tier-0 POSIX which used by spawn_sync_inherit; probes with access(X_OK).
+pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+    fn access_x_ok(p: &ZStr) -> bool {
+        #[cfg(unix)]
+        // SAFETY: `p` is NUL-terminated (`ZStr` invariant), so it is a valid C
+        // string for `access(2)`.
+        unsafe {
+            libc::access(p.as_ptr().cast(), libc::X_OK) == 0
+        }
+        #[cfg(not(unix))]
+        {
+            // No X_OK probe here: this tier-0 helper is only reached from the
+            // linux/freebsd `spawn_sync_inherit` path. Windows callers resolve
+            // executables via `bun_which` (PATHEXT-aware) instead.
+            let _ = p;
+            false
+        }
+    }
+    which_with(buf, path, cwd, bin, access_x_ok)
 }
 
 // ── auto_reload_on_crash / reload_process group ───────────────────────────
@@ -4529,33 +4451,10 @@ pub fn exit_thread() -> ! {
     }
     #[cfg(windows)]
     // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
-    crate::windows_sys::kernel32::ExitThread(0);
+    bun_windows_sys::kernel32::ExitThread(0);
     #[cfg(not(any(unix, windows)))]
     loop {
         core::hint::spin_loop();
-    }
-}
-
-/// Release thread-local pooled
-/// buffers (PathBuffer pool, ObjectPool, …) before the thread terminates so
-/// the backing storage is returned to mimalloc rather than leaked with the
-/// TLS block.
-///
-/// LAYERING: the actual pool registries live in higher-tier crates
-/// (`bun_paths`, `bun_collections`). They register a destructor here at init
-/// via [`register_thread_exit_pool_destructor`]; this fn just walks the list.
-static THREAD_EXIT_POOL_DESTRUCTORS: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
-
-pub fn register_thread_exit_pool_destructor(f: fn()) {
-    THREAD_EXIT_POOL_DESTRUCTORS.lock().push(f);
-}
-
-pub fn delete_all_pools_for_thread_exit() {
-    // Snapshot under the lock so a destructor can't deadlock by
-    // re-registering.
-    let snapshot: Vec<fn()> = THREAD_EXIT_POOL_DESTRUCTORS.lock().clone();
-    for f in snapshot {
-        f();
     }
 }
 
@@ -4616,7 +4515,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(windows)]
     {
         // Signal the watcher-manager parent via magic exit code.
-        use crate::windows_sys::kernel32::{GetCurrentProcess, GetLastError};
+        use bun_windows_sys::kernel32::{GetCurrentProcess, GetLastError};
         unsafe extern "system" {
             // `h` is an opaque kernel HANDLE (never dereferenced in-process);
             // the kernel validates it and returns FALSE on a bad handle. No
@@ -5433,17 +5332,14 @@ impl core::fmt::Display for f16 {
 }
 
 // ── perf ──────────────────────────────────────────────────────────────────
-// `bun.perf`. The Linux ftrace backend is
-// libc-only, so it folds in directly and `bun_core::perf::trace("X")` is real
-// instrumentation on Linux. macOS: signposts wrap `Bun__signpost_emit`
-// (c-bindings.cpp) which keys on the codegen `PerfEvent` int — that table
-// lives in `bun_perf` (T2, owns generated_perf_trace_events), so T0 reports
-// disabled on macOS. **No functional divergence today**: `bun_perf`'s Darwin
-// arm currently routes through the `bun_sys::darwin::os_log::signpost::Interval`
-// stub whose `end()` is a no-op, so neither tier emits signposts yet. When
-// `Bun__signpost_emit` is wired, callers above T0 use `bun_perf::trace`; T0
-// callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
-// the profiling target. Windows/other platforms are no-ops.
+// `bun.perf`. **This is THE Linux ftrace backend** — it is libc-only so it
+// lives in T0 and `bun_core::perf::trace("X")` / `trace_event(PerfEvent::X)`
+// are real instrumentation on Linux. The codegen `PerfEvent` table lives at
+// `crate::generated_perf_trace_events`. macOS: os_signpost needs
+// `bun_sys::darwin::OSLog` (above T0), so `bun_perf` layers the Darwin
+// signpost arm on top, keyed by `PerfEvent`, and on Linux delegates back here
+// so there is exactly one ftrace implementation. T0 reports disabled on
+// macOS. Windows/other platforms are no-ops.
 pub mod perf {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::AtomicBool;
@@ -5494,11 +5390,9 @@ pub mod perf {
             .get()
             .unwrap_or(false)
             && Linux::is_supported();
-        // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0).
-        // **`bun_perf` is the canonical entry point** (it drives both the
-        // ftrace and signpost backends via `PerfEvent`); `bun_core::perf` is
-        // the T0 subset for low-tier callers that cannot reach `bun_perf` and
-        // only need Linux ftrace. T0 therefore reports disabled on macOS.
+        // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0), so
+        // the Darwin signpost arm lives in `bun_perf` and T0 reports disabled
+        // on macOS.
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let on = false;
         IS_ENABLED.store(if on { ENABLED } else { DISABLED }, Ordering::Relaxed);
@@ -5533,6 +5427,14 @@ pub mod perf {
             let _ = name;
             Ctx::DISABLED
         }
+    }
+
+    pub use crate::generated_perf_trace_events::PerfEvent;
+    /// Typed variant of [`trace`]. Same Linux ftrace backend; macOS signposts
+    /// are layered on top by `bun_perf::trace`.
+    #[inline]
+    pub fn trace_event(event: PerfEvent) -> Ctx {
+        trace(event.into())
     }
 
     // ── Linux ftrace backend (folded from src/perf/lib.rs) ────────────────
@@ -5583,9 +5485,7 @@ pub mod perf {
     }
 
     /// Single source of truth for the Linux ftrace FFI decls (defined in
-    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
-    /// (the canonical signpost/ftrace entry point) imports these instead of
-    /// re-declaring them.
+    /// `src/jsc/bindings/linux_perf_tracing.cpp`).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub mod sys {
         unsafe extern "C" {
@@ -5600,117 +5500,3 @@ pub mod perf {
         }
     }
 }
-
-// ── form_data ─────────────────────────────────────────────────────────────
-// `bun.FormData.{Encoding, AsyncFormData, getBoundary}`.
-// The JSC-touching parts (`toJS`, the field map,
-// multipart parser) stay in `bun_runtime::webcore::form_data`; T0 owns only
-// the encoding-detection types so `Request`/`Response`/`Body` can name them
-// without a runtime→core cycle. Per PORTING.md §JSC: `to_js` is an extension
-// method that lives in the higher-tier crate.
-pub mod form_data {
-    /// `FormData.Encoding` — `union(enum) { URLEncoded, Multipart: []const u8 }`.
-    /// `Multipart` owns its boundary (the Box moves in directly).
-    #[derive(Debug)]
-    pub enum Encoding {
-        URLEncoded,
-        /// boundary
-        Multipart(Box<[u8]>),
-    }
-
-    impl Encoding {
-        pub fn get(content_type: &[u8]) -> Option<Encoding> {
-            // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type and subtype are
-            // case-insensitive.
-            if crate::strings_impl::contains_case_insensitive_ascii(
-                content_type,
-                b"application/x-www-form-urlencoded",
-            ) {
-                return Some(Encoding::URLEncoded);
-            }
-            if !crate::strings_impl::contains_case_insensitive_ascii(
-                content_type,
-                b"multipart/form-data",
-            ) {
-                return None;
-            }
-            let boundary = get_boundary(content_type)?;
-            Some(Encoding::Multipart(Box::from(boundary)))
-        }
-    }
-
-    /// `FormData.getBoundary` — borrow the `boundary=` value out of a
-    /// `Content-Type` header. Returns `None` on malformed quoting.
-    ///
-    /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
-    /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
-    /// `boundary=` substring inside another parameter's value is not picked up
-    /// by an unanchored substring search. A `;` inside a quoted parameter
-    /// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
-    /// delimit parameters.
-    pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
-        let mut rest = content_type;
-        loop {
-            let semi = index_of_unquoted_semicolon(rest)?;
-            rest = &rest[semi + 1..];
-            let param = crate::strings_impl::trim_left(rest, b" \t");
-            // RFC 2045 §5.1: parameter attribute names are case-insensitive;
-            // the `=` value is matched byte-exact (the boundary delimiter in
-            // the body must match it verbatim).
-            let Some(eq) = crate::strings::index_of_char_usize(param, b'=') else {
-                continue;
-            };
-            if !param[..eq].eq_ignore_ascii_case(b"boundary") {
-                continue;
-            }
-            let begin = &param[eq + 1..];
-            if begin.is_empty() {
-                return None;
-            }
-            let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
-            if begin[0] == b'"' {
-                if end > 1 && begin[end - 1] == b'"' {
-                    return Some(&begin[1..end - 1]);
-                }
-                // Opening quote with no matching closing quote — malformed.
-                return None;
-            }
-            return Some(&begin[..end]);
-        }
-    }
-
-    /// Index of the next `;` in `s` that is not inside an RFC 7230
-    /// quoted-string (`\` escapes the following byte inside quotes).
-    fn index_of_unquoted_semicolon(s: &[u8]) -> Option<usize> {
-        let mut in_quotes = false;
-        let mut i = 0;
-        while i < s.len() {
-            match s[i] {
-                b'"' => in_quotes = !in_quotes,
-                b'\\' if in_quotes => i += 1,
-                b';' if !in_quotes => return Some(i),
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
-    /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
-    /// Cleanup is `Drop` on the
-    /// `Box`/`Box<[u8]>` fields — no explicit impl needed.
-    #[derive(Debug)]
-    pub struct AsyncFormData {
-        pub encoding: Encoding,
-    }
-
-    impl AsyncFormData {
-        #[inline]
-        pub fn init(encoding: Encoding) -> Box<AsyncFormData> {
-            // With `Box<[u8]>`, boundary ownership has already transferred.
-            Box::new(AsyncFormData { encoding })
-        }
-    }
-}
-/// `bun.FormData` — capitalized namespace alias.
-pub use form_data as FormData;

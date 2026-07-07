@@ -24,14 +24,13 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{ZigString, ZigStringSlice};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
-};
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
+use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
+use bun_paths::{self as path};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -59,32 +58,7 @@ pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs",
 use bun_jsc::ZigStringJsc as _;
 #[inline]
 fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
-    jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)
-}
-
-// ── ResolverLike bridge ───────────────────────────────────────────────────
-// `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
-// `bun_resolver::Resolver` is the concrete impl. The orphan-rule-compliant
-// impl lives here in `bun_runtime` (the runtime sees both).
-
-/// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
-/// `bun_resolver::Resolver`.
-struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
-
-impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
-    #[inline]
-    fn fs(&self) -> &'static Fs::FileSystem {
-        Fs::FileSystem::instance()
-    }
-    #[inline]
-    fn fs_impl(&self) -> *mut Fs::Implementation {
-        // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
-    }
-    #[inline]
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
-        self.0.read_dir_info_ignore_error(path)
-    }
+    bun_core::ZigString::from_bytes(bytes).to_js(global)
 }
 
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
@@ -286,7 +260,7 @@ impl FileSystemRouter {
                 .load_routes(
                     &mut log,
                     &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &mut vm.transpiler.resolver,
                     &config_dir,
                 )
                 .is_err()
@@ -519,7 +493,7 @@ impl FileSystemRouter {
                 .load_routes(
                     &mut log,
                     &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &mut vm.transpiler.resolver,
                     &config_dir,
                 )
                 .is_err()

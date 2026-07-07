@@ -1,15 +1,13 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::HashMap;
 use bun_core::Output;
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID};
 
 use crate::Dependency;
-use crate::DependencyID;
 use crate::ManifestLoad;
 use crate::NetworkTask;
-use crate::PackageID;
 use crate::Resolution;
-use crate::dependency::Behavior;
-use crate::invalid_package_id;
+use bun_install_types::dependency::Behavior;
 // Import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
@@ -157,7 +155,7 @@ pub fn populate_manifest_cache(
                 let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
                 let pkg_id = resolutions[dep_id as usize];
-                if pkg_id == invalid_package_id {
+                if pkg_id == INVALID_PACKAGE_ID {
                     continue;
                 }
 
@@ -222,7 +220,7 @@ pub fn populate_manifest_cache(
                         continue;
                     }
                     let pkg_id = resolutions[dep_id];
-                    if pkg_id == invalid_package_id {
+                    if pkg_id == INVALID_PACKAGE_ID {
                         continue;
                     }
                     let dep = &dependencies[dep_id];

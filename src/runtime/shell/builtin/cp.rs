@@ -2,12 +2,13 @@ use bun_paths::resolve_path;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
+use bun_event_loop::EventLoopHandle;
 
 #[derive(Default)]
 pub struct Cp {
@@ -459,8 +460,8 @@ impl ShellCpTask {
         }
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let mut buf2 = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_core::PathBuffer::uninit();
+            let mut buf2 = bun_core::PathBuffer::uninit();
             let src8 = bun_paths::strings::from_wpath(&mut buf, src);
             let dest8 = bun_paths::strings::from_wpath(&mut buf2, dest);
             self.on_copy_impl(src8, dest8);
@@ -476,7 +477,7 @@ impl ShellCpTask {
     /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
-    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
+    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Result<()>) {
         // SAFETY: caller contract — `this` is live and exclusively owned by
         // this thread until `enqueue_to_event_loop` hands it off.
         unsafe {
@@ -547,7 +548,7 @@ impl ShellCpTask {
             .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
-    fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
+    fn is_dir(path: &bun_core::ZStr) -> bun_sys::Result<bool> {
         #[cfg(windows)]
         {
             match bun_sys::get_file_attributes(path) {
@@ -572,8 +573,8 @@ impl ShellCpTask {
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
-        let mut buf2 = bun_paths::PathBuffer::uninit();
-        let mut buf3 = bun_paths::PathBuffer::uninit();
+        let mut buf2 = bun_core::PathBuffer::uninit();
+        let mut buf3 = bun_core::PathBuffer::uninit();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
@@ -685,14 +686,18 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.src_absolute.as_deref().unwrap(),
-                false,
-            )),
-            dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.tgt_absolute.as_deref().unwrap(),
-                false,
-            )),
+            src: bun_jsc::node_path::PathLike::String(
+                bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    self.src_absolute.as_deref().unwrap(),
+                    false,
+                ),
+            ),
+            dest: bun_jsc::node_path::PathLike::String(
+                bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    self.tgt_absolute.as_deref().unwrap(),
+                    false,
+                ),
+            ),
             flags: crate::node::fs::args::CpFlags {
                 mode: crate::node::fs::constants::Copyfile::from_raw(0),
                 recursive: self.opts.recursive,
@@ -747,7 +752,7 @@ impl ShellCpTask {
 }
 
 impl bun_event_loop::Taskable for ShellCpTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellCpTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {

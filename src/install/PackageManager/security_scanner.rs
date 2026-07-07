@@ -1,5 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::ByteVecExt;
+use bun_install_types::{DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID};
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -10,28 +11,23 @@ use bstr::BStr;
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
-use crate::bun_fs::FileSystem;
-use crate::bun_json::{Expr, ExprData};
-use crate::package_manager_real::Command::Context as CommandContext;
+use crate::PackageManager;
+use bun_ast::{Expr, ExprData};
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_core::{self, Error, Output, err};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
-use bun_install::{
-    DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
-};
 use bun_io::Loop as AsyncLoop;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
+use bun_options_types::context::Context as CommandContext;
 use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
+use bun_resolver::fs::FileSystem;
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
-use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status,
-    Stdio,
-};
+use bun_spawn::{self as spawn, Exited, Process, ProcessExit, Rusage, SpawnOptions, Status, Stdio};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
@@ -106,7 +102,7 @@ pub(crate) fn do_partial_install_of_security_scanner(
         return Ok(());
     }
 
-    if security_scanner_pkg_id == invalid_package_id {
+    if security_scanner_pkg_id == INVALID_PACKAGE_ID {
         return Err(err!("InvalidPackageID"));
     }
 
@@ -181,12 +177,12 @@ impl<'a> ScannerFinder<'a> {
             let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
-            if dep_pkg_id == invalid_package_id {
+            if dep_pkg_id == INVALID_PACKAGE_ID {
                 continue;
             }
 
             let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-            if dep_res.tag != bun_install::resolution::Tag::Npm {
+            if dep_res.tag != crate::resolution::Tag::Npm {
                 continue;
             }
 
@@ -206,7 +202,7 @@ impl<'a> ScannerFinder<'a> {
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
 
         for pkg_idx in 0..pkgs.len() {
-            if pkg_res[pkg_idx].tag != bun_install::resolution::Tag::Workspace {
+            if pkg_res[pkg_idx].tag != crate::resolution::Tag::Workspace {
                 continue;
             }
 
@@ -241,7 +237,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     // For remove/uninstall, scan all remaining packages after removal
     // For other commands, scan all if no update requests, otherwise scan update packages
     let scan_all =
-        manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
+        manager.subcommand == crate::Subcommand::Remove || manager.update_requests.is_empty();
     let result = attempt_security_scan(
         manager,
         security_scanner,
@@ -506,7 +502,7 @@ impl<'a> PackageCollector<'a> {
             let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
-            if dep_pkg_id == invalid_package_id {
+            if dep_pkg_id == INVALID_PACKAGE_ID {
                 continue;
             }
 
@@ -529,7 +525,7 @@ impl<'a> PackageCollector<'a> {
         // and collect npm deps from workspace packages
         for pkg_idx in 0..pkgs.len() {
             let pkg_id: PackageID = PackageID::try_from(pkg_idx).expect("int cast");
-            if pkg_resolutions[pkg_id as usize].tag != bun_install::resolution::Tag::Workspace {
+            if pkg_resolutions[pkg_id as usize].tag != crate::resolution::Tag::Workspace {
                 continue;
             }
 
@@ -538,7 +534,7 @@ impl<'a> PackageCollector<'a> {
                 let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
                 let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
-                if dep_pkg_id == invalid_package_id {
+                if dep_pkg_id == INVALID_PACKAGE_ID {
                     continue;
                 }
 
@@ -575,14 +571,14 @@ impl<'a> PackageCollector<'a> {
                     continue;
                 }
 
-                let mut update_dep_id: DependencyID = invalid_dependency_id;
-                let mut parent_pkg_id: PackageID = invalid_package_id;
+                let mut update_dep_id: DependencyID = INVALID_DEPENDENCY_ID;
+                let mut parent_pkg_id: PackageID = INVALID_PACKAGE_ID;
 
                 'update_dep_id: for _pkg_id in 0..pkgs.len() {
                     let pkg_id: PackageID = PackageID::try_from(_pkg_id).expect("int cast");
                     let pkg_res = &pkg_resolutions[pkg_id as usize];
-                    if pkg_res.tag != bun_install::resolution::Tag::Root
-                        && pkg_res.tag != bun_install::resolution::Tag::Workspace
+                    if pkg_res.tag != crate::resolution::Tag::Root
+                        && pkg_res.tag != crate::resolution::Tag::Workspace
                     {
                         continue;
                     }
@@ -592,7 +588,7 @@ impl<'a> PackageCollector<'a> {
                         let dep_id: DependencyID =
                             DependencyID::try_from(_dep_id).expect("int cast");
                         let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-                        if dep_pkg_id == invalid_package_id {
+                        if dep_pkg_id == INVALID_PACKAGE_ID {
                             continue;
                         }
                         if dep_pkg_id != update_pkg_id {
@@ -605,7 +601,7 @@ impl<'a> PackageCollector<'a> {
                     }
                 }
 
-                if update_dep_id == invalid_dependency_id {
+                if update_dep_id == INVALID_DEPENDENCY_ID {
                     continue;
                 }
                 if self.dedupe.get_or_put(update_pkg_id)?.found_existing {
@@ -613,7 +609,7 @@ impl<'a> PackageCollector<'a> {
                 }
 
                 let mut initial_pkg_path: Vec<PackageID> = Vec::new();
-                if parent_pkg_id != invalid_package_id {
+                if parent_pkg_id != INVALID_PACKAGE_ID {
                     initial_pkg_path.push(parent_pkg_id);
                 }
                 initial_pkg_path.push(update_pkg_id);
@@ -643,7 +639,7 @@ impl<'a> PackageCollector<'a> {
             let pkg_id = item.pkg_id;
             let _ = item.dep_id; // Could be useful in the future for dependency-specific processing
 
-            if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm {
+            if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Npm {
                 let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
                 let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
 
@@ -662,7 +658,7 @@ impl<'a> PackageCollector<'a> {
                     DependencyID::try_from(_next_dep_id).expect("int cast");
                 let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
 
-                if next_pkg_id == invalid_package_id {
+                if next_pkg_id == INVALID_PACKAGE_ID {
                     continue;
                 }
 
@@ -721,7 +717,7 @@ impl<'a> JSONBuilder<'a> {
             let dep_id = if !paths.dep_path.is_empty() {
                 paths.dep_path[paths.dep_path.len() - 1]
             } else {
-                invalid_dependency_id
+                INVALID_DEPENDENCY_ID
             };
 
             let pkg_name = pkg_names[pkg_id as usize];
@@ -735,7 +731,7 @@ impl<'a> JSONBuilder<'a> {
             // whose resolution tag is `Tag::Npm` into `package_paths`, so the
             // `npm` union variant is the active field here.
             let npm = pkg_res.npm();
-            if dep_id == invalid_dependency_id {
+            if dep_id == INVALID_DEPENDENCY_ID {
                 write!(
                     &mut json_buf,
                     "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": \"{}\",\n    \"tarball\": {}\n  }}",
@@ -922,7 +918,7 @@ fn attempt_security_scan_with_retry(
 
 pub struct SecurityScanSubprocess<'a> {
     manager: &'a mut PackageManager,
-    /// Stable storage for the io-layer opaque `bun_io::EventLoopHandle`
+    /// Stable storage for the io-layer opaque `bun_io::EventLoopCtx`
     /// (which carries `*const EventLoopHandle`). `manager.event_loop` is an
     /// `AnyEventLoop` — different layout — so its address is NOT a valid
     /// substitute. Mirrors the pattern in `StaticPipeWriter::io_evtloop`.
@@ -956,7 +952,8 @@ pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubp
 // `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
 // the stack (small JSON fits the pipe buffer → write completes → close).
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
+    type SourcePayload = subprocess::NoPayload;
+
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
         // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
@@ -966,10 +963,15 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    SecurityScan for SecurityScanSubprocess => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, rusage),
+impl bun_spawn::ProcessExitOps for SecurityScanSubprocess<'_> {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: vtable contract — `this` is the live subprocess that armed the handler.
+        unsafe { (*this).on_process_exit(&mut *process, status, rusage) }
     }
 }
 
@@ -1126,17 +1128,16 @@ impl<'a> SecurityScanSubprocess<'a> {
         argv: &mut [*const core::ffi::c_char; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
+        use bun_libuv_sys as uv;
         use bun_sys::ReturnCodeExt as _;
-        use bun_sys::windows::libuv as uv;
 
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
-        // make `errno_to_zig_err` index the wrong table.
-        if let Some(e) = pipe_rc.err_enum_e() {
+        // `err_enum_or_unknown` maps the libuv code to a POSIX `bun.sys.E` and
+        // never drops an unmapped negative code (collapses to `E::UNKNOWN`), so
+        // `errno_to_zig_err` always sees a real error here.
+        if let Some(e) = pipe_rc.err_enum_or_unknown() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_core::errno_to_zig_err(e as i32));
@@ -1295,7 +1296,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // (refcount == 1, owned by us); `parent` was just derived from
         // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
         unsafe {
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
+            (*process).set_exit_handler(ProcessExit::of(parent));
             (*parent).process = Some(process);
         }
 
@@ -1555,7 +1556,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut temp_log = bun_ast::Log::init();
 
-        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
+        let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));

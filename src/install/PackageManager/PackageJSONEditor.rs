@@ -1,4 +1,5 @@
 use bun_collections::VecExt;
+use bun_install_types::INVALID_PACKAGE_ID;
 use std::io::Write as _;
 
 use bun_ast as js_ast;
@@ -6,10 +7,10 @@ use bun_ast::{E, Expr, G};
 use bun_core::strings;
 use bun_semver as semver;
 
-use bun_install::dependency::{self, TagExt as _};
-use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
+use crate::lockfile::package::PackageColumns as _;
+use crate::{Dependency, resolution};
 use bun_install_types::DependencyGroup;
+use bun_install_types::dependency::{self};
 
 use super::package_manager_options::{Do, Enable};
 use super::{PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};

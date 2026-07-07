@@ -1,20 +1,20 @@
 //! JS host entry points for the IPC module that need to name `bun_runtime`
 //! types (`Subprocess`, `Listener`).
 //!
-//! LAYERING: `bun_jsc::ipc` defines the protocol/queue (mode-agnostic) and the
-//! `SendQueueOwner` trait. The host fns here close over the concrete
-//! `Subprocess` / `Listener` / `IPCInstance` types so `bun_jsc` keeps zero
-//! upward references into `bun_runtime`. The C-ABI exports (`Bun__Process__send`,
-//! `emit_handle_ipc_message` for JS2Native) are link-time symbols, so which
-//! crate defines them is irrelevant to the C++ side.
+//! LAYERING: `crate::ipc` defines the protocol/queue (mode-agnostic) and the
+//! `SendQueueOwner` enum. The host fns here close over the concrete
+//! `Subprocess` / `Listener` / `IPCInstance` types. The C-ABI exports
+//! (`Bun__Process__send`, `emit_handle_ipc_message` for JS2Native) are
+//! link-time symbols, so which crate defines them is irrelevant to the C++
+//! side.
 
 use bun_core::String as BunString;
-use bun_jsc::ipc::{
-    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
-};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 
 use crate::api::bun::subprocess::Subprocess;
+use crate::ipc::{
+    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
+};
 use crate::socket::Listener;
 
 bun_core::define_scoped_log!(log, IPC, visible);
@@ -191,9 +191,9 @@ pub fn emit_handle_ipc_message(
 ) -> JsResult<JSValue> {
     let [target, message, handle] = callframe.arguments_as_array::<3>();
     if target.is_null() {
-        // mutable); `get_ipc_instance` writes `self.ipc` on first call.
+        // mutable); `get_ipc_instance` writes `state.ipc` on first call.
         let vm = global_this.bun_vm().as_mut();
-        let Some(ipc) = vm.get_ipc_instance() else {
+        let Some(ipc) = crate::ipc::get_ipc_instance(vm) else {
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
@@ -221,12 +221,12 @@ pub fn emit_handle_ipc_message(
 // the C++ caller.
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
 pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
-    // mutable); `get_ipc_instance` writes `self.ipc` on first call.
+    bun_core::mark_binding!();
+    // mutable); `get_ipc_instance` writes `state.ipc` on first call.
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
-    let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
+    let ipc = crate::ipc::get_ipc_instance(vm).map(|i| unsafe { &mut (*i).data });
     do_send(ipc, global, frame, FromEnum::Process)
 }

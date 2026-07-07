@@ -6,8 +6,8 @@
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
-use crate::h2_frame_parser as wire;
 use bun_core::err;
+use bun_http_types::h2 as wire;
 use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
@@ -709,10 +709,10 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         // delivery (it isn't — only ever appended to once per END_HEADERS).
         // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
         let name =
-            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
+            unsafe { bun_opaque::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
         // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
         let value =
-            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
+            unsafe { bun_opaque::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));

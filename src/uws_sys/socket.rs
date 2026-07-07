@@ -28,38 +28,23 @@ use crate::{
 bun_core::declare_scope!(uws, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
-// CloseCode PascalCase aliases
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_uws_sys::CloseCode` (us_socket_t.rs) keeps the snake-case variant
-// names (`normal`/`failure`/`fast_shutdown`). The deleted `bun_uws::CloseKind`
-// duplicate used PascalCase. Expose both spellings via associated consts so
-// every existing call site (`CloseCode::Normal`, `CloseKind::Failure`, …)
-// resolves against the one canonical `#[repr(i32)]` enum.
-#[allow(non_upper_case_globals)]
-impl CloseCode {
-    pub const Normal: CloseCode = CloseCode::normal;
-    pub const Failure: CloseCode = CloseCode::failure;
-    pub const FastShutdown: CloseCode = CloseCode::fast_shutdown;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // InternalSocket
 // ──────────────────────────────────────────────────────────────────────────
 
 /// State of a single connection. `Copy` — passed by value
 /// through the entire HTTP-client / Bun.Socket state machines, so the handle
 /// is a trivially-copyable tagged pointer. The `UpgradedDuplex` / `Pipe`
-/// payloads are raw `*mut` (NOT `&mut`): they are stored in long-lived
-/// `Cell<NewSocketHandler>` fields and re-borrowed per call via the opaque
-/// deref helpers below.
+/// payloads are `NonNull` handles into the runtime-tier transports: they are
+/// stored in long-lived `Cell<NewSocketHandler>` fields and re-borrowed per
+/// call via the opaque deref helpers below.
 #[derive(Copy, Clone)]
 pub enum InternalSocket {
     Connected(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
     Detached,
-    UpgradedDuplex(*mut UpgradedDuplex),
+    UpgradedDuplex(NonNull<UpgradedDuplex>),
     #[cfg(windows)]
-    Pipe(*mut WindowsNamedPipe),
+    Pipe(NonNull<WindowsNamedPipe>),
     #[cfg(not(windows))]
     Pipe,
 }
@@ -74,11 +59,9 @@ impl PartialEq for InternalSocket {
             (InternalSocket::Connected(a), InternalSocket::Connected(b)) => core::ptr::eq(a, b),
             (InternalSocket::Connecting(a), InternalSocket::Connecting(b)) => core::ptr::eq(a, b),
             (InternalSocket::Detached, InternalSocket::Detached) => true,
-            (InternalSocket::UpgradedDuplex(a), InternalSocket::UpgradedDuplex(b)) => {
-                core::ptr::eq(a, b)
-            }
+            (InternalSocket::UpgradedDuplex(a), InternalSocket::UpgradedDuplex(b)) => a == b,
             #[cfg(windows)]
-            (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
+            (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => a == b,
             #[cfg(not(windows))]
             (InternalSocket::Pipe, InternalSocket::Pipe) => false,
             _ => false,
@@ -110,10 +93,10 @@ impl InternalSocket {
 
 // ── Safe deref helpers for `InternalSocket` payloads ────────────────────────
 // All four payload types are `#[repr(C)] UnsafeCell<[u8; 0]>` opaque ZSTs
-// (`opaque_ffi!` / `opaque_extern!`): zero-sized, align-1, no `noalias` /
-// `readonly`. Materializing `&mut T` from `*mut T` therefore has exactly one
-// validity requirement — non-null — which uSockets guarantees for every
-// pointer it stores in `Connected` / `Connecting` / `UpgradedDuplex` / `Pipe`.
+// (`opaque_ffi!`): zero-sized, align-1, no `noalias` / `readonly`.
+// Materializing `&mut T` from `*mut T` therefore has exactly one validity
+// requirement — non-null — which uSockets guarantees for every pointer it
+// stores in `Connected` / `Connecting` / `UpgradedDuplex` / `Pipe`.
 // Centralizing the deref keeps the proof local instead of repeating
 // `unsafe { &mut *s }` at ~50 match arms.
 
@@ -129,14 +112,14 @@ fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
 }
 /// Reborrow the `InternalSocket::UpgradedDuplex` payload (cycle-break shim).
 #[inline(always)]
-fn duplex<'a>(p: *mut UpgradedDuplex) -> &'a mut UpgradedDuplex {
-    bun_opaque::opaque_deref_mut(p)
+fn duplex<'a>(p: NonNull<UpgradedDuplex>) -> &'a mut UpgradedDuplex {
+    bun_opaque::opaque_deref_mut(p.as_ptr())
 }
 /// Reborrow the `InternalSocket::Pipe` payload (Windows only).
 #[cfg(windows)]
 #[inline(always)]
-fn pipe<'a>(p: *mut WindowsNamedPipe) -> &'a mut WindowsNamedPipe {
-    bun_opaque::opaque_deref_mut(p)
+fn pipe<'a>(p: NonNull<WindowsNamedPipe>) -> &'a mut WindowsNamedPipe {
+    bun_opaque::opaque_deref_mut(p.as_ptr())
 }
 
 /// Five-arm `match self.socket` with the `#[cfg(windows)]` Pipe split owned
@@ -378,16 +361,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     /// Write `data` and pass `file_descriptor` over the socket via SCM_RIGHTS.
     /// POSIX-only — Windows IPC fd passing goes through libuv pipes instead.
-    ///
-    /// LAYERING: takes the raw POSIX fd (`c_int`) rather than `bun_sys::Fd` —
-    /// `bun_uws_sys` sits below `bun_sys`; callers extract `.native()` at the
-    /// boundary.
     #[cfg(not(windows))]
-    pub fn write_fd(&self, data: &[u8], file_descriptor: c_int) -> i32 {
+    pub fn write_fd(&self, data: &[u8], file_descriptor: Fd) -> i32 {
         match self.socket {
-            InternalSocket::Connected(s) => {
-                sock(s).write_fd(data, Fd::from_native(file_descriptor))
-            }
+            InternalSocket::Connected(s) => sock(s).write_fd(data, file_descriptor),
             // Duplex/pipe fall back to a plain write (the fd is silently
             // dropped).
             InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
@@ -707,14 +684,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         Self { socket }
     }
     #[inline]
-    pub fn from_duplex(d: *mut UpgradedDuplex) -> Self {
+    pub fn from_duplex(d: NonNull<UpgradedDuplex>) -> Self {
         Self {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
     #[cfg(windows)]
     #[inline]
-    pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
+    pub fn from_named_pipe(p: NonNull<WindowsNamedPipe>) -> Self {
         Self {
             socket: InternalSocket::Pipe(p),
         }

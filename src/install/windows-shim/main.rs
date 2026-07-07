@@ -1,26 +1,17 @@
 //! Entry point for the standalone `bun_shim_impl.exe` PE.
 //!
-//! `bun_shim_impl.rs` is `#![cfg(windows)]` at module scope and its `main()`
-//! returns `!`, so it can't be the bin root directly. This file:
-//!
-//!   - Mirrors `bun_install/lib.rs`'s `_bin_linking_shim` / `_bun_shim_impl`
-//!     module layout so the shared source's `use super::_bin_linking_shim::Flags`
-//!     resolves unmodified.
-//!   - Provides local stand-ins for the `bun_core` / `bun_sys::windows` /
-//!     `bun_str` items the shared source reaches for, so this crate's only
-//!     workspace dep is `bun_windows_sys` (leaf Win32 externs — no native C,
-//!     no `#[no_mangle]` exports). Depending on the real crates would make
-//!     their `#[no_mangle]` C-ABI surface (`Bun__*`, `__bun_dispatch__*`) a
-//!     link root referencing libuv/simdutf/highway/ICU; the shim can't
-//!     satisfy those and shouldn't carry them.
-//!
-//! `BinLinkingShim.rs` is path-included for `Flags`/`VersionFlag` only; its
-//! encoder side (Shebang, `encode_into`, `include_bytes!` of this crate's own
-//! output) is gated out under `feature = "shim_standalone"`.
+//! The launcher (`bun_shim_impl::launcher`) is `#![cfg(windows)]` at module
+//! scope and its `main()` returns `!`, so it can't be the bin root directly.
+//! This file provides the PE entry point plus the `/NODEFAULTLIB` CRT stubs;
+//! all of the shim logic lives in this crate's library (built here with the
+//! `shim_standalone` feature), whose dependencies are only the two leaf
+//! crates `bun_opaque` (`RacyCell`, `w!`, `ffi::{slice,slice_mut,zeroed}`)
+//! and `bun_windows_sys` (Win32 externs) — neither of which has native C or
+//! `#[no_mangle]` exports. Depending on the real `bun_core` / `bun_sys`
+//! crates would make their `#[no_mangle]` C-ABI surface (`Bun__*`,
+//! `__bun_dispatch__*`) a link root referencing libuv/simdutf/highway/ICU;
+//! the shim can't satisfy those and shouldn't carry them.
 
-// Mirror `bun_install/lib.rs`'s crate-level attributes — the path-included
-// modules assume these are set at the crate root.
-//
 // Freestanding: `no_std` + `no_main` so the link contains only the launcher
 // + Win32 externs — no Rust runtime, no CRT, no `std::sys` init.
 // `scripts/build/rust.ts` supplies `/ENTRY:shim_main` and rebuilds `core`
@@ -33,20 +24,6 @@
     incomplete_features,
     dead_code
 )]
-#![feature(adt_const_params)]
-
-// `unreachable_pub`: these files are shared with `bun_install`, where their
-// `pub` items are cross-crate API (`bun_install::windows_shim::*`). Compiled
-// here as private modules of a binary, every `pub` is trivially unreachable.
-#[cfg(windows)]
-#[path = "BinLinkingShim.rs"]
-#[allow(unreachable_pub)]
-mod _bin_linking_shim;
-
-#[cfg(windows)]
-#[path = "bun_shim_impl.rs"]
-#[allow(unreachable_pub)]
-mod _bun_shim_impl;
 
 // ── /NODEFAULTLIB CRT stubs ────────────────────────────────────────────────
 // With `/NODEFAULTLIB` the MSVC CRT isn't linked, so the two CRT-hosted
@@ -132,7 +109,7 @@ pub(crate) extern "C" fn __chkstk() {
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn shim_main() -> ! {
-    _bun_shim_impl::main()
+    bun_shim_impl::launcher::main()
 }
 
 /// `no_std` requires a crate-graph-unique panic handler. The shim's only
@@ -161,136 +138,4 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  Stand-ins for `bun_core` / `bun_sys::windows` / `bun_str`
-//
-//  Brought into `bun_shim_impl.rs`'s scope via a single
-//  `#[cfg(feature = "shim_standalone")] use crate::{bun_core, bun_str, w};`
-//  so the inline `bun_core::ffi::slice(...)` / `bun_core::w!(...)` paths
-//  resolve here instead of the extern prelude, and `w` (= the
-//  `bun_sys::windows` namespace) comes from `compat` below.
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// `bun_core::w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only).
-/// Mirrors `bun_core::w!` (src/string/immutable.rs).
-#[macro_export]
-macro_rules! w_lit {
-    ($s:literal) => {{
-        const __B: &[u8] = $s.as_bytes();
-        const __N: usize = __B.len();
-        const __W: [u16; __N] = {
-            let mut out = [0u16; __N];
-            let mut i = 0;
-            while i < __N {
-                debug_assert!(__B[i] < 0x80, "w! is ASCII-only");
-                out[i] = __B[i] as u16;
-                i += 1;
-            }
-            out
-        };
-        &__W as &'static [u16]
-    }};
-}
-
-#[cfg(windows)]
-pub mod bun_core {
-    // Re-export under the path the shared source uses (`bun_core::w!`).
-    pub use crate::w_lit as w;
-    /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
-    /// interior-mutability cell with no synchronization. The shim is
-    /// single-threaded (it never spawns a thread), so the
-    /// unconditional `Sync` is trivially upheld.
-    ///
-    /// Internally backed by `Cell<T>` (not `UnsafeCell<T>`): `Cell` is
-    /// `#[repr(transparent)]` over `UnsafeCell` with identical `Send`/`!Sync`
-    /// auto-traits, but gives `.get()/.set()` for `T: Copy` without a raw
-    /// deref. The only remaining `unsafe` is the `impl Sync` below — the
-    /// irreducible single-thread invariant.
-    #[repr(transparent)]
-    pub(crate) struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
-    // SAFETY: standalone shim is single-threaded.
-    unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
-    impl<T> RacyCell<T> {
-        #[inline]
-        pub(crate) const fn new(value: T) -> Self {
-            Self(core::cell::Cell::new(value))
-        }
-        #[inline]
-        pub(crate) const fn get(&self) -> *mut T {
-            self.0.as_ptr()
-        }
-        /// Body is safe `Cell::get()`; the single-thread invariant is
-        /// discharged by the `Sync` impl above, not by the caller.
-        /// `bun_shim_impl.rs` only uses `.new()`/`.get()`, so signature
-        /// parity with `bun_core::RacyCell::read` is unneeded here.
-        #[inline]
-        pub(crate) fn read(&self) -> T
-        where
-            T: Copy,
-        {
-            self.0.get()
-        }
-        /// Body is safe `Cell::set()`; see [`Self::read`].
-        #[inline]
-        pub(crate) fn write(&self, value: T) {
-            self.0.set(value)
-        }
-    }
-
-    /// Mirrors the subset of `bun_core::ffi` the shim calls.
-    pub mod ffi {
-        // `core`-only slice/wstr primitives — single audited copy lives in
-        // `bun_opaque::ffi` (zero-dep, zero `#[no_mangle]`, safe for this
-        // freestanding PE to depend on). `Zeroable`/`zeroed` stay local: the
-        // orphan rule blocks `bun_opaque` from `impl Zeroable for
-        // bun_windows_sys::*`, and `bun_core`'s impls drag in link roots.
-        pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
-
-        /// Marker: all-zero bit pattern is a valid `Self`. Local re-spelling
-        /// of `bun_core::ffi::Zeroable`; impl'd below for the two
-        /// `bun_windows_sys` POD types the shim zero-inits.
-        ///
-        /// # Safety
-        /// `Self` must be inhabited at the all-zero bit pattern.
-        pub(crate) unsafe trait Zeroable: Sized {}
-        // SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
-        unsafe impl Zeroable for bun_windows_sys::IO_STATUS_BLOCK {}
-        // SAFETY: two raw-pointer HANDLEs (null-valid) + two u32.
-        unsafe impl Zeroable for crate::compat::PROCESS_INFORMATION {}
-
-        /// Mirrors `bun_core::ffi::zeroed`.
-        #[inline(always)]
-        pub(crate) const fn zeroed<T: Zeroable>() -> T {
-            // SAFETY: `T: Zeroable` asserts all-zero is valid for `T`.
-            unsafe { core::mem::zeroed() }
-        }
-    }
-}
-
-/// `bun_sys::windows` stand-in. Re-exports the leaf `bun_windows_sys` surface
-/// (which now owns CreateProcessW, STARTUPINFOW / PROCESS_INFORMATION, the
-/// TEB→PEB→ProcessParameters chain, and `teb()`/`peb()`); only the shim-local
-/// `PVOID` alias and console-mode flag remain here.
-#[cfg(windows)]
-pub mod compat {
-    use core::ffi::c_void;
-
-    pub use bun_windows_sys::*;
-    // Distinct sub-module so `w::ntdll::NtClose` etc. resolve.
-    pub use bun_windows_sys::ntdll;
-
-    // ── aliases / consts not yet in bun_windows_sys ──
-    pub(crate) type PVOID = *mut c_void;
-    pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
-
-    // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
-    //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──
-    pub mod kernel32 {
-        pub use bun_windows_sys::externs::{
-            GetConsoleMode, GetExitCodeProcess, SetConsoleMode, WaitForSingleObject,
-        };
-        pub use bun_windows_sys::kernel32::*;
-    }
 }

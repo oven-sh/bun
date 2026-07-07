@@ -8,25 +8,18 @@
 //! `webcore::Blob` / `node_fs` (tier-6).
 //!
 //! `from_js`/`from_generated` cannot be inherent `impl SSLConfig` (orphan
-//! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
-//! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
+//! rule on a foreign type), so they're provided as free constructor fns in
+//! this module: `ssl_config::from_js(..)` / `ssl_config::from_generated(..)`.
 
 use core::ffi::c_char;
 
+use bun_http::ssl_config::SSLConfig;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
 use crate::node::fs as node_fs;
 use crate::webcore::Blob;
 use crate::webcore::blob::store::Data as StoreData;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Canonical re-exports (struct + registry live in bun_http now)
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use bun_http::ssl_config::{
-    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
@@ -117,138 +110,112 @@ fn read_from_blob(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// fromJS / fromGenerated — extension trait (orphan-rule workaround)
+// fromJS / fromGenerated — JSC-dependent constructors for the canonical
+// `bun_http::SSLConfig` (free fns: the struct is foreign, so these cannot be
+// inherent impls).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
-/// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
-pub trait SSLConfigFromJs: Sized {
-    fn from_js(
-        vm: &VirtualMachine,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<Self>>;
-
-    fn from_generated(
-        vm: &VirtualMachine,
-        global: &JSGlobalObject,
-        generated: &jsc::generated::SSLConfig,
-    ) -> JsResult<Option<Self>>;
-}
-
-impl SSLConfigFromJs for SSLConfig {
-    fn from_js(
-        vm: &VirtualMachine,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<SSLConfig>> {
-        let generated = jsc::generated::SSLConfig::from_js(global, value)?;
-        // `generated` dropped at scope exit
-        Self::from_generated(vm, global, &generated)
-    }
-
-    fn from_generated(
-        vm: &VirtualMachine,
-        global: &JSGlobalObject,
-        generated: &jsc::generated::SSLConfig,
-    ) -> JsResult<Option<SSLConfig>> {
-        let mut result = SSLConfig::zero();
-        // `result` cleanup handled by Drop on error-path `?`
-        let mut any = false;
-
-        if let Some(passphrase) = generated.passphrase.get() {
-            result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
-            any = true;
-        }
-        if let Some(dh_params_file) = generated.dh_params_file.get() {
-            result.dh_params_file_name = handle_path(global, "dhParamsFile", &dh_params_file)?;
-            any = true;
-        }
-        if let Some(server_name) = generated.server_name.get() {
-            result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
-            result.requires_custom_request_ctx = true;
-        }
-
-        result.low_memory_mode = generated.low_memory_mode;
-        result.reject_unauthorized = generated
-            .reject_unauthorized
-            .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
-            as i32;
-        result.request_cert = generated.request_cert as i32;
-        result.secure_options = generated.secure_options;
-        result.ssl_min_version = generated.ssl_min_version;
-        result.ssl_max_version = generated.ssl_max_version;
-        any = any
-            || result.low_memory_mode
-            || generated.reject_unauthorized.is_some()
-            || generated.request_cert
-            || result.secure_options != 0
-            || result.ssl_min_version != 0
-            || result.ssl_max_version != 0;
-
-        result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
-        result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
-        result.key = handle_file_for_field(global, "key", &generated.key)?;
-        result.requires_custom_request_ctx = result.requires_custom_request_ctx
-            || result.ca.is_some()
-            || result.cert.is_some()
-            || result.key.is_some();
-
-        if let Some(key_file) = generated.key_file.get() {
-            result.key_file_name = handle_path(global, "keyFile", &key_file)?;
-            result.requires_custom_request_ctx = true;
-        }
-        if let Some(cert_file) = generated.cert_file.get() {
-            result.cert_file_name = handle_path(global, "certFile", &cert_file)?;
-            result.requires_custom_request_ctx = true;
-        }
-        if let Some(ca_file) = generated.ca_file.get() {
-            result.ca_file_name = handle_path(global, "caFile", &ca_file)?;
-            result.requires_custom_request_ctx = true;
-        }
-
-        let protocols: *const c_char = match &generated.alpn_protocols {
-            jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
-            jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                zbox_into_raw(&val.get().to_owned_slice_z())
-            }
-            jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
-                // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
-                // owned by the GenVal for the duration of `generated`.
-                let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
-                dupe_z(buffer.byte_slice())
-            }
-        };
-        if !protocols.is_null() {
-            result.protos = protocols;
-            result.requires_custom_request_ctx = true;
-        }
-        if let Some(ciphers) = generated.ciphers.get() {
-            result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
-            result.is_using_default_ciphers = false;
-            result.requires_custom_request_ctx = true;
-        }
-
-        result.client_renegotiation_limit = generated.client_renegotiation_limit;
-        result.client_renegotiation_window = generated.client_renegotiation_window;
-        any = any
-            || result.requires_custom_request_ctx
-            || result.client_renegotiation_limit != 0
-            || generated.client_renegotiation_window != 0;
-
-        // We don't need to deinit `result` if `any` is false.
-        if any { Ok(Some(result)) } else { Ok(None) }
-    }
-}
-
-/// Free-function aliases for callers that prefer module-path syntax.
-#[inline]
 pub fn from_js(
     vm: &VirtualMachine,
     global: &JSGlobalObject,
     value: JSValue,
 ) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
+    let generated = jsc::generated::SSLConfig::from_js(global, value)?;
+    // `generated` dropped at scope exit
+    from_generated(vm, global, &generated)
+}
+
+pub fn from_generated(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    generated: &jsc::generated::SSLConfig,
+) -> JsResult<Option<SSLConfig>> {
+    let mut result = SSLConfig::zero();
+    // `result` cleanup handled by Drop on error-path `?`
+    let mut any = false;
+
+    if let Some(passphrase) = generated.passphrase.get() {
+        result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
+        any = true;
+    }
+    if let Some(dh_params_file) = generated.dh_params_file.get() {
+        result.dh_params_file_name = handle_path(global, "dhParamsFile", &dh_params_file)?;
+        any = true;
+    }
+    if let Some(server_name) = generated.server_name.get() {
+        result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
+        result.requires_custom_request_ctx = true;
+    }
+
+    result.low_memory_mode = generated.low_memory_mode;
+    result.reject_unauthorized = generated
+        .reject_unauthorized
+        .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
+        as i32;
+    result.request_cert = generated.request_cert as i32;
+    result.secure_options = generated.secure_options;
+    result.ssl_min_version = generated.ssl_min_version;
+    result.ssl_max_version = generated.ssl_max_version;
+    any = any
+        || result.low_memory_mode
+        || generated.reject_unauthorized.is_some()
+        || generated.request_cert
+        || result.secure_options != 0
+        || result.ssl_min_version != 0
+        || result.ssl_max_version != 0;
+
+    result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
+    result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
+    result.key = handle_file_for_field(global, "key", &generated.key)?;
+    result.requires_custom_request_ctx = result.requires_custom_request_ctx
+        || result.ca.is_some()
+        || result.cert.is_some()
+        || result.key.is_some();
+
+    if let Some(key_file) = generated.key_file.get() {
+        result.key_file_name = handle_path(global, "keyFile", &key_file)?;
+        result.requires_custom_request_ctx = true;
+    }
+    if let Some(cert_file) = generated.cert_file.get() {
+        result.cert_file_name = handle_path(global, "certFile", &cert_file)?;
+        result.requires_custom_request_ctx = true;
+    }
+    if let Some(ca_file) = generated.ca_file.get() {
+        result.ca_file_name = handle_path(global, "caFile", &ca_file)?;
+        result.requires_custom_request_ctx = true;
+    }
+
+    let protocols: *const c_char = match &generated.alpn_protocols {
+        jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
+        jsc::generated::SSLConfigAlpnProtocols::String(val) => {
+            zbox_into_raw(&val.get().to_owned_slice_z())
+        }
+        jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
+            // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
+            // owned by the GenVal for the duration of `generated`.
+            let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
+            dupe_z(buffer.byte_slice())
+        }
+    };
+    if !protocols.is_null() {
+        result.protos = protocols;
+        result.requires_custom_request_ctx = true;
+    }
+    if let Some(ciphers) = generated.ciphers.get() {
+        result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
+        result.is_using_default_ciphers = false;
+        result.requires_custom_request_ctx = true;
+    }
+
+    result.client_renegotiation_limit = generated.client_renegotiation_limit;
+    result.client_renegotiation_window = generated.client_renegotiation_window;
+    any = any
+        || result.requires_custom_request_ctx
+        || result.client_renegotiation_limit != 0
+        || generated.client_renegotiation_window != 0;
+
+    // We don't need to deinit `result` if `any` is false.
+    if any { Ok(Some(result)) } else { Ok(None) }
 }
 
 // ── handlePath / handleFile helpers ──────────────────────────────────
@@ -386,7 +353,7 @@ fn handle_single_file(
 // WebSocket C-ABI exports (parseSSLConfig / freeSSLConfig)
 //
 // LAYERING: the consumer is `src/http_jsc/websocket_client/
-// WebSocketUpgradeClient.rs`, but `SSLConfig::from_js`
+// WebSocketUpgradeClient.rs`, but `ssl_config::from_js`
 // dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
 // this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
 // the cycle without an opaque stub. The boxed payload is the canonical
@@ -406,8 +373,8 @@ pub(crate) extern "C" fn Bun__WebSocket__parseSSLConfig(
     // SAFETY: `bun_vm()` returns the live VM for this global; the WebSocket
     // constructor only runs on the JS thread with an initialized VM.
     let vm = global_this.bun_vm();
-    // Use SSLConfig::from_js for clean and safe parsing
-    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
+    // Use ssl_config::from_js for clean and safe parsing
+    let config_opt = match from_js(vm, global_this, tls_value) {
         Ok(c) => c,
         // Exception is already set on globalThis
         Err(_) => return None,

@@ -42,7 +42,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         loop {
             // SAFETY: `wtf16_buf` is a contiguous double-NUL-terminated block returned by the OS;
             // every offset we read is inside that block until we observe the terminating empty string.
-            let str_len = unsafe { bun_core::ffi::wcslen(wtf16_buf.add(len)) };
+            let str_len = unsafe { bun_opaque::ffi::wcslen(wtf16_buf.add(len)) };
             len += str_len + 1; // each string is null-terminated
             if str_len == 0 {
                 break; // array ends with empty null-terminated string
@@ -50,7 +50,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
             num_vars += 1;
         }
         // SAFETY: we just measured `len` u16 elements (including terminators) within the OS-owned block.
-        let wtf16_slice = unsafe { bun_core::ffi::slice(wtf16_buf, len) };
+        let wtf16_slice = unsafe { bun_opaque::ffi::slice(wtf16_buf, len) };
         // `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
         // and returns `Vec<u8>` directly — no `?` here.
         break 'blk bun_core::strings::to_utf8_alloc(wtf16_slice);

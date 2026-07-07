@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_paths;
-use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
+use bun_sys::{self, Errno, Fd, FdExt};
 
 pub struct Symlinker {
     pub dest: bun_paths::Path,
@@ -41,7 +41,7 @@ impl Symlinker {
                                 return Ok(());
                             };
 
-                            let _ = Fd::cwd().make_path(dest_parent);
+                            let _ = bun_sys::mkdir_recursive_at(Fd::cwd(), dest_parent);
                             let _ = self.symlink();
                             return Ok(());
                         }
@@ -58,7 +58,7 @@ impl Symlinker {
                                 return Err(symlink_err1);
                             };
 
-                            let _ = Fd::cwd().make_path(dest_parent);
+                            let _ = bun_sys::mkdir_recursive_at(Fd::cwd(), dest_parent);
                             return self.symlink();
                         }
                         Errno::EEXIST => {
@@ -84,7 +84,8 @@ impl Symlinker {
                                                 return Err(symlink_err);
                                             };
 
-                                            let _ = Fd::cwd().make_path(dest_parent);
+                                            let _ =
+                                                bun_sys::mkdir_recursive_at(Fd::cwd(), dest_parent);
                                             return self.symlink();
                                         }
                                         _ => Err(symlink_err),

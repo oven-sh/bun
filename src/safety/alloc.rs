@@ -7,9 +7,8 @@
 //! Higher-tier `is_instance` checks (`MimallocArena`, `LinuxMemFdAllocator`,
 //! `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`, arena vtable)
 //! live in crates above `bun_safety` in the dep graph; they
-//! register their vtable addresses via [`crate::register_alloc_vtable`] at
-//! init (data moved down, no fn-ptr hook). `MimallocArena` is in `bun_alloc`
-//! (below us) so its `is_instance` is called directly.
+//! set `ptr_is_identity` on their `AllocatorVTable`. `MimallocArena` is in
+//! `bun_alloc` (below us) so its `is_instance` is called directly.
 
 use core::fmt;
 
@@ -26,12 +25,9 @@ fn has_ptr(alloc: StdAllocator) -> bool {
     core::ptr::eq(alloc.vtable, basic::C_ALLOCATOR.vtable)
         || core::ptr::eq(alloc.vtable, basic::Z_ALLOCATOR.vtable)
         || bun_alloc::MimallocArena::is_instance(&alloc)
-        || bun_alloc::String::is_wtf_allocator(alloc)
-        // Higher-tier allocators (arena, LinuxMemFdAllocator, MaxHeapAllocator,
-        // CachedBytecode, bundle_v2, heap_breakdown::Zone)
-        // push their vtable addresses into the registry at init. Empty
-        // registry ⇒ `false` (safe under-approximation).
-        || crate::known_alloc_vtable(alloc)
+        || alloc.vtable.wtf_string_refcount
+        // Higher-tier allocators mark identity-meaningful vtables via ptr_is_identity.
+        || alloc.vtable.ptr_is_identity
 }
 
 /// Returns true if the allocators are definitely different.
@@ -193,14 +189,14 @@ impl CheckedAllocator {
     ///
     /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
-    pub fn transfer_ownership(&mut self, new_alloc: &impl AsMimallocArenaAllocator) {
+    pub fn transfer_ownership(&mut self, new_alloc: StdAllocator) {
         let _ = new_alloc;
         if !ENABLED {
             return;
         }
         #[cfg(debug_assertions)]
         {
-            let new_std = new_alloc.allocator();
+            let new_std = new_alloc;
 
             // A scopeguard would need a `&mut self` capture overlapping the
             // reads below, so the assignment is hoisted to both early returns
@@ -226,12 +222,6 @@ impl CheckedAllocator {
             );
         }
     }
-}
-
-/// `MimallocArena` lives in `bun_runtime` (above this crate), so callers
-/// implement this trait there.
-pub trait AsMimallocArenaAllocator {
-    fn allocator(&self) -> StdAllocator;
 }
 
 pub const ENABLED: bool = cfg!(debug_assertions);

@@ -59,8 +59,9 @@ impl CachedBytecode {
         if ok {
             // SAFETY: on success, C++ guarantees both out-params are non-null
             // and the slice is valid for `input_code_size` bytes until deref().
-            let slice =
-                unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
+            let slice = unsafe {
+                bun_opaque::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size)
+            };
             return Some((slice, this.unwrap()));
         }
 
@@ -88,8 +89,9 @@ impl CachedBytecode {
         if ok {
             // SAFETY: on success, C++ guarantees both out-params are non-null
             // and the slice is valid for `input_code_size` bytes until deref().
-            let slice =
-                unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
+            let slice = unsafe {
+                bun_opaque::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size)
+            };
             return Some((slice, this.unwrap()));
         }
 
@@ -113,35 +115,17 @@ impl CachedBytecode {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// The `bun_alloc::Allocator` marker trait has no
-// `alloc`/`free` methods to dispatch through — so "free → deref" semantics
-// cannot ride the trait object. Call sites that would have freed through this
-// allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
-// directly. `is_instance` is preserved for the vtable-identity check in
-// `bun_safety::alloc::has_ptr`.
-// ──────────────────────────────────────────────────────────────────────────
+// `CachedBytecode` is not an allocator: call sites that would have freed
+// through one call `deref()` on the `NonNull<CachedBytecode>` handle directly.
 
-impl bun_alloc::Allocator for CachedBytecode {}
-
-impl CachedBytecode {
-    /// Concrete-type identity check via the `Allocator::type_id()` hook.
-    pub fn is_instance(alloc: &dyn bun_alloc::Allocator) -> bool {
-        alloc.is::<Self>()
-    }
-}
-
-/// Link-time entry point for lower-tier crates (declared `extern "Rust"` in
-/// `bun_bundler`). Generic "generate JSC bytecode off the main JS thread"
-/// helper: marks the calling thread as a bytecode-only thread (so WTF timer
-/// callbacks don't try to reach a non-existent VM), initializes JSC, generates
-/// bytecode for the given output `format`, copies the bytes into an owned
-/// buffer, and releases the C++ handle.
-///
-/// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
-/// jsc-internal setup, not bundler logic.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_generate_cached_bytecode(
+/// Injected into `BundleOptions.generate_cached_bytecode` by the runtime
+/// callers that enable `--bytecode`; runs on a linker worker thread. Generic
+/// "generate JSC bytecode off the main JS thread" helper: marks the calling
+/// thread as a bytecode-only thread (so WTF timer callbacks don't try to reach
+/// a non-existent VM), initializes JSC, generates bytecode for the given
+/// output `format`, copies the bytes into an owned buffer, and releases the
+/// C++ handle.
+pub fn generate_cached_bytecode_for_bundler(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,

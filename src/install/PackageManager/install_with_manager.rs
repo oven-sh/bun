@@ -1,36 +1,34 @@
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use core::sync::atomic::Ordering;
 
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
 
-use crate::bun_fs::FileSystem;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
+use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
-use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::{self, Lockfile};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{
-    Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
-    invalid_package_id,
-};
+use crate::{Dependency, PatchTask, Resolution};
+use bun_install_types::dependency::Tag as DependencyVersionTag;
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
-use super::Command;
 use crate::PackageManager;
 use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
-use crate::lockfile_real::package::Diff;
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::lockfile_real::{Printer, printer as LockfilePrinter};
+use crate::lockfile::package::Diff;
+use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{Printer, printer as LockfilePrinter};
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::package_manager::Options::Enable;
 use crate::package_manager::{Options, WorkspaceFilter};
 use bun_install_types::NodeLinker::NodeLinker;
+use bun_options_types::context::Context;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
@@ -44,7 +42,7 @@ use super::security_scanner;
 
 pub fn install_with_manager(
     manager: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     root_package_json_path: &ZStr,
     original_cwd: &[u8],
 ) -> Result<(), bun_core::Error> {
@@ -56,9 +54,14 @@ pub fn install_with_manager(
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
-            bun_dns::internal::prefetch(
+            // SAFETY: `scope_url.hostname` is NUL-terminated (same contract the
+            // old `bun_dns::internal::prefetch` shim documented).
+            let host = unsafe {
+                bun_core::ZStr::from_raw(scope_url.hostname.as_ptr(), scope_url.hostname.len())
+            };
+            bun_http::dns_cache::prefetch(
                 manager.event_loop.loop_(),
-                scope_url.hostname,
+                Some(host),
                 scope_url.get_port_auto(),
             );
         }
@@ -105,7 +108,7 @@ pub fn install_with_manager(
                 // if migrated always save a new lockfile
                 && (load_result.ok().migrated != lockfile::Migrated::None
                     // if loaded from binary and save-text-lockfile is passed
-                    || (load_result.ok().format == lockfile::Format::Binary
+                    || (load_result.ok().format == lockfile::LockfileFormat::Binary
                         && manager.options.save_text_lockfile.unwrap_or(false)))),
     );
 
@@ -206,11 +209,11 @@ pub fn install_with_manager(
                         Features::main(),
                     )?;
                 }
-                let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize]
+                let mut mapping = vec![INVALID_PACKAGE_ID; maybe_root.dependencies.len as usize]
                     .into_boxed_slice();
                 // @memset already done via vec! init
 
-                // `Diff::generate` (in lockfile_real::package) needs `manager`,
+                // `Diff::generate` (in lockfile::package) needs `manager`,
                 // `manager.log`, `manager.lockfile` and a
                 // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
                 // borrowck.
@@ -260,7 +263,8 @@ pub fn install_with_manager(
                 // patched_dependencies_to_remove}` are disjoint top-level
                 // fields and can be accessed alongside `manager.lockfile`.
                 let summary = &manager.summary;
-                let known_npm_aliases = &mut manager.known_npm_aliases;
+                let mut known_npm_aliases =
+                    crate::dependency::NpmAliasMapRegistry(&mut manager.known_npm_aliases);
                 let patched_dependencies_to_remove = &mut manager.patched_dependencies_to_remove;
                 let (mut builder_, lf) = manager.lockfile.string_builder_split();
                 let builder = &mut builder_;
@@ -339,12 +343,12 @@ pub fn install_with_manager(
                     };
 
                     *lf.overrides = lockfile.overrides.clone(
-                        known_npm_aliases,
+                        &mut known_npm_aliases,
                         &lockfile.buffers.string_bytes,
                         builder,
                     )?;
                     *lf.catalogs = lockfile.catalogs.clone(
-                        known_npm_aliases,
+                        &mut known_npm_aliases,
                         &lockfile.buffers.string_bytes,
                         builder,
                     )?;
@@ -375,19 +379,19 @@ pub fn install_with_manager(
                         Dependency::default()
                     });
                     bun_core::vec::extend_from_fn(lf.resolutions, len as usize, |_| {
-                        invalid_package_id
+                        INVALID_PACKAGE_ID
                     });
                     debug_assert_eq!(lf.dependencies.len(), (off + len) as usize);
                     debug_assert_eq!(lf.resolutions.len(), (off + len) as usize);
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
                         let cloned = new_dep.clone_in(
-                            known_npm_aliases,
+                            &mut known_npm_aliases,
                             &lockfile.buffers.string_bytes,
                             builder,
                         )?;
                         lf.dependencies[off as usize + i] = cloned;
-                        if mapping[i] != invalid_package_id {
+                        if mapping[i] != INVALID_PACKAGE_ID {
                             lf.resolutions[off as usize + i] = old_resolutions[mapping[i] as usize];
                         }
                     }
@@ -432,7 +436,7 @@ pub fn install_with_manager(
                                     // `PatchedDep` has private padding/hash fields,
                                     // so the `..Default::default()` struct-update form is rejected
                                     // outside its module. Build via `default()` + field stores.
-                                    let mut new = crate::lockfile_real::PatchedDep::default();
+                                    let mut new = crate::lockfile::PatchedDep::default();
                                     new.path = builder.append::<SemverString>(
                                         value.path.slice(&lockfile.buffers.string_bytes),
                                     );
@@ -489,12 +493,12 @@ pub fn install_with_manager(
                                 manager.lockfile.buffers.dependencies[dependency_i].clone();
                             if all_name_hashes.contains(&dependency.name_hash) {
                                 manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
+                                    INVALID_PACKAGE_ID;
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
                                     dependency_i as u32,
                                     &dependency,
-                                    invalid_package_id,
+                                    INVALID_PACKAGE_ID,
                                     false,
                                 ) {
                                     add_dependency_error(manager, &dependency, err);
@@ -514,12 +518,12 @@ pub fn install_with_manager(
                             }
 
                             manager.lockfile.buffers.resolutions[dep_id as usize] =
-                                invalid_package_id;
+                                INVALID_PACKAGE_ID;
                             if let Err(err) = enqueue_dependency_with_main(
                                 manager,
                                 dep_id,
                                 &dep,
-                                invalid_package_id,
+                                INVALID_PACKAGE_ID,
                                 false,
                             ) {
                                 add_dependency_error(manager, &dep, err);
@@ -536,7 +540,7 @@ pub fn install_with_manager(
                         let _ = manager.get_temporary_directory();
 
                         while counter_i < changes {
-                            if mapping[counter_i as usize] == invalid_package_id {
+                            if mapping[counter_i as usize] == INVALID_PACKAGE_ID {
                                 let dependency_i = counter_i + off;
                                 let dependency = manager.lockfile.buffers.dependencies
                                     [dependency_i as usize]
@@ -843,8 +847,8 @@ pub fn install_with_manager(
     // A loaded text lockfile is never re-saved just to bump its version: an
     // existing `bun.lock` keeps the version it was written with.
     let should_save_lockfile = (matches!(load_result, lockfile::LoadResult::Ok { .. })
-        && load_result.ok().format == lockfile::Format::Binary
-        && save_format == lockfile::Format::Text)
+        && load_result.ok().format == lockfile::LockfileFormat::Binary
+        && save_format == lockfile::LockfileFormat::Text)
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile()
@@ -1025,7 +1029,7 @@ fn wait_for_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
 #[inline(never)]
 fn print_install_summary(
     this: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
     log_level: Options::LogLevel,
@@ -1452,7 +1456,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         {
             continue;
         }
-        if package_id == invalid_package_id {
+        if package_id == INVALID_PACKAGE_ID {
             continue;
         }
 
@@ -1504,7 +1508,7 @@ fn create_new_lockfile_and_enqueue(
     // on-disk version so re-saving it still doesn't bump the format — matching
     // the "an existing lockfile keeps its version" behavior everywhere else.
     let preserved_text_version = match load_result {
-        lockfile::LoadResult::Ok(ok) if ok.format == lockfile::Format::Text => {
+        lockfile::LoadResult::Ok(ok) if ok.format == lockfile::LockfileFormat::Text => {
             Some(ok.lockfile.text_lockfile_version)
         }
         _ => None,
@@ -1659,7 +1663,7 @@ fn resolve_pending_tasks(
 
 #[cold]
 #[inline(never)]
-fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, original_cwd: &[u8]) {
+fn run_security_scanner(manager: &mut PackageManager, ctx: Context, original_cwd: &[u8]) {
     let is_subcommand_to_run_scanner = matches!(
         manager.subcommand,
         Subcommand::Add | Subcommand::Update | Subcommand::Install | Subcommand::Remove
@@ -1739,9 +1743,9 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
 #[allow(clippy::too_many_arguments)]
 fn save_lockfile_only(
     manager: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     load_result: &lockfile::LoadResult,
-    save_format: lockfile::Format,
+    save_format: lockfile::LockfileFormat,
     had_any_diffs: bool,
     lockfile_before_install: bun_ptr::ParentRef<Lockfile>,
     packages_len_before_install: usize,
@@ -1769,8 +1773,8 @@ fn save_lockfile_only(
         bun_core::pretty!(
             "\nSaved <green>{}<r> ({} package{}) ",
             match save_format {
-                lockfile::Format::Text => "bun.lock",
-                lockfile::Format::Binary => "bun.lockb",
+                lockfile::LockfileFormat::Text => "bun.lock",
+                lockfile::LockfileFormat::Binary => "bun.lockb",
             },
             manager.lockfile.packages.len(),
             if manager.lockfile.packages.len() == 1 {
@@ -1822,7 +1826,7 @@ fn write_yarn_lock_with_progress(
 #[inline(never)]
 fn run_root_lifecycle_scripts(
     manager: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     log_level: Options::LogLevel,
 ) -> Result<(), bun_core::Error> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {

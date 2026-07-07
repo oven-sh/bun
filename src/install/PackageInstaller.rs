@@ -1,30 +1,35 @@
+use bun_install_types::{
+    DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash, TruncatedPackageNameHash,
+};
 use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPath, AutoAbsPath, SEP, platform};
 use bun_semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
 
-use crate::bin_real as bin;
-use crate::bin_real::Bin;
-use crate::bun_bunfig::Arguments as Command;
-use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use bun_core::Progress::{Node as ProgressNode, Progress};
+use bun_options_types::context::Context;
+use bun_resolver::fs::FileSystem;
+
+use crate::bin;
+use crate::bin::Bin;
 
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
-// struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
+// struct `PackageManager.lockfile` actually carries). `lockfile` is still
 // imported for `tree::Id` / `Tree` / `DependencySlice` / `package::*`, all of
 // which are the same types re-exported through `crate::lockfile`.
 use crate::lockfile::Lockfile;
-use crate::lockfile_real::package::{
+use crate::lockfile::package::{
     self as Package, PackageColumns, scripts::Scripts as PackageScripts,
 };
-use crate::lockfile_real::{self as lockfile, DependencySlice, Tree};
+use crate::lockfile::{self as lockfile, DependencySlice, Tree};
 use crate::network_task::ForTarballError;
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
@@ -33,12 +38,9 @@ use crate::package_manager_task as task;
 use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
-use crate::{
-    DependencyID, DependencyInstallContext, ExtractData, PackageID, PackageNameHash,
-    TaskCallbackContext, TruncatedPackageNameHash, invalid_package_id,
-};
+use crate::{DependencyInstallContext, ExtractData, TaskCallbackContext};
 
-bun_output::declare_scope!(PackageInstaller, hidden);
+bun_core::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
@@ -82,17 +84,17 @@ pub struct PackageInstaller<'a> {
     // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
     // Every `resolutions` call site is a read (`&raw const self.resolutions[i]`),
     // so it is also `RawSlice` here.
-    pub metas: bun_ptr::RawSlice<Package::Meta>,
-    pub names: bun_ptr::RawSlice<String>,
-    pub pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
-    pub pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
-    pub bins: bun_ptr::RawSlice<Bin>,
-    pub resolutions: bun_ptr::RawSlice<Resolution>,
+    pub metas: bun_core::RawSlice<Package::Meta>,
+    pub names: bun_core::RawSlice<String>,
+    pub pkg_dependencies: bun_core::RawSlice<DependencySlice>,
+    pub pkg_name_hashes: bun_core::RawSlice<PackageNameHash>,
+    pub bins: bun_core::RawSlice<Bin>,
+    pub resolutions: bun_core::RawSlice<Resolution>,
     pub node: &'a mut ProgressNode,
     pub destination_dir_subpath_buf: PathBuffer,
     pub folder_path_buf: PathBuffer,
     pub successfully_installed: Bitset,
-    pub command_ctx: Command::Context<'a>,
+    pub command_ctx: Context<'a>,
     pub current_tree_id: lockfile::tree::Id,
 
     // fields used for running lifecycle scripts when it's safe
@@ -520,7 +522,7 @@ impl<'a> PackageInstaller<'a> {
         while let Some(dep_id) = tree.binaries.remove_or_null() {
             debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-            debug_assert!(package_id != invalid_package_id);
+            debug_assert!(package_id != INVALID_PACKAGE_ID);
             let bin = self.bins[package_id as usize];
             debug_assert!(bin.tag != bin::Tag::None);
 
@@ -968,12 +970,12 @@ impl<'a> PackageInstaller<'a> {
         // the lifetime of this `PackageInstaller` (only grow, which is why
         // this fn exists — to re-snapshot after growth).
         let packages = self.lockfile_mut().packages.slice();
-        self.metas = bun_ptr::RawSlice::new(packages.items_meta());
-        self.names = bun_ptr::RawSlice::new(packages.items_name());
-        self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
-        self.bins = bun_ptr::RawSlice::new(packages.items_bin());
-        self.resolutions = bun_ptr::RawSlice::new(packages.items_resolution());
-        self.pkg_dependencies = bun_ptr::RawSlice::new(packages.items_dependencies());
+        self.metas = bun_core::RawSlice::new(packages.items_meta());
+        self.names = bun_core::RawSlice::new(packages.items_name());
+        self.pkg_name_hashes = bun_core::RawSlice::new(packages.items_name_hash());
+        self.bins = bun_core::RawSlice::new(packages.items_bin());
+        self.resolutions = bun_core::RawSlice::new(packages.items_resolution());
+        self.pkg_dependencies = bun_core::RawSlice::new(packages.items_dependencies());
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -1031,7 +1033,7 @@ impl<'a> PackageInstaller<'a> {
             let prev_tree_id = self.current_tree_id;
 
             if callbacks.is_empty() {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     PackageInstaller,
                     "Unexpected state: no callbacks for async task."
                 );
@@ -1175,7 +1177,7 @@ impl<'a> PackageInstaller<'a> {
         // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
         let string_buf_ptr =
-            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+            bun_core::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
         macro_rules! string_buf {
             () => {
                 string_buf_ptr.slice()
@@ -1325,7 +1327,7 @@ impl<'a> PackageInstaller<'a> {
             cache_dir_subpath: ZStr::EMPTY,
             file_count: 0,
         };
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             PackageInstaller,
             "Installing {}@{}",
             bstr::BStr::new(pkg_name.slice(string_buf!())),
@@ -1882,7 +1884,8 @@ impl<'a> PackageInstaller<'a> {
                                 log_level,
                                 &mut folder_path,
                                 package_id,
-                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                                dep_behavior
+                                    .contains(bun_install_types::dependency::Behavior::OPTIONAL),
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
@@ -2188,7 +2191,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                         &mut folder_path,
                         package_id,
-                        dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                        dep_behavior.contains(bun_install_types::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
                         if is_trusted_through_update_request {

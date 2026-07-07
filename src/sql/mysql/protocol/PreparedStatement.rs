@@ -43,7 +43,7 @@ impl PrepareOK {
     }
 }
 
-pub struct Execute<'a> {
+pub struct Execute<'a, P: ParamSource + ?Sized> {
     /// ID of the prepared statement to execute, returned from COM_STMT_PREPARE
     pub statement_id: u32,
     /// Execution flags. Currently only CURSOR_TYPE_READ_ONLY (0x01) is supported
@@ -54,32 +54,27 @@ pub struct Execute<'a> {
     pub param_types: &'a [Param],
     /// Whether to send parameter types. Set to true for first execution, false for subsequent executions
     pub new_params_bind_flag: bool,
-    // `params: []Value` — see gated `ExecuteParams` below.
-    pub params: ExecuteParams<'a>,
+    // `params: []Value` — see [`ParamSource`].
+    pub params: &'a P,
 }
 
-/// `Value` (`bun_sql_jsc::mysql::mysql_value::Value`) lives in the
-/// higher-tier `bun_sql_jsc` crate, which this crate cannot depend on. The
-/// borrowed slice is carried behind a context pointer so `len` is real;
-/// encoding goes through the `is_null` / `to_data` hooks the jsc-side caller
-/// fills in.
-pub struct ExecuteParams<'a> {
-    pub len: usize,
-    pub ctx: *mut core::ffi::c_void,
+/// Per-parameter accessor for [`Execute`]. The concrete parameter values
+/// (`bun_runtime::sql_jsc`'s `Value`) live above this crate, so the protocol
+/// encodes through this trait instead of naming the type. Implemented for
+/// `[Value]` in `bun_runtime::sql_jsc::mysql::my_sql_value`.
+pub trait ParamSource {
+    fn count(&self) -> usize;
     /// `param == .null`
-    pub is_null: fn(*mut core::ffi::c_void, usize) -> bool,
+    fn is_null(&self, i: usize) -> bool;
     /// `param.toData(field_type)`
-    pub to_data: fn(
-        *mut core::ffi::c_void,
-        usize,
-        FieldType,
-    ) -> Result<crate::shared::Data, any_mysql_error::Error>,
-    pub _marker: core::marker::PhantomData<&'a ()>,
+    fn to_data(
+        &self,
+        i: usize,
+        field_type: FieldType,
+    ) -> Result<crate::shared::Data, any_mysql_error::Error>;
 }
 
-// Ownership of params stays with the caller (borrowed slice) — no Drop here.
-
-impl<'a> Execute<'a> {
+impl<'a, P: ParamSource + ?Sized> Execute<'a, P> {
     fn write_null_bitmap<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
@@ -87,12 +82,12 @@ impl<'a> Execute<'a> {
         const MYSQL_MAX_PARAMS: usize = (u16::MAX as usize / 8) + 1;
 
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
-        let bitmap_bytes = self.params.len.div_ceil(8);
+        let bitmap_bytes = self.params.count().div_ceil(8);
         let null_bitmap = &mut null_bitmap_buf[0..bitmap_bytes];
         null_bitmap.fill(0);
 
-        for i in 0..self.params.len {
-            if (self.params.is_null)(self.params.ctx, i) {
+        for i in 0..self.params.count() {
+            if self.params.is_null(i) {
                 null_bitmap[i >> 3] |= 1u8 << ((i & 7) as u8);
             }
         }
@@ -110,7 +105,7 @@ impl<'a> Execute<'a> {
         writer.int1(self.flags)?;
         writer.int4(self.iteration_count)?;
 
-        if self.params.len > 0 {
+        if self.params.count() > 0 {
             self.write_null_bitmap(writer)?;
 
             // Write new params bind flag
@@ -132,15 +127,13 @@ impl<'a> Execute<'a> {
             }
 
             // Write parameter values
-            debug_assert_eq!(self.params.len, self.param_types.len());
+            debug_assert_eq!(self.params.count(), self.param_types.len());
             for (i, param_type) in self.param_types.iter().enumerate() {
-                if (self.params.is_null)(self.params.ctx, i)
-                    || param_type.r#type == FieldType::MYSQL_TYPE_NULL
-                {
+                if self.params.is_null(i) || param_type.r#type == FieldType::MYSQL_TYPE_NULL {
                     continue;
                 }
 
-                let value = (self.params.to_data)(self.params.ctx, i, param_type.r#type)?;
+                let value = self.params.to_data(i, param_type.r#type)?;
                 if param_type.r#type.is_binary_format_supported() {
                     writer.write(value.slice())?;
                 } else {

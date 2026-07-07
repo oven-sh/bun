@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, PackageID};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -15,8 +16,7 @@ use bun_install::package_manager_real::{
     PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
 };
 use bun_install::{
-    self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    DEFAULT_TRUSTED_DEPENDENCIES_LIST, LifecycleScriptSubprocess, PackageManager, Resolution,
 };
 use bun_paths::AutoAbsPath;
 
@@ -89,7 +89,7 @@ impl UntrustedCommand {
         for (i, dep) in lockfile.buffers.dependencies.as_slice().iter().enumerate() {
             let dep_id: DependencyID = DependencyID::try_from(i).expect("int cast");
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-            if package_id == install::INVALID_PACKAGE_ID {
+            if package_id == bun_install_types::INVALID_PACKAGE_ID {
                 continue;
             }
 
@@ -314,7 +314,7 @@ impl TrustCommand {
             .enumerate()
         {
             let dep_id: u32 = u32::try_from(i).expect("int cast");
-            if package_id == install::INVALID_PACKAGE_ID {
+            if package_id == bun_install_types::INVALID_PACKAGE_ID {
                 continue;
             }
 
@@ -629,7 +629,7 @@ impl TrustCommand {
                     .unwrap()
                     .put(
                         bun_semver::string::Builder::string_hash(name)
-                            as install::TruncatedPackageNameHash,
+                            as bun_install_types::TruncatedPackageNameHash,
                         Box::<[u8]>::from(&**name),
                     )?;
             }

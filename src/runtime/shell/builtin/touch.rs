@@ -1,8 +1,10 @@
+use bun_event_loop::EventLoopHandle;
+
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -277,7 +279,7 @@ impl ShellTouchTask {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
         // We have to give an absolute path.
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_core::PathBuffer::uninit();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Re-terminate into the path buffer (`filepath` is the bare argv
             // bytes without the trailing NUL).
@@ -331,7 +333,7 @@ impl ShellTouchTask {
 }
 
 impl bun_event_loop::Taskable for ShellTouchTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ShellTouchTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {

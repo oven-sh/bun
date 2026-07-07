@@ -7,7 +7,7 @@
 #
 # and emits:
 #   - src/jsc/bindings/generated_perf_trace_events.h  (X-macro, sorted, 0-indexed)
-#   - src/perf/generated_perf_trace_events.rs         (#[repr(i32)] PerfEvent enum)
+#   - src/bun_core/generated_perf_trace_events.rs     (#[repr(i32)] PerfEvent enum)
 #
 # Not run during the build; re-run manually when adding new trace() calls.
 
@@ -19,8 +19,9 @@ cd "$(dirname "$0")/.."
 # a directory and we only want the captured group.
 LITERAL_EVENTS=$(rg 'bun_core::perf::trace\("([^"]+)"\)' -t rust -I -o -r '$1' src/ | sort -u || true)
 
-# Enum form: accept any of PerfEvent::X, bun_perf::PerfEvent::X, ::bun_perf::PerfEvent::X.
-ENUM_VARIANTS=$(rg '(?:::)?bun_perf::trace\((?:::)?(?:bun_perf::)?PerfEvent::([A-Za-z0-9_]+)\)' \
+# Enum form: accept any of PerfEvent::X, bun_core::PerfEvent::X, bun_perf::PerfEvent::X,
+# with or without a leading `::`.
+ENUM_VARIANTS=$(rg '(?:::)?bun_perf::trace\((?:::)?(?:bun_core::|bun_perf::)?PerfEvent::([A-Za-z0-9_]+)\)' \
     -t rust -I -o -r '$1' src/ | sort -u || true)
 
 # Build "dotted\tvariant" pairs. For literal-form callers the variant name is
@@ -38,7 +39,7 @@ done <<< "$LITERAL_EVENTS"
 
 for v in $ENUM_VARIANTS; do
     name=$(rg -U "PerfEvent::${v}\b\s*=>\s*\{?\s*c\"([^\"]+)\"" \
-        src/perf/generated_perf_trace_events.rs -o -r '$1' || true)
+        src/bun_core/generated_perf_trace_events.rs -o -r '$1' || true)
     if [ -z "$name" ]; then
         # New variant without a cstr mapping yet: synthesize Foo.Bar from FooBar.
         name=$(echo "$v" | sed -E 's/([a-z])([A-Z])/\1.\2/g; s/^_//')
@@ -70,7 +71,7 @@ H_OUT=src/jsc/bindings/generated_perf_trace_events.h
 } > "$H_OUT"
 echo "Generated $H_OUT"
 
-RS_OUT=src/perf/generated_perf_trace_events.rs
+RS_OUT=src/bun_core/generated_perf_trace_events.rs
 {
     echo "// Generated with scripts/generate-perf-trace-events.sh"
     echo "//"

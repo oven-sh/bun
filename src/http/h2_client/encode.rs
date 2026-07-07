@@ -6,10 +6,10 @@ use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
 use crate::HTTPClient;
-use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use bun_core::strings;
+use bun_http_types::h2 as wire;
 use bun_picohttp as picohttp;
 
 pub fn write_preface(session: &mut ClientSession) {
@@ -318,7 +318,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             let pending = stream.pending_body;
             let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
             // pending_body[sent..] is a suffix of the original slice.
-            stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
+            stream.pending_body = bun_core::RawSlice::new(&pending.slice()[sent..]);
             if stream.pending_body.is_empty() {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
@@ -338,7 +338,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
                 return;
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
-            let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
+            let data = unsafe { bun_opaque::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
             // We still hold the lock from `acquire()` above; `sb` is the sole
             // live borrow, so reborrowing `&mut sb.buffer` is a child access.

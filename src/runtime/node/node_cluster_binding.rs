@@ -5,17 +5,12 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_core::String as BunString;
-use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
+use crate::ipc::{InternalMsgHolder, IsInternal, SerializeAndSendResult};
 
-// Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
-// `SendQueue` stores one inline so it must live at that tier. Re-exported here so
-// existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub use bun_jsc::ipc::InternalMsgHolder;
-
-bun_output::declare_scope!(IPC, visible);
+bun_core::declare_scope!(IPC, visible);
 
 // `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — `&JSGlobalObject`
 // is ABI-identical to a non-null pointer with no `readonly`/`noalias`. Both
@@ -51,7 +46,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
 
 #[bun_jsc::host_fn]
 pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "sendHelperChild");
+    bun_core::scoped_log!(IPC, "sendHelperChild");
 
     let arguments = frame.arguments_old::<3>().ptr;
     let message = arguments[0];
@@ -61,7 +56,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
 
-    if vm.ipc.is_none() {
+    if vm.pending_ipc.is_none() && crate::ipc::ipc_instance_ptr().is_none() {
         return Ok(JSValue::FALSE);
     }
     if message.is_undefined() {
@@ -90,14 +85,14 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     #[cfg(debug_assertions)]
     {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             IPC,
             "child: {}",
             bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
         );
     }
 
-    let ipc_instance = vm.get_ipc_instance().unwrap();
+    let ipc_instance = crate::ipc::get_ipc_instance(vm).unwrap();
     // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
     let ipc_instance = unsafe { &mut *ipc_instance };
 
@@ -143,7 +138,7 @@ pub(crate) fn on_internal_message_child(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "onInternalMessageChild");
+    bun_core::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
@@ -157,14 +152,14 @@ pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
 ) -> JsResult<()> {
-    bun_output::scoped_log!(IPC, "handleInternalMessageChild");
+    bun_core::scoped_log!(IPC, "handleInternalMessageChild");
 
     child_singleton().dispatch(message, global)
 }
 
 #[bun_jsc::host_fn]
 pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "sendHelperPrimary");
+    bun_core::scoped_log!(IPC, "sendHelperPrimary");
 
     let arguments = frame.arguments_old::<4>().ptr;
     // `as_class_ref` is the safe shared-borrow downcast (centralised deref
@@ -208,7 +203,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     #[cfg(debug_assertions)]
     {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             IPC,
             "primary: {}",
             bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)

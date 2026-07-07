@@ -142,14 +142,6 @@ pub type StmtNodeIndex = Stmt;
 pub type BindingNodeIndex = Binding;
 
 // ─── arena-slice helpers ────────────────────────────────────────────────────
-// Legacy alias: AST string fields now uniformly use `StoreStr` (safe `Deref`
-// wrapper around an arena `[u8]`). Kept as a type alias so existing field
-// declarations / call sites that spell `ArenaStr` continue to compile.
-pub(crate) type ArenaStr = StoreStr;
-#[inline]
-pub(crate) const fn empty_arena_str() -> ArenaStr {
-    StoreStr::EMPTY
-}
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
 
 // ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
@@ -591,7 +583,7 @@ pub struct ClauseItem {
     /// For imports: `import { foo as bar }` - "bar" is the alias
     /// For exports: `export { foo as bar }` - "bar" is the alias
     /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
-    pub alias: ArenaStr,
+    pub alias: StoreStr,
     pub alias_loc: crate::Loc,
     /// Reference to the actual symbol being imported/exported.
     /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
@@ -607,7 +599,7 @@ pub struct ClauseItem {
     /// In this case both "foo" and "bar" are aliases because it's a re-export.
     /// We need to preserve both aliases in case the symbol is renamed. In this
     /// example, "foo" is "OriginalName" and "bar" is "Alias".
-    pub original_name: ArenaStr,
+    pub original_name: StoreStr,
 }
 
 impl ClauseItem {
@@ -617,10 +609,10 @@ impl ClauseItem {
 impl Default for ClauseItem {
     fn default() -> Self {
         Self {
-            alias: empty_arena_str(),
+            alias: StoreStr::EMPTY,
             alias_loc: crate::Loc::EMPTY,
             name: LocRef::default(),
-            original_name: empty_arena_str(),
+            original_name: StoreStr::EMPTY,
         }
     }
 }
@@ -714,7 +706,7 @@ pub enum OptionalChain {
 pub struct EnumValue {
     pub loc: crate::Loc,
     pub ref_: Ref,
-    pub name: ArenaStr,
+    pub name: StoreStr,
     pub value: Option<ExprNodeIndex>,
 }
 
@@ -767,14 +759,14 @@ impl Default for TlaCheck {
 
 #[derive(Copy, Clone)]
 pub struct Span {
-    pub text: ArenaStr,
+    pub text: StoreStr,
     pub range: crate::Range,
 }
 
 impl Default for Span {
     fn default() -> Self {
         Self {
-            text: empty_arena_str(),
+            text: StoreStr::EMPTY,
             range: crate::Range::default(),
         }
     }
@@ -1194,7 +1186,7 @@ pub struct NamedImport {
     /// - `import * as ns from 'module'` → alias_is_star = true, alias = ""
     /// This field is used by the bundler to match imports with their corresponding
     /// exports and for error reporting when imports can't be resolved.
-    pub alias: Option<ArenaStr>,
+    pub alias: Option<StoreStr>,
     pub alias_loc: crate::Loc,
     pub namespace_ref: Ref,
     pub import_record_index: u32,
@@ -1256,9 +1248,6 @@ pub enum ToJSError {
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
     MacroError,
-    OutOfMemory,
-    JSError,
-    JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
 

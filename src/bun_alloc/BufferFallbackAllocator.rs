@@ -36,6 +36,8 @@ static VTABLE: AllocatorVTable = AllocatorVTable {
     resize,
     remap,
     free,
+    ptr_is_identity: false,
+    wtf_string_refcount: false,
 };
 
 unsafe fn alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ra: usize) -> *mut u8 {

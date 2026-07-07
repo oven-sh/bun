@@ -193,7 +193,7 @@ impl LinuxMemFdAllocator {
                 return false;
             }
 
-            if crate::jsc::VirtualMachine::is_smol_mode() {
+            if bun_jsc::VirtualMachine::is_smol_mode() {
                 return bytes.len() >= 1024 * 1024;
             }
 
@@ -334,11 +334,12 @@ mod allocator_interface {
 
     /// Free-only vtable.
     /// Own static — address is the identity tag for `is_instance`.
-    pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
-}
-
-/// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
-#[inline]
-pub(super) fn std_vtable() -> &'static AllocatorVTable {
-    allocator_interface::VTABLE
+    pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable {
+        alloc: AllocatorVTable::NO_ALLOC,
+        resize: AllocatorVTable::NO_RESIZE,
+        remap: AllocatorVTable::NO_REMAP,
+        free,
+        ptr_is_identity: true,
+        wtf_string_refcount: false,
+    };
 }

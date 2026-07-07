@@ -1,15 +1,13 @@
 use bun_collections::{DynamicBitSet, HashMap};
+use bun_install_types::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash};
 use bun_io::Write;
 use bun_semver as semver;
 
-use crate::lockfile_real::package::PackageColumns as _;
+use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{Printer, package::Meta as PackageMeta};
 use crate::package_manager_real::TrackInstalledBin;
+use crate::{self as install, Bin, Dependency, PackageManager, Resolution, bin, resolution};
 use bun_core::fmt::PathSep;
-use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
-use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, bin, resolution,
-};
 use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
@@ -529,7 +527,7 @@ where
                     package_name: name,
                     // Never read on the .map/.file/.named_file paths this arm covers.
                     destination_node_modules: Fd::INVALID,
-                    buf: bun_paths::PathBuffer::uninit(),
+                    buf: bun_core::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
                 };

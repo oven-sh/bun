@@ -35,7 +35,7 @@ pub enum CommandTag<'a> {
 }
 
 // (deleted) toJSTag / toJSNumber re-exports from sql_jsc — provided as
-// extension-trait methods in the `bun_sql_jsc` crate, not aliased here.
+// extension-trait methods in `bun_runtime::sql_jsc`, not aliased here.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KnownCommand {

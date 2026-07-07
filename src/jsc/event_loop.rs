@@ -1,13 +1,12 @@
 //! `jsc.EventLoop` — the JS-thread event loop.
 //!
 //! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
-//! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
-//! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
-//! `bun_runtime` types and are hoisted to that tier via link-time
-//! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
+//! plumbing are real. The hot dispatch loop (`tickQueueWithCount`'s
+//! per-`Task` switch) names `bun_runtime` types and is hoisted to that tier
+//! via the link-time `extern "Rust"` `__bun_tick_queue_with_count`;
 //! `auto_tick`/`auto_tick_active` likewise
-//! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
-//! poll deadline). See PORTING.md §Dispatch.
+//! dispatch through the `virtual_machine::bun_runtime_*` extern fns (need
+//! `Timer::All` for the poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
@@ -61,13 +60,8 @@ pub struct EventLoop {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    ///
-    /// Note (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
-    /// (cycle). Low tier stores the erased pointer; the high-tier hook
-    /// (link-time `__bun_run_immediate_task`) casts it back.
-    pub immediate_tasks: Vec<*mut ()>,
-    pub next_immediate_tasks: Vec<*mut ()>,
+    pub immediate_tasks: Vec<*mut crate::timer::ImmediateObject>,
+    pub next_immediate_tasks: Vec<*mut crate::timer::ImmediateObject>,
 
     pub concurrent_tasks: ConcurrentQueue,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
@@ -88,11 +82,11 @@ pub struct EventLoop {
     pub concurrent_ref: AtomicI32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
-    /// Note (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::WTFTimer` lives in the higher-tier crate (cycle).
-    /// Low tier stores the erased pointer; the high-tier hook installed via
+    /// Note (§Dispatch): payload is an opaque [`WTFTimerHandle`] — the real
+    /// `bun_runtime::wtf_timer::WTFTimer` lives in the higher-tier crate
+    /// (cycle). Low tier stores the opaque handle; the high-tier hook
     /// (link-time `__bun_run_wtf_timer`) casts it back.
-    pub imminent_gc_timer: AtomicPtr<()>,
+    pub imminent_gc_timer: AtomicPtr<WTFTimerHandle>,
 
     #[cfg(unix)]
     /// Boxed `PosixSignalHandle` ring buffer, leaked once by
@@ -158,6 +152,13 @@ impl From<JsTerminated> for bun_core::Error {
     }
 }
 
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to `bun_runtime::wtf_timer::WTFTimer` (forward dep).
+    /// The runtime dispatch body (`__bun_run_wtf_timer`) is the only place
+    /// that casts back.
+    pub struct WTFTimerHandle;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
 // `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
@@ -175,16 +176,10 @@ unsafe extern "Rust" {
         vm: *mut VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), JsTerminated>;
-    /// `ImmediateObject::runImmediateTask` — `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
-    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_immediate_task(task: *mut (), vm: *mut VirtualMachine) -> bool;
-    /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
-    /// without running it. Defined in `bun_runtime::dispatch`.
-    fn __bun_cancel_pending_immediate(task: *mut (), vm: *mut VirtualMachine);
-    /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
+    /// `WTFTimer::run` — `timer` is an opaque [`WTFTimerHandle`] to
+    /// `bun_runtime::wtf_timer::WTFTimer`; the definer casts it back.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
+    fn __bun_run_wtf_timer(timer: *mut WTFTimerHandle, vm: *mut VirtualMachine);
     /// Tag-specific shutdown release for a queued-but-never-run task. Called
     /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
     /// before `destructOnExit`) for every entry left in `self.tasks`.
@@ -678,7 +673,7 @@ impl EventLoop {
             // iterator advanced past it before returning, so reading then
             // freeing here is sound.
             let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
-            if task.tag == bun_event_loop::task_tag::CppTask {
+            if task.tag == bun_event_loop::TaskTag::CppTask {
                 // SAFETY: every `CppTask` payload is a heap
                 // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
                 // → `new EventLoopTask`); we own it once popped.
@@ -726,7 +721,7 @@ impl EventLoop {
             // SAFETY: tag-specific release (drops JSC handles while the VM is
             // still live); definer in `bun_runtime::dispatch` matches the same
             // tag set `tick_queue_with_count` does. `false` ⇒ not handled.
-            let consumed = task.tag != bun_event_loop::task_tag::ManagedTask
+            let consumed = task.tag != bun_event_loop::TaskTag::ManagedTask
                 && unsafe { __bun_release_task_at_shutdown(task) };
             if !consumed {
                 requeue.push(task);
@@ -749,7 +744,7 @@ impl EventLoop {
         // `drop_concurrent_cpp_tasks` drained it.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
-            if task.tag == bun_event_loop::task_tag::ManagedTask {
+            if task.tag == bun_event_loop::TaskTag::ManagedTask {
                 // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
                 let managed =
                     unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
@@ -772,14 +767,12 @@ impl EventLoop {
             let vm = self.vm();
             for task in pending.into_iter().chain(next) {
                 // SAFETY: `task` came from `enqueue_immediate_task`; `vm` is the live per-thread VM.
-                unsafe { __bun_cancel_pending_immediate(task, vm) };
+                unsafe { crate::timer::ImmediateObject::cancel_pending(task, vm) };
             }
         }
     }
 
-    /// Note (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
-    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
+    pub fn enqueue_immediate_task(&mut self, task: *mut crate::timer::ImmediateObject) {
         self.immediate_tasks.push(task);
     }
 
@@ -787,9 +780,7 @@ impl EventLoop {
     /// immediate queues, drains the now-current batch, then recycles the
     /// drained Vec as the next-tick buffer.
     ///
-    /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
-    /// the per-task body dispatches through `__bun_run_immediate_task` (link-
-    /// time, definer in `bun_runtime`). The swap always happens — this is
+    /// The swap always happens — this is
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
@@ -799,7 +790,7 @@ impl EventLoop {
     pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
-        // the only thing reaching the `__bun_run_immediate_task` extern call is
+        // the only thing reaching the `run_immediate_task` call is
         // `virtual_machine` — a *separate* pointer parameter that LLVM is told
         // does NOT alias `*self` (even though `EventLoop` is a value field of
         // `*virtual_machine`). JS re-enters via `setImmediate` →
@@ -820,7 +811,9 @@ impl EventLoop {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `runImmediateTask` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown = unsafe {
+                crate::timer::ImmediateObject::run_immediate_task(*task, virtual_machine)
+            };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
@@ -911,7 +904,7 @@ impl EventLoop {
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
     /// only sleeps in the uSockets loop while it has active handles.
     /// Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
+    /// `VirtualMachine::auto_tick_active` → `bun_runtime_auto_tick_active`
     /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
     #[inline]
     pub fn auto_tick_active(&mut self) {
@@ -1011,7 +1004,8 @@ impl EventLoop {
     #[inline(always)]
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
-        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so
+        // (`SpawnSyncEventLoop::{init, prepare}`, `init_runtime_state`,
+        // `reload_global`), so
         // read it directly instead of the vm→global dependent-load chain.
         // `'static` so callers can hold it across `&mut self` (see
         // `drain_microtasks`), matching `vm_ref()`.
@@ -1164,8 +1158,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     #[cfg(windows)]
     // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
     let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
-            .expect("int cast");
+        i32::try_from(unsafe { (*bun_libuv_sys::Loop::get()).active_handles }).expect("int cast");
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };
@@ -1236,35 +1229,49 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::any_event_loop::js` extern impls
+// `bun_event_loop::JsEventLoop` link fns
 //
 // `AnyEventLoop` / `EventLoopHandle` live in the lower-tier `bun_event_loop`
-// crate and cannot name `jsc::EventLoop`.
-// Rather than a runtime-registered vtable, the low tier declares
-// these as `extern "Rust"` and the bodies live here, resolved at link time —
-// hardcoded, single consumer. Each slot casts the erased `*mut ()` owner back
-// to `*mut EventLoop` and forwards to the real method.
+// crate and cannot name `jsc::EventLoop`. The low tier declares one typed
+// `extern "Rust"` fn per `JsEventLoop` method; the `#[no_mangle]` definitions
+// below are resolved at link time — hardcoded, single implementor. Each fn
+// casts the opaque `NonNull<JscEventLoop>` back to `*mut EventLoop` and
+// forwards to the real method.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
-#[inline(always)]
-fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
-    // SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
-    unsafe { &mut *owner.cast::<EventLoop>() }
+// `el: *mut EventLoop` — the handle was erased from a live `*mut EventLoop` in
+// `js_event_loop_handle` / `EventLoopHandle::init`. All calls run on the
+// JS thread.
+
+/// The `*mut EventLoop` behind a `bun_event_loop::JscEventLoop` link handle
+/// (shared by every `bun_jsc_event_loop_*` definition below).
+#[inline]
+fn event_loop_raw(el: NonNull<bun_event_loop::JscEventLoop>) -> *mut EventLoop {
+    el.as_ptr().cast()
 }
 
-// `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
-// `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls run on the
-// JS thread.
-bun_event_loop::link_impl_JsEventLoop! {
-    Jsc for EventLoop => |this| {
-        // Reads the EventLoop's own `uws_loop` field; on
-        // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
-        // code paths. Route through `usockets_loop()`.
-        iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
-        // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM (see `EventLoopHandle::file_polls` doc).
-        file_polls() => core::ptr::from_mut(
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_iteration_number(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> u64 {
+    let this = event_loop_raw(el);
+    // Reads the EventLoop's own `uws_loop` field; on
+    // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
+    // code paths. Route through `usockets_loop()`.
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (&*(*this).usockets_loop()).iteration_number() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_file_polls(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut Async::file_poll::Store {
+    let this = event_loop_raw(el);
+    // Return raw to avoid asserting uniqueness — multiple handles may name the
+    // same VM (see `EventLoopHandle::file_polls` doc).
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe {
+        core::ptr::from_mut(
             (*this)
                 .vm_ref()
                 .as_mut()
@@ -1272,134 +1279,188 @@ bun_event_loop::link_impl_JsEventLoop! {
                 .file_polls_
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
-        ),
-        put_file_poll(poll, was_ever_registered) => {
-            // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
-            // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
-            // while holding the store.
-            let store = core::ptr::from_mut(
-                (*this)
-                    .vm_ref()
-                    .as_mut()
-                    .rare_data()
-                    .file_polls_
-                    .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-                    .as_mut(),
-            );
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
-        uws_loop() => (*this).usockets_loop(),
-        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
-        tick() => (*this).tick(),
-        auto_tick() => (*this).auto_tick(),
-        auto_tick_active() => (*this).auto_tick_active(),
-        global_object() => (*this).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
-        bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
-        stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),
-        stderr() => (*this).vm_ref().as_mut().rare_data().stderr().cast(),
-        enter() => (*this).enter(),
-        exit() => (*this).exit(),
-        enqueue_task(task) => (*this).enqueue_task(task),
-        enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
-        env() => (*this).vm_ref().transpiler.env,
-        top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
-        create_null_delimited_env_map() =>
-            (*(*this).vm_ref().transpiler.env).map.create_null_delimited_env_map(),
+        )
     }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_js_event_loop_current() -> *mut () {
-    // SAFETY: `VirtualMachine::get()` panics if no VM on this thread;
-    // `event_loop()` returns the live `*mut EventLoop` self-pointer.
-    VirtualMachine::get().as_mut().event_loop().cast()
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::SpawnSyncEventLoop` extern impls
-//
-// `SpawnSyncEventLoop` lives in the lower-tier `bun_event_loop` crate and
-// cannot name `jsc::EventLoop` / `jsc::VirtualMachine`. The bodies live here as
-// `#[no_mangle]` Rust-ABI fns, declared `extern "Rust"` on the low-tier side
-// and resolved at link time. Each erased `*mut ()` is a `*mut VirtualMachine`
-// or `*mut EventLoop`; cast back and forward to the real method/field.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Recover `&mut VirtualMachine` from the erased SpawnSync vtable `vm`.
-/// Private — every caller is a `#[no_mangle]` trampoline whose contract
-/// guarantees `vm` is the live per-thread `*mut VirtualMachine`.
-#[inline(always)]
-fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
-    // SAFETY: SpawnSync vtable contract — `vm` is the live per-thread VM.
-    unsafe { &mut *vm.cast::<VirtualMachine>() }
-}
-
-/// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
-/// `uws_loop` in `event_loop.uws_loop`.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
-    let vm = vm_from_ptr(vm);
-    let mut el = Box::new(EventLoop::default());
-    el.global = NonNull::new(vm.global);
-    el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
-    #[cfg(windows)]
-    {
-        el.uws_loop = NonNull::new(uws_loop);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = uws_loop;
-    }
-    bun_core::heap::into_raw(el).cast()
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
-    // SAFETY: paired with `heap::alloc` in `__bun_spawn_sync_create_event_loop`.
-    drop(unsafe { bun_core::heap::take(el.cast::<EventLoop>()) });
-}
-
-/// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
-    let el = el_ref(el);
-    let vm = vm_from_ptr(vm);
-    el.global = NonNull::new(vm.global);
-    el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
-    el_ref(el).tick_tasks_only();
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
-    vm: *mut (),
-) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
-    vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
-    vm: *mut (),
-    h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
+pub unsafe extern "Rust" fn bun_jsc_event_loop_put_file_poll(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+    poll: *mut bun_io::FilePoll,
+    was_ever_registered: bool,
 ) {
-    vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
+    let this = event_loop_raw(el);
+    // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
+    // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
+    // while holding the store.
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`;
+    // `poll` is a live hive-slot pointer (non-null).
+    unsafe {
+        let store = core::ptr::from_mut(
+            (*this)
+                .vm_ref()
+                .as_mut()
+                .rare_data()
+                .file_polls_
+                .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
+                .as_mut(),
+        );
+        let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
+        // `poll` is a live hive-slot pointer (caller contract) — non-null.
+        (*store).put(
+            core::ptr::NonNull::new_unchecked(poll),
+            ctx,
+            was_ever_registered,
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
-    // `el` is its previous `event_loop` pointer (a `*mut EventLoop` into
-    // `regular_event_loop`/`macro_event_loop`).
-    vm_from_ptr(vm).event_loop = el.cast::<EventLoop>();
+pub unsafe extern "Rust" fn bun_jsc_event_loop_uws_loop(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut uws::Loop {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).usockets_loop() }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
-    vm_from_ptr(vm).suppress_microtask_drain.replace(v)
+pub unsafe extern "Rust" fn bun_jsc_event_loop_pipe_read_buffer(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut [u8] {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_tick(el: NonNull<bun_event_loop::JscEventLoop>) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).tick() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_auto_tick(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).auto_tick() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_auto_tick_active(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).auto_tick_active() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_global_object(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut () {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe {
+        (*this)
+            .global
+            .map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_bun_vm(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut () {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe {
+        (*this)
+            .virtual_machine
+            .map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_enter(el: NonNull<bun_event_loop::JscEventLoop>) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).enter() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_exit(el: NonNull<bun_event_loop::JscEventLoop>) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).exit() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_enqueue_task(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+    task: bun_event_loop::Task,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).enqueue_task(task) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_enqueue_task_concurrent(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+    task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+) {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).enqueue_task_concurrent(task) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_env(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *mut bun_dotenv::Loader<'static> {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { (*this).vm_ref().transpiler.env }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_top_level_dir(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> *const [u8] {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_create_null_delimited_env_map(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe {
+        (*(*this).vm_ref().transpiler.env)
+            .map
+            .create_null_delimited_env_map()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn bun_jsc_event_loop_as_event_loop_ctx(
+    el: NonNull<bun_event_loop::JscEventLoop>,
+) -> bun_io::EventLoopCtx {
+    let this = event_loop_raw(el);
+    // SAFETY: link-fn contract — `el` was erased from a live `*mut EventLoop`.
+    unsafe { VirtualMachine::event_loop_ctx((*this).virtual_machine.expect("vm set").as_ptr()) }
+}
+
+pub fn js_event_loop_handle(el: *mut EventLoop) -> bun_event_loop::JsEventLoop {
+    // SAFETY: el is the live per-thread jsc::EventLoop.
+    unsafe { bun_event_loop::JsEventLoop::from_ptr(el.cast()) }
 }
 
 /// C++ (webcore/streams) entries for the deferred task queue: register/unregister a task that

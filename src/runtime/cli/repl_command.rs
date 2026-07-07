@@ -26,7 +26,6 @@ mod repl;
 use repl::Repl;
 
 use crate::Command;
-use crate::cli::Arguments;
 
 pub(crate) struct ReplCommand;
 
@@ -47,7 +46,7 @@ impl ReplCommand {
     ) -> Result<(), bun_core::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
-            Arguments::load_config_path(
+            bun_bunfig::arguments::load_config_path(
                 Command::Tag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
@@ -90,9 +89,9 @@ impl ReplCommand {
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
-            // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
-            // post-init like run_command.rs since InitOptions doesn't carry it.
-            (*vm).dns_result_order = dns_order as u8;
+            // `vm.dns_result_order` is set post-init like run_command.rs since
+            // InitOptions doesn't carry it.
+            (*vm).dns_result_order = dns_order;
         }
         // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
         // ReplRunner construction to avoid a move-after-borrow.
@@ -101,10 +100,10 @@ impl ReplCommand {
         // `BundleOptions.install` is `Option<NonNull<_>>` so no
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        b.options.resolve.install = install_ptr;
+        b.resolver.opts.core.install = install_ptr;
+        b.resolver.opts.core.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.core.prefer_offline_install = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online)
@@ -117,8 +116,8 @@ impl ReplCommand {
         // The resolver's `BundleOptions` stub has no `prefer_latest_install` field and the
         // resolver never reads it; only the bundler-side mirror carries it (matches
         // run_command.rs / production.rs).
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.resolve.global_cache = b.resolver.opts.core.global_cache;
+        b.options.resolve.prefer_offline_install = b.resolver.opts.core.prefer_offline_install;
         b.options.prefer_latest_install = prefer_latest;
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;

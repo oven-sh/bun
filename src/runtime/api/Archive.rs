@@ -7,7 +7,7 @@ use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{TaskTag, Taskable};
 use bun_glob as glob;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
@@ -18,7 +18,7 @@ use bun_jsc::{
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+use bun_sys::{self, Fd, FdExt as _, Mode};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
 /// does not yet expose `FileType`, so mirror the constant locally.
@@ -811,7 +811,7 @@ pub struct ExtractContext {
 }
 
 impl TaskContext for ExtractContext {
-    const TAG: TaskTag = task_tag::ArchiveExtractTask;
+    const TAG: TaskTag = TaskTag::ArchiveExtractTask;
 
     fn run(&mut self) {
         self.result = self.do_run();
@@ -921,7 +921,7 @@ pub struct BlobContext {
 }
 
 impl TaskContext for BlobContext {
-    const TAG: TaskTag = task_tag::ArchiveBlobTask;
+    const TAG: TaskTag = TaskTag::ArchiveBlobTask;
 
     fn run(&mut self) {
         self.result = match &self.compress {
@@ -1033,7 +1033,7 @@ pub struct WriteContext {
 }
 
 impl TaskContext for WriteContext {
-    const TAG: TaskTag = task_tag::ArchiveWriteTask;
+    const TAG: TaskTag = TaskTag::ArchiveWriteTask;
 
     fn run(&mut self) {
         self.result = self.do_run();
@@ -1241,7 +1241,7 @@ impl FilesContext {
 }
 
 impl TaskContext for FilesContext {
-    const TAG: TaskTag = task_tag::ArchiveFilesTask;
+    const TAG: TaskTag = TaskTag::ArchiveFilesTask;
 
     fn run(&mut self) {
         self.result = match self.do_run() {
@@ -1444,7 +1444,7 @@ fn extract_to_disk_filtered(
 
     // Open/create target directory using bun.sys
     let cwd = Fd::cwd();
-    let _ = cwd.make_path(root);
+    let _ = bun_sys::Dir::borrow(&cwd).make_path(root);
     let dir_fd: Fd = 'brk: {
         if bun_paths::is_absolute(root) {
             break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
@@ -1500,7 +1500,7 @@ fn extract_to_disk_filtered(
 
         match kind {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
+                match bun_sys::Dir::borrow(&dir_fd).make_path(pathname) {
                     // Directory already exists - don't count as extracted
                     Err(e) if e == bun_core::err!("PathAlreadyExists") => continue,
                     Err(_) => continue,
@@ -1520,7 +1520,7 @@ fn extract_to_disk_filtered(
 
                 // Create parent directories if needed (ignore expected errors)
                 if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
+                    match bun_sys::Dir::borrow(&dir_fd).make_path(parent_dir) {
                         // Expected: directory already exists
                         Err(e) if e == bun_core::err!("PathAlreadyExists") => {}
                         // Permission errors: skip this file, will fail at openat
@@ -1600,7 +1600,7 @@ fn extract_to_disk_filtered(
                         Err(err) => {
                             if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
                                 if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
+                                    let _ = bun_sys::Dir::borrow(&dir_fd).make_path(parent);
                                 }
                                 if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
                                     continue;

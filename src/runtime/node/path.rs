@@ -1,11 +1,10 @@
-use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
-};
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
+use bun_core::MAX_PATH_BYTES;
 use bun_core::{ZigString, ZigStringSlice, strings};
-use bun_paths::{self, MAX_PATH_BYTES, Platform};
+use bun_jsc::rare_data::PathBuf as RarePathBuf;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString};
+use bun_paths::{self, Platform};
 use bun_sys;
 
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
@@ -17,7 +16,7 @@ use bun_sys;
 /// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    use crate::jsc::{StringJsc as _, bun_string_jsc};
+    use bun_jsc::{StringJsc as _, bun_string_jsc};
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
@@ -29,21 +28,6 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
         let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
         bun_string_jsc::create_utf8_for_js(global, s8)
-    }
-}
-
-// ── Local extension shims for upstream types missing methods (cannot edit upstream crates).
-
-/// `ZigString.trunc(n)` — clamp `len` to `n`.
-trait ZigStringTruncExt {
-    fn trunc(&self, len: usize) -> ZigString;
-}
-impl ZigStringTruncExt for ZigString {
-    #[inline]
-    fn trunc(&self, len: usize) -> ZigString {
-        let mut out = *self;
-        out.len = out.len.min(len);
-        out
     }
 }
 
@@ -90,9 +74,7 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
 
-/// Canonical path-unit trait — re-export so external callers that named
-/// `crate::node::path::PathChar` keep compiling.
-pub use bun_paths::PathChar;
+use bun_paths::PathChar;
 
 /// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
 /// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
@@ -225,7 +207,7 @@ impl<'a, T: PathCharCwd> PathParsed<'a, T> {
 
 pub(crate) const fn max_path_size<T: PathCharCwd>() -> usize {
     if T::IS_U16 {
-        bun_paths::PATH_MAX_WIDE
+        bun_core::PATH_MAX_WIDE
     } else {
         MAX_PATH_BYTES
     }
@@ -234,10 +216,10 @@ pub(crate) const fn max_path_size<T: PathCharCwd>() -> usize {
 /// Upper bound of `max_path_size::<T>()` across both `T = u8` and `T = u16` on
 /// the current target. Used for sizing stack buffers where the `T`-dependent
 /// array length can't be expressed as a const-generic.
-const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE {
+const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_core::PATH_MAX_WIDE {
     MAX_PATH_BYTES
 } else {
-    bun_paths::PATH_MAX_WIDE
+    bun_core::PATH_MAX_WIDE
 };
 
 pub(crate) const fn path_size<T: PathCharCwd>() -> usize {
@@ -307,7 +289,7 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
 }
 
 pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd = without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir());
+    let cached_cwd = without_trailing_slash(bun_paths::fs::top_level_dir());
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
     Ok(&mut buf[0..cached_cwd.len()])
 }
@@ -315,7 +297,7 @@ pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
 pub(crate) fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     let result = strings::convert_utf8_to_utf16_in_buffer(
         buf,
-        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
+        without_trailing_slash(bun_paths::fs::top_level_dir()),
     );
     Ok(result)
 }
@@ -1384,7 +1366,7 @@ pub(crate) unsafe extern "C" fn Bun__Node__Path_joinWTF(
     result: *mut bun_core::String,
 ) {
     // SAFETY: caller passes valid pointers from C++.
-    let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
+    let rhs = unsafe { bun_opaque::ffi::slice(rhs_ptr, rhs_len) };
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
     // SAFETY: lhs is a valid BunString pointer.
@@ -1574,7 +1556,7 @@ pub fn join(
         if !path_ptr.is_string() {
             #[cold]
             #[inline(never)]
-            fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> crate::jsc::JsError {
+            fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> bun_jsc::JsError {
                 validate_string(g, v, format_args!("paths[{}]", i)).unwrap_err()
             }
             return Err(not_a_string(global_object, path_ptr, i));
@@ -2983,7 +2965,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             #[cfg(windows)]
             {
-                let mut u16_buf = bun_paths::WPathBuffer::uninit();
+                let mut u16_buf = bun_core::WPathBuffer::uninit();
                 // Storage for the `=X:` fast-path key. Declared here (not inside the
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
                 // 4 elements (not 3) so the wchar immediately following the 3-char
@@ -3230,7 +3212,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
 
         if device_len > 0 {
             // SAFETY: (device_ptr, device_len) describes a live region in tmp_buf or device_buf.
-            let device = unsafe { bun_core::ffi::slice(device_ptr, device_len) };
+            let device = unsafe { bun_opaque::ffi::slice(device_ptr, device_len) };
             if resolved_device_len > 0 {
                 // Translated from the following JS code:
                 //   if (StringPrototypeToLowerCase(device) !==
@@ -3617,8 +3599,8 @@ macro_rules! export_path_host_fn {
                 // (Body kept in sync with the non-Windows arm below — bughunt
                 // changed the target signature to take a slice but only updated
                 // one cfg arm.)
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
-                crate::jsc::host_fn::to_js_host_call(
+                let args = unsafe { bun_opaque::ffi::slice(args_ptr, args_len as usize) };
+                bun_jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args),
                 )
@@ -3634,8 +3616,8 @@ macro_rules! export_path_host_fn {
                 // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
                 // CallFrame (the caller is `Bun__Path__*` in NodePath.cpp). The
                 // slice is borrowed for the synchronous host-call only.
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
-                crate::jsc::host_fn::to_js_host_call(
+                let args = unsafe { bun_opaque::ffi::slice(args_ptr, args_len as usize) };
+                bun_jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args),
                 )

@@ -3,10 +3,11 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
+use bun_core::RawSlice;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
+use bun_ptr::{IntrusiveRc, RefCount};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -155,7 +156,7 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 /// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
 /// engines"), so passing null is fine.
 #[inline]
-fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
+fn boring_engine() -> *mut bun_boringssl_sys::ENGINE {
     core::ptr::null_mut()
 }
 
@@ -221,35 +222,26 @@ impl Default for S3Credentials {
     }
 }
 
-impl S3Credentials {
-    /// Construct a value (refcount = 1) from owned field data. Exists so
-    /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
-    /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
-    /// POD mirror without naming the private `ref_count` field.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_value(
-        access_key_id: Box<[u8]>,
-        secret_access_key: Box<[u8]>,
-        region: Box<[u8]>,
-        endpoint: Box<[u8]>,
-        bucket: Box<[u8]>,
-        session_token: Box<[u8]>,
-        insecure_http: bool,
-    ) -> Self {
+impl From<&bun_s3_types::S3CredentialsValue> for S3Credentials {
+    /// Build a fresh refcounted credential set (refcount = 1) from the
+    /// env-derived value fields.
+    fn from(v: &bun_s3_types::S3CredentialsValue) -> Self {
         Self {
             ref_count: RefCount::init(),
-            access_key_id,
-            secret_access_key,
-            region,
-            endpoint,
-            bucket,
-            session_token,
+            access_key_id: v.access_key_id.clone(),
+            secret_access_key: v.secret_access_key.clone(),
+            region: v.region.clone(),
+            endpoint: v.endpoint.clone(),
+            bucket: v.bucket.clone(),
+            session_token: v.session_token.clone(),
             storage_class: None,
-            insecure_http,
+            insecure_http: v.insecure_http,
             virtual_hosted_style: false,
         }
     }
+}
 
+impl S3Credentials {
     pub fn estimated_size(&self) -> usize {
         size_of::<S3Credentials>()
             + self.access_key_id.len()

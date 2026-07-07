@@ -1,18 +1,16 @@
-//! MOVE_UP from `bun_install::package_manager::update_package_json_and_install`.
+//! CLI orchestration for `bun add/remove/update/patch`: argument parsing, the
+//! `--analyze` bundler scan (DependenciesScanner + BuildCommand, runtime-tier
+//! deps), and the error/exit policy.
 //!
-//! `update_package_json_and_install`'s `cli.analyze` branch constructs a
-//! `DependenciesScanner` and calls
-//! `BuildCommand::exec` — both of which are higher-tier than
-//! `bun_install` in the crate graph (`bun_runtime` → `bun_install`;
-//! `bun_runtime` → `bun_bundler`; `bun_install` ↛ `bun_bundler`). The analyze
-//! branch and the `Cli.log_` access in the catch wrapper are therefore hosted
-//! here, and the crate-local body re-enters `bun_install` via the public
-//! `update_package_json_and_install_and_cli`.
+//! The transactional package.json-edit + install body is
+//! `bun_install::package_manager_real::update_package_json_and_install`, which
+//! takes pre-parsed `CommandLineArguments` — bun_install never parses CLI
+//! input or prints CLI-level errors for these commands.
 
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Error, Global, Output, err};
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
-use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
+use bun_install::package_manager_real::{Subcommand, update_package_json_and_install};
 
 use crate::build_command::BuildCommand;
 use crate::cli::Cli;
@@ -22,7 +20,7 @@ pub fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
 ) -> Result<(), Error> {
-    match update_package_json_and_install(ctx, subcommand) {
+    match run(ctx, subcommand) {
         Ok(()) => Ok(()),
         Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded startup in
@@ -37,7 +35,7 @@ pub fn update_package_json_and_install_catch_error(
     }
 }
 
-pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
+pub fn run(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
     // Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;
@@ -91,7 +89,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 });
 
                 // SAFETY: `this.cli` / `this.ctx` were set from live stack locals in
-                // `update_package_json_and_install` whose scope encloses the entire
+                // `run` whose scope encloses the entire
                 // `BuildCommand::exec` call (and hence this callback). The bundler has
                 // finished reading `entry_points` before invoking `on_fetch`, and this
                 // callback never returns (`Global::exit` below), so forming fresh `&mut`
@@ -99,12 +97,12 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 let cli = unsafe { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
                 // SAFETY: `this.ctx` points to the `ctx` stack local in
-                // `update_package_json_and_install`, whose frame outlives this
+                // `run`, whose frame outlives this
                 // callback; `Global::exit` below makes this `&mut` exclusive for
                 // the remainder of the process.
                 let ctx = unsafe { &mut *this.ctx };
 
-                update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;
+                update_package_json_and_install(ctx, this.subcommand, cli.clone())?;
 
                 Global::exit(0);
             }
@@ -132,5 +130,5 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
         return Ok(());
     }
 
-    update_package_json_and_install_and_cli(ctx, subcommand, cli)
+    update_package_json_and_install(ctx, subcommand, cli)
 }

@@ -66,9 +66,11 @@ impl PendingConnect {
         // (centralised raw upgrade) instead of an open-coded `(*pc)` deref.
         let addrinfo = self_.pc_mut().addrinfo();
         let self_ = bun_core::heap::into_raw(self_);
-        // SAFETY: `self_` is the Box we just leaked above and is consumed by
-        // `on_dns_resolved` (via the global cache's notify path).
-        unsafe { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
+        // SAFETY: `addrinfo` is the live cache `Request` handle returned by
+        // `us_quic_pending_connect_addrinfo`; `self_` is the Box we just leaked
+        // above and is consumed by `dns_cache::register_quic`'s notify path
+        // (`on_dns_resolved`).
+        unsafe { crate::dns_cache::register_quic(addrinfo.cast(), self_) };
     }
 
     pub fn r#loop(&self) -> *mut uws::Loop {

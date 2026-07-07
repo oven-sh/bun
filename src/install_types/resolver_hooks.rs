@@ -3,9 +3,9 @@
 //! MOVE_DOWN from `bun_install` so `bun_resolver` can spell these types
 //! without an upward dep edge (resolver→install would cycle through
 //! install→resolver). The behaviourful `PackageManager` itself stays in
-//! `bun_install`; the resolver talks to it through the [`AutoInstaller`]
-//! trait below, which `bun_install::PackageManager` implements
-//! (`bun_install::auto_installer`).
+//! `bun_install`; the resolver talks to it through the opaque
+//! [`PackageManagerHandle`] + `bun_pm_*` link fns below, whose bodies live
+//! next to the implementation (`bun_install::auto_installer`).
 //!
 //! Every value type here is the SINGLE canonical definition — `bun_install`
 //! re-exports them (`pub use bun_install_types::…`); there is exactly one
@@ -322,7 +322,8 @@ pub enum DependencyVersionTag {
 }
 
 /// Resolver-visible projection of `install::dependency::Version`. The resolver
-/// only reads `.tag` and round-trips the whole value through [`AutoInstaller`]
+/// only reads `.tag` and round-trips the whole value through
+/// [`PackageManagerRef`]
 /// methods; the parsed `Version.Value` union is install-internal and is stored
 /// here as an opaque inline buffer so the struct stays `Send`/`Clone`.
 ///
@@ -336,7 +337,8 @@ pub enum DependencyVersionTag {
 // lower-tier `bun_semver` data), so the full union is spellable here. Putting
 // the real union in this crate lets the resolver inspect
 // `value.npm.version.is_exact()` directly and
-// round-trip the parsed value through [`AutoInstaller`] without type erasure.
+// round-trip the parsed value through [`PackageManagerRef`] without type
+// erasure.
 
 #[derive(Clone, Copy)]
 pub enum URI {
@@ -1355,44 +1357,56 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None.
-///
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
-/// lives in this crate — so callers pass the borrow directly.
-// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
-#[derive(Default, Copy, Clone)]
-pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+bun_opaque::opaque_ffi! {
+    /// The JS module-loader queue (`bun_jsc::AsyncModule::Queue`) that wants
+    /// waking. Opaque here: this carrier crate sits below both `bun_install`
+    /// (PackageManager) and `bun_jsc` (Queue).
+    pub struct WakeHandlerOwner;
 }
+
+// Bodies live in `bun_jsc::AsyncModule` next to `Queue`, the single owner type.
+unsafe extern "Rust" {
+    /// Nudge the JS event loop from a resolver network task. `package_manager`
+    /// stays erased and is forwarded verbatim, never dereferenced here.
+    ///
+    /// May be called from thread-pool / HTTP-callback threads.
+    fn __bun_wake_handler_wake(owner: NonNull<WakeHandlerOwner>, package_manager: *mut c_void);
+    /// Report a dependency resolution failure to the module-loader queue.
+    fn __bun_wake_handler_on_dependency_error(
+        owner: NonNull<WakeHandlerOwner>,
+        dep: &Dependency,
+        id: DependencyID,
+        err: bun_core::Error,
+    );
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct WakeHandler(pub Option<NonNull<WakeHandlerOwner>>);
 
 impl WakeHandler {
     #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context`, `handler`, and
-        // `on_dependency_error` together in one struct literal, and callers
-        // gate on `context.is_some()` before invoking — so this unwrap cannot
-        // fire.
-        self.handler.unwrap()
+    pub fn is_set(self) -> bool {
+        self.0.is_some()
+    }
+
+    /// `package_manager` is forwarded to the registered handler verbatim and
+    /// never dereferenced here.
+    #[inline]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn wake(self, package_manager: *mut c_void) {
+        if let Some(owner) = self.0 {
+            // SAFETY: `owner` is the live `Queue` registered by the producer
+            // (owner outlives the handler registration).
+            unsafe { __bun_wake_handler_wake(owner, package_manager) }
+        }
     }
 
     #[inline]
-    pub fn get_on_dependency_error(
-        &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
-        // Same invariant as `get_handler`: set together with `context` by the
-        // sole installer; callers gate on `context.is_some()`.
-        self.on_dependency_error.unwrap()
+    pub fn on_dependency_error(self, dep: &Dependency, id: DependencyID, err: bun_core::Error) {
+        if let Some(owner) = self.0 {
+            // SAFETY: same owner-liveness contract as `wake`.
+            unsafe { __bun_wake_handler_on_dependency_error(owner, dep, id, err) }
+        }
     }
 }
 
@@ -1485,58 +1499,85 @@ pub enum EnqueueResult {
     Failure(bun_core::Error),
 }
 
-// ─── AutoInstaller trait ──────────────────────────────────────────────────
+// ─── PackageManager link surface ──────────────────────────────────────────
 
-/// Everything `bun_resolver`'s auto-install path needs from
-/// `bun_install::PackageManager` + its `Lockfile`. `bun_install` implements
-/// this for `PackageManager` (see `bun_install::auto_installer`); the
-/// resolver holds `Option<NonNull<dyn AutoInstaller>>` and only enters the
-/// auto-install path when it is set.
-///
-/// No method has a default body — this is a pure capability interface, not a
-/// stub. Calling through an unset `Option` is statically prevented by
-/// `Resolver::use_package_manager()`.
-pub trait AutoInstaller {
+bun_opaque::opaque_ffi! {
+    /// The process-static `bun_install::PackageManager` singleton, opaque
+    /// here because this carrier crate sits below `bun_install`. Only ever
+    /// observed by pointer; obtained from the `bun_package_manager_init`
+    /// link fn (declared in `bun_resolver`) and dispatched through
+    /// [`PackageManagerRef`].
+    pub struct PackageManagerHandle;
+}
+
+// Everything `bun_resolver`'s auto-install path needs from
+// `bun_install::PackageManager` + its `Lockfile`. Bodies live in
+// `bun_install::auto_installer` next to the single implementation; each fn is
+// the corresponding `PackageManager` operation with the receiver spelled as
+// the typed opaque handle.
+//
+// SAFETY (caller contract, every fn): `pm` is the live handle returned by
+// `bun_package_manager_init`. The read fns take `pm: &PackageManagerHandle`
+// (a shared reborrow — no `&mut PackageManager` may be live for the call) and
+// tie every lifetime-carrying return to that borrow; the mutating fns take
+// `pm: NonNull<..>` with the caller holding exclusive access to the pointee
+// for the duration of the call.
+unsafe extern "Rust" {
     // ── Lockfile reads ────────────────────────────────────────────────────
-    fn lockfile_packages_len(&self) -> usize;
-    fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice;
-    fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice;
-    fn lockfile_package_resolution(&self, id: PackageID) -> Resolution;
-    fn lockfile_dependencies_buf(&self) -> &[Dependency];
-    fn lockfile_resolutions_buf(&self) -> &[PackageID];
-    fn lockfile_string_bytes(&self) -> &[u8];
-    fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
-    fn lockfile_legacy_package_to_dependency_id(
-        &self,
+    fn bun_pm_lockfile_packages_len(pm: &PackageManagerHandle) -> usize;
+    fn bun_pm_lockfile_package_dependencies(
+        pm: &PackageManagerHandle,
+        id: PackageID,
+    ) -> DependencySlice;
+    fn bun_pm_lockfile_package_resolutions(
+        pm: &PackageManagerHandle,
+        id: PackageID,
+    ) -> ResolutionSlice;
+    fn bun_pm_lockfile_package_resolution(pm: &PackageManagerHandle, id: PackageID) -> Resolution;
+    fn bun_pm_lockfile_dependencies_buf<'a>(pm: &'a PackageManagerHandle) -> &'a [Dependency];
+    fn bun_pm_lockfile_resolutions_buf<'a>(pm: &'a PackageManagerHandle) -> &'a [PackageID];
+    fn bun_pm_lockfile_string_bytes<'a>(pm: &'a PackageManagerHandle) -> &'a [u8];
+    fn bun_pm_lockfile_resolve(
+        pm: &PackageManagerHandle,
+        name: &[u8],
+        version: &DependencyVersion,
+    ) -> Option<PackageID>;
+    fn bun_pm_lockfile_legacy_package_to_dependency_id(
+        pm: &PackageManagerHandle,
         package_id: PackageID,
     ) -> core::result::Result<DependencyID, bun_core::Error>;
     /// Project a `SemverString` into the lockfile's `string_bytes` buffer.
-    /// The returned slice borrows from either `self` (heap buffer) or `s`
-    /// (inline small-string), so both inputs share the bound `'a`.
-    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8];
+    /// The returned slice borrows from either the lockfile (heap buffer,
+    /// via `pm`) or `s` (inline small-string); `'a` covers both.
+    fn bun_pm_lockfile_str<'a>(pm: &'a PackageManagerHandle, s: &'a SemverString) -> &'a [u8];
 
     // ── Lockfile writes ───────────────────────────────────────────────────
     /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —
     /// collapsed because `Package` itself is install-internal. Returns the
     /// id assigned to the appended package.
-    fn lockfile_append_from_package_json(
-        &mut self,
-        package_json: &dyn PackageJsonView,
+    fn bun_pm_lockfile_append_from_package_json(
+        pm: NonNull<PackageManagerHandle>,
+        package_json: PackageJsonRef<'_>,
         features: Features,
     ) -> core::result::Result<PackageID, bun_core::Error>;
-    fn lockfile_append_root_stub(&mut self) -> core::result::Result<PackageID, bun_core::Error>;
+    fn bun_pm_lockfile_append_root_stub(
+        pm: NonNull<PackageManagerHandle>,
+    ) -> core::result::Result<PackageID, bun_core::Error>;
 
     // ── PackageManager ops ────────────────────────────────────────────────
-    fn set_on_wake(&mut self, handler: WakeHandler);
-    fn path_for_resolution<'b>(
-        &mut self,
+    fn bun_pm_set_on_wake(pm: NonNull<PackageManagerHandle>, handler: WakeHandler);
+    fn bun_pm_path_for_resolution<'b>(
+        pm: NonNull<PackageManagerHandle>,
         package_id: PackageID,
         resolution: &Resolution,
         buf: &'b mut [u8],
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
-    fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
-    fn enqueue_package_for_download(
-        &mut self,
+    fn bun_pm_get_preinstall_state(
+        pm: &PackageManagerHandle,
+        package_id: PackageID,
+    ) -> PreinstallState;
+    fn bun_pm_enqueue_package_for_download(
+        pm: NonNull<PackageManagerHandle>,
         name: &[u8],
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -1544,33 +1585,33 @@ pub trait AutoInstaller {
         ctx: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
     ) -> core::result::Result<(), bun_core::Error>;
-    fn resolve_from_disk_cache(
-        &mut self,
+    fn bun_pm_resolve_from_disk_cache(
+        pm: NonNull<PackageManagerHandle>,
         name: &[u8],
         version: &DependencyVersion,
     ) -> Option<PackageID>;
-    fn enqueue_dependency_to_root(
-        &mut self,
+    fn bun_pm_enqueue_dependency_to_root(
+        pm: NonNull<PackageManagerHandle>,
         name: &[u8],
         version: &DependencyVersion,
         version_buf: &[u8],
         behavior: Behavior,
     ) -> EnqueueResult;
 
-    // ── Dependency parsing ─────────────────────────────────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases`, so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
-    fn parse_dependency(
-        &mut self,
+    // ── Dependency parsing ────────────────────────────────────────────────
+    // `parse_with_tag` records `npm:`-aliased deps into
+    // `pm.known_npm_aliases`, so parsing takes the (mutable) manager handle
+    // even though it is otherwise pure.
+    fn bun_pm_parse_dependency(
+        pm: NonNull<PackageManagerHandle>,
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
-    fn parse_dependency_with_tag(
-        &mut self,
+    fn bun_pm_parse_dependency_with_tag(
+        pm: NonNull<PackageManagerHandle>,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -1578,22 +1619,246 @@ pub trait AutoInstaller {
         sliced: &bun_semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
-    /// Pure string
-    /// classification, but the table lives in `bun_install`.
-    fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
+    /// Pure string classification, but the table lives in `bun_install`.
+    fn bun_pm_infer_dependency_tag(
+        pm: &PackageManagerHandle,
+        dependency: &[u8],
+    ) -> DependencyVersionTag;
 }
 
-/// Read-only view of `bun_resolver::PackageJSON` that
-/// [`AutoInstaller::lockfile_append_from_package_json`] needs. Defined here
-/// (not in `bun_resolver`) so `bun_install` can name it without depending on
-/// the resolver crate at the trait-definition layer.
-pub trait PackageJsonView {
-    fn name(&self) -> &[u8];
-    fn version(&self) -> &[u8];
-    fn source_path(&self) -> &[u8];
+/// Copyable typed handle to the auto-install `PackageManager` singleton.
+///
+/// The resolver caches the raw [`PackageManagerHandle`] pointer and calls
+/// through these inherent wrappers, which forward to the `bun_pm_*` link fns
+/// above. Being `Copy`, it carries no aliasing guarantee of its own — the
+/// exclusivity contract lives on [`Self::from_handle`].
+#[derive(Clone, Copy)]
+pub struct PackageManagerRef(NonNull<PackageManagerHandle>);
+
+// `&self` on the read accessors is deliberate: their returned borrows are
+// anchored to the handle borrow (a by-value receiver would let them float).
+#[allow(clippy::trivially_copy_pass_by_ref)]
+impl PackageManagerRef {
+    /// # Safety
+    /// `pm` must be the live handle returned by `bun_package_manager_init`
+    /// (the process-static `PackageManager` singleton), and no other Rust
+    /// reference to the pointee may be live while methods on the returned
+    /// value run.
+    #[inline]
+    pub unsafe fn from_handle(pm: NonNull<PackageManagerHandle>) -> Self {
+        Self(pm)
+    }
+
+    /// Shared reborrow of the handle for the read-only link fns; the
+    /// returned borrow (and everything the read fns derive from it) is tied
+    /// to `&self`.
+    #[inline]
+    fn handle(&self) -> &PackageManagerHandle {
+        // SAFETY: `from_handle` contract — the handle is live for `'self`.
+        unsafe { self.0.as_ref() }
+    }
+
+    // ── Lockfile reads ────────────────────────────────────────────────────
+
+    #[inline]
+    pub fn lockfile_packages_len(&self) -> usize {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_packages_len(self.handle()) }
+    }
+
+    #[inline]
+    pub fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_package_dependencies(self.handle(), id) }
+    }
+
+    #[inline]
+    pub fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_package_resolutions(self.handle(), id) }
+    }
+
+    #[inline]
+    pub fn lockfile_package_resolution(&self, id: PackageID) -> Resolution {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_package_resolution(self.handle(), id) }
+    }
+
+    #[inline]
+    pub fn lockfile_dependencies_buf(&self) -> &[Dependency] {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_dependencies_buf(self.handle()) }
+    }
+
+    #[inline]
+    pub fn lockfile_resolutions_buf(&self) -> &[PackageID] {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_resolutions_buf(self.handle()) }
+    }
+
+    #[inline]
+    pub fn lockfile_string_bytes(&self) -> &[u8] {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_string_bytes(self.handle()) }
+    }
+
+    #[inline]
+    pub fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_resolve(self.handle(), name, version) }
+    }
+
+    #[inline]
+    pub fn lockfile_legacy_package_to_dependency_id(
+        &self,
+        package_id: PackageID,
+    ) -> core::result::Result<DependencyID, bun_core::Error> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_legacy_package_to_dependency_id(self.handle(), package_id) }
+    }
+
+    #[inline]
+    pub fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_str(self.handle(), s) }
+    }
+
+    // ── Lockfile writes ───────────────────────────────────────────────────
+
+    #[inline]
+    pub fn lockfile_append_from_package_json(
+        self,
+        package_json: PackageJsonRef<'_>,
+        features: Features,
+    ) -> core::result::Result<PackageID, bun_core::Error> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_append_from_package_json(self.0, package_json, features) }
+    }
+
+    #[inline]
+    pub fn lockfile_append_root_stub(self) -> core::result::Result<PackageID, bun_core::Error> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_lockfile_append_root_stub(self.0) }
+    }
+
+    // ── PackageManager ops ────────────────────────────────────────────────
+
+    #[inline]
+    pub fn set_on_wake(self, handler: WakeHandler) {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_set_on_wake(self.0, handler) }
+    }
+
+    #[inline]
+    pub fn path_for_resolution<'b>(
+        self,
+        package_id: PackageID,
+        resolution: &Resolution,
+        buf: &'b mut [u8],
+    ) -> core::result::Result<&'b [u8], bun_core::Error> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_path_for_resolution(self.0, package_id, resolution, buf) }
+    }
+
+    #[inline]
+    pub fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_get_preinstall_state(self.handle(), package_id) }
+    }
+
+    #[inline]
+    pub fn enqueue_package_for_download(
+        self,
+        name: &[u8],
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        resolution: &Resolution,
+        ctx: TaskCallbackContext,
+        patch_name_and_version_hash: Option<u64>,
+    ) -> core::result::Result<(), bun_core::Error> {
+        // SAFETY: `from_handle` contract.
+        unsafe {
+            bun_pm_enqueue_package_for_download(
+                self.0,
+                name,
+                dependency_id,
+                package_id,
+                resolution,
+                ctx,
+                patch_name_and_version_hash,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn resolve_from_disk_cache(
+        self,
+        name: &[u8],
+        version: &DependencyVersion,
+    ) -> Option<PackageID> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_resolve_from_disk_cache(self.0, name, version) }
+    }
+
+    #[inline]
+    pub fn enqueue_dependency_to_root(
+        self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+        behavior: Behavior,
+    ) -> EnqueueResult {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_enqueue_dependency_to_root(self.0, name, version, version_buf, behavior) }
+    }
+
+    // ── Dependency parsing ────────────────────────────────────────────────
+
+    #[inline]
+    pub fn parse_dependency(
+        self,
+        name: SemverString,
+        name_hash: Option<u64>,
+        version: &[u8],
+        sliced: &bun_semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<DependencyVersion> {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_parse_dependency(self.0, name, name_hash, version, sliced, log) }
+    }
+
+    #[inline]
+    pub fn parse_dependency_with_tag(
+        self,
+        name: SemverString,
+        name_hash: u64,
+        version: &[u8],
+        tag: DependencyVersionTag,
+        sliced: &bun_semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<DependencyVersion> {
+        // SAFETY: `from_handle` contract.
+        unsafe {
+            bun_pm_parse_dependency_with_tag(self.0, name, name_hash, version, tag, sliced, log)
+        }
+    }
+
+    #[inline]
+    pub fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag {
+        // SAFETY: `from_handle` contract.
+        unsafe { bun_pm_infer_dependency_tag(self.handle(), dependency) }
+    }
+}
+
+/// Borrowed install-side view of `bun_resolver::package_json::PackageJSON`,
+/// built by `PackageJSON::as_install_ref()` at the auto-install call site.
+#[derive(Clone, Copy)]
+pub struct PackageJsonRef<'a> {
+    pub name: &'a [u8],
+    pub version: &'a [u8],
+    pub arch: Architecture,
+    pub os: OperatingSystem,
     /// Backing string-bytes buffer the dependency `SemverString`s slice into.
-    fn dependency_source_buf(&self) -> &[u8];
-    fn arch(&self) -> Architecture;
-    fn os(&self) -> OperatingSystem;
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_>;
+    pub dependency_source_buf: &'a [u8],
+    pub dependencies: &'a bun_collections::ArrayHashMap<SemverString, Dependency>,
 }

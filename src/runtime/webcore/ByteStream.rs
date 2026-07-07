@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
+use bun_http_types::FetchRedirect::CommonAbortReason;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 
@@ -8,7 +9,7 @@ use crate::webcore::Pipe;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{blob, readable_stream};
 
-bun_output::declare_scope!(ByteStream, visible);
+bun_core::declare_scope!(ByteStream, visible);
 
 /// R-2 (`sharedThis`): every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
@@ -167,13 +168,13 @@ impl ByteStream {
     }
 
     pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
             // payload drops implicitly at the `return` below — no explicit `drop` needed.
             self.has_received_last_chunk.set(stream.is_done());
 
-            bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
+            bun_core::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
             return Ok(());
         }
@@ -201,7 +202,7 @@ impl ByteStream {
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
-                bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
+                bun_core::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
                 let global = self.parent_const().global_this();
                 // R-2: move the action out of the cell *before* calling
@@ -227,7 +228,7 @@ impl ByteStream {
                 let mut action = self.buffer_action.replace(None).unwrap();
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         ByteStream,
                         "ByteStream.onData done and action.fulfill()"
                     );
@@ -237,7 +238,7 @@ impl ByteStream {
                 }
                 if self.buffer.get().capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             ByteStream,
                             "ByteStream.onData owned_and_done and action.fulfill()"
                         );
@@ -251,7 +252,7 @@ impl ByteStream {
                     }
                 }
 
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     ByteStream,
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
@@ -335,7 +336,7 @@ impl ByteStream {
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
             }
 
-            bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
+            bun_core::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
             self.signal_drained();
 
@@ -348,7 +349,7 @@ impl ByteStream {
             return Ok(());
         }
 
-        bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
+        bun_core::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
@@ -409,13 +410,13 @@ impl ByteStream {
     }
 
     pub(crate) fn set_value(&self, view: JSValue) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let global = self.parent_const().global_this();
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
     pub(crate) fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
 
@@ -475,7 +476,7 @@ impl ByteStream {
     }
 
     pub(crate) fn on_cancel(&self) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
@@ -500,7 +501,7 @@ impl ByteStream {
             // TODO: properly propagate exception upwards
             let _ = action.reject(
                 global,
-                &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+                &streams::StreamError::AbortReason(CommonAbortReason::UserAbort),
             );
             self.buffer_action.set(None);
         }
@@ -520,7 +521,7 @@ impl ByteStream {
     /// no JS re-entry can alias `self`; and `parent().deinit()` needs unique
     /// `Box` provenance.
     pub(crate) fn finalize(&mut self) {
-        bun_jsc::mark_binding!();
+        bun_core::mark_binding!();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
                 b.clear();

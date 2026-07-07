@@ -9,9 +9,10 @@ use bun_jsc::{
     JsError, JsResult,
 };
 
-use crate::crypto::evp::{AlgorithmExt as _, EVP};
+use crate::crypto::evp::EVP;
 use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
+use crate::node::types::EncodingExt as _;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 use bun_sha_hmac::sha as hashers;
 
@@ -87,7 +88,7 @@ impl CryptoHasher {
         name_len: usize,
     ) -> Option<Box<CryptoHasher>> {
         // SAFETY: caller passes a valid (ptr,len) byte slice
-        let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
+        let name = unsafe { bun_opaque::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
         if let Some(inner) = CryptoHasherZig::init(name) {
             return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
@@ -338,7 +339,7 @@ impl CryptoHasher {
         _: JSValue,
         _: PropertyName,
     ) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
+        bun_jsc::bun_string_jsc::to_js_array(global, evp::algorithm_names())
     }
 
     fn hash_to_encoding(

@@ -1,10 +1,10 @@
-use core::ffi::{CStr, c_uint};
+use core::ffi::c_uint;
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, ZigString};
 
-use crate::jsc::JSGlobalObject;
+use bun_jsc::JSGlobalObject;
 
 pub struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
@@ -14,87 +14,25 @@ pub struct EVP {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// The `Algorithm` enum + `md()` live in
+// The `Algorithm` enum + `md()`, `tag_cstr()` and `ALL` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
-// bun_str live below as an extension trait / free fns on the re-exported type.
+// enum here; only `names()` and the name-lookup map, which need bun_str, stay
+// below as free fns / statics.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_sha_hmac::evp::Algorithm;
 
-/// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
-/// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
-pub(crate) trait AlgorithmExt: Copy + Sized {
-    /// NUL-terminated tag name. Needed for `EVP_get_digestbyname` which reads
-    /// a C string.
-    fn tag_cstr(self) -> &'static CStr;
-
-    /// `bun.String` view of every algorithm tag name; returned as a flat slice
-    /// since the enum is foreign and cannot derive `enum_map::Enum`.
-    fn names() -> &'static [BunString];
+/// `bun.String` view of every algorithm tag name; a free fn because the enum
+/// is foreign (lives in bun_sha_hmac) and `BunString` is not available there.
+pub(crate) fn algorithm_names() -> &'static [BunString] {
+    static NAMES: std::sync::OnceLock<[BunString; Algorithm::ALL.len()]> =
+        std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            core::array::from_fn(|i| BunString::static_(Algorithm::ALL[i].tag_cstr().to_bytes()))
+        })
+        .as_slice()
 }
-
-impl AlgorithmExt for Algorithm {
-    fn tag_cstr(self) -> &'static CStr {
-        match self {
-            Algorithm::Blake2b256 => c"blake2b256",
-            Algorithm::Blake2b512 => c"blake2b512",
-            Algorithm::Blake2s256 => c"blake2s256",
-            Algorithm::Md4 => c"md4",
-            Algorithm::Md5 => c"md5",
-            Algorithm::Ripemd160 => c"ripemd160",
-            Algorithm::Sha1 => c"sha1",
-            Algorithm::Sha224 => c"sha224",
-            Algorithm::Sha256 => c"sha256",
-            Algorithm::Sha384 => c"sha384",
-            Algorithm::Sha512 => c"sha512",
-            Algorithm::Sha512_224 => c"sha512-224",
-            Algorithm::Sha512_256 => c"sha512-256",
-            Algorithm::Sha3_224 => c"sha3-224",
-            Algorithm::Sha3_256 => c"sha3-256",
-            Algorithm::Sha3_384 => c"sha3-384",
-            Algorithm::Sha3_512 => c"sha3-512",
-            Algorithm::Shake128 => c"shake128",
-            Algorithm::Shake256 => c"shake256",
-            // upstream enum is `#[non_exhaustive]`; the variant set is closed in
-            // practice.
-            _ => unreachable!("unhandled EVP algorithm variant"),
-        }
-    }
-
-    fn names() -> &'static [BunString] {
-        static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
-        NAMES
-            .get_or_init(|| {
-                core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes()))
-            })
-            .as_slice()
-    }
-}
-
-/// Stable iteration order over every `Algorithm` variant — the lowered enum is
-/// foreign + `#[non_exhaustive]`, so we can't derive an iterator for it.
-const ALL: [Algorithm; 19] = [
-    Algorithm::Blake2b256,
-    Algorithm::Blake2b512,
-    Algorithm::Blake2s256,
-    Algorithm::Md4,
-    Algorithm::Md5,
-    Algorithm::Ripemd160,
-    Algorithm::Sha1,
-    Algorithm::Sha224,
-    Algorithm::Sha256,
-    Algorithm::Sha384,
-    Algorithm::Sha512,
-    Algorithm::Sha512_224,
-    Algorithm::Sha512_256,
-    Algorithm::Sha3_224,
-    Algorithm::Sha3_256,
-    Algorithm::Sha3_384,
-    Algorithm::Sha3_512,
-    Algorithm::Shake128,
-    Algorithm::Shake256,
-];
 
 /// Algorithm names joined as `"'a', 'b', … 'y' or 'z'"` (declaration order),
 /// for "must be one of" error messages.

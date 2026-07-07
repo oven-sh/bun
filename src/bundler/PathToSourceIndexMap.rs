@@ -2,22 +2,6 @@ use bun_collections::StringHashMap;
 
 use crate::IndexStringMap::IndexInt;
 
-/// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
-/// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
-/// the crates converge. Both expose `.text: &[u8]`, which is all we need.
-pub trait PathLike {
-    fn path_text(&self) -> &[u8];
-}
-
-// `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
-// so a single impl covers both.
-impl PathLike for bun_paths::fs::Path<'_> {
-    #[inline]
-    fn path_text(&self) -> &[u8] {
-        self.text
-    }
-}
-
 /// The lifetime of the keys are not owned by this map.
 ///
 /// We assume it's arena allocated.
@@ -33,8 +17,8 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
-    pub fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
-        self.get(path.path_text())
+    pub fn get_path(&self, path: &bun_paths::fs::Path<'_>) -> Option<IndexInt> {
+        self.get(path.text)
     }
 
     pub fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {
@@ -43,10 +27,10 @@ impl PathToSourceIndexMap {
 
     pub fn put_path(
         &mut self,
-        path: &impl PathLike,
+        path: &bun_paths::fs::Path<'_>,
         value: IndexInt,
     ) -> Result<(), bun_alloc::AllocError> {
-        self.put(path.path_text(), value)
+        self.put(path.text, value)
     }
 
     // Takes `&[u8]` (not `impl AsRef<[u8]>`)
@@ -59,9 +43,9 @@ impl PathToSourceIndexMap {
 
     pub fn get_or_put_path(
         &mut self,
-        path: &impl PathLike,
+        path: &bun_paths::fs::Path<'_>,
     ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        self.get_or_put(path.path_text())
+        self.get_or_put(path.text)
     }
 
     pub fn get_or_put(
@@ -76,7 +60,7 @@ impl PathToSourceIndexMap {
         self.map.remove(text.as_ref()).is_some()
     }
 
-    pub fn remove_path(&mut self, path: &impl PathLike) -> bool {
-        self.remove(path.path_text())
+    pub fn remove_path(&mut self, path: &bun_paths::fs::Path<'_>) -> bool {
+        self.remove(path.text)
     }
 }

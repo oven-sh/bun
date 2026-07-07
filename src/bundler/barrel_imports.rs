@@ -495,7 +495,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(dev, resolved_path_text, alias);
             }
         }
     }
@@ -812,6 +812,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
 /// seeding so that exports requested in previous builds are not lost when the
 /// barrel is re-parsed in an incremental build where the requesting file is
 /// not stale.
-fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
+fn persist_barrel_export(dev: crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
     dev.register_barrel_export(barrel_path, alias)
 }

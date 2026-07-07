@@ -3,11 +3,10 @@ use core::ffi::c_void;
 use bun_core::MutableString;
 use bun_core::strings;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{TaskTag, Taskable};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
-    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
-    Method,
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, Method,
 };
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -142,7 +141,7 @@ pub struct S3HttpSimpleTask {
 }
 
 impl Taskable for S3HttpSimpleTask {
-    const TAG: TaskTag = task_tag::S3HttpSimpleTask;
+    const TAG: TaskTag = TaskTag::S3HttpSimpleTask;
 }
 
 // `..Default::default()` requires the whole struct to be Default, so beyond
@@ -171,8 +170,7 @@ impl Default for S3HttpSimpleTask {
     }
 }
 
-// Re-export the canonical alias so sibling modules that imported it from here keep compiling.
-pub use bun_jsc::JsTerminatedResult;
+use bun_jsc::JsTerminatedResult;
 
 pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
@@ -604,7 +602,7 @@ pub(crate) fn execute_simple_s3_request(
         if let Some(range_) = &options.range {
             let _headers =
                 result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
-            break 'brk Headers::from_pico_http_headers(_headers);
+            break 'brk bun_http::headers::from_pico_http_headers(_headers);
         } else {
             if let Some(content_type) = options.content_type {
                 if !content_type.is_empty() {
@@ -612,10 +610,10 @@ pub(crate) fn execute_simple_s3_request(
                         &mut header_buffer,
                         picohttp::Header::new(b"Content-Type", content_type),
                     );
-                    break 'brk Headers::from_pico_http_headers(_headers);
+                    break 'brk bun_http::headers::from_pico_http_headers(_headers);
                 }
             }
-            break 'brk Headers::from_pico_http_headers(result.headers());
+            break 'brk bun_http::headers::from_pico_http_headers(result.headers());
         }
     };
 

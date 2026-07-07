@@ -5,8 +5,8 @@ use crate::options::Loader;
 // the `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
+use bun_core::PathBuffer;
 use bun_core::String as BunString;
-use bun_paths::PathBuffer;
 use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
@@ -311,10 +311,7 @@ pub struct SavedFile {
 
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
-        // Note: `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
-        // distinct nominal types with identical layout; re-init from `text` (the
-        // resolver path borrows arena/static memory, so the `'static` bound holds).
-        let src_path = fs::Path::init(pending.path_const().expect("path").text);
+        let src_path = *pending.path_const().expect("path");
         OutputFile {
             loader,
             src_path,
@@ -442,15 +439,12 @@ impl OutputFile {
                 }
 
                 let mut path_buf = PathBuffer::uninit();
-                let _ = bun_sys::write_file_with_path_buffer(
+                let _ = bun_sys::write_file_at(
                     &mut path_buf,
-                    &bun_sys::WriteFileArgs {
-                        data: bun_sys::WriteFileData::Buffer { buffer: bytes },
-                        encoding: bun_sys::WriteFileEncoding::Buffer,
-                        mode: if self.is_executable { 0o755 } else { 0o644 },
-                        dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(rel_path),
-                    },
+                    root_dir,
+                    bun_sys::WriteTarget::Path(rel_path),
+                    bytes,
+                    if self.is_executable { 0o755 } else { 0o644 },
                 )?;
             }
             Value::Move(value) => {

@@ -27,7 +27,7 @@ pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 
 type JsTerminated<T> = bun_jsc::JsResult<T>;
 
-bun_output::define_scoped_log!(debug, Redis, visible);
+bun_core::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
@@ -322,10 +322,10 @@ impl DeferredFailure {
     pub(crate) fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
+        fn run_raw(ptr: *mut DeferredFailure) -> bun_core::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this).map_err(Into::into)
+            DeferredFailure::run(*this)
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
@@ -654,7 +654,7 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        socket.close(uws::CloseCode::Normal);
+        socket.close(uws::CloseCode::normal);
         if is_semi_socket {
             self.status = Status::Disconnected;
             let _ = self.on_close();

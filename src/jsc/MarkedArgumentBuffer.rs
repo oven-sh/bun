@@ -60,7 +60,7 @@ impl MarkedArgumentBuffer {
             // SAFETY: both fn-pointer signatures are `extern "C"` with two
             // thin-pointer params; ABI-identical modulo pointee type.
             unsafe {
-                bun_ptr::cast_fn_ptr::<
+                bun_core::cast_fn_ptr::<
                     extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
                 >(func)

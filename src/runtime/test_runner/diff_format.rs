@@ -3,7 +3,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue};
 
-use super::diff::print_diff::{print_diff_main, DiffConfig};
+use super::diff::print_diff::{DiffConfig, print_diff_main};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 #[derive(Default)]
@@ -101,10 +101,10 @@ pub(crate) extern "C" fn zig__renderDiff(
 ) {
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
     // of length `expected_len` that outlives this call.
-    let expected = unsafe { bun_core::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
+    let expected = unsafe { bun_opaque::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
     // of length `received_len` that outlives this call.
-    let received = unsafe { bun_core::ffi::slice(received_ptr.cast::<u8>(), received_len) };
+    let received = unsafe { bun_opaque::ffi::slice(received_ptr.cast::<u8>(), received_len) };
     let formatter = DiffFormatter {
         received_string: Some(received),
         expected_string: Some(expected),

@@ -44,69 +44,62 @@ pub use streams::{
     H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,
 };
 
-#[path = "webcore/ObjectURLRegistry.rs"]
-pub mod object_url_registry;
-pub use object_url_registry::ObjectURLRegistry;
+pub use bun_jsc::object_url_registry;
+pub use bun_jsc::object_url_registry::ObjectURLRegistry;
 
-// ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
-pub mod jsc {
-    pub use crate::jsc::*;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
+// `node:buffer` `resolveObjectURL`: lives here (not in
+// `bun_jsc::object_url_registry`) because wrapping the resolved `Blob` goes
+// through `BlobExt::to_js`, which routes S3-backed blobs to `JSS3File`.
+#[bun_jsc::host_fn(export = "jsFunctionResolveObjectURL")]
+pub(crate) fn js_function_resolve_object_url(
+    global_object: &bun_jsc::JSGlobalObject,
+    callframe: &bun_jsc::CallFrame,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    use bun_jsc::JSValue;
+    use bun_jsc::object_url_registry::SPECIFIER_LEN;
 
-    /// `jsc.Codegen.JS*` — forward the real `js_class_module!`-emitted modules
-    /// so any webcore call site that still spells the path
-    /// `crate::webcore::jsc::codegen::JS…` resolves to working C++ shims
-    /// instead of a no-op stub.
-    pub mod codegen {
-        pub use crate::jsc::codegen::*;
-        pub use bun_jsc::generated::{JSBlob, JSRequest, JSResponse};
-        // `JSFileSink` / `JSFileReader` are NOT `.classes.ts`-generated —
-        // FileSink uses the JSSink codegen (`FileSink__createObject` /
-        // `FileSink__fromJS` in JSSink.cpp) and FileReader uses
-        // `source_context_codegen!`; neither flows through `js_class_module!`.
+    let arguments = callframe.arguments_old::<1>();
+
+    // Errors are ignored.
+    // Not thrown.
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/blob.js#L441
+    if arguments.len < 1 {
+        return Ok(JSValue::UNDEFINED);
     }
+    // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
+    // path (exception, non-blob prefix, success) releases it.
+    let str = bun_core::OwnedString::new(arguments.ptr[0].to_bun_string(global_object)?);
+
+    if global_object.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    if !str.has_prefix_comptime(b"blob:") || str.length() < SPECIFIER_LEN {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    let slice = str.to_utf8_without_ref();
+    let sliced = slice.slice();
+
+    let registry = ObjectURLRegistry::singleton();
+    let blob = registry
+        .resolve_and_dupe(&sliced[b"blob:".len()..])
+        .map(|resolved| {
+            let ptr = Blob::new(resolved);
+            // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
+            unsafe { BlobExt::to_js(&*ptr, global_object) }
+        });
+    Ok(blob.unwrap_or(JSValue::UNDEFINED))
 }
 
-// `bun_s3` is not a workspace crate (only `bun_s3_signing`). Webcore drafts
-// reference `bun_s3::{S3Credentials, ACL, ...}` for the S3-backed Blob store.
-// Forward the real `bun_s3_signing` types so `s3_stub::X` and
-// `bun_s3_signing::X` are the *same* type (avoids
-// `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
-// Remaining names without a real definition stay as opaque unit structs until
-// a real `bun_s3` crate exists.
-pub mod s3_stub {
-    macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
-        #[derive(Debug, Default)] pub struct $n;
-    )*};}
-    opaque!(
-        S3DeleteResult,
-        S3ListObjectsResult,
-        S3SimpleRequestResult,
-        S3DownloadStreamWrapper,
-        S3HttpSimpleTask,
-    );
-    // Real types now exist upstream — forward them.
-    pub use bun_s3_signing::{ACL, S3Credentials, S3CredentialsWithOptions, StorageClass};
-    // Real type now exists in webcore/s3/list_objects.rs — forward it so
-    // `s3_stub::S3ListObjectsOptions` and `s3::list_objects::S3ListObjectsOptions`
-    // are the same type (Store.rs imports via this path).
-    pub use crate::webcore::__s3_list_objects::S3ListObjectsOptions;
-    pub use crate::webcore::s3::MultiPartUploadOptions;
-}
-
-// Forward the real enums so `webcore::node_types::X` and
-// `crate::node::types::X` are the same type.
+// Forward the canonical enums so `webcore::node_types::X` names the
+// `bun_jsc::node_path` types directly.
 pub mod node_types {
-    pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
+    pub use crate::node::types::PathOrBlob;
+    pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 }
 
-pub use crate::jsc::AbortSignal;
+pub use bun_jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
 // The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
@@ -163,7 +156,7 @@ impl AutoFlusher {
     #[inline]
     pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
-        vm: &jsc::VirtualMachine,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
     ) {
         if this.auto_flusher().registered.get() {
             return;
@@ -174,7 +167,7 @@ impl AutoFlusher {
     #[inline]
     pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
-        vm: &jsc::VirtualMachine,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
     ) {
         if !this.auto_flusher().registered.get() {
             return;
@@ -185,7 +178,7 @@ impl AutoFlusher {
     #[inline]
     pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
-        vm: &jsc::VirtualMachine,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
     ) {
         debug_assert!(this.auto_flusher().registered.get());
         // Do not wrap the side-effecting call in `debug_assert!`;
@@ -201,7 +194,7 @@ impl AutoFlusher {
     #[inline]
     pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
-        vm: &jsc::VirtualMachine,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
     ) {
         debug_assert!(!this.auto_flusher().registered.get());
         this.auto_flusher().registered.set(true);
@@ -311,7 +304,7 @@ bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-pub use crate::jsc::FetchHeaders;
+pub use bun_jsc::FetchHeaders;
 
 #[path = "webcore/EncodingLabel.rs"]
 pub mod encoding_label;
@@ -335,14 +328,8 @@ pub mod prompt;
 
 #[path = "webcore/FormData.rs"]
 pub mod form_data;
-pub use form_data::{AsyncFormData, FormData};
+pub use form_data::FormData;
 
-#[path = "webcore/ScriptExecutionContext.rs"]
-pub mod script_execution_context;
-
-#[doc(hidden)]
-#[path = "webcore/s3/multipart_options.rs"]
-pub mod multipart_options_impl;
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to
@@ -366,16 +353,11 @@ pub mod __s3_multipart;
 #[path = "webcore/s3/simple_request.rs"]
 pub mod __s3_simple_request;
 pub mod s3 {
-    pub use super::multipart_options_impl as multipart_options;
-    pub use super::multipart_options_impl::MultiPartUploadOptions;
+    pub use bun_s3_signing::MultiPartUploadOptions;
     // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
     // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
-    // These come from `s3_stub` until a real `bun_s3` crate exists.
-    pub use super::s3_stub::{
-        ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
-        S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,
-        StorageClass,
-    };
+    pub use super::__s3_list_objects::S3ListObjectsOptions;
+    pub use bun_s3_signing::{ACL, S3Credentials, S3CredentialsWithOptions, StorageClass};
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.

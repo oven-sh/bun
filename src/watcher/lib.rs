@@ -30,27 +30,9 @@ pub mod watcher_impl;
 // ─── public re-exports ────────────────────────────────────────────────────
 
 pub use WatchItemKind as Kind;
+pub use bun_core::loader::Loader;
 pub use watcher_impl::{
-    AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, MAX_COUNT,
-    MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent,
-    WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+    ChangedFilePath, Event, HashType, Item, ItemList, MAX_COUNT, MAX_EVICTION_COUNT, Op,
+    REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent, WatchItem, WatchItemColumns,
+    WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };
-
-// ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────
-//
-// These belong to higher-tier crates that don't yet expose a usable surface
-// to depend on. Watcher only stores/passes them through; never dereferenced.
-
-/// Opaque forward-decl of `bun_ast::Loader` (cycle-break: bun_watcher sits
-/// below bun_ast in the crate graph). Watcher only stores the value in
-/// `WatchItem.loader` and passes it through; callers construct it via
-/// `Loader(bun_ast::Loader as u8)` at the boundary.
-#[derive(Clone, Copy, Default)]
-pub struct Loader(pub u8);
-impl Loader {
-    /// Mirrors `bun_ast::Loader::File as u8`;
-    /// keep the discriminant in sync with `src/ast/loader.rs`. A compile-time
-    /// drift guard lives in `src/jsc/hot_reloader.rs` (a crate that sees both
-    /// types).
-    pub const File: Loader = Loader(5);
-}

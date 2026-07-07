@@ -12,26 +12,11 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
 
-// ── merged from bun_io ──────────────────────────────────────────────────────
-//
-// `bun_io`'s `FilePoll`/`EventLoopCtx`/`ParentDeathWatchdog`/`Loop`/`Waker`
-// scaffolding now lives here. The two crates were at the same dependency tier
-// (both T2, neither reachable from `bun_event_loop`'s upward direction) and
-// shared every dep; the only effect of the split was forcing the
-// `bun_io::EventLoopHandle = *mut c_void` type-erasure seam between
-// `BufferedReader` and `FilePoll`, which let callers smuggle a pointer to the
-// wrong enum (`&AnyEventLoop` instead of `&EventLoopHandle`) and reinterpret
-// the discriminant — a SIGABRT-at-best bug class. With both halves in one
-// crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
-// pair) and the seam is type-checked.
-
-pub mod stub_event_loop;
-
 #[cfg(windows)]
 pub mod windows_event_loop;
 
 // `posix_event_loop` also defines the *shared* event-loop scaffolding
-// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,
+// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `Store`,
 // `OpaqueCallback`); `windows_event_loop` re-uses those types and only
 // overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
 // specific bits inside (kqueue/epoll wakers, fd polling) are individually
@@ -102,37 +87,248 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     }
 }
 
-pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
+pub use posix_event_loop::{AllocatorType, Owner, get_vm_ctx, js_vm_ctx};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
-// At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
-// macro emits (and the impl-macro reads back) actually resolve from impl
-// crates. `Store`/`FilePoll` here are the *platform* re-exports above.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum EventLoopCtxKind {
+    Js,
+    Mini,
+}
+
+bun_opaque::opaque_ffi! {
+    /// The JS-loop owner (`jsc::VirtualMachine`), opaque at this tier.
+    pub struct JsLoopCtxOwner;
+    /// The Mini-loop owner (`bun_event_loop::MiniEventLoop`), opaque at this tier.
+    pub struct MiniLoopCtxOwner;
+}
+
+// Js vs Mini is a fixed layering pair, not open polymorphism: one typed link
+// fn per former vtable slot, defined in `bun_jsc::VirtualMachine` (Js) and
+// `bun_event_loop::MiniEventLoop` (Mini), resolved at link time. Every body
+// casts the owner back to the live pointer it was erased from.
 //
-// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
-// wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
-// re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
-// `uv_loop_t` whereas the impl bodies
+// `bun_*_loop_ctx_platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop`
+// (the uws wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased
+// `crate::Loop` re-export. On POSIX those coincide, but on Windows
+// `crate::Loop` is the raw `uv_loop_t` whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
-bun_dispatch::link_interface! {
-    pub EventLoopCtx[Js, Mini] {
-        fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
-        fn file_polls_ptr() -> *mut Store;
-        // `alloc_file_poll() -> *mut FilePoll` was removed — it
-        // returned an *uninitialized* hive slot, and any caller forming
-        // `&mut FilePoll` over it hit validity-invariant UB on the niche-
-        // bearing enum fields. `FilePoll::init` now goes through
-        // `file_polls_ptr()` + `Store::get_init` (write-before-read).
-        fn increment_pending_unref_counter();
-        fn ref_concurrently();
-        fn unref_concurrently();
-        fn after_event_loop_callback() -> Option<OpaqueCallback>;
-        fn set_after_event_loop_callback(
-            cb: Option<OpaqueCallback>,
-            ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
-        );
-        fn pipe_read_buffer() -> *mut [u8];
+//
+// A `*_alloc_file_poll() -> *mut FilePoll` slot was removed — it returned an
+// *uninitialized* hive slot, and any caller forming `&mut FilePoll` over it
+// hit validity-invariant UB on the niche-bearing enum fields. `FilePoll::init`
+// now goes through `*_file_polls_ptr()` + `Store::get_init` (write-before-read).
+unsafe extern "Rust" {
+    pub unsafe fn bun_vm_loop_ctx_platform_event_loop_ptr(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> *mut bun_uws_sys::Loop;
+    pub unsafe fn bun_vm_loop_ctx_file_polls_ptr(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> *mut Store;
+    pub unsafe fn bun_vm_loop_ctx_increment_pending_unref_counter(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    );
+    pub unsafe fn bun_vm_loop_ctx_ref_concurrently(vm: core::ptr::NonNull<JsLoopCtxOwner>);
+    pub unsafe fn bun_vm_loop_ctx_unref_concurrently(vm: core::ptr::NonNull<JsLoopCtxOwner>);
+    pub unsafe fn bun_vm_loop_ctx_after_event_loop_callback(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> Option<OpaqueCallback>;
+    pub unsafe fn bun_vm_loop_ctx_set_after_event_loop_callback(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+        cb: Option<OpaqueCallback>,
+        ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+    );
+    pub unsafe fn bun_vm_loop_ctx_pipe_read_buffer(
+        vm: core::ptr::NonNull<JsLoopCtxOwner>,
+    ) -> *mut [u8];
+
+    pub unsafe fn bun_mini_loop_ctx_platform_event_loop_ptr(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> *mut bun_uws_sys::Loop;
+    pub unsafe fn bun_mini_loop_ctx_file_polls_ptr(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> *mut Store;
+    pub unsafe fn bun_mini_loop_ctx_increment_pending_unref_counter(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    );
+    pub unsafe fn bun_mini_loop_ctx_ref_concurrently(ml: core::ptr::NonNull<MiniLoopCtxOwner>);
+    pub unsafe fn bun_mini_loop_ctx_unref_concurrently(ml: core::ptr::NonNull<MiniLoopCtxOwner>);
+    pub unsafe fn bun_mini_loop_ctx_after_event_loop_callback(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> Option<OpaqueCallback>;
+    pub unsafe fn bun_mini_loop_ctx_set_after_event_loop_callback(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+        cb: Option<OpaqueCallback>,
+        ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+    );
+    pub unsafe fn bun_mini_loop_ctx_pipe_read_buffer(
+        ml: core::ptr::NonNull<MiniLoopCtxOwner>,
+    ) -> *mut [u8];
+}
+
+/// Handle to the loop's owner — a live `*mut VirtualMachine` (`Js`) or
+/// `*mut MiniEventLoop` (`Mini`), erased to the matching opaque handle type.
+/// SAFETY invariant: the owner must outlive every dispatch through the handle.
+/// The repr is private so a handle can only come from the `unsafe`
+/// constructors [`EventLoopCtx::js`] / [`EventLoopCtx::mini`].
+#[derive(Copy, Clone)]
+pub struct EventLoopCtx(EventLoopCtxRepr);
+
+#[derive(Copy, Clone)]
+enum EventLoopCtxRepr {
+    Js(core::ptr::NonNull<JsLoopCtxOwner>),
+    Mini(core::ptr::NonNull<MiniLoopCtxOwner>),
+}
+
+impl EventLoopCtx {
+    /// Build a `Js` handle from the owning `VirtualMachine` pointer.
+    ///
+    /// # Safety
+    /// `owner` must point to a live `jsc::VirtualMachine` that outlives every
+    /// dispatch through the returned handle (and any copy of it).
+    #[inline]
+    pub unsafe fn js(owner: core::ptr::NonNull<JsLoopCtxOwner>) -> Self {
+        Self(EventLoopCtxRepr::Js(owner))
+    }
+    /// Build a `Mini` handle from the owning `MiniEventLoop` pointer.
+    ///
+    /// # Safety
+    /// `owner` must point to a live `bun_event_loop::MiniEventLoop` that
+    /// outlives every dispatch through the returned handle (and any copy).
+    #[inline]
+    pub unsafe fn mini(owner: core::ptr::NonNull<MiniLoopCtxOwner>) -> Self {
+        Self(EventLoopCtxRepr::Mini(owner))
+    }
+    #[inline]
+    pub fn kind(&self) -> EventLoopCtxKind {
+        match self.0 {
+            EventLoopCtxRepr::Js(_) => EventLoopCtxKind::Js,
+            EventLoopCtxRepr::Mini(_) => EventLoopCtxKind::Mini,
+        }
+    }
+    #[inline]
+    pub fn is(&self, kind: EventLoopCtxKind) -> bool {
+        self.kind() == kind
+    }
+}
+
+impl EventLoopCtx {
+    #[inline]
+    pub fn platform_event_loop_ptr(&self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_platform_event_loop_ptr(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_platform_event_loop_ptr(ml),
+            }
+        }
+    }
+    #[inline]
+    pub fn file_polls_ptr(&self) -> *mut Store {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_file_polls_ptr(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_file_polls_ptr(ml),
+            }
+        }
+    }
+    #[inline]
+    pub fn increment_pending_unref_counter(&self) {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_increment_pending_unref_counter(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_increment_pending_unref_counter(ml),
+            }
+        }
+    }
+    #[inline]
+    pub fn ref_concurrently(&self) {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_ref_concurrently(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_ref_concurrently(ml),
+            }
+        }
+    }
+    #[inline]
+    pub fn unref_concurrently(&self) {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_unref_concurrently(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_unref_concurrently(ml),
+            }
+        }
+    }
+    #[inline]
+    pub fn after_event_loop_callback(&self) -> Option<OpaqueCallback> {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_after_event_loop_callback(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_after_event_loop_callback(ml),
+            }
+        }
+    }
+    #[inline]
+    pub fn set_after_event_loop_callback(
+        &self,
+        cb: Option<OpaqueCallback>,
+        ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+    ) {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => {
+                    bun_vm_loop_ctx_set_after_event_loop_callback(vm, cb, ctx)
+                }
+                EventLoopCtxRepr::Mini(ml) => {
+                    bun_mini_loop_ctx_set_after_event_loop_callback(ml, cb, ctx)
+                }
+            }
+        }
+    }
+    #[inline]
+    pub fn pipe_read_buffer(&self) -> *mut [u8] {
+        // SAFETY: live-owner invariant on the enum.
+        unsafe {
+            match self.0 {
+                EventLoopCtxRepr::Js(vm) => bun_vm_loop_ctx_pipe_read_buffer(vm),
+                EventLoopCtxRepr::Mini(ml) => bun_mini_loop_ctx_pipe_read_buffer(ml),
+            }
+        }
+    }
+}
+
+thread_local! {
+    pub static CURRENT_JS_CTX: core::cell::Cell<Option<EventLoopCtx>> =
+        const { core::cell::Cell::new(None) };
+    pub static CURRENT_MINI_CTX: core::cell::Cell<Option<EventLoopCtx>> =
+        const { core::cell::Cell::new(None) };
+}
+
+/// Install the per-thread `EventLoopCtx` handle that
+/// [`posix_event_loop::get_vm_ctx`] hands out; the cell is chosen by the
+/// handle's own variant. The `Js` cell is set in `VirtualMachine::init` and
+/// cleared in `VirtualMachine::destroy`; the `Mini` cell is set in
+/// `MiniEventLoop::init_global`.
+pub fn set_current_ctx(ctx: EventLoopCtx) {
+    match ctx.0 {
+        EventLoopCtxRepr::Js(_) => CURRENT_JS_CTX.with(|c| c.set(Some(ctx))),
+        EventLoopCtxRepr::Mini(_) => CURRENT_MINI_CTX.with(|c| c.set(Some(ctx))),
+    }
+}
+
+/// Clear the per-thread `EventLoopCtx` cell for `kind` (loop teardown).
+pub fn clear_current_ctx(kind: EventLoopCtxKind) {
+    match kind {
+        EventLoopCtxKind::Js => CURRENT_JS_CTX.with(|c| c.set(None)),
+        EventLoopCtxKind::Mini => CURRENT_MINI_CTX.with(|c| c.set(None)),
     }
 }
 
@@ -269,11 +465,6 @@ pub use posix_event_loop::Store;
 #[cfg(windows)]
 pub use windows_event_loop::Store;
 
-/// Mirrors posix_event_loop::Flags.
-pub use posix_event_loop::Flags as PollFlag;
-/// Mirrors poll kind enum used by process.rs.
-pub use posix_event_loop::Flags as PollKind;
-
 /// `file_poll` module — real one lives in {posix,windows}_event_loop.rs.
 pub mod file_poll {
     pub use super::FilePoll;
@@ -318,47 +509,15 @@ pub use write::{
 pub use max_buf as MaxBuf;
 pub use pipes::{FileType, ReadState};
 
-// `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
-// `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
-// trait impl — see `buffered_reader_parent_link!` below.
-bun_dispatch::link_interface! {
-    pub BufferedReaderParentLink[
-        SubprocessPipeReader,
-        ShellPipeReader,
-        ShellIoReader,
-        FileReader,
-        FileResponseStream,
-        Terminal,
-        CronRegister,
-        CronRemove,
-        FilterRunHandle,
-        MultiRunPipeReader,
-        TestParallelWorkerPipe,
-        LifecycleScript,
-        SecurityScan,
-    ] {
-        fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
-        fn on_reader_done();
-        fn on_reader_error(err: bun_sys::Error);
-        fn loop_ptr() -> *mut Loop;
-        fn event_loop() -> EventLoopCtx;
-        // Only the `SubprocessPipeReader` arm acts on this; everything else
-        // no-ops (no other parent type wires a `MaxBuf`).
-        fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
-    }
-}
-
-/// One-stop generator for a `BufferedReader` parent: emits **both** the
-/// `impl BufferedReaderParent for $T` block and the matching
-/// `link_impl_BufferedReaderParentLink!` registration. Every parent type just
+/// One-stop generator for a `BufferedReader` parent: emits the
+/// `impl BufferedReaderParent for $T` block. Every parent type just
 /// declares same-named inherent methods and writes one macro invocation.
 ///
 /// ## Shape
 ///
 /// ```ignore
 /// bun_io::impl_buffered_reader_parent! {
-///     Variant for Ty;                 // or `Ty<'a>` (link uses `'static`)
+///     Variant for Ty;                 // or `Ty<'a>`; the leading ident is ignored
 ///     has_on_read_chunk = true|false;
 ///     // ↓ omit when has_on_read_chunk = false (trait default fires)
 ///     on_read_chunk    = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
@@ -381,12 +540,12 @@ bun_dispatch::link_interface! {
 /// forward as `<Self>::method(this)` instead.
 #[macro_export]
 macro_rules! impl_buffered_reader_parent {
-    // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
+    // Single-lifetime generic: trait impl over `<'lt>`. `$variant` is a legacy
+    // head token kept so call sites don't change; it is ignored.
     (
         $variant:ident for $T:ident<$lt:lifetime>;
         $($rest:tt)*
     ) => {
-        $crate::buffered_reader_parent_link!($variant for $T<'static>);
         $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; $($rest)* }
     };
     // Non-generic.
@@ -394,7 +553,6 @@ macro_rules! impl_buffered_reader_parent {
         $variant:ident for $T:ty;
         $($rest:tt)*
     ) => {
-        $crate::buffered_reader_parent_link!($variant for $T);
         $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; $($rest)* }
     };
 }
@@ -416,8 +574,6 @@ macro_rules! __impl_buffered_reader_parent_body {
         // contract — `this` is the `*mut Self` registered via `set_parent`; a
         // `&mut` to the embedded reader may be live on the caller's stack.
         impl $(<$lt>)? $crate::pipe_reader::BufferedReaderParent for $T {
-            const KIND: $crate::BufferedReaderParentLinkKind =
-                $crate::BufferedReaderParentLinkKind::$variant;
             const HAS_ON_READ_CHUNK: bool = $has;
             $(
                 #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
@@ -442,7 +598,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 unsafe { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
+            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopCtx {
                 unsafe { $ev }
             }
             $(
@@ -461,32 +617,6 @@ macro_rules! __impl_buffered_reader_parent_body {
 #[doc(hidden)]
 pub use bun_sys as __bun_sys;
 
-/// Generates the `link_impl_BufferedReaderParentLink!` body for a type that
-/// already implements [`pipe_reader::BufferedReaderParent`]. Used once per
-/// variant in the impl crates (`bun_runtime`/`bun_install`).
-#[macro_export]
-macro_rules! buffered_reader_parent_link {
-    ($variant:ident for $T:ty) => {
-        $crate::link_impl_BufferedReaderParentLink! {
-            $variant for $T => |this| {
-                has_on_read_chunk() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::HAS_ON_READ_CHUNK,
-                on_read_chunk(chunk, has_more) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_read_chunk(this, chunk, has_more),
-                on_reader_done() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_done(this),
-                on_reader_error(err) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_reader_error(this, err),
-                loop_ptr() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
-                event_loop() =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
-                on_max_buffer_overflow(maxbuf) =>
-                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_max_buffer_overflow(this, maxbuf),
-            }
-        }
-    };
-}
 pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
 #[cfg(windows)]
 pub use source::Source;
@@ -864,9 +994,10 @@ impl IoRequestLoop {
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
+                            readable.poll.owner = Some(readable.owner);
                             match readable.poll.register_for_epoll(
                                 Flags::PollReadable,
-                                readable.tag,
+                                PollableTag::Owned,
                                 watcher_fd,
                                 true,
                                 readable.fd,
@@ -880,9 +1011,10 @@ impl IoRequestLoop {
                             }
                         }
                         Action::Writable(writable) => {
+                            writable.poll.owner = Some(writable.owner);
                             match writable.poll.register_for_epoll(
                                 Flags::PollWritable,
-                                writable.tag,
+                                PollableTag::Owned,
                                 watcher_fd,
                                 true,
                                 writable.fd,
@@ -1018,18 +1150,20 @@ impl IoRequestLoop {
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
+                            readable.poll.owner = Some(readable.owner);
                             Poll::apply_kqueue(
                                 ApplyAction::Readable,
-                                readable.tag,
+                                PollableTag::Owned,
                                 readable.poll,
                                 readable.fd,
                                 add_one(&mut events_list),
                             );
                         }
                         Action::Writable(writable) => {
+                            writable.poll.owner = Some(writable.owner);
                             Poll::apply_kqueue(
                                 ApplyAction::Writable,
-                                writable.tag,
+                                PollableTag::Owned,
                                 writable.poll,
                                 writable.fd,
                                 add_one(&mut events_list),
@@ -1039,9 +1173,10 @@ impl IoRequestLoop {
                             if close.poll.flags.contains(Flags::PollReadable)
                                 || close.poll.flags.contains(Flags::PollWritable)
                             {
+                                close.poll.owner = Some(close.owner);
                                 Poll::apply_kqueue(
                                     ApplyAction::Cancel,
-                                    close.tag,
+                                    PollableTag::Owned,
                                     close.poll,
                                     close.fd,
                                     add_one(&mut events_list),
@@ -1233,7 +1368,7 @@ pub unsafe trait IntrusiveUvFs: Sized {
     /// live `Self` allocation, and the pointer's provenance must cover the
     /// whole allocation.
     #[inline(always)]
-    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
+    unsafe fn from_uv_fs(req: *mut bun_libuv_sys::fs_t) -> *mut Self {
         // SAFETY: caller upholds the trait safety contract above.
         unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
     }
@@ -1290,7 +1425,7 @@ pub struct FileAction<'a> {
     pub fd: Fd,
     pub poll: &'a mut Poll,
     pub ctx: *mut (),
-    pub tag: PollableTag,
+    pub owner: &'static PollOwnerVTable,
     pub on_error: fn(*mut (), &sys::Error),
 }
 
@@ -1298,7 +1433,7 @@ pub struct CloseAction<'a> {
     pub fd: Fd,
     pub poll: &'a mut Poll,
     pub ctx: *mut (),
-    pub tag: PollableTag,
+    pub owner: &'static PollOwnerVTable,
     pub on_done: fn(*mut ()),
 }
 
@@ -1310,8 +1445,7 @@ pub struct CloseAction<'a> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PollableTag {
     Empty = 0,
-    ReadFile,
-    WriteFile,
+    Owned = 1,
 }
 
 /// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
@@ -1351,8 +1485,7 @@ impl Pollable {
         // Tag was written by `init` from a valid `PollableTag` discriminant.
         match (self.value >> POLLABLE_ADDR_BITS) as u16 {
             0 => PollableTag::Empty,
-            1 => PollableTag::ReadFile,
-            2 => PollableTag::WriteFile,
+            1 => PollableTag::Owned,
             // Only `init` writes the tag bits, so any other value is memory
             // corruption / a logic bug — trap rather than fabricate a
             // discriminant.
@@ -1375,8 +1508,16 @@ type GenerationNumberInt = u64;
 static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
+/// Installed by the Poll owner (ReadFile/WriteFile in bun_runtime) when it
+/// registers; `poll` is the owner's embedded `io_poll` field.
+pub struct PollOwnerVTable {
+    pub on_ready: unsafe fn(poll: *mut Poll),
+    pub on_io_error: unsafe fn(poll: *mut Poll, err: &sys::Error),
+}
+
 pub struct Poll {
     pub flags: FlagsSet,
+    pub owner: Option<&'static PollOwnerVTable>,
     #[cfg(all(target_os = "macos", debug_assertions))]
     pub generation_number: GenerationNumberInt,
 }
@@ -1385,6 +1526,7 @@ impl Default for Poll {
     fn default() -> Self {
         Self {
             flags: FlagsSet::empty(),
+            owner: None,
             #[cfg(all(target_os = "macos", debug_assertions))]
             generation_number: 0,
         }
@@ -1392,17 +1534,6 @@ impl Default for Poll {
 }
 
 pub type Tag = PollableTag;
-
-unsafe extern "Rust" {
-    /// Hot-path dispatch for `Pollable` owners. The concrete owners
-    /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
-    /// io (T2) only knows the embedded `*mut Poll` and the tag. The body is
-    /// `#[no_mangle]` in `bun_runtime::dispatch` and recovers the parent
-    /// struct via `container_of(io_poll)`.
-    /// Cold path — only Bun.write / Bun.file().text() reach this.
-    fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
-    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
-}
 
 #[derive(enumset::EnumSetType)]
 pub enum Flags {
@@ -1630,16 +1761,16 @@ impl Poll {
             return;
         }
         let poll = pollable.poll();
-        // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
-        // `extern "Rust"` defined in `bun_runtime::dispatch`. The
-        // container_of(io_poll) recovery happens there.
+        // SAFETY: poll is the `io_poll` field of a live owner; the owner
+        // installed its vtable before registering.
+        let Some(vt) = (unsafe { (*poll).owner }) else {
+            return;
+        };
         if event.flags == libc::EV_ERROR {
             log!("error({}) = {}", event.ident, event.data);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
+            // SAFETY: poll is the `io_poll` field of a live owner.
             unsafe {
-                __bun_io_pollable_on_io_error(
-                    tag,
+                (vt.on_io_error)(
                     poll,
                     // `event.data` is a kernel-supplied errno; do NOT transmute into the
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
@@ -1651,7 +1782,7 @@ impl Poll {
         } else {
             log!("ready({}) = {}", event.ident, event.data);
             // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
+            unsafe { (vt.on_ready)(poll) };
         }
     }
 
@@ -1666,25 +1797,20 @@ impl Poll {
             return;
         }
         let poll = poll.as_ptr();
-        // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
-        // `extern "Rust"` defined in `bun_runtime::dispatch`. The
-        // container_of(io_poll) recovery happens there.
+        // SAFETY: poll is the `io_poll` field of a live owner; the owner
+        // installed its vtable before registering.
+        let Some(vt) = (unsafe { (*poll).owner }) else {
+            return;
+        };
         if event.events & linux::EPOLL_ERR != 0 {
             let errno = sys::get_errno(event.events as isize);
             log!("error() = {:?}", errno);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
-            unsafe {
-                __bun_io_pollable_on_io_error(
-                    tag,
-                    poll,
-                    &sys::Error::from_code(errno, sys::Tag::epoll_ctl),
-                )
-            };
+            // SAFETY: poll is the `io_poll` field of a live owner.
+            unsafe { (vt.on_io_error)(poll, &sys::Error::from_code(errno, sys::Tag::epoll_ctl)) };
         } else {
             log!("ready()");
             // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
+            unsafe { (vt.on_ready)(poll) };
         }
     }
 
@@ -1780,10 +1906,6 @@ pub const RETRY: E = E::EAGAIN;
 use crate::posix_event_loop::OneShotFlag;
 use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet};
 
-pub type EventLoopHandle = EventLoopCtx;
-
-pub type FilePollFlag = PollFlags;
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FilePollKind {
@@ -1802,7 +1924,7 @@ pub struct FilePollRef(pub core::ptr::NonNull<FilePoll>);
 
 impl FilePollRef {
     #[inline]
-    pub fn init(ev: EventLoopHandle, fd: Fd, owner: Owner) -> FilePollRef {
+    pub fn init(ev: EventLoopCtx, fd: Fd, owner: Owner) -> FilePollRef {
         FilePollRef(
             core::ptr::NonNull::new(FilePoll::init(ev, fd, PollFlagsSet::empty(), owner))
                 .expect("FilePoll::init returns a fresh hive slot"),
@@ -1905,11 +2027,11 @@ impl FilePollRef {
         }
     }
     #[inline]
-    pub fn has_flag(self, f: FilePollFlag) -> bool {
+    pub fn has_flag(self, f: PollFlags) -> bool {
         self.inner().flags.contains(f)
     }
     #[inline]
-    pub fn set_flag(self, f: FilePollFlag) {
+    pub fn set_flag(self, f: PollFlags) {
         self.inner().flags.insert(f);
     }
     #[inline]
@@ -1951,15 +2073,15 @@ impl FilePollRef {
         }
     }
     #[inline]
-    pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
+    pub fn enable_keeping_process_alive(self, ev: EventLoopCtx) {
         self.inner().enable_keeping_process_alive(ev);
     }
     #[inline]
-    pub fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
+    pub fn disable_keeping_process_alive(self, ev: EventLoopCtx) {
         self.inner().disable_keeping_process_alive(ev);
     }
     #[inline]
-    pub fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
+    pub fn set_keeping_process_alive(self, ev: EventLoopCtx, value: bool) {
         if value {
             self.enable_keeping_process_alive(ev)
         } else {
@@ -2118,7 +2240,7 @@ pub mod waker {
         pub fn init() -> Result<Self, bun_core::Error> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
-                return Err(bun_core::Error::from_errno(bun_errno::posix::errno()));
+                return Err(bun_core::Error::from_errno(bun_core::errno::posix::errno()));
             }
             Self::init_with_file_descriptor(kq)
         }
@@ -2218,7 +2340,7 @@ pub mod waker {
         /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
         /// block at the call site.
         #[inline]
-        pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
+        pub fn uv_loop(&self) -> *mut bun_libuv_sys::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
             // is a `Copy` field set once by C `us_create_loop`.
             self.loop_ref().uv_loop
@@ -2278,7 +2400,7 @@ pub mod closer {
     #[cfg(windows)]
     use crate::IntrusiveUvFs as _;
     #[cfg(windows)]
-    use bun_sys::windows::libuv as uv;
+    use bun_libuv_sys as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
 
@@ -2307,7 +2429,7 @@ pub mod closer {
                 )
                 .err_enum()
                 {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                     drop(bun_core::heap::take(closer));
                 }
             }
@@ -2328,7 +2450,7 @@ pub mod closer {
 
                 #[cfg(debug_assertions)]
                 if let Some(err) = (*closer).io_request.result.err_enum() {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                 }
 
                 (*req).deinit();

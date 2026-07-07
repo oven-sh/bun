@@ -1,25 +1,28 @@
+use bun_install_types::PackageID;
 use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
 
-use crate::bun_fs::FileSystem;
-use crate::lockfile_real::package::PackageColumns;
-use crate::repository::Repository;
+use crate::Resolution;
+use crate::lockfile::package::PackageColumns;
+use crate::lockfile::{LoadResult, Lockfile, LockfileFormat};
+use crate::resolution::Tag as ResolutionTag;
+use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
-use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_install_types::resolver_hooks::Repository;
+use bun_paths::{self as path, AbsPath, SEP};
+use bun_resolver::fs::FileSystem;
 use bun_semver::{self as Semver, String as SemverString};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
+use bun_sys::{self as sys, Dir, Fd, File};
 
-use crate::bun_progress::Node as ProgressNode;
+use bun_core::Progress::Node as ProgressNode;
 
-use super::options::{self, Enable, LogLevel};
-use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
+use super::package_manager_options::{self as options, Enable, LogLevel};
+use super::{Options, PackageManager, ProgressStrings, Subcommand};
+use bun_options_types::context::Context;
 
 // ───────────────────────────── method wrappers ───────────────────────────────
 // Thin `&mut self` shims so call sites can use method-style spelling
@@ -354,7 +357,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 
     let mut buf = PathBuffer::uninit();
-    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
+    let temp_dir_path = match sys::get_fd_path_z(tempdir.fd(), &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(
@@ -436,50 +439,36 @@ pub struct CacheDir {
 }
 
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
-    if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return CacheDir {
+    let env = &*env;
+    match sys::resolve_cache_directory(
+        // XDG_CACHE_HOME / HOME come from the process-env cache, the rest from
+        // the dotenv-aware loader — preserving the original lookup split.
+        |k| match k {
+            b"XDG_CACHE_HOME" => env_var::XDG_CACHE_HOME.get(),
+            b"HOME" => env_var::HOME.get(),
+            other => env.get(other),
+        },
+        options.map(|o| o.cache_directory).filter(|d| !d.is_empty()),
+    ) {
+        sys::CacheDirStep::Override(dir) => CacheDir {
             path: FileSystem::instance().abs(&[dir]).to_vec(),
             is_node_modules: false,
-        };
-    }
-
-    if let Some(opts) = options {
-        if !opts.cache_directory.is_empty() {
-            return CacheDir {
-                path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
+        },
+        sys::CacheDirStep::Under(root, suffixes) => {
+            let mut parts: Vec<&[u8]> = Vec::with_capacity(1 + suffixes.len());
+            parts.push(root);
+            parts.extend_from_slice(suffixes);
+            CacheDir {
+                path: FileSystem::instance().abs(&parts).to_vec(),
                 is_node_modules: false,
-            };
+            }
         }
-    }
-
-    if let Some(dir) = env.get(b"BUN_INSTALL") {
-        let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
-        };
-    }
-
-    if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
-        };
-    }
-
-    if let Some(dir) = env_var::HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
-        };
-    }
-
-    let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
-    CacheDir {
-        is_node_modules: true,
-        path: FileSystem::instance().abs(&fallback_parts).to_vec(),
+        sys::CacheDirStep::Fallback => CacheDir {
+            is_node_modules: true,
+            path: FileSystem::instance()
+                .abs(&[b"node_modules/.bun-cache" as &[u8]])
+                .to_vec(),
+        },
     }
 }
 
@@ -824,7 +813,7 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
 
 // ─────────────────────────── global directories ───────────────────────────────
 
-pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
+pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Context) -> Result<(), Error> {
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = PathBuffer::uninit();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
@@ -1305,7 +1294,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let file = tmpfile.file();
     {
-        let mut printer = crate::lockfile_real::Printer {
+        let mut printer = crate::lockfile::Printer {
             lockfile: &this.lockfile,
             options: &this.options,
             successfully_installed: None,
@@ -1316,7 +1305,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
         // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
-        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
+        crate::lockfile::printer::Yarn::print(&mut printer, &mut buf)?;
         file.write_all(&buf).map_err(Error::from)?;
     }
 

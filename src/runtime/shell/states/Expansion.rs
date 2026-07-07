@@ -4,9 +4,11 @@
 //! needs to be evaluated at runtime — this state node walks the atom and
 //! produces zero or more output strings.
 
+use bun_event_loop::EventLoopHandle;
+
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
+    Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
 use crate::shell::states::base::Base;

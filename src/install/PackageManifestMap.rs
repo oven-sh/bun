@@ -1,9 +1,9 @@
 use bun_collections::HashMap;
 use bun_collections::zig_hash_map::MapEntry as Entry;
+use bun_install_types::PackageNameHash;
 use bun_semver::string::Builder as StringBuilder;
 use bun_sys::Fd;
 
-use crate::PackageNameHash;
 use crate::npm;
 
 #[derive(Default)]

@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bun_core::Error;
 use bun_core::{MutableString, strings};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{TaskTag, Taskable};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -47,7 +47,7 @@ pub struct S3HttpDownloadStreamingTask {
 
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
-    const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
+    const TAG: TaskTag = TaskTag::S3HttpDownloadStreamingTask;
 }
 
 impl Default for S3HttpDownloadStreamingTask {

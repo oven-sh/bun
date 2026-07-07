@@ -6,8 +6,9 @@ use core::sync::atomic::Ordering;
 
 use bun_core::{StringPointer, ZigString};
 use bun_http::Headers;
-use bun_http::headers::{EntryList, api};
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use bun_http::headers::EntryList;
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
+use bun_jsc::{CallFrame, FetchHeaders, JSGlobalObject, JSValue, JsResult};
 
 /// Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
@@ -21,7 +22,7 @@ pub fn from_fetch_headers(
 ) -> Headers {
     // `FetchHeaders::{count,fast_has_,copy_to}` take `&mut self` but
     // are read-only FFI shims; cast through `*mut` (matching the prior
-    // `link_interface!` impl which did `from_ref(h).cast_mut()`).
+    // impl which did `from_ref(h).cast_mut()`).
     let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
 
     let mut header_count: u32 = 0;
@@ -54,7 +55,7 @@ pub fn from_fetch_headers(
         .ensure_total_capacity(header_count as usize)
         .is_err()
     {
-        bun_alloc::out_of_memory();
+        bun_core::out_of_memory();
     }
     // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
     // overwritten by `copy_to` / the explicit writes below before any read.
@@ -68,9 +69,9 @@ pub fn from_fetch_headers(
     let sliced = headers.entries.slice();
     // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
-    let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
+    let names_ptr: *mut StringPointer = sliced.items_raw::<"name", StringPointer>();
     // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
-    let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
+    let values_ptr: *mut StringPointer = sliced.items_raw::<"value", StringPointer>();
     // Zero-init so any slot `copy_to` fails to write (iterator skip, count
     // desync) reads as `{0, 0}` — a valid empty slice — rather than garbage.
     // SAFETY: both columns hold exactly `header_count` `StringPointer` slots.
@@ -91,7 +92,7 @@ pub fn from_fetch_headers(
         // SAFETY: header_count >= 1 (incremented above); names_ptr points to a
         // live column of `header_count` slots.
         unsafe {
-            *names_ptr.add(header_count as usize - 1) = api::StringPointer {
+            *names_ptr.add(header_count as usize - 1) = StringPointer {
                 offset: buf_len_before_content_type,
                 length: u32::try_from(ct.len()).unwrap(),
             };
@@ -101,7 +102,7 @@ pub fn from_fetch_headers(
             .copy_from_slice(body_ct);
         // SAFETY: see above.
         unsafe {
-            *values_ptr.add(header_count as usize - 1) = api::StringPointer {
+            *values_ptr.add(header_count as usize - 1) = StringPointer {
                 offset: buf_len_before_content_type + u32::try_from(ct.len()).unwrap(),
                 length: u32::try_from(body_ct.len()).unwrap(),
             };
@@ -115,9 +116,8 @@ pub fn from_fetch_headers(
 ///
 /// `FetchHeaders` (opaque C++ handle) was moved into `bun_jsc`, so
 /// the prior dep-cycle on `bun_runtime` no longer applies. The C++ side
-/// receives raw `StringPointer` column pointers; `bun_http_types` and
-/// `bun_string` both re-export the canonical `bun_core::StringPointer`, so no
-/// layout cast is needed.
+/// receives raw `bun_core::StringPointer` column pointers, so no layout cast
+/// is needed.
 pub fn to_fetch_headers(
     this: &Headers,
     global: &JSGlobalObject,
@@ -200,8 +200,8 @@ impl H3TestingAPIs {
 }
 
 /// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
-/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` them (associated fns aren't importable items).
+/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime`'s generated js2native
+/// thunks can name them by a plain fn path.
 #[inline]
 pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H2TestingAPIs::live_counts(global, frame)

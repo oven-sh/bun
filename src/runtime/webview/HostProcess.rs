@@ -16,17 +16,15 @@
 
 use core::ptr::{self, NonNull};
 
+use bun_core::{declare_scope, scoped_log};
 use bun_jsc::JSGlobalObject;
-use bun_output::{declare_scope, scoped_log};
 use bun_spawn::{self, Process};
 
 #[cfg(target_os = "macos")]
 use {
     bun_core::Error,
     bun_jsc::virtual_machine::VirtualMachine,
-    bun_spawn::{
-        EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
-    },
+    bun_spawn::{EventLoopHandle, ProcessExit, SpawnOptions, SpawnResultExt as _, Stdio},
     bun_sys::{self, Fd, FdExt as _},
     core::ffi::c_char,
 };
@@ -109,12 +107,20 @@ pub(crate) extern "C" fn Bun__WebViewHost__ensure(
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    HostProcess for HostProcess => |this| {
-        // Child died (EVFILT_PROC). Socket onClose may or may not have fired
-        // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
-        // pending promises and mark the host dead.
-        on_process_exit(_process, status, _rusage) => {
+impl bun_spawn::ProcessExitOps for HostProcess {
+    // Child died (EVFILT_PROC). Socket onClose may or may not have fired
+    // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
+    // pending promises and mark the host dead.
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        _process: &mut Process,
+        status: bun_spawn::Status,
+        _rusage: &bun_spawn::Rusage,
+    ) {
+        // SAFETY: per the `ProcessExitOps` contract `this` is the live owner
+        // boxed in `spawn()`; the exit hook fires once, so reclaiming the Box
+        // and dropping our `Process` ref here is the final use.
+        unsafe {
             scoped_log!(WebViewHost, "child exited: {}", status);
             let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
             Bun__WebViewHost__childDied(signo);
@@ -124,7 +130,7 @@ bun_spawn::link_impl_ProcessExit! {
             Process::deref((*this).process.as_ptr());
             drop(bun_core::heap::take(this));
             INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-        },
+        }
     }
 }
 
@@ -201,8 +207,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {
-            (*process.as_ptr())
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+            (*process.as_ptr()).set_exit_handler(ProcessExit::of(self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
         match unsafe { (*process.as_ptr()).watch() } {

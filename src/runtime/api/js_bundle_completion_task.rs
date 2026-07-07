@@ -3,23 +3,23 @@
 //! LAYERING: this type lives in `bun_runtime` (not `bun_bundler_jsc`) because
 //! its fields name `bun_runtime` types (`JSBundler::Config`, `Plugin`,
 //! `HTMLBundle::Route`). `bun_bundler_jsc` is a lower-tier crate and cannot
-//! depend on `bun_runtime`; keeping the struct there forces an opaque stub at
-//! every use site. The struct is defined here and `bun_bundler_jsc` consumes it
-//! through the `bun_bundler::bundle_v2::CompletionStruct` trait
-//! (layout-agnostic).
+//! depend on `bun_runtime`. `bun_bundler` reaches back into the task only
+//! through the opaque `bundle_v2::dispatch::JsBundleCompletion` handle, whose
+//! `bun_bundle_completion_*` link-time symbols are defined at the bottom of
+//! this file. The bundle thread itself (`BundleThread`) lives here too, next
+//! to its only client.
 
+use bun_options_types::ForceNodeEnv;
 use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_alloc::Arena;
-use bun_bundler::bundle_v2::{
-    BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
-    JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
-};
+use bun_bundler::bundle_v2::{BuildResult, BundleV2, FileMap as Bv2FileMap, dispatch};
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
+use bun_core::PathBuffer;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
@@ -30,7 +30,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
-use bun_paths::{self as paths, PathBuffer, SEP};
+use bun_paths::{self as paths, SEP};
 use bun_ptr::BackRef;
 use bun_ptr::RefCount;
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -45,10 +45,300 @@ use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
-use crate::node::types::{
-    Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
-};
+use crate::node::types::{Encoding, FileSystemFlags, StringOrBuffer};
 use crate::server::html_bundle;
+use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+
+/// Used to keep the bundle thread from spinning on Windows
+#[cfg(windows)]
+extern "C" fn timer_callback(_: *mut bun_libuv_sys::Timer) {}
+
+pub enum BundleV2Result {
+    Pending,
+    Err(bun_core::Error),
+    Value(BuildResult),
+}
+
+/// Originally, bake.DevServer required a separate bundling thread, but that was
+/// later removed. Owns the worker pool + completion queue for `BundleV2`;
+/// completions are `JSBundleCompletionTask`s enqueued from the JS thread.
+pub struct BundleThread {
+    pub waker: bun_io::Waker,
+    /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event
+    /// (futex-backed) used to block `spawn()` until the bundle thread has
+    /// initialized its `waker`; set-before-wait does not deadlock.
+    pub ready_event: bun_threading::ResetEvent,
+    // `bun.UnboundedQueue(JSBundleCompletionTask, .next)` — intrusive over
+    // the task's `next` link (see the `bun_threading::Linked` impl below).
+    pub queue: bun_threading::unbounded_queue::UnboundedQueue<JSBundleCompletionTask>,
+    pub generation: bun_core::Generation,
+}
+
+impl BundleThread {
+    /// To initialize, put this somewhere in memory, and then call `spawn()`
+    // We can't use
+    // `mem::zeroed()` here — the platform `Waker`s hold NonNull-validity
+    // fields (a `Box<[u8]>` on macOS, a niche-optimised `Option<BackRef>` on
+    // Windows), so zeroing them is *language-level* UB even if never read.
+    // `placeholder()` yields a fully-initialized inert value instead.
+    // `ready_event.wait()` in `spawn()` blocks until `thread_main` overwrites
+    // it via `ptr::write`, so the placeholder is never observed live.
+    pub fn uninitialized() -> Self {
+        Self {
+            waker: bun_io::Waker::placeholder(),
+            queue: bun_threading::unbounded_queue::UnboundedQueue::new(),
+            generation: 0,
+            ready_event: bun_threading::ResetEvent::default(),
+        }
+    }
+
+    /// # Safety
+    /// `instance` must be valid for `'static` (the spawned thread runs forever and
+    /// accesses it). After this returns the bundle thread concurrently accesses
+    /// `*instance`; callers must only touch it via the raw-pointer methods on this
+    /// impl (e.g. `enqueue`) and never materialize a `&mut Self`.
+    pub unsafe fn spawn(instance: *mut Self) -> std::io::Result<std::thread::JoinHandle<()>> {
+        // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
+        // is surfaced to the caller.
+        struct SendPtr<T>(*mut T);
+        // SAFETY: the pointer is only dereferenced on the bundle thread via raw
+        // projections; `BundleThread` itself is never moved across threads.
+        unsafe impl<T> Send for SendPtr<T> {}
+        let ptr = SendPtr(instance);
+        let thread = std::thread::Builder::new()
+            .name("Bundler".into())
+            .spawn(move || {
+                let ptr = ptr;
+                // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
+                // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
+                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // from other threads is sound.
+                unsafe { Self::thread_main(ptr.0) }
+            })?;
+        // SAFETY: field projection via raw ptr — the spawned thread is concurrently
+        // writing `waker`, so we must not hold `&Self`/`&mut Self` here. `ready_event`
+        // itself is a sync primitive safe to wait on from this thread.
+        unsafe { (*instance).ready_event.wait() };
+        Ok(thread)
+    }
+
+    /// # Safety
+    /// `instance` must point to a live `BundleThread` whose bundle thread has been
+    /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
+    pub unsafe fn enqueue(instance: *mut Self, completion: *mut JSBundleCompletionTask) {
+        // SAFETY: `completion` is a live, caller-owned task node (non-null).
+        let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
+        // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
+        // accesses the same struct concurrently, so we never materialize `&mut Self`.
+        // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
+        // `&self` on all platforms (LinuxWaker/Windows/KEventWaker — the latter uses
+        // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
+        // safe to call concurrently with `wait(&self)` in `thread_main` and with
+        // other `enqueue` callers.
+        unsafe {
+            (*instance).queue.push(completion);
+            (*instance).waker.wake();
+        }
+    }
+
+    unsafe fn thread_main(instance: *mut Self) {
+        bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bundler"));
+
+        // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
+        // releases any thread that could call `enqueue` (which reads `waker`).
+        unsafe {
+            core::ptr::addr_of_mut!((*instance).waker)
+                .write(bun_io::Waker::init().unwrap_or_else(|_| panic!("Failed to create waker")));
+        }
+
+        // Unblock the calling thread so it can continue.
+        // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
+        unsafe { (*instance).ready_event.set() };
+
+        // The libuv Timer lives on stack for the lifetime of this never-returning fn.
+        // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
+        // block below) because `timer.init()`/`timer.start()` register `&timer`'s address
+        // into the uv loop's intrusive handle queue / timer min-heap, and `waker.wait()`
+        // (→ `uv_run`) in the `loop {}` below dereferences that address.
+        #[cfg(windows)]
+        let mut timer: bun_libuv_sys::Timer = bun_core::ffi::zeroed();
+        #[cfg(windows)]
+        {
+            // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
+            // write-once in `Waker::init()` above and never mutated by `wake()`, so a
+            // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
+            // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
+            timer.init(unsafe { (*instance).waker.uv_loop() });
+            timer.start(u64::MAX, u64::MAX, Some(timer_callback));
+        }
+
+        let mut has_bundled = false;
+        loop {
+            loop {
+                // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
+                // `enqueue` is the lock-free queue's intended use.
+                let completion = unsafe { (*instance).queue.pop() };
+                if completion.is_null() {
+                    break;
+                }
+                // SAFETY: queue stores non-null pointers pushed via enqueue(); owner keeps
+                // the task alive until complete_on_bundle_thread() signals completion.
+                let completion = unsafe { &mut *completion };
+                // SAFETY: `generation` is only read/written on this (bundle) thread.
+                let generation = unsafe { (*instance).generation };
+                // `panic = "abort"` → a Rust panic on this thread enters the
+                // crash-handler hook and aborts the whole process.
+                // No `catch_unwind` — there is nothing to catch.
+                match Self::generate_in_new_thread(completion, generation) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        completion.result = BundleV2Result::Err(err);
+                        completion.complete_on_bundle_thread();
+                    }
+                }
+                has_bundled = true;
+            }
+            // SAFETY: `generation` is only read/written on this (bundle) thread.
+            unsafe {
+                let g = core::ptr::addr_of_mut!((*instance).generation);
+                *g = (*g).saturating_add(1);
+            }
+
+            if has_bundled {
+                bun_alloc::mimalloc::mi_collect(false);
+                has_bundled = false;
+            }
+
+            // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
+            unsafe { (*instance).waker.wait() };
+        }
+    }
+
+    /// This is called from `Bun.build` in JavaScript.
+    fn generate_in_new_thread(
+        completion: &mut JSBundleCompletionTask,
+        generation: bun_core::Generation,
+    ) -> Result<(), bun_core::Error> {
+        let heap = Arena::new();
+
+        let bump = &heap;
+        let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
+            bump.alloc(bun_ast::ASTMemoryAllocator::new(bump));
+        ast_memory_store.reset();
+        ast_memory_store.push();
+
+        // Allocate + configure folded — see `create_and_configure_transpiler` doc.
+        let transpiler = completion.create_and_configure_transpiler(bump)?;
+
+        transpiler.resolver.generation = generation;
+
+        // Construction + run delegated — see
+        // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
+        // `completion` can be borrowed again below.
+        let transpiler_ptr: *mut Transpiler<'_> = transpiler;
+        let run = completion.init_and_run(
+            // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
+            unsafe { &mut *transpiler_ptr },
+            bump,
+            // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
+            // `init_and_run` can hand it to `BundleV2::init` (which stores `*mut`).
+            std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
+        );
+
+        // Straight-line teardown: log copy
+        // runs on both paths; `completeOnBundleThread` only on success (the error
+        // path's `Err` result + complete happens in `thread_main`). The
+        // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
+        // (it owns `this`).
+        let mut out_log = bun_ast::Log::init();
+        // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
+        // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
+        // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
+        let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only
+        completion.log = out_log;
+
+        if run.is_ok() {
+            completion.complete_on_bundle_thread();
+        }
+
+        ast_memory_store.pop();
+
+        // `transpiler` / `ast_memory_store` are arena-allocated, but their
+        // containers (`Resolver` caches, `BundleOptions` strings, the AST
+        // allocator's own `mi_heap` handle, …) live on the global heap as
+        // `Vec`/`Box`/`HashMap`, so dropping `heap` (`mi_heap_destroy`) reclaims
+        // the struct bytes but never runs `Transpiler::drop` /
+        // `ASTMemoryAllocator::drop` — leaking the resolver's directory/file
+        // caches and an entire `mi_heap` per `Bun.build()` call. LSan does not
+        // flag the latter (mimalloc bypasses the ASAN `malloc` interceptor), so
+        // the symptom is RSS-only: ~32 MB/build linear growth in the
+        // bun-build-api "does not leak sourcemap JSON" test.
+        //
+        // SAFETY: both pointers are the unique `&'a mut` slots returned by
+        // `bump.alloc(...)` above; nothing else holds a reference to either
+        // past `init_and_run` (`completion.transpiler` was cleared by
+        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
+        // thread-local). The arena bytes themselves are bulk-freed afterwards
+        // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
+        // global-heap* state, so there is no double free.
+        unsafe {
+            core::ptr::drop_in_place(transpiler_ptr);
+            core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(
+                ast_memory_store,
+            ));
+        }
+
+        run
+    }
+}
+
+/// Lazily-initialized bundle-thread singleton. Lives next to
+/// `JSBundleCompletionTask` (its only completion type) so the queue and the
+/// task are concretized on one struct — no generic statics, no erased
+/// `OnceLock<NonNull<()>>`.
+mod bundle_thread_singleton {
+    use super::{BundleThread, JSBundleCompletionTask};
+    use bun_core::Output;
+
+    struct Instance(core::ptr::NonNull<BundleThread>);
+    // SAFETY: the allocation is a leaked `Box<BundleThread>` valid for
+    // `'static`; cross-thread access is mediated entirely through
+    // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
+    unsafe impl Send for Instance {}
+    // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
+    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives.
+    unsafe impl Sync for Instance {}
+
+    static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
+
+    // Blocks the calling thread until the bun build thread is created.
+    // OnceLock also blocks other callers of this function until the first caller is done.
+    fn load_once_impl() -> Instance {
+        let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::uninitialized()));
+        // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn`
+        // takes the raw pointer directly so no `&mut` is materialized that
+        // would alias the bundle thread's own access.
+        let os_thread = unsafe { BundleThread::spawn(bundle_thread) }
+            .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
+        // `std.Thread.detach()` — drop the JoinHandle without joining.
+        drop(os_thread);
+        // SAFETY: `into_raw` of a `Box` is never null.
+        Instance(unsafe { core::ptr::NonNull::new_unchecked(bundle_thread) })
+    }
+
+    pub(super) fn enqueue(completion: *mut JSBundleCompletionTask) {
+        // Validate the caller's pointer at the public boundary so the unsafe
+        // path below never receives null.
+        let completion = core::ptr::NonNull::new(completion).unwrap_or_else(|| {
+            Output::panic(format_args!("BundleThread enqueue: null completion"))
+        });
+        let instance = INSTANCE.get_or_init(load_once_impl).0.as_ptr();
+        // SAFETY: `instance` is the leaked 'static singleton whose bundle
+        // thread is running; `BundleThread::enqueue` only performs raw-ptr
+        // field projections.
+        unsafe { BundleThread::enqueue(instance, completion.as_ptr()) };
+    }
+}
 
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
@@ -153,7 +443,7 @@ pub(crate) fn create_and_schedule_completion_task(
     // conditions from creating two
     let _ = WorkPool::get();
 
-    bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
+    bundle_thread_singleton::enqueue(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
     unsafe {
@@ -539,7 +829,7 @@ impl JSBundleCompletionTask {
 
     /// AnyTask trampoline: `onComplete` runs on the JS thread once the bundle
     /// thread posts back via `complete_on_bundle_thread`.
-    fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+    fn on_complete_anytask(ctx: *mut Self) -> bun_core::JsResult<()> {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
@@ -762,41 +1052,29 @@ bun_jsc::jsc_abi_extern! {
     );
 }
 
-// ─── CompletionDispatch vtable ───────────────────────────────────────────────
-// §Dispatch — the bundler holds `JSBundleCompletionTask` as a
-// `dispatch::CompletionHandle` (erased owner + this `&'static` vtable) so the
-// struct layout stays in `bun_runtime`.
+// ─── `dispatch::JsBundleCompletion` up-call definitions ──────────────────────
+// `bun_bundler` declares these `unsafe extern "Rust"` and calls them through
+// the opaque `JsBundleCompletion` handle stored in `BundleV2.completion`.
 
-/// Recover `&JSBundleCompletionTask` from the opaque vtable owner pointer.
-///
-/// Centralises the `NonNull<Bv2OpaqueCompletion> → &JSBundleCompletionTask`
-/// cast+deref so the two `CompletionDispatch` thunks below stay safe at the
-/// call site (one accessor, N safe callers).
-#[inline]
-fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCompletionTask {
-    // SAFETY: `c` is the live backref the bundler stashed in
-    // `CompletionHandle.owner` (set from a `Box<JSBundleCompletionTask>` that
-    // outlives every dispatch call). The opaque marker and the concrete struct
-    // are the same allocation; only shared field reads follow.
-    unsafe { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
+#[unsafe(no_mangle)]
+unsafe fn bun_bundle_completion_result_is_err(c: &dispatch::JsBundleCompletion) -> bool {
+    // SAFETY: dispatch contract — `c` was erased from a live `*mut JSBundleCompletionTask`.
+    let this = unsafe { &*c.as_mut_ptr().cast::<JSBundleCompletionTask>() };
+    matches!(this.result, BundleV2Result::Err(_))
 }
 
-static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
-    enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
-        unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
-        }
-    },
-};
+#[unsafe(no_mangle)]
+unsafe fn bun_bundle_completion_enqueue_task_concurrent(
+    c: &dispatch::JsBundleCompletion,
+    task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+) {
+    // SAFETY: dispatch contract — `c` was erased from a live `*mut JSBundleCompletionTask`.
+    let this = unsafe { &*c.as_mut_ptr().cast::<JSBundleCompletionTask>() };
+    // `jsc_event_loop` is a BackRef<EventLoop> — safe Deref; the queue
+    // takes ownership of `task`.
+    this.jsc_event_loop.enqueue_task_concurrent(task);
+}
 
-// ─── CompletionStruct impl ───────────────────────────────────────────────────
-// Hands BundleThread the field accessors it needs without exposing the layout.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
 unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     #[inline]
@@ -806,7 +1084,7 @@ unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     }
 }
 
-impl CompletionStruct for JSBundleCompletionTask {
+impl JSBundleCompletionTask {
     /// Port of `JSBundleCompletionTask.configureBundler` — the post-init half
     /// (everything after `transpiler.* = try Transpiler.init(...)`).
     /// `Transpiler::init` itself is called by `create_and_configure_transpiler`
@@ -823,14 +1101,14 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
         // its set, so clone rather than alias `config.features`.
         transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
-        if config.force_node_env != options::ForceNodeEnv::Unspecified {
-            transpiler.options.force_node_env = config.force_node_env;
+        if config.force_node_env != ForceNodeEnv::Unspecified {
+            transpiler.options.resolve.force_node_env = config.force_node_env;
         }
 
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
         // Convert API JSX config back to options.JSX.Pragma
         let jsx_import = &config.jsx.import_source;
-        transpiler.options.jsx = options::jsx::Pragma {
+        transpiler.options.resolve.jsx = options::jsx::Pragma {
             factory: if !config.jsx.factory.is_empty() {
                 options::jsx::Pragma::member_list_to_components_if_different(
                     options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
@@ -896,32 +1174,31 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
-        transpiler.options.compile = config.compile.is_some();
+        transpiler.options.generate_cached_bytecode =
+            Some(bun_jsc::cached_bytecode::generate_cached_bytecode_for_bundler);
+        transpiler.options.resolve.compile = config.compile.is_some();
 
         // For compile mode, set the public_path to the target-specific base path
         // This ensures embedded resources like yoga.wasm are correctly found
         if let Some(compile_opts) = &config.compile {
             let base_public_path =
                 target_base_public_path(compile_opts.compile_target.os, b"root/");
-            transpiler.options.public_path = Box::from(base_public_path);
+            transpiler.options.resolve.public_path = Box::from(base_public_path);
         } else {
-            transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
+            transpiler.options.resolve.public_path = Box::from(config.public_path.list.as_slice());
         }
 
-        transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
-        transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
+        transpiler.options.resolve.output_dir = Box::from(config.outdir.list.as_slice());
+        transpiler.options.resolve.root_dir = Box::from(config.rootdir.list.as_slice());
         transpiler.options.minify_syntax = config.minify.syntax;
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;
         transpiler.options.keep_names = config.minify.keep_names;
         transpiler.options.inlining = config.minify.syntax;
         transpiler.options.source_map = config.source_map;
-        transpiler.options.packages = config.packages;
+        transpiler.options.resolve.packages = config.packages;
         transpiler.options.allow_unresolved = match &config.allow_unresolved {
-            Some(a) => options::AllowUnresolved::from_strings(
-                a.keys().to_vec().into_boxed_slice(),
-                |p, s| bun_glob::r#match(p, s).matches(),
-            ),
+            Some(a) => options::AllowUnresolved::from_strings(a.keys().to_vec().into_boxed_slice()),
             None => options::AllowUnresolved::All,
         };
         transpiler.options.code_splitting = config.code_splitting;
@@ -945,7 +1222,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
         // When compiling to standalone HTML, don't use the bun executable compile path
         if transpiler.options.compile_to_standalone_html {
-            transpiler.options.compile = false;
+            transpiler.options.resolve.compile = false;
             config.compile = None;
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
@@ -978,7 +1255,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                 Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
         }
 
-        if transpiler.options.compile {
+        if transpiler.options.resolve.compile {
             // Emitting DCE annotations is nonsensical in --compile.
             transpiler.options.emit_dce_annotations = false;
         }
@@ -986,7 +1263,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
-        if !transpiler.options.production {
+        if !transpiler.options.resolve.production {
             transpiler
                 .options
                 .conditions
@@ -1009,19 +1286,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         self.jsc_event_loop
             .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
     }
-    fn set_result(&mut self, result: BundleV2Result) {
-        self.result = result;
-    }
-    fn set_log(&mut self, log: bun_ast::Log) {
-        self.log = log;
-    }
-    fn set_transpiler(&mut self, this: *mut BundleV2<'_>) {
-        self.transpiler = this.cast();
-    }
-    fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>> {
-        // `Plugin` and `JSBundlerPlugin` are the same `bun_bundler` opaque.
-        self.plugins
-    }
     fn file_map(&mut self) -> Option<NonNull<Bv2FileMap>> {
         // `FileMap` and `Bv2FileMap` are the same `bun_bundler` type.
         if self.config.files.map.is_empty() {
@@ -1030,13 +1294,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             Some(NonNull::from(&mut self.config.files))
         }
     }
-    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle {
-        dispatch::CompletionHandle {
-            owner: NonNull::from(self).cast::<Bv2OpaqueCompletion>(),
-            vtable: &COMPLETION_VTABLE,
-        }
-    }
-
+    // The `&'a mut` return is arena-allocated from `bump`, not derived from
+    // a `&` input (same pattern as the other arena constructors).
+    #[allow(clippy::mut_from_ref)]
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
@@ -1114,16 +1374,17 @@ impl CompletionStruct for JSBundleCompletionTask {
         let worker_pool = NonNull::new(thread_pool);
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
+        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, None, worker_pool, bump)?;
 
-        bv2.plugins = self.plugins();
-        bv2.completion = Some(self.as_js_bundle_completion_task());
+        // `Plugin` and `JSBundlerPlugin` are the same `bun_bundler` opaque.
+        bv2.plugins = self.plugins;
+        bv2.completion = Some(NonNull::from(&mut *self).cast::<dispatch::JsBundleCompletion>());
         // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
         // which outlives `bv2` (both live until `generate_in_new_thread`
         // returns). `BundleV2.file_map: Option<&'a FileMap>` — erase to `'a`.
         bv2.file_map = self.file_map().map(|p| unsafe { &*p.as_ptr() });
 
-        self.set_transpiler(&raw mut *bv2);
+        self.transpiler = (&raw mut *bv2).cast();
 
         // Snapshot entry points as `&[&[u8]]`.
         let entry_points: Vec<&[u8]> = self
@@ -1140,7 +1401,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // source-map wait-group waits run only on the error path.
         match run {
             Ok(build) => {
-                self.set_result(BundleV2Result::Value(build));
+                self.result = BundleV2Result::Value(build);
                 bv2.deinit_without_freeing_arena();
                 Ok(())
             }

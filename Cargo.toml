@@ -3,12 +3,10 @@ resolver = "2"
 members = [
   "src/opaque",
   "src/analytics",
-  "src/api",
   "src/base64",
   "src/bundler",
   "src/collections",
   "src/css",
-  "src/errno",
   "src/glob",
   "src/http",
   "src/install",
@@ -24,6 +22,7 @@ members = [
   "src/semver",
   "src/sourcemap",
   "src/sql",
+  "src/sync",
   "src/sys",
   "src/threading",
   "src/valkey",
@@ -44,6 +43,7 @@ members = [
   "src/ini",
   "src/install_jsc",
   "src/install_types",
+  "src/js_lexer",
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
@@ -53,20 +53,21 @@ members = [
   "src/ast_jsc",
   "src/picohttp",
   "src/s3_signing",
-  "src/sql_jsc",
+  "src/s3_types",
   "src/zlib",
   "src/patch",
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
   "src/zlib_sys",
-  "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
   "src/perf",
   "src/resolve_builtins",
   "src/sourcemap_jsc",
   "src/url",
+  "src/uv_errno",
+  "src/ascii",
   "src/windows_sys",
   "src/jsc",
   "src/jsc_macros",
@@ -77,6 +78,7 @@ members = [
   "src/mimalloc_sys",
   "src/semver_jsc",
   "src/standalone_graph",
+  "src/standalone_graph_core",
   "src/uws",
   "src/wyhash",
   "src/hash",
@@ -91,11 +93,9 @@ members = [
   "src/uws_sys",
   "src/zstd",
   "src/options_types",
-  "src/output",
   "src/runtime",
   "src/simdutf_sys",
   "src/which",
-  "src/transpiler",
   "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
@@ -352,12 +352,10 @@ itoa = "1"
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
-bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
-bun_errno = { path = "src/errno" }
 bun_glob = { path = "src/glob" }
 bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
@@ -372,6 +370,7 @@ bun_safety = { path = "src/safety" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
+bun_sync = { path = "src/sync" }
 bun_sys = { path = "src/sys" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
@@ -392,6 +391,7 @@ bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
 bun_install_jsc = { path = "src/install_jsc" }
 bun_install_types = { path = "src/install_types" }
+bun_js_lexer = { path = "src/js_lexer" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
@@ -401,20 +401,21 @@ bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/s3_signing" }
-bun_sql_jsc = { path = "src/sql_jsc" }
+bun_s3_types = { path = "src/s3_types" }
 bun_zlib = { path = "src/zlib" }
 bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
-bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
+bun_uv_errno = { path = "src/uv_errno" }
+bun_ascii = { path = "src/ascii" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
@@ -425,6 +426,7 @@ bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
+bun_standalone_graph_core = { path = "src/standalone_graph_core" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_hash = { path = "src/hash" }
@@ -435,6 +437,7 @@ bun_output_tags = { path = "src/bun_output_tags" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }
+bun_shim_impl = { path = "src/install/windows-shim" }
 bun_spawn = { path = "src/spawn" }
 bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
@@ -442,11 +445,9 @@ bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
-bun_output = { path = "src/output" }
 bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
-bun_transpiler = { path = "src/transpiler" }
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

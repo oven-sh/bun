@@ -5,7 +5,7 @@ use bun_core::{Global, Output};
 use bun_options_types::schema::api;
 
 use crate::shell::Interpreter;
-use bun_paths::{self, PathBuffer};
+use bun_core::PathBuffer;
 use bun_sys;
 
 use crate::command::Context;

@@ -1,9 +1,9 @@
 use std::io::Write as _;
 
 use bun_core::{Global, OrWriteFailed as _};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_which::which;
 
@@ -412,7 +412,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         let (p, l) = spawned.buf[j];
         // SAFETY: pointers reference either 'static data or `spawned.file_path_buf`,
         // both of which outlive this function.
-        argv[j] = unsafe { bun_core::ffi::slice(p, l) };
+        argv[j] = unsafe { bun_opaque::ffi::slice(p, l) };
     }
 
     // FIXME(windows-leak): the sync::spawn path
@@ -435,9 +435,9 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         stdin: sync::SyncStdio::Inherit,
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
+            loop_: bun_event_loop::EventLoopHandle::init_mini(
+                bun_event_loop::MiniEventLoop::init_global(None, None),
+            ),
             ..Default::default()
         },
         ..Default::default()

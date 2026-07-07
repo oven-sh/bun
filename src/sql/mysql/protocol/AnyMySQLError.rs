@@ -66,5 +66,16 @@ impl From<bun_core::Error> for Error {
     }
 }
 
+impl From<bun_core::JsError> for Error {
+    #[inline]
+    fn from(e: bun_core::JsError) -> Self {
+        match e {
+            bun_core::JsError::Thrown => Self::JSError,
+            bun_core::JsError::OutOfMemory => Self::OutOfMemory,
+            bun_core::JsError::Terminated => Self::JSTerminated,
+        }
+    }
+}
+
 // NOTE: `mysql_error_to_js` lives in
-// `bun_sql_jsc::mysql::protocol::any_mysql_error_jsc` as an extension fn.
+// `bun_runtime::sql_jsc::mysql::protocol::any_mysql_error_jsc` as an extension fn.

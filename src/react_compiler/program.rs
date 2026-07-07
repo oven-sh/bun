@@ -24,6 +24,7 @@ use crate::hir::environment_config::{
     ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
 };
 use bun_alloc::{AstAlloc, AstVec};
+use bun_ast::JSXImport;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{
@@ -41,17 +42,6 @@ use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
 use crate::pipeline;
-
-/// JSX runtime symbols the compiler may need to reference in generated code.
-/// Mirrors `bun_js_parser::JSXImport` without the crate dependency.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JsxImportKind {
-    Jsx,
-    Jsxs,
-    JsxDEV,
-    Fragment,
-    CreateElement,
-}
 
 /// Parser-side state the React Compiler needs. Implemented by `P` at the
 /// hook site so this crate stays free of a `bun_js_parser` dependency.
@@ -79,7 +69,7 @@ pub trait Host {
     /// `Ref` for a JSX runtime symbol (jsx/jsxs/jsxDEV/Fragment/createElement),
     /// declaring it on the parser's `jsx_imports` table on first use so the
     /// post-visit JSX-import emission picks it up.
-    fn jsx_import(&mut self, kind: JsxImportKind) -> Ref;
+    fn jsx_import(&mut self, kind: JSXImport) -> Ref;
 
     /// Whether JSX is being compiled in development mode (selects `jsxDEV`
     /// over `jsx`/`jsxs` and emits the trailing dev-only call args).
@@ -108,9 +98,6 @@ pub trait Host {
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
-
-// Back-compat alias for the parser hook written against the previous API.
-pub use Host as SymbolHost;
 
 // -----------------------------------------------------------------------
 // Constants

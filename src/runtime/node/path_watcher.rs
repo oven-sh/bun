@@ -34,6 +34,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core::PathBuffer;
 #[cfg(not(windows))]
 use bun_core::ZBox;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -42,8 +44,6 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::PathBuffer;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -55,14 +55,14 @@ use bun_threading::Mutex;
 #[cfg(not(windows))]
 use bun_wyhash::hash;
 
-use bun_jsc::VirtualMachineRef as VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
 
 #[cfg(target_os = "macos")]
 use crate::node::fs_events as fsevents;
 
-bun_output::define_scoped_log!(log, fs_watch, hidden);
+bun_core::define_scoped_log!(log, fs_watch, hidden);
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).
@@ -591,7 +591,7 @@ fn walk_subtree<const DIRS_ONLY: bool>(
             Ok(None) => return,
             Ok(Some(e)) => e,
         };
-        let child_is_file = entry.kind != sys::EntryKind::Directory;
+        let child_is_file = entry.kind != bun_core::FileKind::Directory;
         if DIRS_ONLY && child_is_file {
             continue;
         }

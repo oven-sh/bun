@@ -1,6 +1,8 @@
+use core::ptr::NonNull;
+
 use bun_core::{String as BunString, ZigString};
 
-use crate::{JSGlobalObject, JSHostFn, JSValue};
+use crate::{CallFrame, JSGlobalObject, JSHostFn, JSValue, JsError, JsResult};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::JSFunction`.
@@ -81,6 +83,25 @@ impl JSFunction {
         )
     }
 
+    /// Like [`JSFunction::create`] but accepts a safe Rust fn item
+    /// (`fn(&JSGlobalObject, &CallFrame) -> JSValue` or `-> JsResult<JSValue>`)
+    /// via [`IntoJsHostFn`].
+    pub fn create_from_host_fn<M, F: IntoJsHostFn<M>>(
+        global: &JSGlobalObject,
+        name: &str,
+        implementation: F,
+        arg_count: u32,
+        options: CreateJSFunctionOptions,
+    ) -> JSValue {
+        Self::create(
+            global,
+            BunString::init(name),
+            implementation.into_js_host_fn(),
+            arg_count,
+            options,
+        )
+    }
+
     pub fn optimize_soon(value: JSValue) {
         JSC__JSFunction__optimizeSoon(value)
     }
@@ -93,5 +114,91 @@ impl JSFunction {
         } else {
             None
         }
+    }
+}
+
+/// Marker-typed conversion from a safe Rust fn item to a [`JsHostFn`] thunk.
+/// Bodies preserve the SQL bindings' exact error handling (OutOfMemory throws;
+/// other errors leave the pending exception and return JSValue::ZERO).
+///
+/// [`JsHostFn`]: crate::host_fn::JsHostFn
+pub trait IntoJsHostFn<Marker>: Sized {
+    fn into_js_host_fn(self) -> JSHostFn;
+}
+#[doc(hidden)]
+pub struct HostFnResult;
+#[doc(hidden)]
+pub struct HostFnPlain;
+
+// `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
+// thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
+// The where-clause is bracketed to avoid `tt`-muncher ambiguity against `{`.
+// Thunk bodies scope their raw-ptr derefs locally, so the fn itself has no
+// caller preconditions; a safe `extern fn` coerces to the `JSHostFn` type.
+macro_rules! jsc_host_fn_thunk {
+    ($name:ident<$F:ident>($($args:tt)*) -> $ret:ty where [$($bound:tt)+] $body:block) => {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        extern "sysv64" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        extern "C" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
+    };
+}
+
+impl<F> IntoJsHostFn<HostFnResult> for F
+where
+    F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
+{
+    fn into_js_host_fn(self) -> JSHostFn {
+        debug_assert_eq!(
+            core::mem::size_of::<F>(),
+            0,
+            "IntoJsHostFn: expected fn item (ZST)"
+        );
+        let _ = self;
+        jsc_host_fn_thunk! {
+            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
+            where [F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static]
+            {
+                let f: F = bun_core::ffi::conjure_zst::<F>();
+                // JSC passes live non-null `*JSGlobalObject` / `*CallFrame`; both
+                // strictly outlive the host-fn call, satisfying the `ParentRef`
+                // invariant. Safe `From<NonNull>` + `Deref` collapse the per-thunk
+                // raw `&*ptr` pair to one audited deref site in `bun_ptr`.
+                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
+                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
+                match f(&global, &frame) {
+                    Ok(v) => v,
+                    Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
+                    Err(_) => JSValue::ZERO,
+                }
+            }
+        }
+        thunk::<F>
+    }
+}
+impl<F> IntoJsHostFn<HostFnPlain> for F
+where
+    F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
+{
+    fn into_js_host_fn(self) -> JSHostFn {
+        debug_assert_eq!(
+            core::mem::size_of::<F>(),
+            0,
+            "IntoJsHostFn: expected fn item (ZST)"
+        );
+        let _ = self;
+        jsc_host_fn_thunk! {
+            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
+            where [F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static]
+            {
+                let f: F = bun_core::ffi::conjure_zst::<F>();
+                // JSC passes live non-null pointers; both outlive the host-fn
+                // call (the `ParentRef` invariant). Safe `Deref` recovers `&T`.
+                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
+                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
+                f(&global, &frame)
+            }
+        }
+        thunk::<F>
     }
 }

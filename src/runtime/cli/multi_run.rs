@@ -4,25 +4,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use bun_collections::{StringArrayHashMap, VecExt};
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;
 
-// `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
-// lives under crate::api::bun::process.
+// `bun.spawn` (Process/Status/SpawnOptions/spawnProcess) —
+// lives under crate::api::bun::process; `Rusage` is one level up.
+use crate::api::bun::Rusage;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
-    event_loop_handle_to_ctx,
+    self as spawn, Process, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
 };
 use bun_dotenv::Loader as DotEnvLoader;
 type OutputWriter = bun_core::io::Writer;
@@ -240,12 +241,7 @@ impl<'a> ProcessHandle<'a> {
         let process = unsafe { &mut *process };
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::MultiRunHandle,
-                std::ptr::from_mut::<Self>(self),
-            )
-        });
+        process.set_exit_handler(bun_spawn::ProcessExit::of(std::ptr::from_mut::<Self>(self)));
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -262,14 +258,21 @@ impl<'a> ProcessHandle<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    MultiRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(_process, status, _rusage) => {
+impl bun_spawn::ProcessExitOps for ProcessHandle<'_> {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        _process: &mut Process,
+        status: Status,
+        _rusage: &Rusage,
+    ) {
+        // SAFETY: `this` is the `ProcessHandle` slot in `State.handles` registered
+        // via `set_exit_handler`; it outlives the process, so it is still live here.
+        unsafe {
             (*this).process.as_mut().unwrap().status = status;
             (*this).end_time = Instant::now().into();
             let state = &mut *(*this).state.cast_mut();
             let _ = state.process_exit(&mut *this);
-        },
+        }
     }
 }
 
@@ -288,7 +291,7 @@ struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopCtx` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
@@ -676,7 +679,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
 
         if let Some(pc) = pre_content {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(pc.len() + 1);
-            RunCommand::replace_package_manager_run(&mut cmd_buf, pc)?;
+            bun_install::lifecycle_script_runner::replace_package_manager_run(&mut cmd_buf, pc)?;
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
@@ -689,7 +692,10 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         // Main script
         {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(content.len() + 1);
-            RunCommand::replace_package_manager_run(&mut cmd_buf, content)?;
+            bun_install::lifecycle_script_runner::replace_package_manager_run(
+                &mut cmd_buf,
+                content,
+            )?;
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
@@ -701,7 +707,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
 
         if let Some(pc) = post_content {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(pc.len() + 1);
-            RunCommand::replace_package_manager_run(&mut cmd_buf, pc)?;
+            bun_install::lifecycle_script_runner::replace_package_manager_run(&mut cmd_buf, pc)?;
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label,
@@ -1143,13 +1149,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
+                    bun_core::ffi::zeroed::<bun_libuv_sys::Pipe>(),
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
+                    bun_core::ffi::zeroed::<bun_libuv_sys::Pipe>(),
                 ))),
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]

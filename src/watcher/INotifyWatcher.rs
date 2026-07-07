@@ -5,8 +5,8 @@ use core::ffi::c_int;
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use bun_core::MAX_PATH_BYTES;
 use bun_core::{ZStr, env_var, output as Output};
-use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
@@ -370,7 +370,7 @@ impl INotifyWatcher {
 }
 
 /// Repeatedly called by the main watcher until the watcher is terminated.
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle<P: 'static>(this: &mut Watcher<P>) -> bun_sys::Result<()> {
     use crate::watcher_impl::WatchItemColumns;
     let _flush = Output::flush_guard();
 
@@ -484,8 +484,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     Ok(())
 }
 
-fn process_inotify_event_batch(
-    this: &mut Watcher,
+fn process_inotify_event_batch<P: 'static>(
+    this: &mut Watcher<P>,
     event_count: usize,
     temp_name_list: &[Option<&'static ZStr>],
 ) -> bun_sys::Result<()> {

@@ -15,9 +15,10 @@
 
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
-use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
+use bun_http::ssl_config::SSLConfig;
 use bun_jsc::JsClass as _;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 
@@ -69,7 +70,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        let config =
+            crate::socket::ssl_config::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         SecureContext::create(global, &config)
@@ -202,7 +204,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        let config =
+            crate::socket::ssl_config::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -241,7 +244,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        let config =
+            crate::socket::ssl_config::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -282,22 +286,16 @@ impl SecureContext {
 
     fn create_with_digest(
         global: &JSGlobalObject,
-        ctx_opts: &uws::socket_context::BunSocketContextOptions,
+        ctx_opts: &uws::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
-        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
-        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
-        // `RareData`). Reach it via the thread-local — same instance
-        // `Bun__RareData__sslCtxCache` hands out over FFI.
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
-        // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        // `global.bunVM().rareData().sslCtxCache()` — the per-VM
+        // `SSLContextCache` lives on `RareData` (one per JS thread); it has a
+        // stable address for the VM's lifetime and is only touched from the JS
+        // thread.
+        let vm = VirtualMachine::get().as_mut();
+        let cache = &mut vm.rare_data().ssl_ctx_cache;
         let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
@@ -391,8 +389,8 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
+use bun_core::ZigString;
 use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

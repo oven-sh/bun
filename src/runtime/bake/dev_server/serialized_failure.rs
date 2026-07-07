@@ -8,7 +8,7 @@ use bun_io::Write as _;
 
 use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle;
-use crate::bake::Side;
+use bun_bundler::bake_types::Side;
 
 /// `SerializedFailure.Owner` — `packed struct(u32)` (1-bit side + 31-bit idx).
 ///

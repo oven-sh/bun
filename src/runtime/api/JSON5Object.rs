@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_js_parser::lexer;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc};
 use bun_parsers::json5;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -83,7 +83,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 struct Stringifier {
     stack_check: StackCheck,
-    builder: wtf::StringBuilder,
+    builder: jsc::StringBuilder,
     indent: usize,
     space: Space,
     // NOTE: `JSValue` keys live on the heap here, but every entry is also
@@ -141,7 +141,7 @@ impl Stringifier {
     pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
-            builder: wtf::StringBuilder::init(),
+            builder: jsc::StringBuilder::init(),
             indent: 0,
             space: Space::init(global, space_value)?,
             visiting: HashMap::default(),

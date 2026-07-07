@@ -1,18 +1,19 @@
+use bun_install_types::{
+    DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
+};
 use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
-use crate::{
-    Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
-    invalid_package_id,
-};
+use crate::{Dependency, Resolution};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tree
@@ -42,7 +43,7 @@ impl Default for Tree {
     fn default() -> Self {
         Self {
             id: INVALID_ID,
-            dependency_id: invalid_dependency_id,
+            dependency_id: INVALID_DEPENDENCY_ID,
             parent: INVALID_ID,
             dependencies: DependencyIDSlice::default(),
         }
@@ -59,7 +60,7 @@ pub(crate) const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
 pub(crate) type External = [u8; EXTERNAL_SIZE];
 pub type List = Vec<Tree>;
 
-pub(crate) const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
+pub(crate) const ROOT_DEP_ID: DependencyID = INVALID_PACKAGE_ID - 1;
 pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {
@@ -90,7 +91,7 @@ pub(crate) fn depth_buf_uninit() -> DepthBuf {
 impl Tree {
     pub fn folder_name<'b>(&self, deps: &'b [Dependency], buf: &'b [u8]) -> &'b [u8] {
         let dep_id = self.dependency_id;
-        if dep_id == invalid_dependency_id {
+        if dep_id == INVALID_DEPENDENCY_ID {
             return b"";
         }
         deps[dep_id as usize].name.slice(buf)
@@ -178,7 +179,7 @@ pub enum IteratorPathStyle {
 
 // Stores
 // the four buffer slices the iterator actually reads so callers from both
-// `crate::lockfile` (stub) and `crate::lockfile_real` can drive the same
+// `crate::lockfile` (stub) and `crate::lockfile` can drive the same
 // iterator without a unified `Lockfile` type (reconciler-6).
 pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
     pub tree_id: Id,
@@ -300,13 +301,13 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 /// `node_modules/<name>/...`; this path and the tree builder must agree on the
 /// same validator.
 pub fn folder_name_is_safe(name: &[u8]) -> bool {
-    crate::dependency::is_safe_install_folder_name(name)
+    bun_install_types::dependency::is_safe_install_folder_name(name)
 }
 
 /// Returns relative path and the depth of the tree
 // Takes the three
 // buffer slices directly so callers from both `crate::lockfile` (stub) and
-// `crate::lockfile_real` can use this without a shared `Lockfile` type.
+// `crate::lockfile` can use this without a shared `Lockfile` type.
 pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     trees: &[Tree],
     dependencies: &[Dependency],
@@ -515,7 +516,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             let off: u32 = dep_ids.len() as u32;
             for &dep_id in child.iter() {
                 let pkg_id = self.resolutions[dep_id as usize];
-                if pkg_id == invalid_package_id {
+                if pkg_id == INVALID_PACKAGE_ID {
                     // optional peers that never resolved
                     continue;
                 }
@@ -767,7 +768,7 @@ impl Tree {
 
                 // unresolved packages are skipped when filtering. they already had
                 // their chance to resolve.
-                if pkg_id == invalid_package_id {
+                if pkg_id == INVALID_PACKAGE_ID {
                     continue;
                 }
 
@@ -798,7 +799,7 @@ impl Tree {
                 .name
                 .slice(lockfile.buffers.string_bytes.as_slice());
             if !dependency_name.is_empty()
-                && !crate::dependency::is_safe_install_folder_name(dependency_name)
+                && !bun_install_types::dependency::is_safe_install_folder_name(dependency_name)
             {
                 builder.maybe_report_error(format_args!(
                     "Invalid dependency name \"{}\"",
@@ -818,7 +819,7 @@ impl Tree {
                     });
                 }
 
-                if pkg_id == invalid_package_id {
+                if pkg_id == INVALID_PACKAGE_ID {
                     if dependency.behavior.is_optional_peer() {
                         break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                             next_id,
@@ -853,8 +854,8 @@ impl Tree {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
 
                 HoistDependencyResult::Resolve(res_id) => {
-                    debug_assert!(pkg_id == invalid_package_id);
-                    debug_assert!(res_id != invalid_package_id);
+                    debug_assert!(pkg_id == INVALID_PACKAGE_ID);
+                    debug_assert!(res_id != INVALID_PACKAGE_ID);
                     builder.resolutions[dep_id as usize] = res_id;
                     if cfg!(debug_assertions) {
                         debug_assert!(
@@ -874,7 +875,7 @@ impl Tree {
                             debug_assert!(
                                 unresolved_dep_id == dep_id
                                     || builder.resolutions[unresolved_dep_id as usize]
-                                        == invalid_package_id
+                                        == INVALID_PACKAGE_ID
                             );
                             builder.resolutions[unresolved_dep_id as usize] = res_id;
                         }
@@ -882,7 +883,7 @@ impl Tree {
                     }
                 }
                 HoistDependencyResult::ResolveReplace(replace) => {
-                    debug_assert!(pkg_id != invalid_package_id);
+                    debug_assert!(pkg_id != INVALID_PACKAGE_ID);
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) = builder
                         .pending_optional_peers
@@ -894,7 +895,7 @@ impl Tree {
                             debug_assert!(
                                 unresolved_dep_id == replace.dep_id
                                     || builder.resolutions[unresolved_dep_id as usize]
-                                        == invalid_package_id
+                                        == INVALID_PACKAGE_ID
                             );
                             builder.resolutions[unresolved_dep_id as usize] = pkg_id;
                         }
@@ -908,7 +909,7 @@ impl Tree {
                             }
                         }
                     }
-                    if pkg_id != invalid_package_id
+                    if pkg_id != INVALID_PACKAGE_ID
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
                         builder.queue.write_item(FillItem {
@@ -941,7 +942,7 @@ impl Tree {
                             .dependencies
                             .len += 1;
                     }
-                    if pkg_id != invalid_package_id
+                    if pkg_id != INVALID_PACKAGE_ID
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
                         builder.queue.write_item(FillItem {
@@ -1016,7 +1017,7 @@ impl Tree {
 
             let res_id = builder.resolutions[dep_id as usize];
 
-            if res_id == invalid_package_id && package_id == invalid_package_id {
+            if res_id == INVALID_PACKAGE_ID && package_id == INVALID_PACKAGE_ID {
                 debug_assert!(dep.behavior.is_optional_peer());
                 debug_assert!(dependency.behavior.is_optional_peer());
                 // both optional peers will need to be resolved if they can resolve later.
@@ -1024,7 +1025,7 @@ impl Tree {
                 return Ok(HoistDependencyResult::ResolveLater);
             }
 
-            if res_id == invalid_package_id {
+            if res_id == INVALID_PACKAGE_ID {
                 debug_assert!(dep.behavior.is_optional_peer());
                 return Ok(HoistDependencyResult::ResolveReplace(ResolveReplace {
                     id: this.id,
@@ -1032,9 +1033,9 @@ impl Tree {
                 }));
             }
 
-            if package_id == invalid_package_id {
+            if package_id == INVALID_PACKAGE_ID {
                 debug_assert!(dependency.behavior.is_optional_peer());
-                debug_assert!(res_id != invalid_package_id);
+                debug_assert!(res_id != INVALID_PACKAGE_ID);
                 // resolve optional peer to `builder.resolutions[dep_id]`
                 return Ok(HoistDependencyResult::Resolve(res_id)); // 1
             }
@@ -1057,7 +1058,7 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                if dependency.version.tag == crate::dependency::VersionTag::Npm {
+                if dependency.version.tag == bun_install_types::dependency::Tag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
                     let version = &dependency.version.npm().version;

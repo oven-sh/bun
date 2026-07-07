@@ -2,12 +2,12 @@ use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
-#[cfg(unix)]
-use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
+#[cfg(unix)]
+use bun_io::posix_event_loop::Flags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 #[cfg(not(windows))]
@@ -44,8 +44,8 @@ pub struct PipeReader {
     // single unsafe deref behind a safe `Deref`/`get()`.
     pub event_loop: bun_ptr::BackRef<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
+    /// (`bun_io::EventLoopCtx` wraps `*const EventLoopHandle`).
+    pub event_loop_handle: bun_event_loop::EventLoopHandle,
     /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
@@ -114,7 +114,9 @@ impl PipeReader {
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
             event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop_handle: bun_event_loop::EventLoopHandle::init(
+                event_loop.as_ptr().cast::<()>(),
+            ),
             stdio_result: result,
             state: State::Pending,
         });
@@ -151,7 +153,8 @@ impl PipeReader {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop_handle =
+            bun_event_loop::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
         {
             return self.reader.start_with_current_pipe();
@@ -183,8 +186,8 @@ impl PipeReader {
                             return bun_sys::Result::Ok(());
                         }
                         if let Some(poll) = self.reader.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
-                            poll.set_flag(FilePollFlag::Nonblocking);
+                            poll.set_flag(Flags::Socket);
+                            poll.set_flag(Flags::Nonblocking);
                         }
                         self.reader.flags.insert(
                             PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,

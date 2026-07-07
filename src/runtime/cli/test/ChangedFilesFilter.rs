@@ -20,18 +20,19 @@ use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
+#[cfg(windows)]
+use bun_event_loop::EventLoopHandle;
 #[cfg(not(windows))]
 use bun_jsc as jsc;
-#[cfg(windows)]
-use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -39,7 +40,7 @@ use bun_sys as sys;
 use bun_which::which;
 
 use crate::Command;
-use crate::api::bun_process::sync as spawn_sync;
+use ::bun_spawn::process::sync as spawn_sync;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
@@ -144,22 +145,22 @@ pub(crate) fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_ast::Target::Bun;
+    scan_transpiler.options.resolve.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
-    scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
+    scan_transpiler.options.resolve.packages = bun_bundler::options::PackagesOption::External;
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
     scan_transpiler.options.ignore_module_resolution_errors = true;
-    scan_transpiler.options.output_dir = Box::default();
-    scan_transpiler.options.tree_shaking = false;
+    scan_transpiler.options.resolve.output_dir = Box::default();
+    scan_transpiler.options.resolve.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
-    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
-    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
-    scan_transpiler.resolver.opts.output_dir = Box::default();
+    scan_transpiler.resolver.opts.core.target = scan_transpiler.options.resolve.target;
+    scan_transpiler.resolver.opts.core.packages = bun_resolver::options::Packages::External;
+    scan_transpiler.resolver.opts.core.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at

@@ -11,6 +11,7 @@ use bstr::BStr;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
+use bun_core::PathBuffer;
 use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
@@ -20,8 +21,8 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
+use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, platform};
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -712,11 +713,15 @@ pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-// ─── bunfig loading ──────────────────────────────────────────────────────────
-// their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
-// call them without a tier-6 dependency. Re-export here so existing
-// `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+/// `$rust(bun.rs, getUseSystemCA)` target (see generated_js2native.rs). Lives
+/// here because it reads the `Bun__Node__UseSystemCA` flag this module owns.
+pub(crate) fn bun_get_use_system_ca(
+    _global: &bun_jsc::JSGlobalObject,
+    _frame: &bun_jsc::CallFrame,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    let v = Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
+    Ok(bun_jsc::JSValue::js_boolean(v))
+}
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -838,7 +843,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     ctx.positionals = slice_to_owned(args.positionals());
 
     if command::LOADS_CONFIG[cmd] {
-        load_config_with_cmd_args(cmd, &args, ctx)?;
+        bun_bunfig::arguments::load_config_with_cmd_args(cmd, &args, ctx)?;
     }
 
     let mut opts: api::TransformOptions = ctx.args.clone();
@@ -1410,7 +1415,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if let Some(define) = &opts.define {
             if !define.keys.is_empty() {
-                bun_jsc::runtime_transpiler_cache::IS_DISABLED
+                bun_ast::transpiler_cache::IS_DISABLED
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
@@ -1542,10 +1547,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
     if bun_core::env::SHOW_CRASH_TRACE {
         // argv slices are process-lifetime.
-        let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
-            .set(args.options(b"--breakpoint-resolve").to_vec());
-        let _ =
-            cli::debug_flags::PRINT_BREAKPOINTS.set(args.options(b"--breakpoint-print").to_vec());
+        bun_core::debug_flags::set_breakpoints(
+            args.options(b"--breakpoint-resolve").to_vec(),
+            args.options(b"--breakpoint-print").to_vec(),
+        );
     }
 
     Ok(opts)
@@ -1728,10 +1733,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 Global::exit(1);
             }
         };
-        // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
-        // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
-        // back-edge. High tier owns construction/destruction.
-        ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
+        crate::cli::TEST_FILTER_REGEX.store(regex, core::sync::atomic::Ordering::Release);
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());

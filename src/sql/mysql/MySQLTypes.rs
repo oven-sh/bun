@@ -42,8 +42,8 @@ pub enum FieldType {
 }
 
 impl FieldType {
-    // `from_js` is provided as an extension-trait method in the
-    // `bun_sql_jsc` crate; the base type carries no JSC dependency.
+    // `from_js` is provided as an extension-trait method in
+    // `bun_runtime::sql_jsc`; the base type carries no JSC dependency.
 
     /// Decode a raw protocol byte. On the wire any byte is possible; this
     /// Rust enum is
@@ -105,7 +105,7 @@ impl FieldType {
     }
 }
 
-// Callers import `bun_sql_jsc::mysql::mysql_value::Value` directly.
+// Callers import `bun_runtime::sql_jsc::mysql::my_sql_value::Value` directly.
 
 pub(crate) type MySQLInt32 = Int4;
 pub(crate) type MySQLInt64 = Int8;

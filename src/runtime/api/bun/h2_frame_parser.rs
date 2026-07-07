@@ -14,6 +14,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
+use crate::node::types::EncodingExt as _;
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
@@ -33,7 +34,7 @@ use bun_jsc::{
 };
 use bun_ptr::IntrusiveRc;
 
-bun_output::declare_scope!(H2FrameParser, visible);
+bun_core::declare_scope!(H2FrameParser, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Codegen modules — `jsc.Codegen.JSH2FrameParser` / `JSTCPSocket` / `JSTLSSocket`.
@@ -1139,7 +1140,7 @@ impl Handlers {
         handler_pair!(onFrameError, "frameError");
         handler_pair!(onStreamPush, "streamPush");
 
-        if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
+        if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::error)? {
             if !callback_value.is_cell() || !callback_value.is_callable() {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "Expected \"error\" callback to be a function"
@@ -1551,7 +1552,7 @@ impl SignalRef {
     }
 
     pub(crate) fn abort_listener(this: &mut SignalRef, reason: JSValue) {
-        bun_output::scoped_log!(H2FrameParser, "abortListener");
+        bun_core::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
@@ -1594,7 +1595,7 @@ impl PendingQueue {
     pub(crate) fn enqueue(&mut self, value: PendingFrame) {
         self.data.push(value);
         self.len += 1;
-        bun_output::scoped_log!(H2FrameParser, "PendingQueue.enqueue {}", self.len);
+        bun_core::scoped_log!(H2FrameParser, "PendingQueue.enqueue {}", self.len);
     }
 
     pub(crate) fn peek_last(&mut self) -> Option<&mut PendingFrame> {
@@ -1614,7 +1615,7 @@ impl PendingQueue {
 
     pub(crate) fn dequeue(&mut self) -> Option<PendingFrame> {
         if self.len == 0 {
-            bun_output::scoped_log!(H2FrameParser, "PendingQueue.dequeue null");
+            bun_core::scoped_log!(H2FrameParser, "PendingQueue.dequeue null");
             return None;
         }
         let value = core::mem::take(&mut self.data[self.front]);
@@ -1625,7 +1626,7 @@ impl PendingQueue {
         } else {
             self.front += 1;
         }
-        bun_output::scoped_log!(H2FrameParser, "PendingQueue.dequeue {}", self.len);
+        bun_core::scoped_log!(H2FrameParser, "PendingQueue.dequeue {}", self.len);
         Some(value)
     }
 
@@ -1722,7 +1723,7 @@ impl Stream {
                     )
                     .min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                 if max_size == 0 {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "dataFrame flow control limited {} {} {} {} {} {}",
                         frame_remaining,
@@ -1760,7 +1761,7 @@ impl Stream {
                         } else {
                             0
                         };
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "padding: {} size: {} max_size: {} payload_size: {}",
                         padding,
@@ -1821,7 +1822,7 @@ impl Stream {
                         } else {
                             0
                         };
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "padding: {} size: {} max_size: {} payload_size: {}",
                         padding,
@@ -1980,7 +1981,7 @@ impl Stream {
                 let len = lf!().len as usize;
                 lf!().buffer[len..len + consumed_len].copy_from_slice(merge);
                 lf!().len += u32::try_from(consumed_len).expect("int cast");
-                bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
+                bun_core::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
                 client
                     .queued_data_size
@@ -2009,7 +2010,7 @@ impl Stream {
                 return unsafe { (*this).queue_frame(client, more_data, callback, end_stream) };
             }
         }
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "{} queued {} {}",
             if client.is_server.get() {
@@ -2041,7 +2042,7 @@ impl Stream {
             frame.buffer[0..bytes.len()].copy_from_slice(bytes);
             global_this.vm().deprecated_report_extra_memory(bytes.len());
         }
-        bun_output::scoped_log!(H2FrameParser, "dataFrame enqueued {}", frame.len);
+        bun_core::scoped_log!(H2FrameParser, "dataFrame enqueued {}", frame.len);
         self.data_frame_queue.enqueue(frame);
         client
             .outbound_queue_size
@@ -2142,7 +2143,7 @@ impl Stream {
     }
 
     fn clean_queue<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "cleanQueue len: {} front: {} outboundQueueSize: {}",
             self.data_frame_queue.len,
@@ -2154,7 +2155,7 @@ impl Stream {
         while let Some(item) = queue.dequeue() {
             let frame = item;
             let len = frame.slice().len();
-            bun_output::scoped_log!(H2FrameParser, "dataFrame dropped {}", len);
+            bun_core::scoped_log!(H2FrameParser, "dataFrame dropped {}", len);
             client
                 .queued_data_size
                 .set(client.queued_data_size.get() - len as u64);
@@ -2288,7 +2289,7 @@ impl H2FrameParser {
                 .get()
                 .saturating_add(payload_size as u64),
         );
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "adjustWindowSize {} {} {} {}",
             self.used_window_size.get(),
@@ -2331,7 +2332,7 @@ impl H2FrameParser {
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
             let stream = unsafe { &mut **item };
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "incrementWindowSizeIfNeeded stream {} {} {} {}",
                 stream.id,
@@ -2342,7 +2343,7 @@ impl H2FrameParser {
             if stream.used_window_size >= stream.window_size / 2 && stream.used_window_size > 0 {
                 let consumed = stream.used_window_size;
                 stream.used_window_size = 0;
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     H2FrameParser,
                     "incrementWindowSizeIfNeeded stream {} {} {}",
                     stream.id,
@@ -2355,7 +2356,7 @@ impl H2FrameParser {
         for (id, consumed) in updates {
             self.send_window_update(id, UInt31WithReserved::init(consumed as u32, false));
         }
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "incrementWindowSizeIfNeeded connection {} {} {}",
             self.used_window_size.get(),
@@ -2372,7 +2373,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn set_settings(&self, settings: FullSettingsPayload) -> bool {
-        bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
+        bun_core::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
 
         if self.outstanding_settings.get() >= self.max_outstanding_settings.get() {
             self.send_go_away(
@@ -2409,7 +2410,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_RST_STREAM id: {} code: CANCEL",
             stream.id
@@ -2445,7 +2446,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_RST_STREAM id: {} code: {}",
             stream.id,
@@ -2498,7 +2499,7 @@ impl H2FrameParser {
         last_stream_id: u32,
         emit_error: bool,
     ) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
             triggering_stream_id,
@@ -2561,7 +2562,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn send_alt_svc(&self, stream_identifier: u32, origin_str: &[u8], alt: &[u8]) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_ALTSVC stream {} origin {} alt {}",
             stream_identifier,
@@ -2594,7 +2595,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn send_ping(&self, ack: bool, payload: &[u8]) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_PING ack {} payload {}",
             ack,
@@ -2619,7 +2620,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn send_preface_and_settings(&self) {
-        bun_output::scoped_log!(H2FrameParser, "sendPrefaceAndSettings");
+        bun_core::scoped_log!(H2FrameParser, "sendPrefaceAndSettings");
         // PREFACE + Settings Frame
         let mut preface_buffer =
             [0u8; 24 + FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
@@ -2641,7 +2642,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn send_settings_ack(&self) {
-        bun_output::scoped_log!(H2FrameParser, "send HTTP_FRAME_SETTINGS ack true");
+        bun_core::scoped_log!(H2FrameParser, "send HTTP_FRAME_SETTINGS ack true");
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
         let mut stream = FixedBufferStream::new(&mut buffer);
         let settings_header = FrameHeader {
@@ -2659,7 +2660,7 @@ impl H2FrameParser {
         stream_identifier: u32,
         window_size: UInt31WithReserved,
     ) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_WINDOW_UPDATE stream {} size {}",
             stream_identifier,
@@ -2825,7 +2826,7 @@ impl H2FrameParser {
         CORKED_H2.with(|c| c.set(Some(self.as_ctx_ptr())));
         self.ref_();
         self.register_auto_flush();
-        bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
+        bun_core::scoped_log!(H2FrameParser, "cork {:p}", self);
         CORK_OFFSET.with(|c| c.set(0));
     }
 
@@ -2844,7 +2845,7 @@ impl H2FrameParser {
             if (written as usize) < buffer_len {
                 self.write_buffer_offset
                     .set(self.write_buffer_offset.get() + written as usize);
-                bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
+                bun_core::scoped_log!(H2FrameParser, "_genericFlush {}", written);
                 return written as usize;
             }
 
@@ -2857,15 +2858,15 @@ impl H2FrameParser {
                     wb.shrink_to(MAX_BUFFER_SIZE as usize);
                 }
             });
-            bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", buffer_len);
+            bun_core::scoped_log!(H2FrameParser, "_genericFlush {}", buffer_len);
         } else {
-            bun_output::scoped_log!(H2FrameParser, "_genericFlush 0");
+            bun_core::scoped_log!(H2FrameParser, "_genericFlush 0");
         }
         buffer_len
     }
 
     pub(crate) fn _generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
-        bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
+        bun_core::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
         let global = self.global();
         let buffered_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
@@ -2887,7 +2888,7 @@ impl H2FrameParser {
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
                     global.vm().deprecated_report_extra_memory(bytes.len());
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "_genericWrite flushed {} and buffered more {}",
                         written,
@@ -2912,7 +2913,7 @@ impl H2FrameParser {
                     let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
                     global.vm().deprecated_report_extra_memory(pending.len());
 
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "_genericWrite buffered more {}",
                         pending.len()
@@ -2946,7 +2947,7 @@ impl H2FrameParser {
 
     /// be sure that we dont have any backpressure/data queued on writerBuffer before calling this
     fn flush_stream_queue(&self) -> usize {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "flushStreamQueue {}",
             self.outbound_queue_size.get()
@@ -2975,7 +2976,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn flush(&self) -> usize {
-        bun_output::scoped_log!(H2FrameParser, "flush");
+        bun_core::scoped_log!(H2FrameParser, "flush");
         // Keep `self` alive across the
         // re-entrant JS calls below. ScopedRef stores a raw pointer so it does
         // not borrow `self`.
@@ -3115,7 +3116,7 @@ impl H2FrameParser {
             return 0;
         }
         self.unregister_auto_flush();
-        bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
+        bun_core::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
         CORKED_H2.with(|c| c.set(None));
 
         // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
@@ -3333,7 +3334,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn write(&self, mut bytes: &[u8]) -> bool {
-        bun_output::scoped_log!(H2FrameParser, "write {}", bytes.len());
+        bun_core::scoped_log!(H2FrameParser, "write {}", bytes.len());
         if !ENABLE_AUTO_CORK {
             return self._write(bytes);
         }
@@ -3404,7 +3405,7 @@ impl Payload {
         // SAFETY: see doc comment above — `data_ptr` is valid for `data_len` bytes for the
         // full lifetime of this `Payload` local. `ffi::slice` tolerates the (null, 0) shape
         // used for empty payloads.
-        unsafe { bun_core::ffi::slice(self.data_ptr, self.data_len) }
+        unsafe { bun_opaque::ffi::slice(self.data_ptr, self.data_len) }
     }
 }
 
@@ -3519,7 +3520,7 @@ impl H2FrameParser {
         data: &[u8],
         stream: Option<*mut Stream>,
     ) -> usize {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "handleWindowUpdateFrame {}",
             frame.stream_identifier
@@ -3585,7 +3586,7 @@ impl H2FrameParser {
                 }
                 self.remote_window_size.set(next);
             }
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "windowSizeIncrement stream {} value {}",
                 frame.stream_identifier,
@@ -3724,7 +3725,7 @@ impl H2FrameParser {
         stream: &mut Stream,
         flags: u8,
     ) -> JsResult<Option<*mut Stream>> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "decodeHeaderBlock isSever: {}",
             self.is_server.get()
@@ -3766,7 +3767,7 @@ impl H2FrameParser {
                 }
             };
             offset += header.next;
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "header {} {}",
                 BStr::new(header.name),
@@ -3884,7 +3885,7 @@ impl H2FrameParser {
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> usize {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "handleDataFrame {} data.len: {}",
             if self.is_server.get() {
@@ -3897,7 +3898,7 @@ impl H2FrameParser {
         self.read_buffer.with_mut(|rb| rb.reset());
 
         let Some(stream_ptr) = stream_ else {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "received data frame on stream that does not exist"
             );
@@ -3915,7 +3916,7 @@ impl H2FrameParser {
 
         let max_frame_size = self.local_settings.get().max_frame_size;
         if frame.length > max_frame_size {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "received data frame with length: {} and max frame size: {}",
                 frame.length,
@@ -4008,7 +4009,7 @@ impl H2FrameParser {
             let data_region_start: usize = if padded { start_idx.max(1) } else { start_idx };
             let max_payload_size: usize = data_region_end.saturating_sub(data_region_start);
             payload = &payload[0..payload.len().min(max_payload_size)];
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "received_size: {} max_payload_size: {} padding: {} payload.len: {}",
                 received_size,
@@ -4069,7 +4070,7 @@ impl H2FrameParser {
         data: &[u8],
         _stream_: Option<*mut Stream>,
     ) -> usize {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "handleGoAwayFrame {} {}",
             frame.stream_identifier,
@@ -4135,7 +4136,7 @@ impl H2FrameParser {
         data: &[u8],
         _: Option<*mut Stream>,
     ) -> JsResult<usize> {
-        bun_output::scoped_log!(H2FrameParser, "handleOriginFrame {}", BStr::new(data));
+        bun_core::scoped_log!(H2FrameParser, "handleOriginFrame {}", BStr::new(data));
         if self.is_server.get() {
             self.send_go_away(
                 frame.stream_identifier,
@@ -4166,7 +4167,7 @@ impl H2FrameParser {
             let global = self.handlers.get().global();
             while !payload.is_empty() {
                 if payload.len() < 2 {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "error reading ORIGIN frame size: short read"
                     );
@@ -4222,7 +4223,7 @@ impl H2FrameParser {
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> JsResult<usize> {
-        bun_output::scoped_log!(H2FrameParser, "handleAltsvcFrame {}", BStr::new(data));
+        bun_core::scoped_log!(H2FrameParser, "handleAltsvcFrame {}", BStr::new(data));
         if self.is_server.get() {
             // client should not send ALTSVC frame
             self.send_go_away(
@@ -4284,7 +4285,7 @@ impl H2FrameParser {
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> usize {
-        bun_output::scoped_log!(H2FrameParser, "handleRSTStreamFrame {}", BStr::new(data));
+        bun_core::scoped_log!(H2FrameParser, "handleRSTStreamFrame {}", BStr::new(data));
         let Some(stream_ptr) = stream_ else {
             self.send_go_away(
                 frame.stream_identifier,
@@ -4495,7 +4496,7 @@ impl H2FrameParser {
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> JsResult<usize> {
-        bun_output::scoped_log!(H2FrameParser, "handleContinuationFrame");
+        bun_core::scoped_log!(H2FrameParser, "handleContinuationFrame");
         let Some(stream_ptr) = stream_ else {
             self.send_go_away(
                 frame.stream_identifier,
@@ -4611,7 +4612,7 @@ impl H2FrameParser {
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> JsResult<usize> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "handleHeadersFrame {}",
             if self.is_server.get() {
@@ -4749,7 +4750,7 @@ impl H2FrameParser {
     pub(crate) fn handle_settings_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
         let is_ack = frame.flags & SettingsFlags::ACK as u8 != 0;
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "handleSettingsFrame {} isACK {}",
             if self.is_server.get() {
@@ -4775,7 +4776,7 @@ impl H2FrameParser {
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if frame.length > 0 {
             if is_ack || !(frame.length as usize).is_multiple_of(setting_byte_size) {
-                bun_output::scoped_log!(H2FrameParser, "invalid settings frame size");
+                bun_core::scoped_log!(H2FrameParser, "invalid settings frame size");
                 self.send_go_away(
                     frame.stream_identifier,
                     ErrorCode::FRAME_SIZE_ERROR,
@@ -4791,7 +4792,7 @@ impl H2FrameParser {
         } else {
             if is_ack {
                 // we received an ACK
-                bun_output::scoped_log!(H2FrameParser, "settings frame ACK");
+                bun_core::scoped_log!(H2FrameParser, "settings frame ACK");
 
                 // we can now write any request
                 if self.outstanding_settings.get() > 0 {
@@ -4820,7 +4821,7 @@ impl H2FrameParser {
                                     .saturating_sub(u64::try_from(-delta).expect("int cast"));
                             }
                         }
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             H2FrameParser,
                             "adjusted stream windows by delta {} (old: {}, new: {})",
                             delta,
@@ -4836,7 +4837,7 @@ impl H2FrameParser {
                     self.local_settings.get().to_js(&global),
                 );
             } else {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     H2FrameParser,
                     "empty settings has remoteSettings? {}",
                     self.remote_settings.get().is_some()
@@ -4846,7 +4847,7 @@ impl H2FrameParser {
                     let remote_settings = FullSettingsPayload::default();
                     self.remote_settings.set(Some(remote_settings));
                     let _iws = remote_settings.initial_window_size;
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "remoteSettings.initialWindowSize: {} {} {}",
                         _iws,
@@ -4937,7 +4938,7 @@ impl H2FrameParser {
                 }
                 remote_settings.update_with(unit);
                 let (_ut, _uv) = (unit.type_, unit.value);
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     H2FrameParser,
                     "remoteSettings: {} {} isServer: {}",
                     _ut,
@@ -4949,7 +4950,7 @@ impl H2FrameParser {
             self.read_buffer.with_mut(|rb| rb.reset());
             self.remote_settings.set(Some(remote_settings));
             let _iws = remote_settings.initial_window_size;
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "remoteSettings.initialWindowSize: {} {} {}",
                 _iws,
@@ -5100,7 +5101,7 @@ impl H2FrameParser {
     }
 
     fn read_bytes(&self, bytes: &[u8]) -> JsResult<usize> {
-        bun_output::scoped_log!(H2FrameParser, "read {}", bytes.len());
+        bun_core::scoped_log!(H2FrameParser, "read {}", bytes.len());
         if self.is_server.get() && self.preface_received_len.get() < 24 {
             // Handle Server Preface
             let preface_missing: usize = 24 - self.preface_received_len.get() as usize;
@@ -5110,7 +5111,7 @@ impl H2FrameParser {
                 ..preface_available + self.preface_received_len.get() as usize];
             if bytes[0..preface_available] != *expected {
                 // invalid preface
-                bun_output::scoped_log!(H2FrameParser, "invalid preface");
+                bun_core::scoped_log!(H2FrameParser, "invalid preface");
                 self.send_go_away(
                     0,
                     ErrorCode::PROTOCOL_ERROR,
@@ -5127,7 +5128,7 @@ impl H2FrameParser {
             return Ok(preface_available);
         }
         if let Some(header) = self.current_frame.get() {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "current frame {} {} {} {} {}",
                 if self.is_server.get() {
@@ -5178,7 +5179,7 @@ impl H2FrameParser {
 
             self.current_frame.set(Some(header));
             self.remaining_length.set(header.length as i32);
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "new frame {} {} {} {}",
                 header.type_,
@@ -5206,7 +5207,7 @@ impl H2FrameParser {
                 .expect("infallible: size matches"),
         );
 
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "new frame {} {} {} {} {}",
             if self.is_server.get() {
@@ -5385,7 +5386,7 @@ impl H2FrameParser {
 
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
-        bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
+        bun_core::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
         // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
         // bytes back into the same parser from inside such a dispatch (e.g. a custom Duplex whose
         // write path synchronously pushes back into the socket). The engine cell stays mutably
@@ -5653,7 +5654,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_window_update(&self, stream_id: u32, increment: u32) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "engine WU received stream={} inc={}",
             stream_id,
@@ -6032,7 +6033,7 @@ impl H2FrameParser {
                         )
                         .throw();
                 }
-                bun_output::scoped_log!(H2FrameParser, "initialWindowSize: {}", value as u32);
+                bun_core::scoped_log!(H2FrameParser, "initialWindowSize: {}", value as u32);
                 local_settings.initial_window_size = value as u32;
             } else if !v.is_empty_or_undefined_or_null() {
                 return global_object
@@ -6782,7 +6783,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(H2FrameParser, "rstStream");
+        bun_core::scoped_log!(H2FrameParser, "rstStream");
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
             return Err(global_object.throw(format_args!("Expected stream and code arguments")));
@@ -6892,7 +6893,7 @@ impl H2FrameParser {
         callback: JSValue,
         suppress_half_closed_local_dispatch: bool,
     ) -> u8 {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
             if self.is_server.get() {
@@ -6988,7 +6989,7 @@ impl H2FrameParser {
                         } else {
                             0
                         };
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "padding: {} size: {} max_size: {} payload_size: {}",
                         padding,
@@ -7361,7 +7362,7 @@ impl H2FrameParser {
                     );
                     return Err(global_object.throw_value(exception));
                 }
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     H2FrameParser,
                     "encode header {} {}",
                     BStr::new(validated_name),
@@ -7508,7 +7509,7 @@ impl H2FrameParser {
 
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     H2FrameParser,
                     "encode header {} {}",
                     BStr::new(name),
@@ -7532,7 +7533,7 @@ impl H2FrameParser {
             .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
 
-        bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
+        bun_core::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
 
         let mut writer = this.to_writer();
 
@@ -7547,7 +7548,7 @@ impl H2FrameParser {
             let _ = frame.write(&mut writer);
             let _ = writer.write_all(encoded_data);
         } else {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "Using CONTINUATION frames for trailers: encoded_size={} max_frame_size={}",
                 encoded_size,
@@ -8145,7 +8146,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(H2FrameParser, "request");
+        bun_core::scoped_log!(H2FrameParser, "request");
 
         let args_list = callframe.arguments_old::<5>();
         if args_list.len < 4 {
@@ -8297,7 +8298,7 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",
                         BStr::new(validated_name),
@@ -8410,7 +8411,7 @@ impl H2FrameParser {
                 }
 
                 if js_value.js_type().is_array() {
-                    bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
+                    bun_core::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
                     let mut value_iter = js_value.array_iterator(global_object)?;
 
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
@@ -8484,7 +8485,7 @@ impl H2FrameParser {
                                 )
                                 .throw());
                         }
-                        bun_output::scoped_log!(
+                        bun_core::scoped_log!(
                             H2FrameParser,
                             "encode header {} {}",
                             BStr::new(validated_name),
@@ -8522,7 +8523,7 @@ impl H2FrameParser {
                         }
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
-                    bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
+                    bun_core::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if single_value_headers[idx] {
                             let exception = global_object.to_type_error(
@@ -8574,7 +8575,7 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",
                         BStr::new(validated_name),
@@ -8821,7 +8822,7 @@ impl H2FrameParser {
             flags |= HeadersFrameFlags::PRIORITY as u8;
         }
 
-        bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
+        bun_core::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
 
         // Check if headers block exceeds maxSendHeaderBlockLength
         if this.max_send_header_block_length.get() != 0
@@ -8879,7 +8880,7 @@ impl H2FrameParser {
         if encoded_size <= headers_frame_max_payload {
             // Single HEADERS frame - fits in one frame
             let payload_size = encoded_size + priority_overhead + padding_overhead;
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "padding: {} size: {} max_size: {} payload_size: {}",
                 padding,
@@ -8933,7 +8934,7 @@ impl H2FrameParser {
                 let _ = writer.write_all(&encoded_headers);
             }
         } else {
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 H2FrameParser,
                 "Using CONTINUATION frames: encoded_size={} max_frame_payload={}",
                 encoded_size,
@@ -9059,7 +9060,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
-        bun_output::scoped_log!(H2FrameParser, "onNativeRead");
+        bun_core::scoped_log!(H2FrameParser, "onNativeRead");
         self.ref_();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
@@ -9083,7 +9084,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_close(&self) {
-        bun_output::scoped_log!(H2FrameParser, "onNativeClose");
+        bun_core::scoped_log!(H2FrameParser, "onNativeClose");
         self.detach_native_socket();
     }
 
@@ -9101,14 +9102,14 @@ impl H2FrameParser {
         let socket_js = args_list.ptr[0];
         this.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket_js) {
-            bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
+            bun_core::scoped_log!(H2FrameParser, "TLSSocket attached");
             this.native_socket
                 .set(this.attach_to_native_socket::<true>(socket));
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure.set(false);
             let _ = this.flush();
         } else if let Some(socket) = TCPSocket::from_js(socket_js) {
-            bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
+            bun_core::scoped_log!(H2FrameParser, "TCPSocket attached");
             this.native_socket
                 .set(this.attach_to_native_socket::<false>(socket));
             // if we started with non native and go to native we now control the backpressure internally
@@ -9278,13 +9279,13 @@ impl H2FrameParser {
         // check if socket is provided, and if it is a valid native socket
         if let Some(socket_js) = options.get(global_object, "native")? {
             if let Some(socket) = TLSSocket::from_js(socket_js) {
-                bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
+                bun_core::scoped_log!(H2FrameParser, "TLSSocket attached");
                 this_ref
                     .native_socket
                     .set(this_ref.attach_to_native_socket::<true>(socket));
                 let _ = this_ref.flush();
             } else if let Some(socket) = TCPSocket::from_js(socket_js) {
-                bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
+                bun_core::scoped_log!(H2FrameParser, "TCPSocket attached");
                 this_ref
                     .native_socket
                     .set(this_ref.attach_to_native_socket::<false>(socket));
@@ -9293,7 +9294,7 @@ impl H2FrameParser {
         }
         if let Some(settings_js) = options.get(global_object, "settings")? {
             if !settings_js.is_empty_or_undefined_or_null() {
-                bun_output::scoped_log!(H2FrameParser, "settings received in the constructor");
+                bun_core::scoped_log!(H2FrameParser, "settings received in the constructor");
                 this_ref.load_settings_from_js_value(global_object, settings_js)?;
 
                 if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
@@ -9448,7 +9449,7 @@ impl H2FrameParser {
     }
 
     fn deinit(&self) {
-        bun_output::scoped_log!(H2FrameParser, "deinit");
+        bun_core::scoped_log!(H2FrameParser, "deinit");
 
         self.detach();
         // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
@@ -9493,7 +9494,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(H2FrameParser, "finalize");
+        bun_core::scoped_log!(H2FrameParser, "finalize");
         // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         bun_ptr::finalize_js_box(self, |this| {
             this.strong_this.set(JsRef::empty());

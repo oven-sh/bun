@@ -21,53 +21,34 @@ use crate::env_var;
 use crate::strings;
 // MOVE_DOWN: bun_sys::Fd / bun_sys::fd → bun_core (move-in pass).
 use crate::Fd;
-// MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
-use crate::Mutex;
+use crate::Guarded as Mutex;
 // MOVE_DOWN: io::Writer → bun_core (move-in pass) — re-exported as crate::io::Writer.
 use crate::io;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Output sink (CYCLEBREAK §Debug-hook / §Dispatch cold path)
-//
-// `bun_sys::{File, QuietWrite, file::QuietWriter, make_path, create_file,
-// deprecated::BufferedReader}` are higher-tier I/O primitives that `bun_core`
-// cannot name. The `bun_dispatch::link_interface!` `OutputSink[Sys]` (declared
-// at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::OutputSink;
-
-#[inline]
-pub(crate) fn output_sink() -> OutputSink {
-    OutputSink::SYS
-}
-
-/// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
-/// POD blob; bun_sys casts back to the concrete type. Contract: bun_sys only
-/// stashes the raw fd in slot 0 (see `qw_fd`/`qw_set_fd` in bun_sys), so the
-/// blob just needs pointer size/alignment — keep `[*mut (); 4]` in sync with
-/// that consumer if either side changes.
+/// Unbuffered best-effort fd writer; write errors are swallowed (the bool
+/// from `write_all` lets ScopedLogger disable a dead scope).
 #[derive(Clone, Copy)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct QuietWriter {
-    _opaque: [*mut (); 4],
+    pub(crate) fd: Fd,
 }
 impl QuietWriter {
-    pub const ZEROED: Self = Self {
-        _opaque: [core::ptr::null_mut(); 4],
-    };
+    pub const ZEROED: Self = Self { fd: Fd::INVALID };
 
     #[inline]
+    pub fn from_fd(fd: Fd) -> Self {
+        Self { fd }
+    }
+    #[inline]
     pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
-        output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
+        QuietWriterAdapter::new(self.fd, buf.as_mut_ptr(), buf.len())
     }
+    /// QuietWriter itself is unbuffered (buffering lives in the Adapter).
     #[inline]
-    pub fn flush(&mut self) {
-        output_sink().quiet_writer_flush(self)
-    }
+    pub fn flush(&mut self) {}
     #[inline]
-    pub fn context_handle(&self) -> Fd {
-        output_sink().quiet_writer_fd(self)
+    pub fn context_handle(self) -> Fd {
+        self.fd
     }
     /// Inherent forwarder so call sites don't need `use fmt::Write`.
     #[inline]
@@ -77,7 +58,7 @@ impl QuietWriter {
 }
 impl core::fmt::Write for QuietWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        if output_sink().quiet_writer_write_all(self, s.as_bytes()) {
+        if crate::fdio::write_all_quiet(self.fd, s.as_bytes()) {
             Ok(())
         } else {
             Err(core::fmt::Error)
@@ -86,30 +67,105 @@ impl core::fmt::Write for QuietWriter {
 }
 // `qw.write_fmt(args)` resolves through `fmt::Write`.
 
-/// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
-/// Layout contract: bun_sys's concrete `SysQuietWriterAdapter` must fit in
-/// these 64 bytes with `io::Writer` as its first field; const-asserted on the
-/// bun_sys side next to that struct.
-#[repr(C, align(8))]
+/// Buffered writer over a `QuietWriter`'s fd, exposing `crate::io::Writer`
+/// (a raw-dispatch handle carrying its own vtable — no layout pact).
 pub struct QuietWriterAdapter {
-    _opaque: [u8; 64],
+    fd: Fd,
+    buf: *mut u8,
+    cap: usize,
+    pos: usize,
+    /// Cached handle pointing at `self`; refreshed by `new_interface()`.
+    interface: io::Writer,
 }
 impl QuietWriterAdapter {
-    /// Zeroed placeholder; caller must overwrite via `adapt_to_new_api` before use.
+    /// Placeholder with no buffer; caller overwrites via `adapt_to_new_api`
+    /// before use. Safe to call `write_all`/`flush` on (cap 0 → unbuffered
+    /// writes to `Fd::INVALID`, which are swallowed).
     #[inline]
     pub const fn uninit() -> Self {
-        Self { _opaque: [0u8; 64] }
+        Self {
+            fd: Fd::INVALID,
+            buf: core::ptr::null_mut(),
+            cap: 0,
+            pos: 0,
+            interface: io::WriterHandle::NOOP,
+        }
+    }
+    #[inline]
+    fn new(fd: Fd, buf: *mut u8, len: usize) -> Self {
+        Self {
+            fd,
+            buf,
+            cap: len,
+            pos: 0,
+            interface: io::WriterHandle::NOOP,
+        }
+    }
+    /// Handle dispatching to this adapter. The handle is only valid while the
+    /// adapter's address is stable.
+    #[inline]
+    pub fn handle(&mut self) -> io::Writer {
+        io::WriterHandle::of(std::ptr::from_mut(self))
     }
     #[inline]
     pub fn new_interface(&mut self) -> &mut io::Writer {
-        // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees
-        // the io::Writer is the first field (repr(C)).
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
+        self.interface = self.handle();
+        &mut self.interface
+    }
+    /// View of the bytes buffered so far (`buf[0..pos]`). Centralises the
+    /// (ptr, len) → slice reconstruction; the buffer is owned by the adapter
+    /// and lives for `&self`.
+    #[inline]
+    fn buffered(&self) -> &[u8] {
+        // SAFETY: `buf` is a `cap`-byte allocation owned by this adapter (set
+        // at construction); `pos <= cap` is upheld by `adapter_write_all`
+        // (drains before writing past `cap`). Bytes `[0, pos)` were written by
+        // `copy_nonoverlapping` and are initialized. Borrow tied to `&self`.
+        unsafe { core::slice::from_raw_parts(self.buf, self.pos) }
     }
 }
 
-/// Opaque file handle. Replaces `bun_sys::File` in this crate.
-/// repr matches `bun_sys::File` (transparent over a single Fd).
+impl io::RawWrite for QuietWriterAdapter {
+    unsafe fn write_all(this: *mut Self, bytes: &[u8]) -> Result<(), crate::Error> {
+        // SAFETY: `this` points at a live QuietWriterAdapter (see `handle()`).
+        let this = unsafe { &mut *this };
+        if this.cap == 0 {
+            let _ = crate::fdio::write_all_quiet(this.fd, bytes);
+            return Ok(());
+        }
+        if this.pos + bytes.len() > this.cap {
+            // Drain buffered bytes first.
+            if this.pos > 0 {
+                let _ = crate::fdio::write_all_quiet(this.fd, this.buffered());
+                this.pos = 0;
+            }
+            // Large writes bypass the buffer so the next small write still coalesces.
+            if bytes.len() >= this.cap {
+                let _ = crate::fdio::write_all_quiet(this.fd, bytes);
+                return Ok(());
+            }
+        }
+        // SAFETY: `this.buf` has capacity `this.cap`; the branch above ensures
+        // `this.pos + bytes.len() <= this.cap`, so `[buf+pos, buf+pos+len)` is
+        // in-bounds and cannot overlap `bytes` (caller-owned slice).
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len());
+        }
+        this.pos += bytes.len();
+        Ok(())
+    }
+    unsafe fn flush(this: *mut Self) -> Result<(), crate::Error> {
+        // SAFETY: `this` points at a live QuietWriterAdapter (see `handle()`).
+        let this = unsafe { &mut *this };
+        if this.pos > 0 {
+            let _ = crate::fdio::write_all_quiet(this.fd, this.buffered());
+            this.pos = 0;
+        }
+        Ok(())
+    }
+}
+
+/// File handle: bun_core's own fd-newtype for terminal/log output.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct File(pub Fd);
@@ -124,21 +180,19 @@ impl File {
     pub fn handle(self) -> Fd {
         self.0
     }
-    /// `bun_sys::File::stderr()` via the sink (T0-safe).
     #[inline]
     pub fn stderr() -> Self {
-        output_sink().stderr()
+        Self(Fd::stderr())
     }
     #[inline]
     pub fn quiet_writer(self) -> QuietWriter {
-        output_sink().quiet_writer_from_fd(self.0)
+        QuietWriter::from_fd(self.0)
     }
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed). Progress.rs uses this.
     #[inline]
     pub fn write_all(self, bytes: &[u8]) -> Result<(), crate::Error> {
-        let mut qw = self.quiet_writer();
-        let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
+        let _ = crate::fdio::write_all_quiet(self.0, bytes);
         Ok(())
     }
     #[inline]
@@ -322,17 +376,17 @@ pub struct Source {
     pub stderr_buffer: [u8; 4096],
     pub buffered_stream_backing: QuietWriterAdapter,
     pub buffered_error_stream_backing: QuietWriterAdapter,
-    // Self-referential: point into `*_backing.new_interface`. Use the accessor
-    // methods instead of these raw fields.
+    // Self-referential: handles dispatch into `*_backing`. Use the accessor
+    // methods instead of these cached fields.
     // (LIFETIMES.tsv: BORROW_FIELD — self-ref into buffered_*_backing)
-    buffered_stream: *mut io::Writer,
-    buffered_error_stream: *mut io::Writer,
+    buffered_stream: io::Writer,
+    buffered_error_stream: io::Writer,
 
     pub stream_backing: QuietWriterAdapter,
     pub error_stream_backing: QuietWriterAdapter,
     // Self-referential (BORROW_FIELD)
-    stream: *mut io::Writer,
-    error_stream: *mut io::Writer,
+    stream: io::Writer,
+    error_stream: io::Writer,
 
     pub raw_stream: StreamType,
     pub raw_error_stream: StreamType,
@@ -365,12 +419,12 @@ impl Source {
         stderr_buffer: [0u8; 4096],
         buffered_stream_backing: QuietWriterAdapter::uninit(),
         buffered_error_stream_backing: QuietWriterAdapter::uninit(),
-        buffered_stream: core::ptr::null_mut(),
-        buffered_error_stream: core::ptr::null_mut(),
+        buffered_stream: io::WriterHandle::NOOP,
+        buffered_error_stream: io::WriterHandle::NOOP,
         stream_backing: QuietWriterAdapter::uninit(),
         error_stream_backing: QuietWriterAdapter::uninit(),
-        stream: core::ptr::null_mut(),
-        error_stream: core::ptr::null_mut(),
+        stream: io::WriterHandle::NOOP,
+        error_stream: io::WriterHandle::NOOP,
         raw_stream: Self::ZEROED_STREAM,
         raw_error_stream: Self::ZEROED_STREAM,
         out_buffer: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
@@ -419,17 +473,16 @@ impl Source {
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut out.stderr_buffer);
-        out.buffered_stream = std::ptr::from_mut(out.buffered_stream_backing.new_interface());
-        out.buffered_error_stream =
-            std::ptr::from_mut(out.buffered_error_stream_backing.new_interface());
+        out.buffered_stream = out.buffered_stream_backing.handle();
+        out.buffered_error_stream = out.buffered_error_stream_backing.handle();
 
         out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
         out.error_stream_backing = out
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut []);
-        out.stream = std::ptr::from_mut(out.stream_backing.new_interface());
-        out.error_stream = std::ptr::from_mut(out.error_stream_backing.new_interface());
+        out.stream = out.stream_backing.handle();
+        out.error_stream = out.error_stream_backing.handle();
     }
 
     pub fn configure_thread() {
@@ -570,7 +623,7 @@ pub mod windows_stdio {
     use super::*;
     // MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
     use crate::windows_sys as w;
-    use crate::windows_sys::kernel32 as c;
+    use bun_windows_sys::kernel32 as c;
 
     // `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0 on
     // a non-console handle); `&mut DWORD` is ABI-identical to `LPDWORD` (thin
@@ -608,7 +661,7 @@ pub mod windows_stdio {
         // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
         // long-lived `&` — read the handle fields through raw-pointer deref.
         let (stdin, stdout, stderr) = unsafe {
-            let pp = (*w::peb()).ProcessParameters;
+            let pp = (*bun_windows_sys::peb()).ProcessParameters;
             ((*pp).hStdInput, (*pp).hStdOutput, (*pp).hStdError)
         };
 
@@ -631,7 +684,7 @@ pub mod windows_stdio {
     }
 
     pub fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
+        bun_windows_sys::uv_disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -659,10 +712,8 @@ pub mod windows_stdio {
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
-        // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
-        unsafe {
-            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
-        }
+        // The stdin handle is now cached: `bun_sys::stdio::init()` (called by
+        // `bun_bin` right after `stdio::init()`) fixes up `BUFFERED_STDIN.fd`.
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
@@ -1140,21 +1191,14 @@ pub fn flush() {
         // Same re-entrancy hazard as with_dest_writer: drop the RefCell borrow
         // before calling into the writer so a flush triggered from inside a
         // print (or vice-versa) doesn't BorrowMutError.
-        let (bs, bes): (*mut io::Writer, *mut io::Writer) = SOURCE.with_borrow_mut(|s| {
-            (
-                std::ptr::from_mut::<io::Writer>(s.buffered_stream()),
-                std::ptr::from_mut::<io::Writer>(s.buffered_error_stream()),
-            )
-        });
-        // SAFETY: see with_dest_writer — pointers target thread-local backing
-        // fields with stable addresses once Source::init has run. We call the
-        // vtable fn pointer directly with the raw `*mut` (no `&mut Writer`
-        // formed) so a re-entrant print/flush from inside the drain cannot
+        let (mut bs, mut bes): (io::Writer, io::Writer) =
+            SOURCE.with_borrow_mut(|s| (*s.buffered_stream(), *s.buffered_error_stream()));
+        // The handles are local copies that dispatch through raw adapter
+        // pointers (see with_dest_writer) — no `&mut` to the adapter is
+        // formed, so a re-entrant print/flush from inside the drain cannot
         // alias an outstanding exclusive borrow.
-        unsafe {
-            let _ = ((*bs).flush)(bs);
-            let _ = ((*bes).flush)(bes);
-        }
+        let _ = bs.flush();
+        let _ = bes.flush();
         // let _ = s.stream().flush();
         // let _ = s.error_stream().flush();
     }
@@ -1309,61 +1353,46 @@ pub fn print_timer(timer: &mut impl ReadTimer) {
 /// Pick the active writer for `dest`, honoring `enable_buffering`. Non-generic
 /// so the buffering branch isn't duplicated into every call site.
 ///
-/// Hands `f` a **raw** `*mut io::Writer`, not a `&mut`. `f` may call into
+/// Hands `f` an `io::WriterHandle` **by value**. `f` may call into
 /// `write_fmt`, which evaluates user `Display` impls that can re-enter this
-/// module (e.g. `debug_warn` → `print_to`, or `flush()`). If we materialized a
-/// `&mut io::Writer` here, the re-entrant call would produce a second `&mut`
-/// aliasing the first while it is still live — UB. So this hands out a raw
-/// pointer with no exclusivity contract, and callers must route writes
-/// through the vtable fn pointers directly (see `write_fmt_raw`).
+/// module (e.g. `debug_warn` → `print_to`, or `flush()`). The handle
+/// dispatches through a raw adapter pointer, never a `&mut` to the adapter,
+/// so a re-entrant write only sees another handle copy.
 #[inline(never)]
-fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) -> R {
+fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(io::Writer) -> R) -> R {
     debug_assert!(SOURCE_SET.get());
     let buffering = ENABLE_BUFFERING.load(Ordering::Relaxed);
-    // Load the writer pointer and *drop the RefCell borrow* before invoking `f`;
+    // Load the writer handle and *drop the RefCell borrow* before invoking `f`;
     // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
-    let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
-        Destination::Stdout => std::ptr::from_mut(if buffering {
-            s.buffered_stream()
-        } else {
-            s.stream()
-        }),
-        Destination::Stderr => std::ptr::from_mut(if buffering {
-            s.buffered_error_stream()
-        } else {
-            s.error_stream()
-        }),
+    let w: io::Writer = SOURCE.with_borrow_mut(|s| match dest {
+        Destination::Stdout => {
+            *(if buffering {
+                s.buffered_stream()
+            } else {
+                s.stream()
+            })
+        }
+        Destination::Stderr => {
+            *(if buffering {
+                s.buffered_error_stream()
+            } else {
+                s.error_stream()
+            })
+        }
     });
-    // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
+    // `w` dispatches into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
-    // `Source::init` has run (asserted via SOURCE_SET above). These same raw
-    // pointers are already cached on `Source.{stream,error_stream,...}` and
-    // handed out by `writer()`/`error_writer()` — this is the established
-    // self-referential pattern, not a lifetime extension of borrowed data.
-    // We pass the raw pointer through unchanged; `f` is responsible for not
-    // forming a `&mut` that outlives a single non-reentrant vtable call.
+    // `Source::init` has run (asserted via SOURCE_SET above).
     f(w)
 }
 
-/// Write `args` through a raw `*mut io::Writer` without ever forming a
-/// `&mut io::Writer`, so re-entrant writes from inside `Display` impls don't
-/// alias an outstanding exclusive borrow.
-///
-/// SAFETY: `w` must point to a live `io::Writer` for the duration of the call
-/// (guaranteed by `with_dest_writer`'s thread-local-stability invariant).
-unsafe fn write_fmt_raw(w: *mut io::Writer, args: fmt::Arguments<'_>) {
-    struct Raw(*mut io::Writer);
+/// Write `args` through a writer handle, swallowing write errors so a failed
+/// write does not abort the formatting of the remaining arguments.
+fn write_fmt_raw(w: io::Writer, args: fmt::Arguments<'_>) {
+    struct Raw(io::Writer);
     impl fmt::Write for Raw {
         fn write_str(&mut self, s: &str) -> fmt::Result {
-            // SAFETY: `self.0` is the `w` passed to `write_fmt_raw`, valid per
-            // the caller's contract. We read the `write_all` vtable fn pointer
-            // via raw-pointer field projection (no intermediate `&`/`&mut`
-            // Writer) and call it with the raw `*mut` — any re-entrant write
-            // sees only another raw pointer, never an aliased `&mut`.
-            unsafe {
-                let f = (*self.0).write_all;
-                let _ = f(self.0, s.as_bytes());
-            }
+            let _ = self.0.write_all(s.as_bytes());
             Ok(())
         }
     }
@@ -1373,13 +1402,8 @@ unsafe fn write_fmt_raw(w: *mut io::Writer, args: fmt::Arguments<'_>) {
 /// Single shared write path for pre-formatted bytes.
 #[inline(never)]
 fn write_bytes(dest: Destination, bytes: &[u8]) {
-    with_dest_writer(dest, |w| {
-        // SAFETY: `w` is valid per `with_dest_writer`; call the vtable fn
-        // directly with the raw pointer so no `&mut Writer` is formed.
-        unsafe {
-            let f = (*w).write_all;
-            let _ = f(w, bytes);
-        }
+    with_dest_writer(dest, |mut w| {
+        let _ = w.write_all(bytes);
     });
 }
 
@@ -1399,10 +1423,10 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     }
     // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
     with_dest_writer(dest, |w| {
-        // SAFETY: `w` is valid per `with_dest_writer`; `write_fmt_raw` routes
-        // through the vtable without forming a `&mut Writer`, so `Display`
-        // impls that re-enter `print_to`/`flush` cannot alias.
-        unsafe { write_fmt_raw(w, args) };
+        // `write_fmt_raw` routes through the handle's vtable without forming
+        // a `&mut` to the adapter, so `Display` impls that re-enter
+        // `print_to`/`flush` cannot alias.
+        write_fmt_raw(w, args);
     });
 }
 
@@ -1604,7 +1628,7 @@ impl ScopedLogger {
             self.really_disable.store(true, Ordering::Relaxed);
             return;
         }
-        // `QuietWriter::flush()` returns `()` through the OutputSink vtable,
+        // `QuietWriter::flush()` returns `()`,
         // so flush errors are not observable here (debug logging only).
         out.flush();
     }
@@ -2517,22 +2541,22 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // pretty_errorln! add exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
-    if let Some(e) = error_name.as_sys_err_info() {
-        // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
-        if let Some(label) = crate::coreutils_error_map::get(e.errno) {
+    if let Some(errno) = error_name.errno() {
+        let syscall = error_name.syscall_name().unwrap_or("");
+        if let Some(label) = crate::coreutils_error_map::get(errno) {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {}: {} <d>({})<r>",
-                bstr::BStr::new(e.tag_name),
+                bstr::BStr::new(error_name.name()),
                 bstr::BStr::new(label),
                 body,
-                e.syscall,
+                syscall,
             );
         } else {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {} <d>({})<r>",
-                bstr::BStr::new(e.tag_name),
+                bstr::BStr::new(error_name.name()),
                 body,
-                e.syscall,
+                syscall,
             );
         }
         return;
@@ -2565,23 +2589,16 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
     );
 }
 
-/// What `err()` needs from a `bun_sys::Error` without naming the type.
-/// Populated by bun_sys's `ErrName` impl (move-in pass).
-#[derive(Clone, Copy)]
-pub struct SysErrInfo {
-    pub tag_name: &'static [u8],
-    pub errno: i32,
-    pub syscall: &'static str,
-}
-
-/// Trait abstracting the error-name shapes accepted by `err()`.
-///
-/// `as_sys_err_info()` replaces the former `as_sys_error() -> Option<&bun_sys::Error>`:
-/// bun_core (T0) can't name `bun_sys::Error` (T1). bun_sys impls `ErrName` for
-/// its own error type (move-in pass) and returns the projected info here.
+/// Trait abstracting the error-name shapes accepted by `err()`. Higher tiers
+/// implement it for their own error types (orphan rule: trait owner is here).
 pub trait ErrName {
     fn name(&self) -> &[u8];
-    fn as_sys_err_info(&self) -> Option<SysErrInfo> {
+    /// Errno for syscall-style errors; `None` for plain tags.
+    fn errno(&self) -> Option<i32> {
+        None
+    }
+    /// Syscall name (e.g. "open") for syscall-style errors.
+    fn syscall_name(&self) -> Option<&'static str> {
         None
     }
 }
@@ -2600,8 +2617,9 @@ impl ErrName for crate::Error {
         (*self).name().as_bytes()
     }
 }
-// Higher-tier impls live with their types (orphan rule allows it):
-// `bun_sys::Error` (src/sys/Error.rs) and `SystemErrno` (src/errno/lib.rs).
+// Other impls live with their types: `bun_sys::Error` (src/sys/Error.rs, a
+// higher tier — the orphan rule allows it) and `SystemErrno`
+// (src/bun_core/errno/mod.rs).
 // A blanket impl for `T: Into<&'static str>` (strum enums) is coherence-blocked;
 // each enum impls `ErrName` explicitly instead.
 
@@ -2653,7 +2671,7 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
         if !path.is_empty() && path != b"0" && path != b"false" {
             // MOVE_DOWN: bun_paths::dirname → bun_core (bundled with SEP/PathBuffer move-in).
             if let Some(dir) = crate::dirname(path) {
-                let _ = output_sink().make_path(Fd::cwd(), dir);
+                let _ = crate::fdio::make_path(dir);
             }
 
             // do not use libuv through this code path, since it might not be initialized yet.
@@ -2663,7 +2681,7 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
 
             let path_fmt = strings::replace_owned(path, b"{pid}", &pid);
 
-            let fd: Fd = match output_sink().create_file(Fd::cwd(), &path_fmt) {
+            let fd: Fd = match crate::fdio::create_file(&path_fmt) {
                 Ok(fd) => fd,
                 Err(open_err) => panic(format_args!(
                     "Failed to open file for debug output: {} ({})",
@@ -2673,8 +2691,7 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
             };
             // SAFETY: single-threaded startup.
             unsafe {
-                scoped_debug_writer::SCOPED_FILE_WRITER
-                    .write(output_sink().quiet_writer_from_fd(fd));
+                scoped_debug_writer::SCOPED_FILE_WRITER.write(QuietWriter::from_fd(fd));
             }
             return;
         }
@@ -2683,7 +2700,7 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
     // SAFETY: single-threaded startup.
     unsafe {
         scoped_debug_writer::SCOPED_FILE_WRITER
-            .write(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
+            .write(QuietWriter::from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
     }
 }
 
@@ -2717,123 +2734,11 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Stdin readers (CYCLEBREAK §Dispatch cold path)
+// Stdin readers
 //
-// The concrete `File.Reader` lives in bun_sys; bun_core routes
-// the underlying `read(2)` through the [`OutputSinkVTable::read`] slot so the
-// `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
+// The buffered process-global stdin reader (`bun.Output.buffered_stdin`)
+// lives in `bun_sys::stdio` (it reads through `bun_sys::read`).
 // ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> =
-    crate::RacyCell::new(BufferedStdin {
-        fd: {
-            #[cfg(windows)]
-            {
-                Fd::INVALID // set in WindowsStdio.init
-            }
-            #[cfg(not(windows))]
-            {
-                Fd::stdin()
-            }
-        },
-        buf: [0; 4096],
-        start: 0,
-        end: 0,
-    });
-
-/// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
-/// Layout is local to bun_core; bun_sys never casts into this (it only fills
-/// `.fd` during Windows startup).
-#[repr(C)]
-pub struct BufferedStdin {
-    pub fd: Fd,
-    pub buf: [u8; 4096],
-    pub start: usize,
-    pub end: usize,
-}
-
-impl BufferedStdin {
-    /// Hands back `&mut Self` (which already exposes `read`/`read_byte`).
-    #[inline]
-    pub fn reader(&mut self) -> &mut Self {
-        self
-    }
-
-    /// Fill `dest` from the buffer, refilling from
-    /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
-    ///
-    /// Matches std `BufferedReader.read` fill-to-completion semantics
-    /// (loops on the underlying fd), not POSIX partial-read.
-    pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, crate::Error> {
-        let mut written: usize = 0;
-        loop {
-            let current = &self.buf[self.start..self.end];
-            if !current.is_empty() {
-                let n = current.len().min(dest.len() - written);
-                dest[written..written + n].copy_from_slice(&current[..n]);
-                self.start += n;
-                written += n;
-                if written == dest.len() {
-                    return Ok(written);
-                }
-            }
-            let remaining = dest.len() - written;
-            if remaining >= self.buf.len() {
-                // Large dest tail: bypass the buffer.
-                let n = output_sink().read(self.fd, &mut dest[written..])?;
-                if n == 0 {
-                    return Ok(written);
-                }
-                written += n;
-                if written == dest.len() {
-                    return Ok(written);
-                }
-                continue;
-            }
-            self.end = output_sink().read(self.fd, &mut self.buf)?;
-            self.start = 0;
-            if self.end == 0 {
-                return Ok(written);
-            }
-        }
-    }
-
-    /// Read one byte — `Err` on I/O error *or* EOF (`EndOfStream`).
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
-        if self.start < self.end {
-            let b = self.buf[self.start];
-            self.start += 1;
-            return Ok(b);
-        }
-        let mut one = [0u8; 1];
-        match self.read(&mut one)? {
-            0 => Err(crate::err!(EndOfStream)),
-            _ => Ok(one[0]),
-        }
-    }
-
-    /// Appends bytes (not
-    /// including `delimiter`) into `out`; errors with `StreamTooLong`
-    /// semantics if `out.len()` would exceed `max_size`.
-    pub fn read_until_delimiter_array_list(
-        &mut self,
-        out: &mut Vec<u8>,
-        delimiter: u8,
-        max_size: usize,
-    ) -> Result<(), crate::Error> {
-        out.clear();
-        loop {
-            if out.len() >= max_size {
-                return Err(crate::err!(StreamTooLong));
-            }
-            let b = self.read_byte()?;
-            if b == delimiter {
-                return Ok(());
-            }
-            out.push(b);
-        }
-    }
-}
 
 /// Unbuffered stdin byte reader.
 /// Each `take_byte` is a 1-byte blocking read on the process stdin.
@@ -2846,7 +2751,7 @@ impl StdinReader {
     #[inline]
     pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
         let mut one = [0u8; 1];
-        match output_sink().read(self.fd, &mut one)? {
+        match crate::fdio::read(self.fd, &mut one)? {
             0 => Err(crate::err!(EndOfStream)),
             _ => Ok(one[0]),
         }
@@ -2863,38 +2768,6 @@ impl StdinReader {
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
-}
-
-/// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB
-/// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
-///
-/// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
-/// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
-/// `&mut` at the use site. Matches the other self-ref escapes in this module
-/// (`writer()`, `error_writer()`, …).
-///
-/// SAFETY: the static is single-threaded by construction (only ever touched
-/// from the main JS/CLI thread while blocked on user input).
-#[inline]
-pub fn buffered_stdin() -> *mut BufferedStdin {
-    BUFFERED_STDIN.get()
-}
-
-/// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`].
-#[inline]
-pub fn buffered_stdin_reader() -> *mut BufferedStdin {
-    buffered_stdin()
-}
-
-/// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
-#[inline]
-pub fn buffered_stdin_read_until_delimiter(
-    out: &mut Vec<u8>,
-    delimiter: u8,
-    max_size: usize,
-) -> Result<(), crate::Error> {
-    // SAFETY: single-threaded static; only live `&mut` for this call's duration.
-    unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

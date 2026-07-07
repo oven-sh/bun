@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{JSXTag, options};
+use crate::parser::JSXTag;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
@@ -222,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             properties = G::PropertyList::move_from_list(props);
             if is_key_after_spread
-                && p.options.jsx.runtime == options::JSXRuntime::Automatic
+                && p.options.jsx.runtime == bun_options_types::jsx::Runtime::Automatic
                 && !p.has_classic_runtime_warned
             {
                 p.log().add_warning(

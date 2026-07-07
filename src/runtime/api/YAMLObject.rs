@@ -7,7 +7,7 @@ use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    JsError, JsResult, MarkedArgumentBuffer,
 };
 use bun_parsers::yaml::{YAML, YamlParseError};
 
@@ -62,7 +62,7 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
 
 pub(crate) struct Stringifier {
     stack_check: StackCheck,
-    builder: wtf::StringBuilder,
+    builder: jsc::StringBuilder,
     indent: usize,
 
     known_collections: HashMap<JSValue, AnchorAlias>,
@@ -192,7 +192,7 @@ impl Stringifier {
 
         Ok(Stringifier {
             stack_check: StackCheck::init(),
-            builder: wtf::StringBuilder::init(),
+            builder: jsc::StringBuilder::init(),
             indent: 0,
             known_collections: HashMap::default(),
             array_item_counter: 0,
@@ -1102,23 +1102,18 @@ impl From<JsError> for ToJsError {
     }
 }
 
-bun_core::oom_from_alloc!(ToJsError);
-
-impl From<bun_ast::ToJSError> for ToJsError {
-    fn from(e: bun_ast::ToJSError) -> Self {
-        use bun_ast::ToJSError as Up;
+impl From<bun_js_parser_jsc::ExprToJsError> for ToJsError {
+    fn from(e: bun_js_parser_jsc::ExprToJsError) -> Self {
         match e {
-            Up::OutOfMemory => ToJsError::OutOfMemory,
-            Up::JSError => ToJsError::JsError,
-            Up::JSTerminated => ToJsError::JsTerminated,
-            // `value_string_to_js` never yields the macro/identifier variants
-            // (those come from the full `data_to_js` walker); map defensively.
-            Up::CannotConvertArgumentTypeToJS
-            | Up::CannotConvertIdentifierToJS
-            | Up::MacroError => ToJsError::JsError,
+            bun_js_parser_jsc::ExprToJsError::Js(e) => e.into(),
+            // `string_to_js` never yields the macro/identifier variants (those
+            // come from the full `data_to_js` walker); map defensively.
+            bun_js_parser_jsc::ExprToJsError::ToJs(_) => ToJsError::JsError,
         }
     }
 }
+
+bun_core::oom_from_alloc!(ToJsError);
 
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
@@ -1157,10 +1152,7 @@ impl<'a> ParserCtx<'a> {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-            ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
-                str.get(),
-                self.global,
-            )?),
+            ExprData::EString(str) => Ok(bun_js_parser_jsc::string_to_js(str.get(), self.global)?),
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {

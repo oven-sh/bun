@@ -3,6 +3,7 @@
 use core::ffi::c_int;
 
 use bun_core::feature_flag;
+use bun_jsc::rare_data::RareData as JscRareData;
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
@@ -31,27 +32,16 @@ impl Params {
     pub const MIN_WINDOW_BITS: u8 = 8;
 }
 
-#[derive(Default)]
-pub struct RareData {
-    libdeflate_decompressor: Option<libdeflate_sys::OwnedDecompressor>,
-    // PERF: a 128KB inline buffer reused as scratch for (de)compression
-    // output could avoid per-call allocation — profile if hot.
-}
+pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
 
-impl RareData {
-    pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
-
-    pub fn array_list(&self) -> Vec<u8> {
-        // PERF: allocates a fresh heap Vec per call — profile if hot.
-        Vec::with_capacity(Self::STACK_BUFFER_SIZE)
+/// Lazy-init the per-VM pooled libdeflate decompressor in `slot`.
+fn decompressor(
+    slot: &mut Option<libdeflate_sys::OwnedDecompressor>,
+) -> Option<&mut libdeflate_sys::Decompressor> {
+    if slot.is_none() {
+        *slot = libdeflate_sys::OwnedDecompressor::new();
     }
-
-    pub fn decompressor(&mut self) -> Option<&mut libdeflate_sys::Decompressor> {
-        if self.libdeflate_decompressor.is_none() {
-            self.libdeflate_decompressor = libdeflate_sys::OwnedDecompressor::new();
-        }
-        self.libdeflate_decompressor.as_deref_mut()
-    }
+    slot.as_deref_mut()
 }
 
 /// Parent module references this type as `WebSocketDeflate`.
@@ -64,12 +54,10 @@ pub struct PerMessageDeflate {
     pub compress_stream: zlib::DeflateEncoder,
     pub decompress_stream: zlib::InflateDecoder,
     pub params: Params,
-    // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
-    // handles, shared across connections), but the concrete type is *this*
-    // `RareData`, which `bun_jsc` cannot name without a dep cycle, so each
-    // connection owns a fresh instance instead: a per-connection libdeflate
-    // allocation, not a correctness divergence.
-    pub rare_data: RareData,
+    // Per-VM pooled libdeflate state: its own heap allocation owned (and
+    // freed) by `bun_jsc::RareData`, so this pointer stays valid across
+    // later `&mut RareData` borrows and outlives every connection on this VM.
+    pub pool: core::ptr::NonNull<bun_jsc::rare_data::WebSocketDeflateSlot>,
 }
 
 // Constants from zlib.h
@@ -107,7 +95,10 @@ pub enum CompressError {
 bun_core::named_error_set!(DecompressError, CompressError);
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> Result<Box<Self>, bun_core::Error> {
+    pub(crate) fn init(
+        params: Params,
+        rare_data: &mut JscRareData,
+    ) -> Result<Box<Self>, bun_core::Error> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         let compress_stream = zlib::DeflateEncoder::new(
@@ -127,8 +118,7 @@ impl PerMessageDeflate {
             params,
             compress_stream,
             decompress_stream,
-            // Fresh per-connection instance; see the `rare_data` field note.
-            rare_data: RareData::default(),
+            pool: rare_data.websocket_deflate_slot(),
         }))
     }
 
@@ -137,7 +127,7 @@ impl PerMessageDeflate {
             return false;
         }
 
-        len < RareData::STACK_BUFFER_SIZE
+        len < STACK_BUFFER_SIZE
     }
 
     pub(crate) fn decompress(
@@ -149,7 +139,10 @@ impl PerMessageDeflate {
 
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
         if Self::can_use_libdeflate(in_buf.len()) {
-            if let Some(decompressor) = self.rare_data.decompressor() {
+            // SAFETY: single JS thread; the pool lives in the VM's RareData which outlives
+            // every open connection (connections are torn down by close_all_socket_groups
+            // before RareData drops).
+            if let Some(decompressor) = decompressor(unsafe { self.pool.as_mut() }) {
                 let result =
                     decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
                 if result.status == libdeflate_sys::Status::Success {

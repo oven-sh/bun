@@ -20,7 +20,7 @@ pub struct Assigns {
     pub base: Base,
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
-    pub node: bun_ptr::RawSlice<ast::Assign>,
+    pub node: bun_core::RawSlice<ast::Assign>,
     pub io: IO,
     pub state: AssignsState,
     pub ctx: AssignCtx,
@@ -48,7 +48,7 @@ impl Assigns {
         interp.alloc_node(Node::Assigns(Assigns {
             base: Base::new(StateKind::Assign, parent, shell),
             // AST arena outlives every state node — `RawSlice` invariant.
-            node: bun_ptr::RawSlice::new(node),
+            node: bun_core::RawSlice::new(node),
             io,
             state: AssignsState::Idle,
             ctx,

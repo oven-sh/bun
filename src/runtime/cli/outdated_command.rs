@@ -1,19 +1,21 @@
+use bun_install_types::{DependencyID, PackageID};
 use core::fmt::Write as _;
 
 use bstr::BStr;
 
+use bun_core::PathBuffer;
 use bun_core::fmt::{Table, TableSymbols};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
-use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
-use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
+use bun_install::{CommandLineArguments, PackageManager, resolution};
+use bun_install_types::dependency::{self, Behavior};
+use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 
@@ -182,7 +184,7 @@ impl OutdatedCommand {
             let root_pkg_id = manager
                 .root_package_id
                 .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
+            if root_pkg_id == bun_install_types::INVALID_PACKAGE_ID {
                 return Ok(());
             }
             let ids = [root_pkg_id];
@@ -471,7 +473,7 @@ impl OutdatedCommand {
                 manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
             for dep_id in pkg_deps.begin()..pkg_deps.end() {
                 let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                if package_id == bun_install::INVALID_PACKAGE_ID {
+                if package_id == bun_install_types::INVALID_PACKAGE_ID {
                     continue;
                 }
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();

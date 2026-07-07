@@ -42,7 +42,7 @@ pub fn generate_code_for_lazy_export(
     // runtime, so always generate the `module.exports = ...` form below.
     // The ESM form would synthesize `export` parts that
     // `print_dev_server_module` cannot represent.
-    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
+    if this.options.output_format == crate::options::Format::InternalBakeDev
         && exports_kind != bun_ast::ExportsKind::Cjs
     {
         exports_kind = bun_ast::ExportsKind::Cjs;
@@ -421,7 +421,7 @@ pub fn generate_code_for_lazy_export(
             if matches!(expr.data, ExprData::ECall(ref c)
                 if matches!(c.target.data, ExprData::ERequireCallTarget))
                 // if it's commonjs, use require()
-                && this.options.output_format != crate::options::OutputFormat::Cjs
+                && this.options.output_format != crate::options::Format::Cjs
             {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,

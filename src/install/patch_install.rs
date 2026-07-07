@@ -1,33 +1,32 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{DependencyID, PackageID, PreinstallState};
 
 use bstr::BStr;
 
 use bun_ast::{Loc, Log};
+use bun_core::IntrusiveField as _;
+use bun_core::PathBuffer;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
-use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
-use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
-    resolution::Resolution,
-};
+use crate::{BUN_HASH_TAG, PackageManager, lockfile::Package, resolution::Resolution};
 
 pub use crate::lockfile::PatchedDep;
 
-bun_output::declare_scope!(InstallPatch, visible);
+bun_core::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).
 pub(crate) const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
+pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
 pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
@@ -165,12 +164,12 @@ impl PatchTask {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
-        let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
+        let patch_task = unsafe { &mut *PatchTask::from_field_ptr(task) };
         patch_task.run_from_thread_pool_impl();
     }
 
     pub fn run_from_thread_pool_impl(&mut self) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             InstallPatch,
             "runFromThreadPoolImpl {}",
             <&'static str>::from(&self.callback)
@@ -209,7 +208,7 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
             <&'static str>::from(&self.callback)
@@ -314,14 +313,14 @@ impl PatchTask {
             ) {
                 PreinstallState::Done => {
                     // patched pkg in folder path, should now be handled by PackageInstall.install()
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         InstallPatch,
                         "pkg: {} done",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
                 }
                 PreinstallState::Extract => {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         InstallPatch,
                         "pkg: {} extract",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
@@ -360,9 +359,7 @@ impl PatchTask {
                             &pkg_again,
                             Some(name_and_version_hash),
                             match pkg_resolution_tag {
-                                crate::resolution_real::Tag::Npm => {
-                                    Authorization::AllowAuthorization
-                                }
+                                crate::resolution::Tag::Npm => Authorization::AllowAuthorization,
                                 _ => Authorization::NoAuthorization,
                             },
                         )?
@@ -373,7 +370,7 @@ impl PatchTask {
                     }
                 }
                 PreinstallState::ApplyPatch => {
-                    bun_output::scoped_log!(
+                    bun_core::scoped_log!(
                         InstallPatch,
                         "pkg: {} apply patch",
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
@@ -408,7 +405,7 @@ impl PatchTask {
             unreachable!()
         };
         let log = &mut patch.logger;
-        bun_output::scoped_log!(InstallPatch, "apply patch task");
+        bun_core::scoped_log!(InstallPatch, "apply patch task");
         // bun.assert(this.callback == .apply) — enforced by the match above.
 
         let dir = self.project_dir;
@@ -564,7 +561,7 @@ impl PatchTask {
             }
 
             // 5. Add bun tag
-            let bun_tag_prefix = bun_hash_tag;
+            let bun_tag_prefix = BUN_HASH_TAG;
             let mut buntagbuf: BuntagHashBuf = [0; MAX_BUNTAG_HASH_BUF_LEN];
             buntagbuf[..bun_tag_prefix.len()].copy_from_slice(bun_tag_prefix);
             let hashlen = {
@@ -604,7 +601,7 @@ impl PatchTask {
             path_in_tmpdir,
             patch.cache_dir,
             cache_dir_subpath_z,
-            sys::RenameOptions {
+            sys::RenameatConcurrentlyOptions {
                 move_fallback: true,
                 ..Default::default()
             },
@@ -862,7 +859,6 @@ impl PatchTask {
     }
 }
 
-use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;

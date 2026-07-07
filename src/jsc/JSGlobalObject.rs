@@ -1,18 +1,18 @@
 use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 
-use crate::Error as JscError; // jsc.Error (ErrorCode enum)
+use crate::ErrorCode as JscError; // jsc.Error (ErrorCode enum)
 use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_core::String
 use crate::ZigStringJsc as _;
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
-use crate::zig_string::ZigString;
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 
+use bun_core::ZigString;
 use bun_core::{Output, StackCheck, fmt as bun_fmt, perf};
 use bun_core::{OwnedString, String as BunString, strings};
 
@@ -1180,14 +1180,6 @@ impl JSGlobalObject {
         ZigGlobalObject__readableStreamToFormData(self, value, content_type)
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
-    /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
-    pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
-        ZigGlobalObject__makeNapiEnvForFFI(self)
-    }
-
     #[inline]
     pub fn assert_on_js_thread(&self) {
         if cfg!(debug_assertions) {
@@ -1490,7 +1482,7 @@ impl JSGlobalObject {
 pub use crate::GregorianDateTime;
 
 /// The enum is defined once in `bun_bundler::transpiler` (the lowest tier that names it,
-/// for `Linker::link`'s call into `PluginResolver::on_resolve`) and re-exported
+/// for `Linker::link`'s call into `__bun_plugin_runner_on_resolve`) and re-exported
 /// here so the C++ FFI signature and all `bun_jsc` callers share one nominal
 /// type — no mirror enum, no transmute.
 pub use bun_bundler::transpiler::BunPluginTarget;
@@ -1698,8 +1690,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
-
-    safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
     safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;

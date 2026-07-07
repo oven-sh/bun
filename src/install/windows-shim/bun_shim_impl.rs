@@ -48,25 +48,19 @@ use core::fmt::Write as _;
 use core::marker::ConstParamTy;
 use core::mem::{MaybeUninit, size_of};
 
-// Standalone PE: depend ONLY on `bun_windows_sys` (leaf, no native C, no
-// `#[no_mangle]` exports) so the link has no libuv/simdutf/ICU roots and the
-// binary stays tiny. `crate::compat`
-// re-exports `bun_windows_sys::*` and locally declares the few items
-// (`CreateProcessW`, `STARTUPINFOW`, `TEB`/`teb()`, …) that otherwise live in
-// `bun_sys::windows`. The local `bun_core`/`bun_str` shadows bring
-// `ffi::{slice,slice_mut,zeroed}` / `RacyCell` / `w!` into scope under the
-// same paths the in-process build resolves through the extern prelude.
-#[cfg(feature = "shim_standalone")]
-use crate::bun_core;
-#[cfg(feature = "shim_standalone")]
-use crate::compat as w;
-#[cfg(not(feature = "shim_standalone"))]
-use bun_sys::windows as w;
+// Both builds (in-process `bun_install` module AND the standalone PE) spell
+// their vocabulary against the same two leaf crates — `bun_opaque`
+// (`RacyCell`, `w!`, `ffi::{slice,slice_mut,zeroed}`) and `bun_windows_sys`
+// (Win32 externs). Neither has native C or `#[no_mangle]` exports, so the
+// standalone link has no libuv/simdutf/ICU roots and the binary stays tiny.
+// The real `bun_core` / `bun_sys` are reached for only behind
+// `#[cfg(feature = "host")]`.
+use bun_windows_sys as w;
 use w::{
     BOOL, DWORD, HANDLE, IO_STATUS_BLOCK, LARGE_INTEGER, NTSTATUS, PVOID, ULONG, UNICODE_STRING,
 };
 
-use super::_bin_linking_shim::Flags;
+use crate::bin_linking_shim::Flags;
 
 const DBG: bool = cfg!(debug_assertions);
 
@@ -74,8 +68,8 @@ const DBG: bool = cfg!(debug_assertions);
 /// `bun_shim_impl.exe`), false when compiled into bun.exe.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
-#[cfg(not(feature = "shim_standalone"))]
-bun_output::declare_scope!(bun_shim_impl, hidden);
+#[cfg(feature = "host")]
+bun_core::declare_scope!(bun_shim_impl, hidden);
 
 /// A copy of all ntdll declarations this program uses
 mod nt {
@@ -103,8 +97,8 @@ mod nt {
         pub(super) safe fn NtClose(Handle: HANDLE) -> Status;
     }
 
-    // Declared locally (not in `bun_sys::windows::ntdll`) so the standalone PE
-    // build, whose `w` alias is `crate::compat`, needs no extra re-export.
+    // Declared locally (not in `bun_windows_sys::ntdll`) so the shim needs no
+    // extra re-export in the leaf crate.
     // SAFETY: ntdll syscalls; signatures match WDK headers. Kept `unsafe fn`
     // (not `safe fn`) because both write through caller-supplied out-pointers
     // (`IoStatusBlock`, `Buffer`) — validity is a genuine caller precondition.
@@ -182,8 +176,8 @@ macro_rules! debug {
         // which fails E0080 in const-eval when `debug_assertions` is off).
         #[cfg(debug_assertions)]
         {
-            #[cfg(not(feature = "shim_standalone"))]
-            { bun_output::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
+            #[cfg(feature = "host")]
+            { bun_core::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
             #[cfg(feature = "shim_standalone")]
             {
                 // The standalone build has no logger; deliberately a no-op to
@@ -203,7 +197,7 @@ macro_rules! debug {
 /// the pointee is live).
 unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
     // SAFETY: discharged by caller per fn-level # Safety.
-    unsafe { bun_core::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
+    unsafe { bun_opaque::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
 }
 
 const FILE_GENERIC_READ: u32 = w::STANDARD_RIGHTS_READ
@@ -270,7 +264,7 @@ impl FailReason {
 
 impl core::fmt::Display for FailReason {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        #[cfg(not(feature = "shim_standalone"))]
+        #[cfg(feature = "host")]
         if bun_core::Environment::ALLOW_ASSERT && *self == FailReason::InvalidShimValidation {
             panic!(
                 "Internal Assertion: When encountering FailReason.InvalidShimValidation, you must not print the error, but rather fallback to running the .exe file"
@@ -296,7 +290,7 @@ impl core::fmt::Display for FailReason {
             // was bounded by the producer loop, and this path is single-threaded
             // (standalone exe / just-before-exit), so the bytes are stable.
             let arg_slice = unsafe {
-                bun_core::ffi::slice(FAILURE_REASON_DATA.get().cast::<u8>().cast_const(), len)
+                bun_opaque::ffi::slice(FAILURE_REASON_DATA.get().cast::<u8>().cast_const(), len)
             };
             // `arg_slice` is filled by truncating
             // UTF-16 code units to 7 bits (`& 0x7F`) — every byte is < 0x80, hence
@@ -340,7 +334,7 @@ impl core::fmt::Display for FailReason {
 }
 
 pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
-    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut io: IO_STATUS_BLOCK = bun_opaque::ffi::zeroed();
     // SAFETY: NtWriteFile is given a valid handle and a buffer that lives for the call.
     let rc = unsafe {
         nt::NtWriteFile(
@@ -383,7 +377,7 @@ impl core::fmt::Write for NtWriter {
 
 // PORTING.md §Global mutable state: standalone single-threaded shim exe (or
 // just-before-exit path when linked into bun). RacyCell — no concurrency.
-static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0; 512]);
+static FAILURE_REASON_DATA: bun_opaque::RacyCell<[u8; 512]> = bun_opaque::RacyCell::new([0; 512]);
 // Length of the argument written into `FAILURE_REASON_DATA[..len]`. The data
 // pointer is always `FAILURE_REASON_DATA.as_ptr()`, so storing only the
 // `usize` length lets this be a plain `AtomicUsize` (safe
@@ -448,8 +442,9 @@ impl LauncherMode {
 enum LauncherRet {
     /// `.launch` in non-standalone returned (validation fallback path).
     LaunchFellThrough,
-    /// `.read_without_launch` result.
-    Read(ReadWithoutLaunchResult),
+    /// `.read_without_launch` result. Only `read_without_launch` (`host`)
+    /// reads the payload; the standalone exe only matches on the variant.
+    Read(#[cfg_attr(not(feature = "host"), allow(dead_code))] ReadWithoutLaunchResult),
 }
 
 /// Abstraction over `()` (standalone), `FromBunRunContext`, and `FromBunShellContext`
@@ -521,7 +516,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     };
     // SAFETY: image_path_ptr is valid for image_path_b_len bytes per UNICODE_STRING / caller contract.
     let image_path_u16: &[u16] =
-        unsafe { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
+        unsafe { bun_opaque::ffi::slice(image_path_ptr, image_path_b_len / 2) };
     // Byte view of the same buffer — `&[u16]` → `&[u8]` is a total, panic-free
     // `bytemuck` cast (align 1, size always divides).
     let image_path_u8: &[u8] = bytemuck::cast_slice(image_path_u16);
@@ -529,7 +524,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let cmd_line_b_len = command_line.Length as usize;
     // SAFETY: CommandLine.Buffer is valid for Length bytes.
     let cmd_line_u16: &[u16] =
-        unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
+        unsafe { bun_opaque::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
     let cmd_line_u8: &[u8] = bytemuck::cast_slice(cmd_line_u16);
 
     debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
@@ -572,9 +567,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     let suffix: &'static [u16] = if IS_STANDALONE {
-        bun_core::w!("exe")
+        bun_opaque::w!("exe")
     } else {
-        bun_core::w!("bunx")
+        bun_opaque::w!("bunx")
     };
     if DBG {
         if !image_path_u16.ends_with(suffix) {
@@ -597,7 +592,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // Open the metadata file
     let mut metadata_handle: HANDLE = core::ptr::null_mut();
-    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut io: IO_STATUS_BLOCK = bun_opaque::ffi::zeroed();
     if IS_STANDALONE {
         // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
         // SAFETY: writing 4 u16s ("bunx") into buf1 at the computed offset, which is in bounds.
@@ -642,7 +637,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
             );
             debug_assert!(
-                unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!(".bunx"))
+                unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_opaque::w!(".bunx"))
             );
         }
         // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
@@ -782,7 +777,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
         loop {
             if DBG {
-                debug!("1 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
+                debug!("1 - {}", fmt16(unsafe { bun_opaque::ffi::slice(ptr, 1) }));
             }
             // SAFETY: ptr is within buf1 (left > 0 invariant below).
             if unsafe { *ptr } == '\\' as u16 {
@@ -806,7 +801,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // inlined loop to do this again, because the completion case is different
         loop {
             if DBG {
-                debug!("2 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
+                debug!("2 - {}", fmt16(unsafe { bun_opaque::ffi::slice(ptr, 1) }));
             }
             if unsafe { *ptr } == '\\' as u16 {
                 // ptr is at the position marked S, so move forward one *character*
@@ -897,7 +892,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // SAFETY: buf1_u16[0..total] is fully initialized in both build modes:
             // [0..4] by the unconditional NT_OBJECT_PREFIX store above, [4..read_ptr) by the
             // image-path memcpy, and [read_ptr..read_ptr+read_len) by NtReadFile.
-            fmt16(unsafe { bun_core::ffi::slice(buf1_u16, total) })
+            fmt16(unsafe { bun_opaque::ffi::slice(buf1_u16, total) })
         );
     }
 
@@ -1087,8 +1082,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     - NT_OBJECT_PREFIX.len()
                     - 2 /* "\"\x00".len */;
                 // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (the metadata format places '"' after the bin path).
-                let launch_slice =
-                    unsafe { bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len) };
+                let launch_slice = unsafe {
+                    bun_opaque::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len)
+                };
                 debug_assert_eq!(
                     unsafe { *buf1_u16.add(NT_OBJECT_PREFIX.len() + len) },
                     '"' as u16
@@ -1152,7 +1148,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
             // SAFETY: slice within buf1.
             let filename: &[u8] = unsafe {
-                bun_core::ffi::slice(
+                bun_opaque::ffi::slice(
                     buf1_u8.add(2 * NT_OBJECT_PREFIX.len()),
                     length_of_filename_u8,
                 )
@@ -1248,7 +1244,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // Copy into the caller-provided buffer so the returned pointer outlives this stack
         // frame (covers both the buf1-backed no-shebang path and the buf2-backed shebang path).
         // SAFETY: spawn_command_line is NUL-terminated (terminator written above).
-        let len = unsafe { bun_core::ffi::wstr_units(spawn_command_line) }.len();
+        let len = unsafe { bun_opaque::ffi::wstr_units(spawn_command_line) }.len();
         let dst = bun_ctx
             .out_buf()
             .expect("ReadWithoutLaunch requires BunCtx::out_buf() (would otherwise return a dangling stack pointer)");
@@ -1258,7 +1254,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         return LauncherRet::Read(ReadWithoutLaunchResult::CommandLine(dst, len));
     }
 
-    #[cfg(not(feature = "shim_standalone"))]
+    #[cfg(feature = "host")]
     if MODE == LauncherMode::Launch {
         // Prepare stdio for the child process, as after this we are going to *immediatly* exit
         // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
@@ -1291,7 +1287,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     //
     // Documentation for the function I am using:
     // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
-    let mut process: w::PROCESS_INFORMATION = bun_core::ffi::zeroed();
+    let mut process: w::PROCESS_INFORMATION = bun_opaque::ffi::zeroed();
     let mut startup_info = w::STARTUPINFOW {
         cb: size_of::<w::STARTUPINFOW>() as u32,
         lpReserved: core::ptr::null_mut(),
@@ -1313,7 +1309,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         hStdInput: if IS_STANDALONE {
             unsafe { (*process_parameters).hStdInput }
         } else {
-            #[cfg(not(feature = "shim_standalone"))]
+            #[cfg(feature = "host")]
             {
                 bun_sys::Fd::stdin().native()
             }
@@ -1325,7 +1321,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         hStdOutput: if IS_STANDALONE {
             unsafe { (*process_parameters).hStdOutput }
         } else {
-            #[cfg(not(feature = "shim_standalone"))]
+            #[cfg(feature = "host")]
             {
                 bun_sys::Fd::stdout().native()
             }
@@ -1337,7 +1333,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         hStdError: if IS_STANDALONE {
             unsafe { (*process_parameters).hStdError }
         } else {
-            #[cfg(not(feature = "shim_standalone"))]
+            #[cfg(feature = "host")]
             {
                 bun_sys::Fd::stderr().native()
             }
@@ -1356,7 +1352,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 // SAFETY: spawn_command_line is NUL-terminated (we wrote the terminator above).
                 debug!(
                     "lpCommandLine: {}\n",
-                    fmt16(unsafe { bun_core::ffi::wstr_units(spawn_command_line) })
+                    fmt16(unsafe { bun_opaque::ffi::wstr_units(spawn_command_line) })
                 );
             }
             // SAFETY: all pointers are valid; spawn_command_line is NUL-terminated mutable buffer.
@@ -1415,9 +1411,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     if DBG {
                                         debug_assert!(
                                             unsafe {
-                                                bun_core::ffi::wstr_units(spawn_command_line)
+                                                bun_opaque::ffi::wstr_units(spawn_command_line)
                                             }
-                                            .starts_with(bun_core::w!("node "))
+                                            .starts_with(bun_opaque::w!("node "))
                                         );
                                     }
 
@@ -1427,7 +1423,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     //                  ^~~ replace these three bytes with 'bun'
                                     // SAFETY: spawn_command_line[1..4] is within the buffer.
                                     unsafe {
-                                        let bun = bun_core::w!("bun");
+                                        let bun = bun_opaque::w!("bun");
                                         core::ptr::copy_nonoverlapping(
                                             bun.as_ptr(),
                                             spawn_command_line.add(1),
@@ -1447,9 +1443,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     if DBG {
                                         debug_assert!(
                                             unsafe {
-                                                bun_core::ffi::wstr_units(spawn_command_line)
+                                                bun_opaque::ffi::wstr_units(spawn_command_line)
                                             }
-                                            .starts_with(bun_core::w!("bun "))
+                                            .starts_with(bun_opaque::w!("bun "))
                                         );
                                     }
                                     return LauncherMode::fail(
@@ -1463,8 +1459,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             if attempt_number == 1 {
                                 if DBG {
                                     debug_assert!(
-                                        unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
-                                            .starts_with(bun_core::w!("bun "))
+                                        unsafe { bun_opaque::ffi::wstr_units(spawn_command_line) }
+                                            .starts_with(bun_opaque::w!("bun "))
                                     );
                                 }
                                 return LauncherMode::fail(
@@ -1530,7 +1526,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     unreachable!("above loop should not exit");
 }
 
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(feature = "host")]
 type CommandContext<'a> = bun_options_types::context::Context<'a>;
 #[cfg(feature = "shim_standalone")]
 type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standalone
@@ -1541,7 +1537,7 @@ type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standa
 // to SharedReadOnly. Storing `&'a mut ContextData` and casting `*const→*mut` in
 // the accessor would violate Stacked Borrows the moment `Run.boot` writes through
 // it.
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(feature = "host")]
 type CommandContextPtr = *mut bun_options_types::context::ContextData;
 #[cfg(feature = "shim_standalone")]
 type CommandContextPtr = (); // unused in standalone
@@ -1569,12 +1565,14 @@ pub struct FromBunRunContext {
 impl FromBunRunContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
+    /// Only the `host` entry points `debug_assert!` on it.
     #[inline]
+    #[cfg_attr(any(not(feature = "host"), not(debug_assertions)), allow(dead_code))]
     pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
         // the duration of the call. Borrow tied to `&self`.
-        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
+        unsafe { bun_opaque::ffi::slice(self.base_path, self.base_path_len) }
     }
 }
 
@@ -1587,7 +1585,7 @@ impl BunCtx for &FromBunRunContext {
     }
     fn arguments(&self) -> &[u16] {
         // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
+        unsafe { bun_opaque::ffi::slice(self.arguments, self.arguments_len) }
     }
     fn handle(&self) -> HANDLE {
         self.handle
@@ -1601,7 +1599,7 @@ impl BunCtx for &FromBunRunContext {
         // raw `*mut` is `Copy` through `&self` without retag and retains the
         // Unique provenance. It is exclusively owned for the duration of
         // `try_startup_from_bun_js` and not aliased while `launcher` runs.
-        #[cfg(not(feature = "shim_standalone"))]
+        #[cfg(feature = "host")]
         (self.direct_launch_with_bun_js)(wpath, unsafe { &mut *self.cli_context });
         #[cfg(feature = "shim_standalone")]
         {
@@ -1622,7 +1620,7 @@ impl BunCtx for &FromBunRunContext {
 /// If the launch is successful, this function does not return. If a validation error occurs,
 /// this returns void, to which the caller should still try invoking the exe directly. This
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(feature = "host")]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1657,12 +1655,14 @@ pub(crate) type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
 impl FromBunShellContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
+    /// Only the `host` entry points `debug_assert!` on it.
     #[inline]
+    #[cfg_attr(any(not(feature = "host"), not(debug_assertions)), allow(dead_code))]
     pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
         // from a live `[u16]` buffer it owns for the duration of the call.
         // Borrow tied to `&self`.
-        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
+        unsafe { bun_opaque::ffi::slice(self.base_path, self.base_path_len) }
     }
 }
 
@@ -1675,7 +1675,7 @@ impl BunCtx for &FromBunShellContext {
     }
     fn arguments(&self) -> &[u16] {
         // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
+        unsafe { bun_opaque::ffi::slice(self.arguments, self.arguments_len) }
     }
     fn handle(&self) -> HANDLE {
         self.handle
@@ -1707,7 +1707,7 @@ pub enum ReadWithoutLaunchResult {
 ///
 /// The cost of spawning is about 5-12ms, and the unicode conversions are way
 /// faster than that, so this is a huge win.
-#[cfg(not(feature = "shim_standalone"))]
+#[cfg(feature = "host")]
 pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchResult {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1721,7 +1721,7 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
 /// Main function for `bun_shim_impl.exe`
 #[cfg(feature = "shim_standalone")]
 #[inline]
-pub(crate) fn main() -> ! {
+pub fn main() -> ! {
     const _: () = assert!(IS_STANDALONE);
     // The standalone crate enforces the single-threaded, CRT-free build shape
     // structurally via `#![no_std]` / `#![no_main]` and its link configuration

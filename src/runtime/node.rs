@@ -19,10 +19,10 @@ pub mod assert {
 
 #[path = "node/types.rs"]
 pub mod types;
+pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 pub use types::{
-    BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
-    PathOrBuffer, PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer,
-    js_assert_encoding_valid, mode_from_js,
+    BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding, FileSystemFlags, PathOrBlob,
+    PathOrBuffer, StringOrBuffer, Valid, VectorArrayBuffer, js_assert_encoding_valid, mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -168,12 +168,12 @@ pub mod zlib {
 #[cfg(unix)]
 pub type uid_t = libc::uid_t;
 #[cfg(not(unix))]
-pub type uid_t = bun_sys::windows::libuv::uv_uid_t;
+pub type uid_t = bun_libuv_sys::uv_uid_t;
 
 #[cfg(unix)]
 pub type gid_t = libc::gid_t;
 #[cfg(not(unix))]
-pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
+pub type gid_t = bun_libuv_sys::uv_gid_t;
 
 /// Node.js expects the error to include contextual information
 /// - "syscall"
@@ -288,7 +288,7 @@ pub trait MaybeErrorTodo: Sized + Default {
     }
 }
 
-/// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
+/// Extension surface providing `Maybe::todo()` on `bun_sys::Result<T>`
 /// (= `core::result::Result<T, bun_sys::Error>`), the type-alias form of
 /// `Maybe` used throughout `node/`.
 pub trait MaybeTodo: Sized {
@@ -317,8 +317,8 @@ pub trait MaybeSysExt<R>: Sized {
     ) -> Self;
     fn to_array_buffer(
         self,
-        global_object: &crate::jsc::JSGlobalObject,
-    ) -> bun_jsc::JsResult<crate::jsc::JSValue>
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue>
     where
         R: Into<Vec<u8>>;
     fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self;
@@ -372,8 +372,8 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
 
     fn to_array_buffer(
         self,
-        global_object: &crate::jsc::JSGlobalObject,
-    ) -> bun_jsc::JsResult<crate::jsc::JSValue>
+        global_object: &bun_jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<bun_jsc::JSValue>
     where
         R: Into<Vec<u8>>,
     {

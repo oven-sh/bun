@@ -1,3 +1,4 @@
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID};
 use core::cell::Cell;
 
 use bun_core::{Global, Output};
@@ -7,20 +8,18 @@ use bun_paths::resolve_path::join_abs_string_z;
 use bun_semver::{ExternalString, String as SemverString};
 use bun_sys as sys;
 
-use crate::bun_json as json;
-use crate::bun_json::Expr;
-use crate::lockfile_real::StringBuilder;
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
-use crate::package_manager_real::options::LogLevel;
+use crate::lockfile::StringBuilder;
+use crate::lockfile::package::{Package, PackageColumns, ResolverContext, Scripts};
+use crate::package_manager_real::package_manager_options::LogLevel;
 use crate::package_manager_real::{
     PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
 };
-use crate::repository_real::{Repository, RepositoryExt as _};
+use crate::repository::RepositoryExt as _;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
-use crate::{
-    DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
-    TaskCallbackContext, initialize_store,
-};
+use crate::{ExtractData, Resolution, TaskCallbackContext, initialize_store};
+use bun_ast::Expr;
+use bun_install_types::resolver_hooks::Repository;
+use bun_parsers::json;
 
 // ──────────────────────────────────────────────────────────────────────────
 // GitResolver

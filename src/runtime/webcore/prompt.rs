@@ -1,10 +1,10 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::Output;
+use bun_core::ZigString;
 use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
@@ -180,11 +180,11 @@ pub mod prompt {
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }
 
-    impl ReadByte for bun_core::output::BufferedStdin {
+    impl ReadByte for bun_sys::stdio::BufferedStdin {
         type Error = bun_core::Error;
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
-            bun_core::output::BufferedStdin::read_byte(self)
+            bun_sys::stdio::read_byte(self)
         }
     }
 
@@ -309,8 +309,8 @@ pub mod prompt {
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
         // SAFETY: process-global static; prompt() runs single-threaded on the JS
         // main thread, so the exclusive borrow is sound for this scope.
-        let reader: &mut bun_core::output::BufferedStdin =
-            unsafe { &mut *Output::buffered_stdin_reader() };
+        let reader: &mut bun_sys::stdio::BufferedStdin =
+            unsafe { &mut *bun_sys::stdio::buffered_stdin() };
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string

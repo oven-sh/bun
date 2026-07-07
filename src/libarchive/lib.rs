@@ -9,10 +9,10 @@ use core::ffi::{c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
+#[cfg(unix)]
+use bun_core::PathBuffer;
 use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
-#[cfg(unix)]
-use bun_paths::PathBuffer;
 use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;

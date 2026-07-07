@@ -163,28 +163,27 @@ pub enum SendStatus {
 pub use bun_core::Timespec;
 
 // Opaque FFI handles (Nomicon pattern) — what higher tiers reach for when the
-// real module body isn't needed. See `bun_core::opaque_extern!` doc for the
+// real module body isn't needed. See `bun_opaque::opaque_ffi!` doc for the
 // `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
 // as `safe fn` and drop per-call-site `unsafe { }`.
-bun_core::opaque_extern!(
+bun_opaque::opaque_ffi!(
     pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
     pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
 // ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
-// The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
-// here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
-// upward dep, the opaque handle gets thin inherent methods that forward to
-// `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
-// This is the same link-time-dispatch pattern as other `*_sys` crates use for
-// their C backends — only here the "backend" is Rust in a higher tier.
-// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
-// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
+// The full `UpgradedDuplex` lives in `bun_runtime::socket`; `socket.rs` here
+// dispatches to it from the low-tier `InternalSocket` enum. To avoid an upward
+// dep, the opaque handle gets thin inherent methods that forward to
+// `extern "Rust"` symbols which the runtime crate exports with
+// `#[unsafe(no_mangle)]`. Signatures must stay in sync with
+// `src/runtime/socket/UpgradedDuplex.rs`.
+// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_ffi!` ZST handle (`!Freeze`
 // via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
 // scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
-unsafe extern "C" {
+unsafe extern "Rust" {
     safe fn UpgradedDuplex__ssl_error(this: &UpgradedDuplex) -> us_bun_verify_error_t;
     safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
@@ -263,10 +262,10 @@ impl UpgradedDuplex {
 // ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
 // Same link-time-dispatch as `UpgradedDuplex` above: the real
 // `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
-// forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`.
+// forwards to `extern "Rust"` symbols that the runtime crate exports with
+// `#[unsafe(no_mangle)]`.
 #[cfg(windows)]
-unsafe extern "C" {
+unsafe extern "Rust" {
     safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
     safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
@@ -319,10 +318,12 @@ impl WindowsNamedPipe {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: see `UpgradedDuplex::encode_and_write`.
         unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: see `UpgradedDuplex::raw_write`.
         unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
@@ -439,7 +440,7 @@ pub use socket::{
 
 // ───────────────────────────── re-exports ────────────────────────────────────
 
-pub use internal_loop_data::InternalLoopData;
+pub use internal_loop_data::{InternalLoopData, LoopParent};
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
 pub use loop_::{Loop, PosixLoop};
@@ -460,8 +461,7 @@ pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
-/// Legacy aliases for `App<SSL>` / `Response<SSL>`.
-pub type NewApp<const SSL: bool> = app::App<SSL>;
-pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
+pub use app::App;
+pub use response::Response;
 pub type Socket = us_socket::us_socket_t;
 pub type SocketContext = us_socket_context_t;

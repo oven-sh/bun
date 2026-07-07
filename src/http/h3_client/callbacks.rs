@@ -258,7 +258,7 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
-    let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
+    let slice = unsafe { bun_opaque::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
     stream.session_mut().deliver(stream, fin != 0);
 

@@ -4,7 +4,10 @@ use core::ptr::NonNull;
 use bun_sys::FdExt as _;
 
 use bun_core::String as BunString;
+use bun_http_types::FetchRedirect::CommonAbortReason;
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
 use bun_http_types::Method::Method;
+use bun_jsc::SystemErrorJsc as _;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
@@ -245,9 +248,9 @@ where
 // stream handling, error handling.
 use bun_collections::VecExt;
 use bun_core::Output;
+use bun_core::PathBuffer;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
-use bun_paths::PathBuffer;
 use std::io::Write as _;
 // Forward to the real module (now declared in `crate::api`). `take` is reshaped
 // from `Option<NonNull<T>>` to an unbounded exclusive borrow so call sites can invoke
@@ -351,11 +354,7 @@ mod shim {
         bun_ptr::BackRef::from(s).aborted()
     }
     #[inline]
-    pub(super) fn signal_fire(
-        s: NonNull<AbortSignal>,
-        g: &JSGlobalObject,
-        r: jsc::CommonAbortReason,
-    ) {
+    pub(super) fn signal_fire(s: NonNull<AbortSignal>, g: &JSGlobalObject, r: CommonAbortReason) {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(s).signal(g, r)
     }
@@ -416,26 +415,7 @@ mod shim {
 }
 use bun_options_types::schema::api as Api;
 
-use bun_js_parser::parser::Runtime::Fallback;
-
-/// NOTE: `Api.JsException` is split across two crates —
-/// `bun_jsc::schema_api::JsException` (carries `stack`, used by
-/// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle).
-/// Bridge the two here so the
-/// fallback page actually carries the captured exceptions instead of an empty
-/// array (react-response.test.ts asserts `exceptions[0].message`).
-fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
-    list.into_iter()
-        .map(|ex| Api::JsException {
-            name: (!ex.name.is_empty()).then_some(ex.name),
-            message: (!ex.message.is_empty()).then_some(ex.message),
-            runtime_type: Some(ex.runtime_type),
-            // jsc copy widened `code` to u16 (from `u16::from(u8)`); spec is u8.
-            code: Some(ex.code as u8),
-        })
-        .collect()
-}
+use crate::server::fallback::Fallback;
 
 bun_core::declare_scope!(RequestContext, visible);
 bun_core::declare_scope!(ReadableStream, visible);
@@ -614,7 +594,7 @@ where
         self.request_body.take();
     }
 
-    pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
+    pub fn set_signal_aborted(&mut self, reason: CommonAbortReason) {
         if let Some(signal) = &self.signal {
             if let Some(server) = self.server {
                 // server is a BACKREF — valid while this RequestContext is alive
@@ -1065,15 +1045,7 @@ where
                 code: err.as_u16(),
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
-                build: {
-                    // `log.to_api()` returns `bun_ast::api::Log`; the schema
-                    // crate has its own `api::Log` (msgs omitted). Map fields.
-                    let api_log = log.to_api();
-                    Api::Log {
-                        warnings: api_log.warnings,
-                        errors: api_log.errors,
-                    }
-                },
+                build: log.to_api(),
             }),
         });
 
@@ -1428,11 +1400,7 @@ where
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
             if !shim::signal_aborted(signal) {
-                shim::signal_fire(
-                    signal,
-                    global_this,
-                    jsc::CommonAbortReason::ConnectionClosed,
-                );
+                shim::signal_fire(signal, global_this, CommonAbortReason::ConnectionClosed);
                 any_js_calls.set(true);
             }
             shim::signal_release(signal);
@@ -1518,11 +1486,7 @@ where
         // if signal is not aborted, abort the signal
         if let Some(signal) = self.signal.take() {
             if self.flags.aborted() && !shim::signal_aborted(signal) {
-                shim::signal_fire(
-                    signal,
-                    global_this,
-                    jsc::CommonAbortReason::ConnectionClosed,
-                );
+                shim::signal_fire(signal, global_this, CommonAbortReason::ConnectionClosed);
             }
             shim::signal_release(signal);
         }
@@ -1773,7 +1737,7 @@ where
                         base_err.with_fd(*pathlike_fd)
                     }
                 };
-                let mut sys: jsc::SystemError = err.to_system_error().into();
+                let mut sys = err.to_system_error();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
@@ -1831,7 +1795,7 @@ where
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
-                    .map(|h| h.fast_has(jsc::HTTPHeaderName::ContentRange))
+                    .map(|h| h.fast_has(HTTPHeaderName::ContentRange))
                     .unwrap_or(false)
         } else {
             false
@@ -2355,7 +2319,7 @@ where
                 // SAFETY: BACKREF
                 let global_this = self.server().global_this();
                 body.to_error_instance(
-                    Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
+                    Body::ValueError::AbortReason(CommonAbortReason::ConnectionClosed),
                     global_this,
                 )?;
                 return Ok(true);
@@ -2499,7 +2463,7 @@ where
                 // first respect the headers
                 if !HTTP3 {
                     if let Some(transfer_encoding) =
-                        headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
+                        headers.fast_get(HTTPHeaderName::TransferEncoding)
                     {
                         // fastGet() borrows the header map's StringImpl; renderMetadata() ->
                         // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
@@ -2512,7 +2476,7 @@ where
                         return;
                     }
                 }
-                if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
+                if let Some(content_length) = headers.fast_get(HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
                     let content_length_str = content_length.to_slice();
@@ -2984,7 +2948,6 @@ where
                         (*std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut())
                             .run_error_handler(err, Some(&mut exception_list));
                     }
-                    let exception_list = jsc_exceptions_to_api(exception_list);
 
                     // The fallback page below writes into `resp`, which must
                     // not be dereferenced once the sink has already ended the
@@ -3416,7 +3379,7 @@ where
             (vm.on_unhandled_rejection)(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
-            let exception_list = jsc_exceptions_to_api(exception_list_upstream);
+            let exception_list = exception_list_upstream;
             let log = vm.log_mut().unwrap();
             // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
@@ -3446,7 +3409,7 @@ where
         value: JSValue,
         status: u16,
     ) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = &*server;
@@ -3568,7 +3531,7 @@ where
     }
 
     pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         let Some(resp) = self.resp else { return };
         if resp.has_responded() {
             return;
@@ -3607,8 +3570,8 @@ where
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(mut headers_) = response.swap_init_headers() {
-            has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
-            has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
+            has_content_disposition = headers_.fast_has(HTTPHeaderName::ContentDisposition);
+            has_content_range = headers_.fast_has(HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.
@@ -3747,14 +3710,14 @@ where
 
     fn do_write_headers(&mut self, headers: &mut FetchHeaders) {
         ctx_log!("writeHeaders");
-        headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
-        headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
+        headers.fast_remove(HTTPHeaderName::ContentLength);
+        headers.fast_remove(HTTPHeaderName::TransferEncoding);
         if HTTP3 {
             // RFC 9114 §4.2: connection-specific fields are malformed.
-            headers.fast_remove(jsc::HTTPHeaderName::Connection);
-            headers.fast_remove(jsc::HTTPHeaderName::KeepAlive);
-            headers.fast_remove(jsc::HTTPHeaderName::ProxyConnection);
-            headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
+            headers.fast_remove(HTTPHeaderName::Connection);
+            headers.fast_remove(HTTPHeaderName::KeepAlive);
+            headers.fast_remove(HTTPHeaderName::ProxyConnection);
+            headers.fast_remove(HTTPHeaderName::Upgrade);
         }
         if let Some(resp) = self.resp {
             headers.to_uws_response(Self::RESP_KIND, any_response_as_ptr(resp));
@@ -3898,7 +3861,7 @@ where
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the
             // caller for the duration of the synchronous `on_data` call.
-            let borrowed = bun_ptr::RawSlice::new(chunk);
+            let borrowed = bun_core::RawSlice::new(chunk);
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
@@ -4485,7 +4448,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
-            if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
+            if let Some(content) = headers_.fast_get(HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();

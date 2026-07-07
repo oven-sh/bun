@@ -14,33 +14,33 @@ use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Sto
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
+use bun_core::IntrusiveField as _;
 use bun_core::String as BunString;
 use bun_core::{self, Error};
 use bun_io::{self as io, FileAction};
-#[cfg(windows)]
+use bun_jsc::SystemErrorJsc as _;
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
+#[cfg(windows)]
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
+use bun_libuv_sys as libuv;
 #[cfg(not(windows))]
 use bun_sys::Stat;
-#[cfg(windows)]
-use bun_sys::windows::libuv;
 use bun_sys::{self, Fd};
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use bun_threading::{WorkPool, WorkPoolTask};
 
-bun_output::declare_scope!(WriteFile, hidden);
-bun_output::declare_scope!(ReadFile, hidden);
+bun_core::declare_scope!(WriteFile, hidden);
+bun_core::declare_scope!(ReadFile, hidden);
 
 macro_rules! bloblog {
-    ($($t:tt)*) => { bun_output::scoped_log!(WriteFile, $($t)*) };
+    ($($t:tt)*) => { bun_core::scoped_log!(WriteFile, $($t)*) };
 }
 #[cfg(windows)]
 macro_rules! log {
-    ($($t:tt)*) => { bun_output::scoped_log!(ReadFile, $($t)*) };
+    ($($t:tt)*) => { bun_core::scoped_log!(ReadFile, $($t)*) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
 // and are guaranteed live (see SAFETY notes below).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for ReadFile {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::ReadFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
         unsafe { (*this).run(task) }
@@ -241,7 +241,7 @@ impl FileOpener for ReadFile {
 }
 
 impl FileCloser for ReadFile {
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
+    const IO_TAG: bun_io::Tag = bun_io::Tag::Owned;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -296,7 +296,7 @@ impl FileCloser for ReadFile {
             fd,
             poll: &mut this.io_poll,
             ctx,
-            tag: <Self as FileCloser>::IO_TAG,
+            owner: &READ_FILE_POLL_VTABLE,
             on_done,
         })
     }
@@ -310,10 +310,33 @@ impl FileCloser for ReadFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
         // recover parent.
-        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
+        let this = unsafe { &mut *ReadFile::from_field_ptr(task) };
         this.close_after_io = false;
         ReadFile::update(this);
     }
+}
+
+/// Installed into `ReadFile.io_poll.owner` when the poll registers; the io
+/// loop dispatches readiness through it.
+pub(crate) static READ_FILE_POLL_VTABLE: io::PollOwnerVTable = io::PollOwnerVTable {
+    on_ready: read_file_poll_on_ready,
+    on_io_error: read_file_poll_on_io_error,
+};
+
+/// # Safety
+/// `poll` is the `io_poll` field of a live `ReadFile`.
+unsafe fn read_file_poll_on_ready(poll: *mut io::Poll) {
+    // SAFETY: per fn contract.
+    let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
+    this.on_ready();
+}
+
+/// # Safety
+/// `poll` is the `io_poll` field of a live `ReadFile`.
+unsafe fn read_file_poll_on_io_error(poll: *mut io::Poll, err: &bun_sys::Error) {
+    // SAFETY: per fn contract.
+    let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
+    this.on_io_error(err);
 }
 
 impl ReadFile {
@@ -404,8 +427,6 @@ impl ReadFile {
         )
     }
 
-    pub const IO_TAG: io::Tag = io::Tag::ReadFile;
-
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
         self.task = WorkPoolTask {
@@ -427,7 +448,7 @@ impl ReadFile {
     pub fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
         self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-        self.system_error = Some(err.to_system_error().into());
+        self.system_error = Some(err.to_system_error());
         self.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_read_loop_task,
@@ -465,7 +486,7 @@ impl ReadFile {
             ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
             fd: this.opened_fd,
             poll: &mut this.io_poll,
-            tag: ReadFile::IO_TAG,
+            owner: &READ_FILE_POLL_VTABLE,
         })
     }
 
@@ -544,7 +565,7 @@ impl ReadFile {
                         }
                         _ => {
                             self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-                            self.system_error = Some(err.to_system_error().into());
+                            self.system_error = Some(err.to_system_error());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
                                     if self.file_store.pathlike.is_path() {
@@ -673,7 +694,7 @@ impl ReadFile {
             Ok(result) => result,
             Err(err) => {
                 self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-                self.system_error = Some(err.to_system_error().into());
+                self.system_error = Some(err.to_system_error());
                 return;
             }
         };
@@ -752,8 +773,7 @@ impl ReadFile {
                 self.errno = Some(bun_core::err!("OutOfMemory"));
                 self.system_error = Some(
                     bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
-                        .to_system_error()
-                        .into(),
+                        .to_system_error(),
                 );
                 self.on_finish();
                 return;
@@ -787,7 +807,7 @@ impl ReadFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
         // recover parent.
-        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
+        let this = unsafe { &mut *ReadFile::from_field_ptr(task) };
 
         this.update();
     }
@@ -975,7 +995,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> FileCloser for ReadFileUV<'a> {
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
+    const IO_TAG: bun_io::Tag = bun_io::Tag::Owned;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -1174,7 +1194,7 @@ impl<'a> ReadFileUV<'a> {
                 Some(Self::on_file_initial_stat),
             )
         };
-        if let Some(errno) = rc.err_enum_e() {
+        if let Some(errno) = rc.err_enum_or_unknown() {
             self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
@@ -1195,7 +1215,7 @@ impl<'a> ReadFileUV<'a> {
 
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
-        if let Some(errno) = this.req.result.err_enum_e() {
+        if let Some(errno) = this.req.result.err_enum_or_unknown() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
@@ -1363,7 +1383,7 @@ impl<'a> ReadFileUV<'a> {
                 )
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
-            if let Some(errno) = res.err_enum_e() {
+            if let Some(errno) = res.err_enum_or_unknown() {
                 self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
                 self.system_error = Some(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::read)
@@ -1390,7 +1410,7 @@ impl<'a> ReadFileUV<'a> {
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         let result = this.req.result;
 
-        if let Some(errno) = result.err_enum_e() {
+        if let Some(errno) = result.err_enum_or_unknown() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)

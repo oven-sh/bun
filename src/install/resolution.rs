@@ -10,9 +10,10 @@ use bun_semver::String;
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
-use crate::dependency::{self, TagExt as _};
-use crate::repository::{Repository, RepositoryExt as _};
-use crate::versioned_url::VersionedURLType;
+use crate::repository::RepositoryExt as _;
+use bun_install_types::dependency::{self};
+use bun_install_types::resolver_hooks::Repository;
+use bun_install_types::resolver_hooks::{ResolutionValue, VersionedURLType};
 
 pub type Resolution = ResolutionType<u64>;
 
@@ -28,7 +29,7 @@ impl Resolution {
         version_buf: &[u8],
         resolution_buf: &[u8],
     ) -> bool {
-        if self.tag == Tag::Npm && version.tag == dependency::VersionTag::Npm {
+        if self.tag == Tag::Npm && version.tag == dependency::Tag::Npm {
             return version.npm().version.satisfies(
                 self.npm().version,
                 version_buf,
@@ -36,11 +37,11 @@ impl Resolution {
             );
         }
 
-        if self.tag == Tag::Git && version.tag == dependency::VersionTag::Git {
+        if self.tag == Tag::Git && version.tag == dependency::Tag::Git {
             return self.git().eql(version.git(), resolution_buf, version_buf);
         }
 
-        if self.tag == Tag::Github && version.tag == dependency::VersionTag::Github {
+        if self.tag == Tag::Github && version.tag == dependency::Tag::Github {
             return self
                 .github()
                 .eql(version.github(), resolution_buf, version_buf);
@@ -55,20 +56,15 @@ impl Resolution {
 pub struct ResolutionType<SemverInt: VersionInt> {
     pub tag: Tag,
     pub _padding: [u8; 7],
-    pub value: Value<SemverInt>,
+    pub value: ResolutionValue<SemverInt>,
 }
-
-/// Compat alias for the stub-era flat `npm` field type. Identical layout to
-/// `VersionedURLType<u64>` (`{ version, url }`); kept so existing
-/// `Value { npm: NpmVersionInfo { .. } }` initializers keep resolving.
-pub(crate) type NpmVersionInfo = VersionedURLType<u64>;
 
 impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
     fn default() -> Self {
         Self {
             tag: Tag::Uninitialized,
             _padding: [0; 7],
-            value: Value { uninitialized: () },
+            value: ResolutionValue { uninitialized: () },
         }
     }
 }
@@ -102,7 +98,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     pub const ZEROED: Self = Self {
         tag: Tag::Uninitialized,
         _padding: [0; 7],
-        value: Value { uninitialized: () },
+        value: ResolutionValue { uninitialized: () },
     };
 
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
@@ -184,14 +180,14 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             return Ok(Self::init(TaggedValue::Folder(string_buf.append(folder)?)));
         }
 
-        match dependency::VersionTag::infer(res_str) {
-            dependency::VersionTag::Git => Ok(Self::init(TaggedValue::Git(
-                Repository::parse_append_git(res_str, string_buf)?,
-            ))),
-            dependency::VersionTag::Github => Ok(Self::init(TaggedValue::Github(
+        match dependency::Tag::infer(res_str) {
+            dependency::Tag::Git => Ok(Self::init(TaggedValue::Git(Repository::parse_append_git(
+                res_str, string_buf,
+            )?))),
+            dependency::Tag::Github => Ok(Self::init(TaggedValue::Github(
                 Repository::parse_append_github(res_str, string_buf)?,
             ))),
-            dependency::VersionTag::Tarball => {
+            dependency::Tag::Tarball => {
                 if dependency::is_remote_tarball(res_str) {
                     return Ok(Self::init(TaggedValue::RemoteTarball(
                         string_buf.append(res_str)?,
@@ -202,7 +198,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                     string_buf.append(res_str)?,
                 )))
             }
-            dependency::VersionTag::Npm => {
+            dependency::Tag::Npm => {
                 let version_literal = string_buf.append(res_str)?;
                 let parsed = semver::VersionType::<SemverInt>::parse(
                     version_literal.sliced(string_buf.bytes.as_slice()),
@@ -222,7 +218,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 Ok(Self {
                     tag: Tag::Npm,
                     _padding: [0; 7],
-                    value: Value {
+                    value: ResolutionValue {
                         npm: VersionedURLType {
                             version: parsed.version.min(),
 
@@ -234,22 +230,20 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             }
 
             // covered above
-            dependency::VersionTag::Workspace => Err(FromTextLockfileError::UnexpectedResolution),
-            dependency::VersionTag::Symlink => Err(FromTextLockfileError::UnexpectedResolution),
-            dependency::VersionTag::Folder => Err(FromTextLockfileError::UnexpectedResolution),
+            dependency::Tag::Workspace => Err(FromTextLockfileError::UnexpectedResolution),
+            dependency::Tag::Symlink => Err(FromTextLockfileError::UnexpectedResolution),
+            dependency::Tag::Folder => Err(FromTextLockfileError::UnexpectedResolution),
 
             // even though it's a dependency type, it's not
             // possible for 'catalog:' to be written to the
             // lockfile for any resolution because the install
             // will fail it it's not successfully replaced by
             // a version
-            dependency::VersionTag::Catalog => Err(FromTextLockfileError::UnexpectedResolution),
+            dependency::Tag::Catalog => Err(FromTextLockfileError::UnexpectedResolution),
 
             // should not happen
-            dependency::VersionTag::DistTag => Err(FromTextLockfileError::UnexpectedResolution),
-            dependency::VersionTag::Uninitialized => {
-                Err(FromTextLockfileError::UnexpectedResolution)
-            }
+            dependency::Tag::DistTag => Err(FromTextLockfileError::UnexpectedResolution),
+            dependency::Tag::Uninitialized => Err(FromTextLockfileError::UnexpectedResolution),
         }
     }
 
@@ -297,14 +291,14 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             )));
         }
 
-        match dependency::VersionTag::infer(res_str) {
-            dependency::VersionTag::Git => Ok(Resolution::init(TaggedValue::Git(
+        match dependency::Tag::infer(res_str) {
+            dependency::Tag::Git => Ok(Resolution::init(TaggedValue::Git(
                 Repository::parse_append_git(res_str, string_buf)?,
             ))),
-            dependency::VersionTag::Github => Ok(Resolution::init(TaggedValue::Github(
+            dependency::Tag::Github => Ok(Resolution::init(TaggedValue::Github(
                 Repository::parse_append_github(res_str, string_buf)?,
             ))),
-            dependency::VersionTag::Tarball => {
+            dependency::Tag::Tarball => {
                 if dependency::is_remote_tarball(res_str) {
                     return Ok(Resolution::init(TaggedValue::RemoteTarball(
                         string_buf.append(res_str)?,
@@ -314,7 +308,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                     string_buf.append(res_str)?,
                 )))
             }
-            dependency::VersionTag::Npm => {
+            dependency::Tag::Npm => {
                 let version_literal = string_buf.append(res_str)?;
                 // This fn returns `Resolution` (= `ResolutionType<u64>`),
                 // not `Self`, so parse at `u64` regardless of the impl's SemverInt.
@@ -339,14 +333,12 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 })))
             }
 
-            dependency::VersionTag::Workspace => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
-            dependency::VersionTag::Symlink => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
-            dependency::VersionTag::Folder => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
-            dependency::VersionTag::Catalog => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
-            dependency::VersionTag::DistTag => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
-            dependency::VersionTag::Uninitialized => {
-                Err(FromPnpmLockfileError::InvalidPnpmLockfile)
-            }
+            dependency::Tag::Workspace => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
+            dependency::Tag::Symlink => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
+            dependency::Tag::Folder => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
+            dependency::Tag::Catalog => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
+            dependency::Tag::DistTag => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
+            dependency::Tag::Uninitialized => Err(FromPnpmLockfileError::InvalidPnpmLockfile),
         }
     }
 
@@ -379,7 +371,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     pub fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
-        B: StringBuilderLike,
+        B: bun_semver::StringBuilder,
     {
         match self.tag {
             Tag::Npm => self.npm().count(buf, builder),
@@ -399,7 +391,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     /// that `ResolutionType: Clone + Copy`.
     pub fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
-        B: StringBuilderLike,
+        B: bun_semver::StringBuilder,
     {
         let value = match self.tag {
             Tag::Npm => value_init(TaggedValue::Npm(self.npm().clone(buf, builder))),
@@ -525,10 +517,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 }
-
-// Local alias for the `bun_semver::StringBuilder` trait (`count` + `append<T>`),
-// kept so dependents that named `resolution::StringBuilderLike` still resolve.
-pub use bun_semver::StringBuilder as StringBuilderLike;
 
 pub struct StorePathFormatter<'a, SemverInt: VersionInt> {
     res: &'a ResolutionType<SemverInt>,
@@ -869,18 +857,8 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
     }
 }
 
-/// Re-export of the lower-tier `#[repr(C)]` union — `bun_install_types` owns the
-/// data definition so the resolver-side `hooks::Resolution` and the install-side
-/// [`ResolutionType`] share the SAME nominal `value` type. Sharing the nominal
-/// type (rather than a layout-identical local duplicate) lets
-/// `auto_installer::resolution_from_hooks` copy `value` by plain assignment
-/// instead of `transmute`. Constructors that need the install-side
-/// zero-padded-init contract live below as free fns ([`value_zero`] /
-/// [`value_init`]) since inherent impls on a foreign type are forbidden.
-pub type Value<SemverInt> = bun_install_types::resolver_hooks::ResolutionValue<SemverInt>;
-
 #[inline]
-pub(crate) fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
+pub(crate) fn value_zero<SemverInt: VersionInt>() -> ResolutionValue<SemverInt> {
     // SAFETY: all-zero is a valid Value — every variant is POD with a valid
     // all-zero representation (Semver String, Repository, VersionedURLType are
     // all #[repr(C)] with no NonNull/NonZero fields).
@@ -888,7 +866,9 @@ pub(crate) fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
 }
 
 /// To avoid undefined memory between union values, we must zero initialize the union first.
-pub(crate) fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
+pub(crate) fn value_init<SemverInt: VersionInt>(
+    field: TaggedValue<SemverInt>,
+) -> ResolutionValue<SemverInt> {
     let mut value = value_zero::<SemverInt>();
     match field {
         TaggedValue::Uninitialized => value.uninitialized = (),

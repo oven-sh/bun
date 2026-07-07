@@ -96,7 +96,7 @@ impl<T, C> New<T, C> {
             // SAFETY: `fn(*mut T, *mut C)` and `fn(*mut (), *mut ())` have identical
             // ABI (single code pointer, two pointer-sized args).
             callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
+                bun_core::cast_fn_ptr::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
             },
             ctx: NonNull::new(ctx.cast::<()>()),
             next: bun_threading::Link::new(),

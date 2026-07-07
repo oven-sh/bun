@@ -112,13 +112,13 @@ use bun_s3_signing::storage_class::StorageClass;
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
 use crate::webcore::ResumableSinkBackpressure;
-use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
     execute_simple_s3_request,
 };
+use bun_s3_signing::MultiPartUploadOptions;
 
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+use bun_jsc::JsTerminatedResult;
 
 declare_scope!(S3MultiPartUpload, hidden);
 

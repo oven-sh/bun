@@ -867,12 +867,13 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
 
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
+  const rustStringEnumsOut = resolve(cfg.codegenDir, "bindgen_string_enums.rs");
 
   // bindgen.ts scans src/ for .bind.ts files itself — this list is only for
   // ninja dependency tracking. New .bind.ts files need a reconfigure to be
   // picked up (next glob gets them).
   n.build({
-    outputs: [cppOut],
+    outputs: [cppOut, rustStringEnumsOut],
     rule: "codegen",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
@@ -883,8 +884,9 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(cppOut);
+  o.all.push(cppOut, rustStringEnumsOut);
   o.cppSources.push(cppOut);
+  o.rustInputs.push(rustStringEnumsOut);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

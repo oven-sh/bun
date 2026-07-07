@@ -1,7 +1,9 @@
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
 
-use crate::headers::{Entry, EntryList, api};
+use bun_core::StringPointer;
+
+use crate::headers::{Entry, EntryList};
 
 #[derive(Default)]
 pub struct HeaderBuilder {
@@ -27,14 +29,14 @@ impl HeaderBuilder {
     pub fn append(&mut self, name: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
         let name = name.as_ref();
         let value = value.as_ref();
-        let name_ptr = api::StringPointer {
+        let name_ptr = StringPointer {
             offset: self.content.len as u32,
             length: name.len() as u32,
         };
 
         let _ = self.content.append(name);
 
-        let value_ptr = api::StringPointer {
+        let value_ptr = StringPointer {
             offset: self.content.len as u32,
             length: value.len() as u32,
         };
@@ -52,13 +54,13 @@ impl HeaderBuilder {
     /// would desync the byte length pre-reserved by `count`.
     pub fn append_bytes_value(&mut self, name: impl AsRef<[u8]>, prefix: &[u8], value: &[u8]) {
         let name = name.as_ref();
-        let name_ptr = api::StringPointer {
+        let name_ptr = StringPointer {
             offset: self.content.len as u32,
             length: name.len() as u32,
         };
         let _ = self.content.append(name);
 
-        let value_ptr = api::StringPointer {
+        let value_ptr = StringPointer {
             offset: self.content.len as u32,
             length: (prefix.len() + value.len()) as u32,
         };
@@ -72,7 +74,7 @@ impl HeaderBuilder {
 
     pub fn append_fmt(&mut self, name: impl AsRef<[u8]>, args: core::fmt::Arguments<'_>) {
         let name = name.as_ref();
-        let name_ptr = api::StringPointer {
+        let name_ptr = StringPointer {
             offset: self.content.len as u32,
             length: name.len() as u32,
         };
@@ -83,7 +85,7 @@ impl HeaderBuilder {
         // builder buffer; capture its length, then re-read `content.len`.
         let value_len = self.content.fmt(args).len();
 
-        let value_ptr = api::StringPointer {
+        let value_ptr = StringPointer {
             offset: (self.content.len - value_len) as u32,
             length: value_len as u32,
         };
@@ -103,6 +105,6 @@ impl HeaderBuilder {
         // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
         // holds it past this call); the lifetime is intentionally unbound.
         client.header_buf =
-            unsafe { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
+            unsafe { bun_opaque::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
     }
 }

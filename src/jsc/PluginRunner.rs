@@ -3,13 +3,15 @@
 //! LAYERING: the static byte helpers (`extract_namespace` / `could_be_plugin`)
 //! live in `bun_bundler::transpiler::PluginRunner` (JSC-free, lowest tier).
 //! The stateful struct lives here because its only field is a typed
-//! `*mut JSGlobalObject`. `bun_bundler::Linker` references it through
-//! `*mut dyn PluginResolver`, so the linker stays JSC-free without
-//! type-erasing to `*mut c_void` or duplicating the body behind a fn-ptr.
+//! `*mut JSGlobalObject`. `bun_bundler::Linker` references it through the
+//! opaque `transpiler::JscPluginRunner` handle and calls back in through the
+//! link-time `__bun_plugin_runner_on_resolve` defined below, so the linker
+//! stays JSC-free without type-erasing to `*mut c_void` or duplicating the
+//! body behind a fn-ptr.
 
 use std::io::Write as _;
 
-use bun_bundler::transpiler::{BunPluginTarget, PluginResolver};
+use bun_bundler::transpiler::{BunPluginTarget, JscPluginRunner};
 use bun_core::{OwnedString, String as BunString};
 use bun_paths::fs::Path as FsPath;
 
@@ -20,8 +22,6 @@ pub struct PluginRunner {
     pub global_object: BackRef<JSGlobalObject>,
 }
 
-// Re-export the JSC-free static helpers so callers in this crate can keep
-// writing `PluginRunner::could_be_plugin(...)` without naming `bun_bundler`.
 impl PluginRunner {
     /// Borrow the JS global stored by `Bun__onDidAppendPlugin`.
     ///
@@ -33,17 +33,6 @@ impl PluginRunner {
         self.global_object.get()
     }
 
-    #[inline]
-    pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
-    }
-    #[inline]
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        bun_bundler::transpiler::PluginRunner::could_be_plugin(specifier)
-    }
-}
-
-impl PluginResolver for PluginRunner {
     fn on_resolve(
         &self,
         specifier: &[u8],
@@ -54,7 +43,7 @@ impl PluginResolver for PluginRunner {
     ) -> Result<Option<FsPath<'static>>, bun_core::Error> {
         let global = self.global();
 
-        let namespace_slice = Self::extract_namespace(specifier);
+        let namespace_slice = bun_bundler::transpiler::PluginRunner::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
             BunString::init(namespace_slice)
         } else {
@@ -171,4 +160,25 @@ impl PluginResolver for PluginRunner {
             Ok(Some(FsPath::init_with_namespace(path_static, ns_static)))
         }
     }
+}
+
+/// `__bun_plugin_runner_on_resolve` body — declared `extern "Rust"` in
+/// `bun_bundler::transpiler`; link-time resolved.
+///
+/// # Safety
+/// See the declaration in `bun_bundler::transpiler`: `runner` must name the
+/// live VM-owned [`PluginRunner`] installed by `Bun__onDidAppendPlugin`.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_plugin_runner_on_resolve(
+    runner: &JscPluginRunner,
+    specifier: &[u8],
+    importer: &[u8],
+    log: &mut bun_ast::Log,
+    loc: bun_ast::Loc,
+    target: BunPluginTarget,
+) -> Result<Option<FsPath<'static>>, bun_core::Error> {
+    // SAFETY: contract above — the handle is a typed view of the VM-owned
+    // `PluginRunner`, which the linker only borrows shared.
+    let runner = unsafe { &*runner.as_mut_ptr().cast::<PluginRunner>().cast_const() };
+    runner.on_resolve(specifier, importer, log, loc, target)
 }

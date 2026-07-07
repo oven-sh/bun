@@ -20,7 +20,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::{Task, TaskTag, Taskable};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
 
@@ -167,7 +167,7 @@ pub(crate) extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, ta
 pub(crate) struct DeferredDerefTask;
 
 impl Taskable for DeferredDerefTask {
-    const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
+    const TAG: TaskTag = TaskTag::NativePromiseContextDeferredDerefTask;
 }
 
 impl DeferredDerefTask {

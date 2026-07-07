@@ -68,7 +68,7 @@ impl NullableAllocator {
     #[inline]
     pub fn is_wtf_allocator(&self) -> bool {
         let Some(a) = self.get() else { return false };
-        crate::String::is_wtf_allocator(a)
+        a.vtable.wtf_string_refcount
     }
 
     #[inline]
@@ -81,7 +81,7 @@ impl NullableAllocator {
 
     pub fn free(&self, bytes: &[u8]) {
         if let Some(allocator) = self.get() {
-            if crate::String::is_wtf_allocator(allocator) {
+            if allocator.vtable.wtf_string_refcount {
                 // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
                 // WTF deallocator treats it as opaque and never writes through it.
                 let buf = unsafe {

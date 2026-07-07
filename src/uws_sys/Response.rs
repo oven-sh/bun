@@ -320,7 +320,7 @@ impl<const SSL: bool> Response<SSL> {
         let size = c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.as_raw(), &mut buf);
         if size > 0 {
             // SAFETY: uws populated `buf` with `size` bytes valid while the response lives.
-            Some(unsafe { bun_core::ffi::slice(buf, size) })
+            Some(unsafe { bun_opaque::ffi::slice(buf, size) })
         } else {
             None
         }
@@ -339,7 +339,7 @@ impl<const SSL: bool> Response<SSL> {
             Some(SocketAddress::new(
                 // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
                 // address lookup on this thread; copied before returning.
-                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
+                unsafe { bun_opaque::ffi::slice(ip_ptr, ip_len) },
                 port,
                 is_ipv6,
             ))

@@ -1,6 +1,6 @@
+use bun_core::ZigString;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {

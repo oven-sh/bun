@@ -6,6 +6,7 @@ use core::ffi::c_char;
 use std::sync::Arc;
 
 use crate::shell::ExitCode;
+use crate::shell::RedirectFlagsExt as _;
 use crate::shell::ast;
 use crate::shell::interpreter::{
     Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
@@ -274,12 +275,12 @@ pub enum BuiltinInput {
 }
 
 pub struct PinnedArrayBuf {
-    buf: crate::jsc::array_buffer::ArrayBufferStrong,
+    buf: bun_jsc::array_buffer::ArrayBufferStrong,
     pinned: bool,
 }
 
 impl core::ops::Deref for PinnedArrayBuf {
-    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
+    type Target = bun_jsc::array_buffer::ArrayBufferStrong;
 
     fn deref(&self) -> &Self::Target {
         &self.buf
@@ -727,9 +728,9 @@ impl Builtin {
                     let mk = || {
                         let pinned = jsval.as_pinned_arraybuffer(global);
                         PinnedArrayBuf {
-                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
+                            buf: bun_jsc::array_buffer::ArrayBufferStrong {
                                 array_buffer: pinned.unwrap_or(buf),
-                                held: crate::jsc::StrongOptional::create(buf.value, global),
+                                held: bun_jsc::StrongOptional::create(buf.value, global),
                             },
                             pinned: pinned.is_some(),
                         }
@@ -956,10 +957,7 @@ impl Builtin {
 
     /// Event loop handle (forwarded from the interpreter).
     #[inline]
-    pub fn event_loop(
-        interp: &Interpreter,
-        _cmd: NodeId,
-    ) -> crate::shell::interpreter::EventLoopHandle {
+    pub fn event_loop(interp: &Interpreter, _cmd: NodeId) -> bun_event_loop::EventLoopHandle {
         interp.event_loop
     }
 
@@ -1050,7 +1048,7 @@ impl Builtin {
     }
 
     /// Error messages formatted to match bash. Maps the errno through
-    /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
+    /// `bun_core::errno::coreutils_typed` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
     pub fn task_error_to_string<'a>(
@@ -1060,7 +1058,7 @@ impl Builtin {
         err: &bun_sys::Error,
     ) -> &'a [u8] {
         if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
-            if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
+            if let Some(message) = bun_core::errno::coreutils_typed::get(sys_errno) {
                 if !err.path.is_empty() {
                     return Self::fmt_error_arena(
                         interp,

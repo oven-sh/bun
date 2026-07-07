@@ -11,9 +11,12 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
+use crate::bake;
 use crate::bake::dev_server_body::map_log;
-use crate::bake::{self, Side};
-use crate::timer::EventLoopTimerState;
+#[cfg(feature = "bake_debugging_features")]
+use bun_bundler::bake_types::Graph;
+use bun_bundler::bake_types::Side;
+use bun_jsc::timer::EventLoopTimerState;
 
 use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 
@@ -228,9 +231,9 @@ impl Entry {
             if let Err(err) = crate::bake::dev_server_body::dump_bundle(
                 dump_dir,
                 if side == Side::Client {
-                    bake::Graph::Client
+                    Graph::Client
                 } else {
-                    bake::Graph::Server
+                    Graph::Server
                 },
                 rel_path_escaped,
                 &json_bytes,
@@ -453,7 +456,20 @@ pub struct SourceMapStore {
     pub weak_ref_sweep_timer: EventLoopTimer,
 }
 
-bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
+impl SourceMapStore {
+    /// Recover `*mut Self` from a pointer to its intrusive `weak_ref_sweep_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `weak_ref_sweep_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.weak_ref_sweep_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, weak_ref_sweep_timer, t) }
+    }
+}
 
 impl Default for SourceMapStore {
     fn default() -> Self {
@@ -480,8 +496,8 @@ impl SourceMapStore {
     }
 
     #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+    fn timer_all<'a>() -> &'a mut bun_jsc::timer::All {
+        bun_jsc::timer::timer_all_mut()
     }
 
     pub fn put_or_increment_ref_count(

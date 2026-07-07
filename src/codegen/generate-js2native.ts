@@ -66,7 +66,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "ipc.rs": "jsc/ipc.rs",
-  "mysql.rs": "sql_jsc/mysql.rs",
+  "mysql.rs": "runtime/sql_jsc/mysql.rs",
   "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
   "node_cluster_binding.rs": "runtime/node/node_cluster_binding.rs",
   "node_crypto_binding.rs": "runtime/node/node_crypto_binding.rs",
@@ -80,11 +80,11 @@ const rustIdentifierPaths: Record<string, string> = {
   "pack_command.rs": "runtime/cli/pack_command.rs",
   "parse_args.rs": "runtime/node/util/parse_args.rs",
   "patch.rs": "patch/patch.rs",
-  "postgres.rs": "sql_jsc/postgres.rs",
+  "postgres.rs": "runtime/sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
-  "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/timer/Timer.rs": "jsc/timer/Timer.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
@@ -95,6 +95,62 @@ const rustIdentifierPaths: Record<string, string> = {
   "udp_socket.rs": "runtime/socket/udp_socket.rs",
   "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
+};
+
+// Out-of-crate `$rust()` targets: mangled name (what rustTarget computes for
+// files outside src/runtime/) -> real Rust path. The generated thunks compile
+// inside bun_runtime, which depends on every crate below. Adding a new
+// out-of-crate $rust() call site requires an entry here.
+const rustOutOfCrateTargets: Record<string, string> = {
+  sql_jsc_mysql_create_binding: "crate::sql_jsc::mysql::create_binding",
+  sql_jsc_postgres_create_binding: "crate::sql_jsc::postgres::create_binding",
+  crash_handler_crash_handler_js_bindings_generate: "crate::api::crash_handler_jsc::js_bindings::generate",
+  install_dependency_from_js: "bun_install_jsc::dependency_jsc::dependency_from_js",
+  install_dependency_version_tag_infer_from_js: "bun_install_jsc::dependency_jsc::tag_infer_from_js",
+  install_hosted_git_info_testing_ap_is_js_from_url: "bun_install_jsc::hosted_git_info_jsc::js_from_url",
+  install_hosted_git_info_testing_ap_is_js_parse_url: "bun_install_jsc::hosted_git_info_jsc::js_parse_url",
+  install_jsc_install_binding_bun_install_js_bindings_generate:
+    "bun_install_jsc::install_binding::bun_install_js_bindings::generate",
+  install_npm_architecture_js_function_architecture_is_match: "bun_install_jsc::npm_jsc::architecture_is_match",
+  install_npm_operating_system_js_function_operating_system_is_match:
+    "bun_install_jsc::npm_jsc::operating_system_is_match",
+  install_npm_package_manifest_bindings_generate: "bun_install_jsc::npm_jsc::package_manifest_bindings_generate",
+  ini_ini_ini_testing_ap_is_load_npmrc_from_js: "bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js",
+  ini_ini_ini_testing_ap_is_parse: "bun_install_jsc::ini_jsc::ini_testing_parse",
+  jsc_bindgen_test_get_bindgen_test_functions: "bun_jsc::bindgen_test::get_bindgen_test_functions",
+  jsc_counters_create_counters_object: "bun_jsc::counters::create_counters_object",
+  jsc_event_loop_get_active_tasks: "bun_jsc::event_loop::get_active_tasks",
+  jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing:
+    "bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting",
+  jsc_ipc_emit_handle_ipc_message: "crate::ipc_host::emit_handle_ipc_message",
+  jsc_timer_timer_internal_bindings_timer_clock_ms: "bun_jsc::timer::timer::internal_bindings::timer_clock_ms",
+  string_escape_reg_exp_js_escape_reg_exp: "bun_jsc::bun_string_jsc::js_escape_reg_exp",
+  string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching:
+    "bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching",
+  bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel:
+    "bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel",
+  patch_patch_testing_ap_is_apply: "bun_patch_jsc::testing::patch_apply",
+  patch_patch_testing_ap_is_make_diff: "bun_patch_jsc::testing::patch_make_diff",
+  patch_patch_testing_ap_is_parse: "bun_patch_jsc::testing::patch_parse",
+  sourcemap_internal_source_map_testing_ap_is_find: "bun_sourcemap_jsc::internal_jsc::testing_find",
+  sourcemap_internal_source_map_testing_ap_is_from_vlq: "bun_sourcemap_jsc::internal_jsc::testing_from_vlq",
+  sourcemap_internal_source_map_testing_ap_is_to_vlq: "bun_sourcemap_jsc::internal_jsc::testing_to_vlq",
+  sys_sys_testing_ap_is_sigaction_layout: "bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout",
+  sys_error_testing_ap_is_sys_error_name_from_libuv: "bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv",
+  sys_sys_testing_ap_is_translate_nt_status_to_e: "bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e",
+  sys_sys_testing_ap_is_translate_uv_error_to_e: "bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e",
+  http_h2_client_testing_ap_is_live_counts: "bun_http_jsc::headers_jsc::h2_live_counts",
+  http_h3_client_testing_ap_is_quic_live_counts: "bun_http_jsc::headers_jsc::h3_quic_live_counts",
+  bun_get_use_system_ca: "crate::cli::Arguments::bun_get_use_system_ca",
+  css_jsc_css_internals__test: "bun_css_jsc::css_internals::_test",
+  css_jsc_css_internals_attr_test: "bun_css_jsc::css_internals::attr_test",
+  css_jsc_css_internals_minify_error_test_with_options: "bun_css_jsc::css_internals::minify_error_test_with_options",
+  css_jsc_css_internals_minify_test: "bun_css_jsc::css_internals::minify_test",
+  css_jsc_css_internals_minify_test_with_options: "bun_css_jsc::css_internals::minify_test_with_options",
+  css_jsc_css_internals_prefix_test: "bun_css_jsc::css_internals::prefix_test",
+  css_jsc_css_internals_prefix_test_with_options: "bun_css_jsc::css_internals::prefix_test_with_options",
+  css_jsc_css_internals_test_with_options: "bun_css_jsc::css_internals::test_with_options",
+  collections_linear_fifo_testing_ap_is_ordered_remove_probe: "crate::linear_fifo_testing::ordered_remove_probe",
 };
 
 function callBaseName(x: string) {
@@ -308,9 +364,8 @@ export function getJS2NativeRust() {
 
   // `src/runtime/node/node_util_binding.rs` + `parseEnv`
   //   → `crate::node::node_util_binding::parse_env`
-  // `src/ini/ini.rs` + `IniTestingAPIs.parse` (outside bun_runtime)
-  //   → `crate::dispatch::js2native::ini_ini_testing_apis_parse` (single
-  //   landing pad; still a compile error if missing).
+  // Files outside src/runtime/ are mapped through `rustOutOfCrateTargets`
+  // (mangled name → real crate path); still a compile error if missing.
   const rustTarget = (filename: string, sym: string) => {
     const rel = path.relative(srcRoot, filename).replace(/\.rs$/, "");
     const segs = rel.split(path.sep);
@@ -325,9 +380,14 @@ export function getJS2NativeRust() {
         .join("::");
       return `crate::${mod}::${fn}`;
     }
-    // Out-of-crate call site: route through a flat dispatch module that
-    // re-exports the real impl from its owning crate.
-    return `crate::dispatch::js2native::${snake(segs.join("_"))}_${fn.replace(/::/g, "_")}`;
+    const mangled = `${snake(segs.join("_"))}_${fn.replace(/::/g, "_")}`;
+    const target = rustOutOfCrateTargets[mangled];
+    if (!target) {
+      throw new Error(
+        `Unknown out-of-crate $rust() target ${mangled} (from ${filename}, ${sym}). Add it to rustOutOfCrateTargets in src/codegen/generate-js2native.ts.`,
+      );
+    }
+    return target;
   };
 
   const thunks: string[] = [];

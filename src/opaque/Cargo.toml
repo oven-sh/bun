@@ -13,3 +13,10 @@ workspace = true
 # every `*_sys` crate (and anything else with C-side opaque handles) can depend
 # on it without pulling a single transitive crate into its build graph.
 [dependencies]
+
+# Sole exception to the zero-dep charter above: `libc` on unix, required so the
+# canonical `Zeroable` impls for libc POD live beside the trait (the orphan
+# rule forbids placing them anywhere else once the trait lives here) — every
+# consumer already links libc.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

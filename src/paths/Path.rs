@@ -7,10 +7,9 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
-use crate::{
-    MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
-    resolve_path as path,
-};
+use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
+
+use crate::{SEP, SEP_POSIX, SEP_WINDOWS, resolve_path as path};
 use bun_core::{Fd, WStr, ZStr, strings};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -631,8 +630,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     // `deinit` → impl Drop (below). Body returns the buffer to the pool.
 
     pub fn init_top_level_dir() -> Self {
-        debug_assert!(crate::fs::FileSystem::instance_loaded());
-        let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
+        debug_assert!(bun_core::top_level_dir_loaded());
+        let top_level_dir = crate::fs::top_level_dir();
 
         let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {
@@ -651,8 +650,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn init_top_level_dir_long_path() -> Self {
-        debug_assert!(crate::fs::FileSystem::instance_loaded());
-        let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
+        debug_assert!(bun_core::top_level_dir_loaded());
+        let top_level_dir = crate::fs::top_level_dir();
 
         let trimmed = match Kind::from_u8(KIND) {
             Kind::Abs => {

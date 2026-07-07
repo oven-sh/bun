@@ -1,15 +1,15 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
-use super::mock;
 use super::Expect;
+use super::mock;
 
 pub(crate) fn to_have_been_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
+    bun_core::mark_binding!();
     let arguments = frame.arguments();
     let (this, calls, _value) = this.mock_prologue(
         global,
@@ -63,7 +63,8 @@ pub(crate) fn to_have_been_called_with(
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
+        let signature =
+            Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
         return this.throw(
             global,
             signature,

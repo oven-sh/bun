@@ -5,7 +5,7 @@ use bun_sys::Fd;
 use bun_sys::FdExt;
 
 #[cfg(target_os = "macos")]
-use crate::FilePollFlag;
+use crate::posix_event_loop::Flags;
 use crate::{FilePollRef, Owner};
 
 pub enum PollOrFd {
@@ -83,9 +83,7 @@ impl PollOrFd {
             if let PollOrFd::Poll(poll) = old {
                 #[cfg(target_os = "macos")]
                 {
-                    if poll.has_flag(FilePollFlag::PollWritable)
-                        && poll.has_flag(FilePollFlag::Nonblocking)
-                    {
+                    if poll.has_flag(Flags::PollWritable) && poll.has_flag(Flags::Nonblocking) {
                         close_async = false;
                     }
                 }
@@ -100,7 +98,7 @@ impl PollOrFd {
             // TODO: We should make this call compatible using bun.FD
             #[cfg(windows)]
             {
-                crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                crate::closer::Closer::close(fd, bun_libuv_sys::Loop::get());
             }
             #[cfg(not(windows))]
             {

@@ -1,21 +1,23 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
-use crate::cli::ci_info as ci;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
+use bun_core::PathBuffer;
+use bun_core::ci_info as ci;
 use bun_core::fmt as bun_fmt;
 use bun_core::{Environment, Error, Global, Output, err};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
 use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::npm as Npm;
+use bun_install::{self as install, Lockfile, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -26,27 +28,11 @@ use bun_url::URL;
 use bun_ast::expr::Data as ExprData;
 use bun_core::OSPathChar;
 pub use bun_install::Access;
-use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
+use bun_install_types::dependency;
 use bun_sys::FdExt as _;
 
-use crate::api::bun_process::sync as spawn_sync;
-
-// `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
-// JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
-// can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
-// its own `as_property` / `as_string_cloned` surface.
-#[inline]
-fn json_get_string_cloned<'b>(
-    expr: &bun_ast::Expr,
-    bump: &'b bun_alloc::Arena,
-    name: &[u8],
-) -> Result<Option<&'b [u8]>, AllocError> {
-    match expr.as_property(name) {
-        Some(q) => q.expr.as_string_cloned(bump),
-        None => Ok(None),
-    }
-}
+use ::bun_spawn::process::sync as spawn_sync;
 
 use crate::Command;
 use crate::cli::pack_command::{self as pack};
@@ -353,7 +339,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
             if let Some(config) = json.get(b"publishConfig") {
                 if manager.options.publish_config.tag.is_empty() {
-                    if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
+                    if let Some(tag) = config.get_string_cloned(&bump, b"tag")? {
                         // Note: `PublishConfig.tag` is `&'static [u8]`; dupe the
                         // bump-owned slice into the process-lifetime CLI arena.
                         manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
@@ -361,7 +347,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
 
                 if manager.options.publish_config.access.is_none() {
-                    if let Some(access) = json_get_string_cloned(&config, &bump, b"access")? {
+                    if let Some(access) = config.get_string_cloned(&bump, b"access")? {
                         manager.options.publish_config.access = match Access::from_str(access) {
                             Some(a) => Some(a),
                             None => {
@@ -378,7 +364,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 // maybe otp
             }
 
-            let name: Box<[u8]> = json_get_string_cloned(&json, &bump, b"name")?
+            let name: Box<[u8]> = json
+                .get_string_cloned(&bump, b"name")?
                 .ok_or(FromTarballError::MissingPackageName)?
                 .into();
             let is_scoped = dependency::is_scoped_package_name(&name)
@@ -390,7 +377,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             }
 
-            let version: Box<[u8]> = json_get_string_cloned(&json, &bump, b"version")?
+            let version: Box<[u8]> = json
+                .get_string_cloned(&bump, b"version")?
                 .ok_or(FromTarballError::MissingPackageVersion)?
                 .into();
             if version.is_empty() {
@@ -698,7 +686,7 @@ impl PublishCommand {
         if PackageManager::get()
             .options
             .do_
-            .contains(install::PackageManagerDoStub::RUN_SCRIPTS)
+            .contains(install::package_manager::Options::Do::RUN_SCRIPTS)
         {
             let abs_workspace_path: Box<[u8]> =
                 strings::without_trailing_slash(strings::without_suffix_comptime(
@@ -1123,7 +1111,7 @@ impl PublishCommand {
         loop {
             // SAFETY: `buffered_stdin()` returns a process-global `*mut`; this
             // loop is the only accessor while it runs (single-threaded CLI path).
-            match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
+            match unsafe { bun_sys::stdio::read_byte(&mut *bun_sys::stdio::buffered_stdin()) } {
                 Ok(b'\n') => break,
                 Ok(_) => continue,
                 Err(_) => return,
@@ -1164,7 +1152,7 @@ impl PublishCommand {
 
         if let Some(json) = res_json {
             'try_web: {
-                let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
+                let Some(auth_url_str) = json.get_string_cloned(&bump, b"authUrl")? else {
                     break 'try_web;
                 };
                 // Note: bump-owned `&[u8]` — dupe into the process-lifetime
@@ -1181,7 +1169,7 @@ impl PublishCommand {
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
-                let Some(done_url_str) = json_get_string_cloned(&json, &bump, b"doneUrl")? else {
+                let Some(done_url_str) = json.get_string_cloned(&bump, b"doneUrl")? else {
                     break 'try_web;
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
@@ -1345,16 +1333,16 @@ impl PublishCommand {
                                 }
                             };
 
-                            let token =
-                                json_get_string_cloned(&otp_done_json, &done_bump, b"token")?
-                                    .unwrap_or_else(|| {
-                                        Output::err(
-                                            "WebLogin",
-                                            "missing `token` field in reponse json",
-                                            (),
-                                        );
-                                        Global::crash();
-                                    });
+                            let token = otp_done_json
+                                .get_string_cloned(&done_bump, b"token")?
+                                .unwrap_or_else(|| {
+                                    Output::err(
+                                        "WebLogin",
+                                        "missing `token` field in reponse json",
+                                        (),
+                                    );
+                                    Global::crash();
+                                });
 
                             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                             // ignore if x-local-cache exists
@@ -1426,7 +1414,12 @@ impl PublishCommand {
 
         let integrity_fmt = {
             let mut v = Vec::new();
-            write!(&mut v, "{}", bun_fmt::integrity::<false>(integrity)).map_err(|_| AllocError)?;
+            write!(
+                &mut v,
+                "{}",
+                bun_install::integrity::fmt_sri::<false>(integrity)
+            )
+            .map_err(|_| AllocError)?;
             leak!(v)
         };
         let shasum_fmt = {
@@ -1591,7 +1584,7 @@ impl PublishCommand {
 
         let mut iter = DirIterator::iterate(workspace_dir);
         while let Some(entry) = iter.next().ok().flatten() {
-            if entry.kind == bun_sys::EntryKind::Directory {
+            if entry.kind == bun_core::FileKind::Directory {
                 continue;
             }
             // Entry names are UTF-8 on every platform.
@@ -1863,7 +1856,7 @@ impl PublishCommand {
                             ..Default::default()
                         });
 
-                        if entry.kind == bun_sys::EntryKind::Directory {
+                        if entry.kind == bun_core::FileKind::Directory {
                             let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
                             else {
                                 continue;
@@ -2027,8 +2020,7 @@ impl PublishCommand {
 
         let encoded_tarball_len =
             bun_core::base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
-        let version_without_build_tag =
-            install::dependency::without_build_tag(&ctx.package_version);
+        let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
 
         let mut buf: Vec<u8> = Vec::with_capacity(
             ctx.package_name.len() * 5

@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
-use crate::node::types::FdJsc as _;
+use bun_sys_jsc::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;

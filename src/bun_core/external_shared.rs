@@ -181,14 +181,13 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `WTF::StringImpl` descriptor — lives here (not `bun_string`) because the
-// struct is defined in `bun_alloc` and the trait here; orphan rule requires
-// one of them to be local. `bun_ptr` already depends on `bun_alloc`.
+// `WTF::StringImpl` descriptor — the struct lives in `crate::string::wtf`
+// and the trait here; both are local to `bun_core`.
 // ──────────────────────────────────────────────────────────────────────────
 
 // SAFETY: ref/deref delegate to JSC's WTF::StringImpl atomic refcount via FFI;
 // the pointee remains valid while count > 0 (JSC contract).
-unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
+unsafe impl ExternalSharedDescriptor for crate::string::wtf::WTFStringImplStruct {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live WTFStringImpl.
         unsafe { (*this).r#ref() }
@@ -200,4 +199,4 @@ unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
 }
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`.
-pub type WTFString = ExternalShared<bun_alloc::WTFStringImplStruct>;
+pub type WTFString = ExternalShared<crate::string::wtf::WTFStringImplStruct>;

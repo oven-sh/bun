@@ -1,8 +1,7 @@
 //! `Bun.JSONC` — `parse()` host function.
 
-use bun_ast::ToJSError;
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc};
 use bun_parsers::json;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -30,11 +29,9 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
             match parsed.root.to_js(global) {
                 Ok(v) => Ok(v),
-                Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
-                Err(ToJSError::JSError) => Err(JsError::Thrown),
-                Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
-                // JSONC parsing does not produce macros or identifiers
-                Err(_) => unreachable!(),
+                Err(bun_js_parser_jsc::ExprToJsError::Js(e)) => Err(e),
+                // JSONC parsing does not produce macros or identifiers.
+                Err(bun_js_parser_jsc::ExprToJsError::ToJs(_)) => unreachable!(),
             }
         },
     )

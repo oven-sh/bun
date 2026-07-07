@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable};
 
 use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;
@@ -11,7 +11,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Taskable for JSCDeferredWorkTask {
-    const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
+    const TAG: TaskTag = TaskTag::JSCDeferredWorkTask;
 }
 
 unsafe extern "C" {
@@ -41,7 +41,7 @@ pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
     jsc_vm: &VirtualMachine,
     delta: c_int,
 ) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.
     let event_loop: &EventLoop = jsc_vm.event_loop_shared();
@@ -57,7 +57,7 @@ pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     jsc_vm: &VirtualMachine,
     task: *mut JSCDeferredWorkTask,
 ) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     let loop_: &EventLoop = jsc_vm.event_loop_shared();
     // `create_from` heap-allocates with the auto-delete bit set.
@@ -69,7 +69,7 @@ pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
 /// callback inside `tick()`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     // SAFETY: see fn contract.
     unsafe {
         VirtualMachine::get()

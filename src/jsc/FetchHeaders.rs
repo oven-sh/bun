@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::{String as BunString, StringPointer, ZigString};
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -341,9 +342,3 @@ impl FetchHeaders {
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
     }
 }
-
-// Canonical enum lives in `bun_http_types::Method::HeaderName` (same 92
-// `#[repr(u8)]` discriminants mirroring WebCore's `HTTPHeaderNames.in`). The
-// `WebCore__FetchHeaders__put` extern decl above and the `fast_*` methods take
-// it by value, so the re-export is ABI-transparent.
-pub use bun_http_types::Method::HeaderName as HTTPHeaderName;

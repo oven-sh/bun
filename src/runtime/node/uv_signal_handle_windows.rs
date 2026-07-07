@@ -8,7 +8,7 @@ use core::ffi::c_int;
 #[cfg(windows)]
 use bun_jsc::JSGlobalObject;
 #[cfg(windows)]
-use bun_sys::windows::libuv;
+use bun_libuv_sys as libuv;
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]

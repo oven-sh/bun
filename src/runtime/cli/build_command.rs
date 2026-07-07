@@ -5,23 +5,15 @@ use bun_bundler::bundle_v2::{self, BundleV2};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
+use bun_core::PathBuffer;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
-
-extern crate bun_standalone_graph as bun_standalone_module_graph;
-
-/// `start_time` accessor — the
-/// single backing `OnceLock` lives in `bun_core` (written once in `Cli::start`).
-#[inline]
-fn cli_start_time() -> i128 {
-    crate::cli::start_time()
-}
 
 /// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
 /// such method yet; loop on `write_all`.
@@ -154,7 +146,7 @@ impl BuildCommand {
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
-        this_transpiler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.resolve.compile = ctx.bundler_options.compile;
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()
@@ -171,11 +163,12 @@ impl BuildCommand {
             && outfile.is_empty()
             && ctx.bundler_options.outdir.is_empty();
 
-        this_transpiler.options.supports_multiple_outputs =
+        this_transpiler.options.resolve.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
 
         this_transpiler
             .options
+            .resolve
             .public_path
             .clone_from(&ctx.bundler_options.public_path);
         this_transpiler
@@ -193,7 +186,7 @@ impl BuildCommand {
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
-            if this_transpiler.options.target.is_server_side() {
+            if this_transpiler.options.resolve.target.is_server_side() {
                 bun_ast::runtime::ReactCompilerMode::Ssr
             } else {
                 bun_ast::runtime::ReactCompilerMode::Client
@@ -224,9 +217,7 @@ impl BuildCommand {
 
         this_transpiler.options.allow_unresolved =
             if let Some(a) = ctx.bundler_options.allow_unresolved.as_ref() {
-                options::AllowUnresolved::from_strings(a.clone().into_boxed_slice(), |p, s| {
-                    bun_glob::r#match(p, s).matches()
-                })
+                options::AllowUnresolved::from_strings(a.clone().into_boxed_slice())
             } else {
                 options::AllowUnresolved::All
             };
@@ -236,15 +227,18 @@ impl BuildCommand {
 
         this_transpiler
             .options
+            .resolve
             .output_dir
             .clone_from(&ctx.bundler_options.outdir);
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
 
-        if ctx.bundler_options.output_format == options::OutputFormat::InternalBakeDev {
-            this_transpiler.options.tree_shaking = false;
+        if ctx.bundler_options.output_format == options::Format::InternalBakeDev {
+            this_transpiler.options.resolve.tree_shaking = false;
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.generate_cached_bytecode =
+            Some(bun_jsc::cached_bytecode::generate_cached_bytecode_for_bundler);
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -280,14 +274,14 @@ impl BuildCommand {
 
                 this_transpiler.options.compile_to_standalone_html = true;
                 // This is not a bun executable compile - clear compile flags
-                this_transpiler.options.compile = false;
+                this_transpiler.options.resolve.compile = false;
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
                     outfile = bun_paths::basename(&first_entry_point);
                 }
 
-                this_transpiler.options.supports_multiple_outputs =
+                this_transpiler.options.resolve.supports_multiple_outputs =
                     !ctx.bundler_options.outdir.is_empty();
             } else {
                 // Standard --compile: produce standalone bun executable
@@ -308,12 +302,12 @@ impl BuildCommand {
                 }
 
                 let base_public_path =
-                    bun_standalone_module_graph::StandaloneModuleGraph::target_base_public_path(
+                    bun_standalone_graph::StandaloneModuleGraph::target_base_public_path(
                         compile_target.os,
                         b"root/",
                     );
 
-                this_transpiler.options.public_path = base_public_path.into();
+                this_transpiler.options.resolve.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
                     outfile = bun_paths::basename(&first_entry_point);
@@ -425,7 +419,7 @@ impl BuildCommand {
             break 'brk1 &*result;
         };
 
-        this_transpiler.options.root_dir = src_root_dir.into();
+        this_transpiler.options.resolve.root_dir = src_root_dir.into();
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
@@ -444,7 +438,7 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
-        if !this_transpiler.options.production {
+        if !this_transpiler.options.resolve.production {
             this_transpiler
                 .options
                 .conditions
@@ -459,8 +453,8 @@ impl BuildCommand {
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
         if ctx.bundler_options.production {
-            this_transpiler.options.jsx.development = false;
-            this_transpiler.resolver.opts.jsx.development = false;
+            this_transpiler.options.resolve.jsx.development = false;
+            this_transpiler.resolver.opts.core.jsx.development = false;
         }
 
         match &ctx.debug.macros {
@@ -468,22 +462,12 @@ impl BuildCommand {
                 this_transpiler.options.no_macros = true;
             }
             MacroOptions::Map(macros) => {
-                // Note: `MacroOptions::Map` carries the
-                // `bun_options_types::context::MacroMap` redeclaration; the
-                // bundler-side `options.macro_remap` is the resolver crate's
-                // `StringArrayHashMap` shape. Re-key into that shape here.
-                use bun_resolver::package_json::{
-                    MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
-                };
-                let mut remap = ResolverMacroMap::default();
                 for (pkg, imports) in macros.iter() {
-                    let mut inner = ResolverInner::default();
-                    for (name, path) in imports.iter() {
-                        inner.insert(name, Box::<[u8]>::from(path.as_ref()));
-                    }
-                    remap.insert(pkg, inner);
+                    this_transpiler
+                        .options
+                        .macro_remap
+                        .insert(pkg, bun_core::handle_oom(imports.clone()));
                 }
-                this_transpiler.options.macro_remap = remap;
             }
             MacroOptions::Unspecified => {}
         }
@@ -496,7 +480,7 @@ impl BuildCommand {
             // and the divergent fields are set explicitly below. `client_transpiler`
             // is currently unused after this block, so a
             // perfect field-wise copy is not load-bearing.
-            ct.options.target = bun_ast::Target::Browser;
+            ct.options.resolve.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
             this_transpiler
@@ -513,13 +497,13 @@ impl BuildCommand {
                 // the client transpiler's Define table.
                 let user_defines = match &ctx.args.define {
                     Some(input) => {
-                        let mut raw = bun_bundler::defines::RawDefines::default();
+                        let mut raw = bun_js_parser::defines::RawDefines::default();
                         raw.reserve(input.keys.len() + 4);
                         for (key, value) in input.keys.iter().zip(input.values.iter()) {
                             raw.insert(key.as_ref(), value.clone());
                         }
                         let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
-                        Some(bun_bundler::defines::DefineData::from_input(
+                        Some(bun_js_parser::defines::DefineData::from_input(
                             &raw, &drop, log_ref, arena,
                         )?)
                     }
@@ -537,12 +521,12 @@ impl BuildCommand {
             crate::bake::bake_body::add_import_meta_defines(
                 &mut this_transpiler.options.define,
                 crate::bake::Mode::Development,
-                crate::bake::Side::Server,
+                bun_bundler::bake_types::Side::Server,
             )?;
             crate::bake::bake_body::add_import_meta_defines(
                 &mut ct.options.define,
                 crate::bake::Mode::Development,
-                crate::bake::Side::Client,
+                bun_bundler::bake_types::Side::Client,
             )?;
 
             this_transpiler.sync_resolver_opts();
@@ -568,11 +552,11 @@ impl BuildCommand {
         // which (with `'a = 'static` from the leaked arena) borrows
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
-        let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
+        let opt_output_dir: Box<[u8]> = this_transpiler.options.resolve.output_dir.clone();
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
         let opt_minify_syntax = this_transpiler.options.minify_syntax;
-        let opt_public_path: Box<[u8]> = this_transpiler.options.public_path.clone();
+        let opt_public_path: Box<[u8]> = this_transpiler.options.resolve.public_path.clone();
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
@@ -581,8 +565,8 @@ impl BuildCommand {
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
-                this_transpiler.options.allow_runtime = false;
-                this_transpiler.resolver.opts.allow_runtime = false;
+                this_transpiler.options.resolve.allow_runtime = false;
+                this_transpiler.resolver.opts.core.allow_runtime = false;
 
                 // TODO: refactor this .transform function
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
@@ -629,7 +613,11 @@ impl BuildCommand {
                 this_transpiler,
                 arena,
                 Some(core::ptr::NonNull::from(&mut event_loop)),
-                ctx.debug.hot_reload == HotReload::Watch,
+                if ctx.debug.hot_reload == HotReload::Watch {
+                    Some(bun_jsc::hot_reloader::enable_hot_module_reloading_for_bundler)
+                } else {
+                    None
+                },
                 &mut reachable_file_count,
                 &mut minify_duration,
                 &mut input_code_length,
@@ -861,7 +849,7 @@ impl BuildCommand {
                     }
                 }
 
-                let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
+                let result = match bun_standalone_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
                     root_dir.fd,
@@ -877,7 +865,7 @@ impl BuildCommand {
                         .unwrap_or(b""),
                     ctx.bundler_options.compile_executable_path.as_deref(),
                     {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                        use bun_standalone_graph::StandaloneModuleGraph::Flags;
                         let mut flags = Flags::default();
                         if !ctx.bundler_options.compile_autoload_dotenv {
                             flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
@@ -904,7 +892,7 @@ impl BuildCommand {
                     }
                 };
 
-                if let bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(err) =
+                if let bun_standalone_graph::StandaloneModuleGraph::CompileResult::Err(err) =
                     &result
                 {
                     Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
@@ -1020,7 +1008,7 @@ impl BuildCommand {
                 if opt_transform_only {
                     bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",
-                        (bun_core::time::nano_timestamp() - cli_start_time())
+                        (bun_core::time::nano_timestamp() - bun_core::start_time())
                             / (bun_core::time::NS_PER_MS as i128)
                     );
                 } else {
@@ -1028,7 +1016,7 @@ impl BuildCommand {
                         "<green>Bundled {} module{} in {}ms<r>",
                         reachable_file_count,
                         if reachable_file_count == 1 { "" } else { "s" },
-                        (bun_core::time::nano_timestamp() - cli_start_time())
+                        (bun_core::time::nano_timestamp() - bun_core::start_time())
                             / (bun_core::time::NS_PER_MS as i128)
                     );
                 }
@@ -1161,7 +1149,7 @@ fn print_summary(
     let padding_buf = [b' '; 16];
 
     let bundle_until_now =
-        ((bundled_end - cli_start_time()) as i64) / (bun_core::time::NS_PER_MS as i64);
+        ((bundled_end - bun_core::start_time()) as i64) / (bun_core::time::NS_PER_MS as i64);
 
     let bundle_elapsed = if minified {
         bundle_until_now - i64::try_from((minify_duration as u64) & ((1u64 << 63) - 1)).unwrap()

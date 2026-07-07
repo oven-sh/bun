@@ -1,7 +1,7 @@
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
-bun_output::declare_scope!(S3Stat, visible);
+bun_core::declare_scope!(S3Stat, visible);
 
 #[bun_jsc::JsClass]
 pub struct S3Stat {

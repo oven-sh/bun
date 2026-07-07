@@ -1,14 +1,19 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 pub(crate) fn to_have_been_called(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    bun_jsc::mark_binding!();
-    let (this, calls, _value) =
-        this.mock_prologue(global, frame.this(), "toHaveBeenCalled", "", super::mock::MockKind::Calls)?;
+    bun_core::mark_binding!();
+    let (this, calls, _value) = this.mock_prologue(
+        global,
+        frame.this(),
+        "toHaveBeenCalled",
+        "",
+        super::mock::MockKind::Calls,
+    )?;
     // arg-check after prologue: counter bump + post_match still fire on bad-arity.
     if !frame.arguments_as_array::<1>()[0].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(

@@ -1,22 +1,17 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use crate::{Alignment, Allocator};
+use crate::Alignment;
 // The libc-malloc-backed allocator.
 use super::C_ALLOCATOR as c_allocator;
 
 /// A fallback zero-initializing allocator.
 //
-// The public export is a ZST implementing the `Allocator` trait. Consumers
-// borrow `&ALLOCATOR` (coerces to `&dyn Allocator`).
+// The public export is a ZST; the allocation methods are inherent on `Z`.
 pub static ALLOCATOR: Z = Z;
 
 #[derive(Clone, Copy, Default)]
 pub struct Z;
-
-// `Allocator` is a marker trait carrying `type_id()`; the allocation methods
-// are inherent on `Z` below.
-impl Allocator for Z {}
 
 impl Z {
     pub fn alloc(

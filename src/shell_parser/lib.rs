@@ -20,7 +20,7 @@ pub mod parse;
 pub mod json_fmt;
 
 pub use parse::{
-    BACKSLASHABLE_CHARS, EscapeUtf16Result, IfClauseTok, JSValueRaw, LEX_JS_OBJREF_PREFIX,
+    BACKSLASHABLE_CHARS, EscapeUtf16Result, IfClauseTok, LEX_JS_OBJREF_PREFIX,
     LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii, LexerError, LexerUnicode,
     MemoryCost, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, SmolList,
     SubShellKind, SubshellKind, TextRange, Token, TokenTag, assert_special_char, ast, ast as AST,

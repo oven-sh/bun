@@ -222,9 +222,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if SSL {
             // we still want to send pending SSL buffer + close_notify
-            this.tcp.get().close(uws::CloseKind::Normal);
+            this.tcp.get().close(uws::CloseCode::normal);
         } else {
-            this.tcp.get().close(uws::CloseKind::Failure);
+            this.tcp.get().close(uws::CloseCode::failure);
         }
 
         // In tunnel mode tcp is .detached so close() above is a no-op and
@@ -240,7 +240,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn fail(&self, code: ErrorCode) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
             CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
@@ -258,7 +258,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         success: i32,
         ssl_error: us_bun_verify_error_t,
     ) {
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
 
         let authorized = success == 1;
 
@@ -311,7 +311,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
@@ -380,7 +380,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         };
 
-        let mut decompressed = deflate.rare_data.array_list();
+        // PERF: allocates a fresh heap Vec per call — profile if hot.
+        let mut decompressed = Vec::with_capacity(websocket_deflate::STACK_BUFFER_SIZE);
+        // `defer decompressed.deinit()` → Drop on Vec
+
         if let Err(err) = deflate.decompress(data, &mut decompressed) {
             let error_code = match err {
                 websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
@@ -433,16 +436,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
                     outstring = ZigString::from16_slice(&utf16);
                     outstring.mark_global();
-                    jsc::mark_binding!();
+                    bun_core::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {
                     outstring = ZigString::init(data);
-                    jsc::mark_binding!();
+                    bun_core::mark_binding!();
                     out.did_receive_text(true, &outstring);
                 }
             }
             Opcode::Binary | Opcode::Ping | Opcode::Pong => {
-                jsc::mark_binding!();
+                bun_core::mark_binding!();
                 out.did_receive_bytes(data.as_ptr(), data.len(), kind as u8);
             }
             _ => {
@@ -1330,7 +1333,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // SAFETY: ptr/len from C++; caller guarantees valid slice. Empty Blob
         // sends (null, 0); `ffi::slice` tolerates that shape.
-        let slice: &[u8] = unsafe { bun_core::ffi::slice(ptr, len) };
+        let slice: &[u8] = unsafe { bun_opaque::ffi::slice(ptr, len) };
         this.send_frame(Copy::Bytes(slice), slice.len(), Opcode::from_raw(op));
     }
 
@@ -1379,12 +1382,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        // Cast the JSValue to a Blob.
-        // `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
-        // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
-        // `from_js`/`shared_view` trampoline through extern fns to avoid the
-        // dep cycle — see `bun_jsc::webcore::Blob` impl block.
-        let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() else {
+        // Cast the JSValue to a Blob. `Blob`'s canonical definition lives in
+        // `bun_jsc::webcore_types` (`bun_jsc::webcore::Blob` is an alias);
+        // `shared_view()` reads the backing store bytes directly.
+        let Some(blob) = blob_value.as_::<bun_jsc::webcore_types::Blob>() else {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
         };
@@ -1454,7 +1455,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         };
         self.unref_keep_alive();
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code);
         // SAFETY: allocation kept live by caller's ref guard (see
         // cancel/handle_close).
@@ -1466,7 +1467,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         };
         self.unref_keep_alive();
-        jsc::mark_binding!();
+        bun_core::mark_binding!();
         CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason);
         // SAFETY: allocation kept live by caller's ref guard.
         unsafe { Self::deref(self.as_ctx_ptr()) };
@@ -1542,7 +1543,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params).ok();
+            *ws_ref.deflate.get_mut() =
+                WebSocketDeflate::init(*params, global_this.bun_vm().as_mut().rare_data()).ok();
         }
 
         ws
@@ -1641,9 +1643,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             tcp,
             group,
             if SSL {
-                uws::DispatchKind::WsClientTls
+                uws::SocketKind::WsClientTls
             } else {
-                uws::DispatchKind::WsClient
+                uws::SocketKind::WsClient
             },
             ws,
             // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
@@ -1759,9 +1761,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.tcp.get().is_closed() {
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
             if SSL {
-                this.tcp.get().close(uws::CloseKind::Normal);
+                this.tcp.get().close(uws::CloseCode::normal);
             } else {
-                this.tcp.get().close(uws::CloseKind::Failure);
+                this.tcp.get().close(uws::CloseCode::failure);
             }
         }
     }

@@ -10,13 +10,14 @@ use crate::cli::command;
 use crate::cli::run_command::RunCommand;
 use bun_alloc::{AllocError, Arena};
 use bun_ast::ExprData;
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
+use bun_paths::{resolve_path as path, resolve_path::platform as path_platform};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
@@ -934,9 +935,9 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 #[inline]
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
-        loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-            None, None,
-        )),
+        loop_: bun_event_loop::EventLoopHandle::init_mini(
+            bun_event_loop::MiniEventLoop::init_global(None, None),
+        ),
         ..Default::default()
     }
 }

@@ -1,19 +1,20 @@
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
+use crate::lockfile::{Buffers, StringBuilder};
+use crate::{Dependency, Lockfile, PackageManager};
 use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
-use bun_install::dependency::DependencyExt as _;
-use bun_install::lockfile::{Buffers, StringBuilder};
-use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install_types::dependency;
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
 // into the lower-tier `bun_ast::js_ast` shape (re-exported via
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
 // dep and produce distinct-`Expr`-type errors at every call site, so use the
 // T2 type directly.
-use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
+use bun_ast::{Expr, ExprData, e as E};
 use bun_ast::{Log, Source};
+use bun_parsers::json::value_loc_of_property;
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
 
@@ -183,7 +184,7 @@ impl CatalogMap {
             let buf = builder.string_bytes.as_slice();
             let version_sliced = version_literal.sliced(buf);
 
-            let Some(version) = Dependency::parse(
+            let Some(version) = dependency::parse(
                 dep_name,
                 dep_name_hash,
                 version_sliced.slice,
@@ -311,7 +312,7 @@ impl CatalogMap {
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub fn clone<PM: bun_install_types::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
         old_buf: &[u8],
@@ -409,7 +410,7 @@ fn put_entries_from_pnpm_lockfile(
         let version = string_buf.append_with_hash(version_str, version_hash)?;
         let version_sliced = version.sliced(string_buf.bytes.as_slice());
 
-        let Some(parsed_version) = Dependency::parse(
+        let Some(parsed_version) = dependency::parse(
             dep_name,
             dep_name_hash,
             version_sliced.slice,

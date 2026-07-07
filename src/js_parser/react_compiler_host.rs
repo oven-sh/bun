@@ -54,15 +54,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.options.jsx.development
     }
 
-    fn jsx_import(&mut self, kind: bun_react_compiler::JsxImportKind) -> js_ast::Ref {
-        use bun_react_compiler::JsxImportKind as K;
-        let kind = match kind {
-            K::Jsx => JSXImport::Jsx,
-            K::Jsxs => JSXImport::Jsxs,
-            K::JsxDEV => JSXImport::JsxDEV,
-            K::Fragment => JSXImport::Fragment,
-            K::CreateElement => JSXImport::CreateElement,
-        };
+    fn jsx_import(&mut self, kind: JSXImport) -> js_ast::Ref {
         let p = &mut *self.p;
         match p.jsx_imports.get_with_tag(kind) {
             Some(existing) => existing,

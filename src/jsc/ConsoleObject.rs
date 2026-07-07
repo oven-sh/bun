@@ -9,10 +9,10 @@ use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{OwnedString, String as BunString, ZigString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -395,6 +395,9 @@ impl Drop for FlushOnDrop<'_> {
 }
 
 /// <https://console.spec.whatwg.org/#formatter>
+///
+/// Call via `bun_runtime::jsc_hooks::console_message_with_type_and_level` so
+/// the `bun:test` reporter flushes its line state before the output.
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
     ctype: *mut ConsoleObject,
@@ -505,14 +508,6 @@ fn message_with_type_and_level_(
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
     let writer: &mut dyn bun_io::Write = raw_writer;
 
-    // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
-    // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
-    // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
-    // when `bun test` isn't running or hooks aren't installed.
-    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-        (hooks.console_on_before_print)();
-    }
-
     let mut print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default.
     let console_depth = bun_options_types::context::try_get()
@@ -534,7 +529,7 @@ fn message_with_type_and_level_(
     };
 
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
-    let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
+    let vals_slice = unsafe { bun_opaque::ffi::slice(vals, len) };
 
     if message_type == MessageType::Table && len >= 1 {
         // if value is not an object/array/iterable, don't print a table and just print it
@@ -1154,52 +1149,41 @@ impl<'a> TablePrinter<'a> {
 // writeTrace
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Adapter: erase a `&mut dyn bun_io::Write` behind the `bun_core::io::Writer`
-/// vtable header so it can be handed to `VirtualMachine::print_stack_trace` /
+/// Adapter: erase a `&mut dyn bun_io::Write` behind a `bun_core::io::Writer`
+/// handle so it can be handed to `VirtualMachine::print_stack_trace` /
 /// `print_errorlike_object`, which take the concrete `io::Writer` type.
-///
-/// `bun_core::io::Writer` is the first `#[repr(C)]` field, so the vtable thunks
-/// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
-/// `Output::QuietWriterAdapter::new_interface`).
-#[repr(C)]
 pub(crate) struct DynWriteAdapter<'a> {
-    head: bun_core::io::Writer,
     inner: &'a mut dyn bun_io::Write,
+    /// Cached handle pointing at `self`; refreshed by `interface()`.
+    interface: bun_core::io::Writer,
 }
 
 impl<'a> DynWriteAdapter<'a> {
     pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
         Self {
-            head: bun_core::io::Writer {
-                write_all: Self::thunk_write_all,
-                flush: Self::thunk_flush,
-            },
             inner,
+            interface: bun_core::io::WriterHandle::NOOP,
         }
     }
 
-    /// Reborrow as the `io::Writer` head.
+    /// Reborrow as the `io::Writer` handle for this adapter.
     #[inline]
     pub(crate) fn interface(&mut self) -> &mut bun_core::io::Writer {
-        // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
-        // and `&mut *self as *mut io::Writer` are the same address; the thunks
-        // below cast back to `*mut Self`.
-        &mut self.head
+        self.interface = bun_core::io::WriterHandle::of(std::ptr::from_mut(self));
+        &mut self.interface
     }
+}
 
-    fn thunk_write_all(w: *mut bun_core::io::Writer, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        // SAFETY: only reachable via the `io::Writer` vtable installed in
-        // `Self::new`, which always passes `&mut self.head` (first repr(C)
-        // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
-        let this = unsafe { &mut *w.cast::<Self>() };
+impl bun_core::io::RawWrite for DynWriteAdapter<'_> {
+    unsafe fn write_all(this: *mut Self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        // SAFETY: `this` was produced by `interface()` from a live adapter.
+        let this = unsafe { &mut *this };
         this.inner.write_all(bytes)
     }
 
-    fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
-        // SAFETY: only reachable via the `io::Writer` vtable installed in
-        // `Self::new`, which always passes `&mut self.head` (first repr(C)
-        // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
-        let this = unsafe { &mut *w.cast::<Self>() };
+    unsafe fn flush(this: *mut Self) -> Result<(), bun_core::Error> {
+        // SAFETY: `this` was produced by `interface()` from a live adapter.
+        let this = unsafe { &mut *this };
         this.inner.flush()
     }
 }
@@ -1493,7 +1477,7 @@ pub fn format2(
     let mut this_value: JSValue = vals[0];
     // see E0509 note above.
     let mut fmt = Formatter::new(global);
-    fmt.remaining_values = bun_ptr::RawSlice::new(&vals[1..]);
+    fmt.remaining_values = bun_core::RawSlice::new(&vals[1..]);
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
@@ -1679,7 +1663,7 @@ pub mod formatter {
         /// the backing storage goes away. A `&'a`
         /// slice cannot express that without forcing `'a` to outlive locals;
         /// `RawSlice` carries the outlives-holder invariant instead.
-        pub remaining_values: bun_ptr::RawSlice<JSValue>,
+        pub remaining_values: bun_core::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
@@ -1713,7 +1697,7 @@ pub mod formatter {
         pub fn new(global_this: &'a JSGlobalObject) -> Self {
             Self {
                 global_this,
-                remaining_values: bun_ptr::RawSlice::EMPTY,
+                remaining_values: bun_core::RawSlice::EMPTY,
                 map: visited::Map::default(),
                 map_node: None,
                 hide_native: false,
@@ -1788,7 +1772,7 @@ pub mod formatter {
         #[inline]
         pub fn advance_remaining(&mut self) {
             let s = self.remaining_values;
-            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
+            self.remaining_values = bun_core::RawSlice::new(&s.slice()[1..]);
         }
     }
 
@@ -1867,7 +1851,7 @@ pub mod formatter {
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
             let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+            formatter.remaining_values = bun_core::RawSlice::new(&one);
 
             let result = (|| {
                 let tag =
@@ -1879,7 +1863,7 @@ pub mod formatter {
                     .map_err(|_| core::fmt::Error)
             })();
 
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
+            formatter.remaining_values = bun_core::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }
@@ -2246,7 +2230,7 @@ pub mod formatter {
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
             {
                 // Attempt to get custom formatter
-                match value.fast_get(global_this, jsc::BuiltinName::InspectCustom) {
+                match value.fast_get(global_this, jsc::BuiltinName::inspectCustom) {
                     Err(_) => {
                         return Ok(TagResult {
                             tag: TagPayload::RevokedProxy,
@@ -2532,7 +2516,7 @@ pub mod formatter {
                         len = slice.len() as u32;
                         let next_value = {
                             let s = self.remaining_values;
-                            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
+                            self.remaining_values = bun_core::RawSlice::new(&s.slice()[1..]);
                             s.slice()[0]
                         };
 
@@ -4689,19 +4673,30 @@ pub mod formatter {
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
             // `FetchHeaders`/`TimeoutObject`/`ImmediateObject`/`BuildMessage`/
             // `ResolveMessage`/Jest asymmetric matchers — all of which live in
-            // `bun_runtime` (forward-dep). Dispatch through `RuntimeHooks` so
-            // the high tier owns the downcasts. Hook returns `true` when it
-            // formatted `value`; otherwise we fall through to the generic
-            // object printer below.
-            if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // The hook only ever
+            // `bun_runtime` (forward-dep). Dispatched through a link-time
+            // `extern "Rust"` symbol whose body lives in
+            // `bun_runtime::jsc_hooks`; it returns `true` when it formatted
+            // `value`; otherwise we fall through to the generic object printer
+            // below.
+            {
+                // The callee only ever
                 // seeds a `ZigString` that `get_class_name` immediately
                 // overwrites with JSC-owned bytes, so a shared zero buffer is
                 // sufficient and keeps 512B off every recursive frame.
                 static NAME_BUF: [u8; 512] = [0; 512];
-                let handled =
-                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
-                if handled {
+                // Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`; link-time
+                // resolved (§Dispatch hot path — print is too warm for a
+                // vtable slot, and the implementor set is closed).
+                unsafe extern "Rust" {
+                    safe fn __bun_console_print_runtime_object(
+                        formatter: &mut crate::console_object::Formatter<'_>,
+                        writer: &mut dyn bun_io::Write,
+                        value: JSValue,
+                        name_buf: &[u8; 512],
+                        enable_ansi_colors: bool,
+                    ) -> JsResult<bool>;
+                }
+                if __bun_console_print_runtime_object(self, writer_, value, &NAME_BUF, C)? {
                     return Ok(());
                 }
             }
@@ -5060,7 +5055,7 @@ pub mod formatter {
                 }
 
                 if let Some(message_value) =
-                    value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                    value.fast_get(self.global_this, jsc::BuiltinName::message)?
                 {
                     if message_value.is_string() {
                         if !self.single_line {
@@ -5099,7 +5094,7 @@ pub mod formatter {
                             pf!("<r>")
                         );
                         let data: JSValue = value
-                            .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                            .fast_get(self.global_this, jsc::BuiltinName::data)?
                             .unwrap_or(JSValue::UNDEFINED);
                         let tag = Tag::get_advanced(data, self.global_this, self.tag_opts())?;
                         self.format::<C>(tag, writer_, data, self.global_this)?;
@@ -5113,7 +5108,7 @@ pub mod formatter {
                     }
                     EventType::ErrorEvent => {
                         if let Some(error_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                            value.fast_get(self.global_this, jsc::BuiltinName::error)?
                         {
                             if !self.single_line {
                                 self.write_indent(writer_).expect("unreachable");
@@ -5872,7 +5867,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
     // set-once `VirtualMachine.console` box.
     let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    let slice = unsafe { bun_opaque::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let counter = this.counts.get_or_put(hash).expect("unreachable");
@@ -5913,7 +5908,7 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     // set-once `VirtualMachine.console` box.
     let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    let slice = unsafe { bun_opaque::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't delete it because deleting is implemented via tombstoning
     if let Some(v) = this.counts.get_mut(&hash) {
@@ -5936,7 +5931,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     len: usize,
 ) {
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+    let id = bun_wyhash::hash(unsafe { bun_opaque::ffi::slice(chars, len) });
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -5963,7 +5958,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     }
 
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let slice = unsafe { bun_opaque::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
@@ -5998,7 +5993,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
 
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let slice = unsafe { bun_opaque::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
@@ -6029,7 +6024,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     // across the `fmt.format(...)` calls below, which can re-enter JS.
     let mut writer = unsafe { (*console).error_writer() };
     // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+    for &arg in unsafe { bun_opaque::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
@@ -6080,29 +6075,6 @@ macro_rules! console_noop_hooks {
 
 console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profileEnd);
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
-    _console: *mut ConsoleObject,
-    global_this: &JSGlobalObject,
-    _chars: *const u8,
-    _len: usize,
-) {
-    // TODO: this does an extra JSONStringify and we don't need it to!
-    let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
-    // SAFETY: re-entry into our own host shim with a stack-local args slice.
-    unsafe {
-        message_with_type_and_level(
-            core::ptr::null_mut(), // unused by the callee
-            MessageType::Log,
-            MessageLevel::Debug,
-            global_this,
-            snapshot.as_ptr(),
-            1,
-        );
-    }
-}
-
 console_noop_hooks!(
     args:
     Bun__ConsoleObject__timeStamp,
@@ -6110,30 +6082,3 @@ console_noop_hooks!(
     Bun__ConsoleObject__recordEnd,
     Bun__ConsoleObject__screenshot,
 );
-
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    ctype: *mut ConsoleObject,
-    // Taking the
-    // exhaustive Rust enums by value at the C ABI would be UB on an
-    // out-of-range discriminant, so accept the raw `u32` (matching the C++
-    // header in `bindings/headers.h`) and clamp via `from_raw`.
-    message_type: u32,
-    level: u32,
-    global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
-) {
-    // SAFETY: forwarding the same FFI args to the inner host shim.
-    unsafe {
-        message_with_type_and_level(
-            ctype,
-            MessageType::from_raw(message_type),
-            MessageLevel::from_raw(level),
-            global,
-            vals,
-            len,
-        )
-    };
-}

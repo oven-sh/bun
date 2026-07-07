@@ -1,43 +1,21 @@
 #![warn(unused_must_use)]
 use bstr::BStr;
+use bun_core::{MAX_PATH_BYTES, PathBuffer, WPathBuffer};
 #[cfg(windows)]
 use bun_core::{WStr, w};
 use bun_core::{ZStr, strings};
-#[cfg(not(windows))]
-use bun_paths::DELIMITER;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_paths::resolve_path::posix_to_platform_in_place;
 #[cfg(windows)]
 use bun_paths::w_path_buffer_pool;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool};
+use bun_paths::{SEP, is_absolute, path_buffer_pool};
 
 #[allow(non_upper_case_globals)]
 mod scope {
     bun_core::declare_scope!(which, hidden);
 }
 use scope::which as which_log;
-
-#[cfg(not(windows))]
-fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
-    let prefix_len = segment.len() + 1; // includes trailing path separator
-    let len = prefix_len + bin.len();
-    let len_z = len + 1; // includes null terminator
-    if len_z > MAX_PATH_BYTES {
-        return None;
-    }
-
-    buf[..segment.len()].copy_from_slice(segment);
-    buf[segment.len()] = SEP;
-    buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
-    buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
-    let filepath = ZStr::from_buf(&buf[..], len);
-    if !bun_sys::is_executable_file_path(filepath) {
-        return None;
-    }
-    Some(u16::try_from(filepath.len()).expect("int cast"))
-}
 
 /// `which()` for spawn-style executable resolution. Windows resolves bare
 /// names against the working directory before `$PATH` (CreateProcessW search
@@ -108,51 +86,10 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
     #[cfg(not(windows))]
     {
-        if bin.is_empty() {
-            return None;
+        fn probe(p: &ZStr) -> bool {
+            bun_sys::is_executable_file_path(p)
         }
-
-        // handle absolute paths
-        if is_absolute(bin) {
-            buf[..bin.len()].copy_from_slice(bin);
-            buf[bin.len()] = 0;
-            // SAFETY: buf[bin.len()] == 0 written above
-            let bin_z = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), bin.len()) };
-            if bun_sys::is_executable_file_path(&*bin_z) {
-                return Some(&*bin_z);
-            }
-            // Do not look absolute paths in $PATH
-            return None;
-        }
-
-        if strings::index_of_char(bin, b'/').is_some() {
-            if !cwd.is_empty() {
-                // Strip trailing SEP bytes from cwd.
-                let mut cwd_trimmed = cwd;
-                while cwd_trimmed.last() == Some(&SEP) {
-                    cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
-                }
-                if let Some(len) = is_valid(
-                    buf,
-                    cwd_trimmed,
-                    strings::without_prefix_comptime(bin, b"./"),
-                ) {
-                    // SAFETY: is_valid wrote NUL at buf[len]
-                    return Some(ZStr::from_buf(&buf[..], len as usize));
-                }
-            }
-            // Do not lookup paths with slashes in $PATH
-            return None;
-        }
-
-        for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
-            if let Some(len) = is_valid(buf, segment, bin) {
-                // SAFETY: is_valid wrote NUL at buf[len]
-                return Some(ZStr::from_buf(&buf[..], len as usize));
-            }
-        }
-
-        None
+        return bun_core::util::which_with(buf, path, cwd, bin, probe);
     }
 }
 

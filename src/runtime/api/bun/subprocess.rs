@@ -17,20 +17,18 @@ use bun_sys::FdExt as _;
 use bun_sys::{self, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
-// Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
-// external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
-// platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
 use crate::api::bun::Terminal;
-#[cfg(windows)]
-use crate::api::bun_process as spawn_process;
-#[cfg(not(windows))]
-use crate::api::bun_process::ExtraPipe;
-use crate::api::bun_process::{Process, Rusage, Status};
 use crate::api::js_bun_spawn_bindings;
-use crate::jsc::ipc as IPC;
+use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
-use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, FileSink};
+#[cfg(not(windows))]
+use ::bun_spawn::ExtraPipe;
+use ::bun_spawn::Rusage;
+#[cfg(windows)]
+use ::bun_spawn::process as spawn_process;
+use ::bun_spawn::process::{Process, Status};
+use bun_jsc::timer::{EventLoopTimer, EventLoopTimerState};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 
@@ -50,15 +48,11 @@ pub use readable::Readable;
 pub mod writable;
 pub use writable::Writable;
 
-#[path = "subprocess/StaticPipeWriter.rs"]
-pub mod static_pipe_writer;
-pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
-
 pub use bun_io::MaxBuf;
 pub use js_bun_spawn_bindings::{spawn, spawn_sync};
 
-bun_output::declare_scope!(Subprocess, visible);
-bun_output::declare_scope!(IPC, visible);
+bun_core::declare_scope!(Subprocess, visible);
+bun_core::declare_scope!(IPC, visible);
 
 // `toJS`/`fromJS`/`fromJSDirect` are wired manually below (the `#[bun_jsc::JsClass]`
 // proc-macro doesn't support generic structs); cached-property accessors
@@ -86,10 +80,11 @@ type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
 type StdioPipeItem = ExtraPipe;
 
-pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
+pub type StaticPipeWriter<'a> = ::bun_spawn::static_pipe_writer::StaticPipeWriter<Subprocess<'a>>;
 
-impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
+impl<'a> ::bun_spawn::static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
+    type SourcePayload = JsSourcePayload;
+
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -103,7 +98,7 @@ pub enum ObservableGetter {
     Stderr,
 }
 
-pub use bun_spawn::process::StdioKind;
+pub use bun_spawn::StdioKind;
 
 // Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
@@ -169,7 +164,20 @@ pub struct Subprocess<'a> {
     pub exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
-bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
+impl Subprocess<'_> {
+    /// Recover `*mut Self` from a pointer to its intrusive `event_loop_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `event_loop_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.event_loop_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, event_loop_timer, t) }
+    }
+}
 
 // Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
@@ -341,13 +349,19 @@ pub unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
     unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    Subprocess for Subprocess => |this| {
-        // `process` forwarded raw (not reborrowed) so `on_process_exit` can
-        // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
-        // provenance cast.
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, &status, rusage),
+impl bun_spawn::ProcessExitOps for Subprocess<'_> {
+    // `process` forwarded raw (not reborrowed) so `on_process_exit` can
+    // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
+    // provenance cast.
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: `this` is the live owner pointer registered via
+        // `Process::set_exit_handler` (see `ProcessExitOps`).
+        unsafe { (*this).on_process_exit(process, &status, rusage) }
     }
 }
 
@@ -386,7 +400,7 @@ impl Subprocess<'_> {
             {
                 let rusage =
                     if let spawn_process::Poller::Uv(uv_proc) = &mut self.process_mut().poller {
-                        Some(spawn_process::uv_getrusage(uv_proc))
+                        Some(::bun_spawn::uv_getrusage(uv_proc))
                     } else {
                         None
                     };
@@ -437,7 +451,7 @@ impl Subprocess<'_> {
 
         let has_pending = self.compute_has_pending_activity();
         if cfg!(debug_assertions) {
-            bun_output::scoped_log!(Subprocess, "updateHasPendingActivity() -> {}", has_pending);
+            bun_core::scoped_log!(Subprocess, "updateHasPendingActivity() -> {}", has_pending);
         }
 
         // Upgrade or downgrade the reference based on pending activity
@@ -656,8 +670,8 @@ impl Subprocess<'_> {
     }
 
     #[inline]
-    fn timer_all() -> &'static mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+    fn timer_all() -> &'static mut bun_jsc::timer::All {
+        bun_jsc::timer::timer_all_mut()
     }
 
     pub fn timeout_callback(&self) {
@@ -777,7 +791,7 @@ impl Subprocess<'_> {
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        bun_output::scoped_log!(IPC, "Subprocess#doSend");
+        bun_core::scoped_log!(IPC, "Subprocess#doSend");
 
         let context = if this.has_exited() {
             crate::ipc_host::FromEnum::SubprocessExited
@@ -873,14 +887,14 @@ impl Subprocess<'_> {
 
     /// # Safety
     /// `process` must be the live `*mut Process` threaded from the
-    /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
+    /// `ProcessExitOps` vtable thunk (mutable provenance, valid for the
     /// duration of the call).
     // Forwards `process` to `VirtualMachine::on_subprocess_exit` without
     // dereferencing it; not_unsafe_ptr_arg_deref is a false positive on
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
-        bun_output::scoped_log!(Subprocess, "onProcessExit()");
+        bun_core::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
@@ -1178,7 +1192,7 @@ impl Subprocess<'_> {
 
     // This must only be run once per Subprocess
     pub fn finalize_streams(&self) {
-        bun_output::scoped_log!(Subprocess, "finalizeStreams");
+        bun_core::scoped_log!(Subprocess, "finalizeStreams");
         self.close_process();
 
         self.close_io(StdioKind::Stdin);
@@ -1219,7 +1233,7 @@ impl Subprocess<'_> {
     }
 
     pub fn finalize(self: Box<Self>) {
-        bun_output::scoped_log!(Subprocess, "finalize");
+        bun_core::scoped_log!(Subprocess, "finalize");
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
         // allocation may outlive this call if other refs remain, so hand
         // ownership back to the raw refcount.
@@ -1342,7 +1356,7 @@ impl Subprocess<'_> {
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
                 use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
+                return bun_core::ZigString::init(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }
@@ -1352,15 +1366,15 @@ impl Subprocess<'_> {
     }
 
     pub fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
-        bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
+        bun_core::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
             // or disable future optimizations if the subprocess is old.
             IPC::DecodedIPCMessage::Version(v) => {
-                bun_output::scoped_log!(IPC, "Child IPC version is {}", v);
+                bun_core::scoped_log!(IPC, "Child IPC version is {}", v);
             }
             IPC::DecodedIPCMessage::Data(data) => {
-                bun_output::scoped_log!(IPC, "Received IPC message from child");
+                bun_core::scoped_log!(IPC, "Received IPC message from child");
                 let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
@@ -1381,7 +1395,7 @@ impl Subprocess<'_> {
                 }
             }
             IPC::DecodedIPCMessage::Internal(data) => {
-                bun_output::scoped_log!(IPC, "Received IPC internal message from child");
+                bun_core::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
                 let _ = node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
@@ -1393,7 +1407,7 @@ impl Subprocess<'_> {
     }
 
     pub fn handle_ipc_close(&self) {
-        bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
+        bun_core::scoped_log!(IPC, "Subprocess#handleIPCClose");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
@@ -1436,47 +1450,50 @@ impl Subprocess<'_> {
     }
 }
 
-pub use bun_spawn::subprocess::{Source, SourceData};
+pub use bun_spawn::subprocess::Source;
 
-// JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
-// `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the
-// value (§Dispatch cold path).
-impl SourceData for webcore::AnyBlob {
+/// Concrete JSC-tier stdin payloads — replaces the boxed dyn SourceData.
+/// Variant sizes are deliberately unbalanced: the payload lives inline in the
+/// per-spawn stdio slot and is consumed once, so boxing the `Blob` arm would
+/// only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum JsSourcePayload {
+    Blob(webcore::AnyBlob),
+    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
+}
+impl bun_spawn::subprocess::SourcePayload for JsSourcePayload {
     fn slice(&self) -> &[u8] {
-        webcore::AnyBlob::slice(self)
+        match self {
+            Self::Blob(b) => webcore::AnyBlob::slice(b),
+            Self::ArrayBuffer(a) => a.slice(),
+        }
     }
     fn detach(&mut self) {
-        webcore::AnyBlob::detach(self)
+        if let Self::Blob(b) = self {
+            webcore::AnyBlob::detach(b)
+        }
+        // ArrayBuffer: GC-owned; Drop releases the Strong handle.
     }
     fn memory_cost(&self) -> usize {
-        webcore::AnyBlob::memory_cost(self)
-    }
-}
-/// Local newtype so the [`SourceData`] impl satisfies coherence —
-/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
-/// implementing it directly would be an orphan.
-struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
-impl SourceData for ArrayBufferSource {
-    fn slice(&self) -> &[u8] {
-        self.0.slice()
-    }
-    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */
-    }
-    fn memory_cost(&self) -> usize {
-        0
+        match self {
+            Self::Blob(b) => webcore::AnyBlob::memory_cost(b),
+            Self::ArrayBuffer(_) => 0,
+        }
     }
 }
 #[inline]
-pub fn source_from_blob(b: webcore::AnyBlob) -> Source {
-    Source::Any(Box::new(b))
+pub fn source_from_blob(b: webcore::AnyBlob) -> Source<JsSourcePayload> {
+    Source::Any(JsSourcePayload::Blob(b))
 }
 #[inline]
-pub fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
+pub fn source_from_array_buffer(
+    ab: jsc::array_buffer::ArrayBufferStrong,
+) -> Source<JsSourcePayload> {
+    Source::Any(JsSourcePayload::ArrayBuffer(ab))
 }
 
 #[cfg(windows)]
-pub extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
+pub extern "C" fn on_pipe_close(this: *mut bun_libuv_sys::Pipe) {
     // safely free the pipes
     // SAFETY: pipe was heap-allocated when created; we are the close callback owner.
     drop(unsafe { bun_core::heap::take(this) });

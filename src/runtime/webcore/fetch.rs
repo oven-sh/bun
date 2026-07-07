@@ -50,22 +50,22 @@ pub mod compress_body;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
-};
+use bun_core::PathBuffer;
 use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_http::{self as http, FetchRedirect, Headers, MimeType};
 use bun_http_jsc::method_jsc;
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
-use bun_paths::{self, PathBuffer};
+use bun_jsc::node_path::PathOrFileDescriptor;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
+use crate::node::types::Encoding;
 use crate::node::types::PathLikeExt as _;
-use crate::node::types::{Encoding, PathOrFileDescriptor};
-use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
@@ -90,33 +90,6 @@ use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Intern an `SSLConfig` into the (single, canonical) `bun_http` registry.
-/// DEDUP(D202): the runtime-tier struct and registry were folded into
-/// `bun_http::ssl_config`, so this is now a thin alias — kept to avoid
-/// churning the call site below.
-#[inline]
-fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr {
-    http::ssl_config::global_registry::intern(config)
-}
-
-/// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
-/// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
-/// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
-/// the call site here in T6.
-pub(crate) fn s3_credentials_from_env(
-    env: &bun_dotenv::S3Credentials,
-) -> bun_s3_signing::S3Credentials {
-    bun_s3_signing::S3Credentials::new_value(
-        env.access_key_id.clone(),
-        env.secret_access_key.clone(),
-        env.region.clone(),
-        env.endpoint.clone(),
-        env.bucket.clone(),
-        env.session_token.clone(),
-        env.insecure_http,
-    )
-}
 
 /// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`,
 /// released on every exit path. `take()` disarms the guard when ownership is
@@ -538,7 +511,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(request_init) = request_init_object {
-            if let Some(url_) = request_init.fast_get(global_this, jsc::BuiltinName::Url)? {
+            if let Some(url_) = request_init.fast_get(global_this, jsc::BuiltinName::url)? {
                 if !url_.is_undefined() {
                     break 'extract_url BunString::from_js(url_, global_this)?;
                 }
@@ -768,13 +741,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             return Ok(JSValue::ZERO);
                         }
 
-                        match SSLConfig::from_js(vm, global_this, tls) {
+                        match crate::socket::ssl_config::from_js(vm, global_this, tls) {
                             Err(_) => {
                                 return Ok(JSValue::ZERO);
                             }
                             Ok(Some(config)) => {
                                 // Intern via GlobalRegistry for deduplication and pointer equality
-                                break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
+                                break 'extract_ssl_config Some(
+                                    http::ssl_config::global_registry::intern(config),
+                                );
                             }
                             Ok(None) => {}
                         }
@@ -1183,7 +1158,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     //
     let mut body = 'extract_body: {
         if let Some(options) = options_object {
-            if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
+            if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::body)? {
                 if !body__.is_undefined() {
                     break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
                 }
@@ -1251,7 +1226,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_init_object {
-            if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
+            if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::body)? {
                 if !body__.is_undefined() {
                     break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
                 }
@@ -1275,7 +1250,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
                 if let Some(headers_value) =
-                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
+                    options.fast_get(global_this, jsc::BuiltinName::headers)?
                 {
                     if !headers_value.is_undefined() {
                         if let Some(headers__) = FetchHeaders::cast(headers_value) {
@@ -1309,7 +1284,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if let Some(options) = request_init_object {
                 if let Some(headers_value) =
-                    options.fast_get(global_this, jsc::BuiltinName::Headers)?
+                    options.fast_get(global_this, jsc::BuiltinName::headers)?
                 {
                     if !headers_value.is_undefined() {
                         if let Some(headers__) = FetchHeaders::cast(headers_value) {
@@ -1635,8 +1610,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if body.needs_to_read_file() {
         'prepare_body: {
             // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
-            // jsc↔runtime cycle).
+            // `path.slice_z()` (no need to reach for the shared per-VM
+            // `crate::jsc_hooks::node_fs` instance).
             let mut open_path_buf = PathBuffer::uninit();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
@@ -1736,9 +1711,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
-            // with an `Fd` path only touches `self.sync_error_buf` for
-            // path-variant inputs, so a fresh `NodeFS` is sufficient here.
+            // `read_file` with an `Fd` path only touches `self.sync_error_buf`
+            // for path-variant inputs, so a fresh `NodeFS` is sufficient here
+            // (no need for the shared `crate::jsc_hooks::node_fs` instance).
             let mut node_fs = node::fs::NodeFS::default();
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
@@ -1806,7 +1781,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if url.is_s3() {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
-        let env_creds = s3_credentials_from_env(
+        let env_creds = bun_s3_signing::S3Credentials::from(
             global_this
                 .bun_vm()
                 .as_mut()
@@ -2139,7 +2114,7 @@ impl<'a> S3StreamWrapper<'a> {
 
 fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) {
     let old = headers.take();
-    *headers = Some(Headers::from_pico_http_headers(new_headers));
+    *headers = Some(http::headers::from_pico_http_headers(new_headers));
     // `if (old) |*h| h.deinit()` → Drop on `old`.
     drop(old);
 }

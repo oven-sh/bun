@@ -9,12 +9,11 @@ use bstr::BStr;
 use bun_core::ZStr;
 
 use crate::Tag;
-use crate::windows::libuv as uv;
-use crate::{E, Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS};
-// `ReturnCodeExt::err_enum_e` overlays the libuv→POSIX errno translation;
-// without it the raw `UV_E*` magnitude (e.g. 4058 for UV_ENOENT) would land
-// in `Error.errno` and break callers that compare against `E::NOENT as _`.
-use crate::ReturnCodeExt;
+use crate::{E, Fd, FdExt, Mode, PlatformIoVec, PlatformIoVecConst, Stat, StatFS};
+use bun_libuv_sys as uv;
+// `ReturnCode::err_enum_or_unknown` performs the libuv→POSIX errno
+// translation; without it the raw `UV_E*` magnitude (e.g. 4058 for UV_ENOENT)
+// would land in `Error.errno` and break callers comparing against `E::NOENT`.
 
 type Result<T> = crate::Result<T>;
 
@@ -132,7 +131,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
         perm,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::open).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(Fd::from_uv(req.result.to_fd()))
@@ -158,7 +157,7 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
         flags,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::mkdir).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -185,7 +184,7 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
         flags,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::chmod).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -199,7 +198,7 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut *req, uv_fd, flags as c_int, None) };
 
     log!("uv fchmod({}, {}) = {}", uv_fd, flags, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::fchmod).with_fd(fd))
     } else {
         Result::Ok(())
@@ -220,7 +219,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::statfs).with_path(file_path.as_bytes()))
     } else {
         // On Windows `StatFS == uv_statfs_t`, so the libuv result *is* the
@@ -256,7 +255,7 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
         gid,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::chown).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -284,7 +283,7 @@ pub fn lchown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<
         gid,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::lchown).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -299,7 +298,7 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &mut *req, uv_fd, uid, gid, None) };
 
     log!("uv chown({}, {}, {}) = {}", uv_fd, uid, gid, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::fchown).with_fd(fd))
     } else {
         Result::Ok(())
@@ -316,7 +315,7 @@ pub fn rmdir(file_path: &ZStr) -> Result<()> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::rmdir).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -333,7 +332,7 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::unlink).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -350,7 +349,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_readlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         log!(
             "uv readlink({}) = {}, [err]",
             BStr::new(file_path.as_bytes()),
@@ -407,7 +406,7 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
         BStr::new(to.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         // which one goes in the .path field?
         Result::Err(Error::new(errno, Tag::rename))
     } else {
@@ -427,7 +426,7 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
         BStr::new(to.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(
             Error::new(errno, Tag::link)
                 .with_path(from.as_bytes())
@@ -458,7 +457,7 @@ pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
         BStr::new(new_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::symlink))
     } else {
         Result::Ok(())
@@ -474,7 +473,7 @@ pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
     let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut *req, uv_fd, size, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::ftruncate).with_fd(fd))
     } else {
         Result::Ok(())
@@ -488,7 +487,7 @@ pub fn fstat(fd: Fd) -> Result<Stat> {
     let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fstat({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::fstat).with_fd(fd))
     } else {
         // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
@@ -503,7 +502,7 @@ pub fn fdatasync(fd: Fd) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fdatasync({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::fdatasync).with_fd(fd))
     } else {
         Result::Ok(())
@@ -517,7 +516,7 @@ pub fn fsync(fd: Fd) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fsync({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::fsync).with_fd(fd))
     } else {
         Result::Ok(())
@@ -530,7 +529,7 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
     let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv stat({}) = {}", BStr::new(path.as_bytes()), rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::stat).with_path(path.as_bytes()))
     } else {
         // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
@@ -544,7 +543,7 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
     let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv lstat({}) = {}", BStr::new(path.as_bytes()), rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         Result::Err(Error::new(errno, Tag::lstat).with_path(path.as_bytes()))
     } else {
         // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
@@ -569,7 +568,7 @@ const MAX_IOVEC_COUNT: usize = c_uint::MAX as usize;
 const MAX_BUF_LEN: usize = u32::MAX as usize;
 
 /// Returns the total byte capacity of a slice of iovec buffers.
-fn sum_bufs_len(bufs: &[PlatformIOVec]) -> usize {
+fn sum_bufs_len(bufs: &[PlatformIoVec]) -> usize {
     let mut total: usize = 0;
     for buf in bufs {
         total += buf.len as usize;
@@ -577,11 +576,11 @@ fn sum_bufs_len(bufs: &[PlatformIOVec]) -> usize {
     total
 }
 
-pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
+pub fn preadv(fd: Fd, bufs: &[PlatformIoVec], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
     const _: () = assert!(
-        core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
-            && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()
+        core::mem::size_of::<PlatformIoVec>() == core::mem::size_of::<uv::uv_buf_t>()
+            && core::mem::align_of::<PlatformIoVec>() == core::mem::align_of::<uv::uv_buf_t>()
     );
 
     let debug_timer = bun_core::Output::DebugTimer::start();
@@ -627,7 +626,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
             );
         }
 
-        if let Some(e) = req.result.err_enum_e() {
+        if let Some(e) = req.result.err_enum_or_unknown() {
             return Result::Err(Error::new(e, Tag::read).with_fd(fd));
         }
 
@@ -650,11 +649,11 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
     Result::Ok(total_read)
 }
 
-pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usize> {
+pub fn pwritev(fd: Fd, bufs: &[PlatformIoVecConst], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
     const _: () = assert!(
-        core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
-            && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()
+        core::mem::size_of::<PlatformIoVec>() == core::mem::size_of::<uv::uv_buf_t>()
+            && core::mem::align_of::<PlatformIoVec>() == core::mem::align_of::<uv::uv_buf_t>()
     );
 
     let debug_timer = bun_core::Output::DebugTimer::start();
@@ -688,7 +687,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             )
         };
 
-        // `sum_bufs_len` expects `&[PlatformIOVec]`; rather than repr-punning the
+        // `sum_bufs_len` expects `&[PlatformIoVec]`; rather than repr-punning the
         // const slice through `from_raw_parts`, sum the `.len` fields directly.
         let chunk_capacity: usize = chunk_bufs.iter().map(|b| b.len as usize).sum();
 
@@ -702,7 +701,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             );
         }
 
-        if let Some(e) = req.result.err_enum_e() {
+        if let Some(e) = req.result.err_enum_or_unknown() {
             return Result::Err(Error::new(e, Tag::write).with_fd(fd));
         }
 
@@ -726,14 +725,14 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
 }
 
 #[inline]
-pub fn readv(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
+pub fn readv(fd: Fd, bufs: &[PlatformIoVec]) -> Result<usize> {
     preadv(fd, bufs, -1)
 }
 
 pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(buf)];
+        let bufs: [PlatformIoVec; 1] = [crate::platform_iovec_create(buf)];
         return preadv(fd, &bufs, position);
     }
 
@@ -744,7 +743,7 @@ pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
+        let bufs: [PlatformIoVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
 
         match preadv(fd, &bufs, current_position) {
             Result::Err(err) => return Result::Err(err),
@@ -769,7 +768,7 @@ pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
 pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(buf)];
+        let bufs: [PlatformIoVec; 1] = [crate::platform_iovec_create(buf)];
         return readv(fd, &bufs);
     }
 
@@ -779,7 +778,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
+        let bufs: [PlatformIoVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
 
         match readv(fd, &bufs) {
             Result::Err(err) => return Result::Err(err),
@@ -799,19 +798,19 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 }
 
 #[inline]
-pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
-    // SAFETY: `PlatformIOVec` (= `uv_buf_t`) and `PlatformIOVecConst` are
+pub fn writev(fd: Fd, bufs: &[PlatformIoVec]) -> Result<usize> {
+    // SAFETY: `PlatformIoVec` (= `uv_buf_t`) and `PlatformIoVecConst` are
     // layout-identical on Windows (size/align asserted in lib.rs); the
     // fat-pointer cast preserves the original slice's (ptr, len) metadata
     // exactly instead of re-deriving it.
-    let const_bufs = unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
+    let const_bufs = unsafe { &*(bufs as *const [PlatformIoVec] as *const [PlatformIoVecConst]) };
     pwritev(fd, const_bufs, -1)
 }
 
 pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVecConst; 1] = [crate::platform_iovec_const_create(buf)];
+        let bufs: [PlatformIoVecConst; 1] = [crate::platform_iovec_const_create(buf)];
         return pwritev(fd, &bufs, position);
     }
 
@@ -822,7 +821,7 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVecConst; 1] =
+        let bufs: [PlatformIoVecConst; 1] =
             [crate::platform_iovec_const_create(&remaining[0..chunk_len])];
 
         match pwritev(fd, &bufs, current_position) {
@@ -848,7 +847,7 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
 pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVecConst; 1] = [crate::platform_iovec_const_create(buf)];
+        let bufs: [PlatformIoVecConst; 1] = [crate::platform_iovec_const_create(buf)];
         return writev_const(fd, &bufs);
     }
 
@@ -858,7 +857,7 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVecConst; 1] =
+        let bufs: [PlatformIoVecConst; 1] =
             [crate::platform_iovec_const_create(&remaining[0..chunk_len])];
 
         match writev_const(fd, &bufs) {
@@ -878,10 +877,10 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     Result::Ok(total_written)
 }
 
-// `write()` builds a `[1]PlatformIOVecConst`, but `writev` takes
-// `&[PlatformIOVec]`; route through pwritev directly with position = -1.
+// `write()` builds a `[1]PlatformIoVecConst`, but `writev` takes
+// `&[PlatformIoVec]`; route through pwritev directly with position = -1.
 // TODO(refactor): unify the iovec types on Windows.
 #[inline]
-fn writev_const(fd: Fd, bufs: &[PlatformIOVecConst]) -> Result<usize> {
+fn writev_const(fd: Fd, bufs: &[PlatformIoVecConst]) -> Result<usize> {
     pwritev(fd, bufs, -1)
 }

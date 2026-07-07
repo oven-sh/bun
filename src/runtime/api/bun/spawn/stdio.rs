@@ -1,7 +1,7 @@
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_libuv_sys as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
@@ -10,24 +10,24 @@ use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
-// `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
-// keep `process` leaf; `subprocess` re-exports it).
-use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
+// `bun.jsc.Subprocess.StdioKind` and `Dup2` are owned by `bun_spawn` (defined
+// in `bun_spawn_sys` to keep them leaf; `bun_spawn` re-exports them).
+use ::bun_spawn::{Dup2 as ProcessDup2, StdioKind};
 
-// `SpawnOptions.Stdio` is platform-dependent: process.rs exposes `PosixStdio` /
-// `WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the body stays
-// platform-neutral.
+// `SpawnOptions.Stdio` is platform-dependent: `bun_spawn` exposes `PosixStdio`
+// / `process::WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the
+// body stays platform-neutral.
 #[cfg(not(windows))]
-pub(crate) type SpawnOptionsStdio = process::PosixStdio;
+pub(crate) type SpawnOptionsStdio = ::bun_spawn::PosixStdio;
 #[cfg(windows)]
-pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
+pub(crate) type SpawnOptionsStdio = ::bun_spawn::process::WindowsStdio;
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
 // re-exported through `bun_sys`.
 use sys::Stdio as FdStdio;
 
 // `const log = bun.sys.syslog;`
-bun_output::define_scoped_log!(log, SYS, visible);
+bun_core::define_scoped_log!(log, SYS, visible);
 
 /// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]
@@ -139,8 +139,7 @@ impl Stdio {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            use crate::api::bun_process::spawn_sys;
-            if !spawn_sys::can_use_memfd() {
+            if !bun_sys::can_use_memfd() {
                 return false;
             }
             let label: &core::ffi::CStr = match index {
@@ -150,7 +149,7 @@ impl Stdio {
                 _ => c"spawn_stdio_memory_file",
             };
 
-            let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
+            let fd = match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess) {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };

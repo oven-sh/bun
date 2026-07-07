@@ -18,12 +18,12 @@ use bun_uws_sys::vtable::Handler as VHandler;
 use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
+use crate::ipc as IPC;
+use crate::sql_jsc::mysql;
+use crate::sql_jsc::postgres;
 use crate::valkey_jsc::js_valkey;
 use bun_http_jsc::websocket_client;
 use bun_http_jsc::websocket_client::websocket_upgrade_client;
-use bun_jsc::ipc as IPC;
-use bun_sql_jsc::mysql;
-use bun_sql_jsc::postgres;
 
 /// Some consumer methods are `bun.JSError!void` (they can throw into JS),
 /// some are plain `void`. The old `configure()` trampolines hand-unrolled the
@@ -545,8 +545,8 @@ impl_ns_socket_events_forward!(
     postgres::postgres_sql_connection::SocketHandler<SSL>
 );
 impl_ns_socket_events_forward!(
-    mysql::js_my_sql_connection::JSMySQLConnection,
-    mysql::js_my_sql_connection::SocketHandler<SSL>
+    mysql::js_mysql_connection::JSMySQLConnection,
+    mysql::js_mysql_connection::SocketHandler<SSL>
 );
 impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>);
 
@@ -897,8 +897,8 @@ pub type Postgres<const SSL: bool> = NsHandler<
     SSL,
 >;
 pub type MySQL<const SSL: bool> = NsHandler<
-    mysql::js_my_sql_connection::JSMySQLConnection,
-    mysql::js_my_sql_connection::SocketHandler<SSL>,
+    mysql::js_mysql_connection::JSMySQLConnection,
+    mysql::js_mysql_connection::SocketHandler<SSL>,
     SSL,
 >;
 pub type Valkey<const SSL: bool> =

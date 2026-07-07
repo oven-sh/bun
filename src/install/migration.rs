@@ -2,37 +2,37 @@ use bun_ast::{E, ExprData};
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Error, Global, Output, err, zstr};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
+use bun_install_types::PackageID;
 use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
+use crate::ExternalSlice;
 use crate::bin::{self, Bin};
-use crate::dependency::{
-    self, Behavior, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _, Value as DepValue,
-    Version as DepVersion,
-};
-use crate::external_slice::ExternalSlice;
-use crate::install::{self as Install, ExternalStringList, PackageID, PackageManager};
 use crate::integrity::Integrity;
+use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::package::workspace_map::{NamesArray, WorkspaceMap};
 use crate::lockfile::{
-    self, Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
-    Migrated, PackageListEntry,
+    self, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, LockfileFormat, Migrated,
+    Package as PackageListEntry,
 };
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::lockfile_real::package::workspace_map::{NamesArray, WorkspaceMap};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
-use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
-use crate::versioned_url::VersionedURLType;
 use crate::yarn;
+use crate::{ExternalStringList, PackageManager};
+use bun_install_types::dependency::{
+    self, Behavior, Dependency, Tag as DepTag, Value as DepValue, Version as DepVersion,
+};
+use bun_install_types::resolver_hooks::Repository;
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem, VersionedURLType};
 
-bun_output::declare_scope!(migrate, visible);
+bun_core::declare_scope!(migrate, visible);
 
 macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(migrate, $($args)*) };
+    ($($args:tt)*) => { bun_core::scoped_log!(migrate, $($args)*) };
 }
 
 pub fn detect_and_load_other_lockfile<'a>(
@@ -216,7 +216,7 @@ const PACKAGE_ID_IS_LINK: u32 = u32::MAX;
 const PACKAGE_ID_IS_BUNDLED: u32 = u32::MAX - 1;
 
 #[cfg(debug_assertions)]
-const UNSET_PACKAGE_ID: PackageID = Install::INVALID_PACKAGE_ID - 1;
+const UNSET_PACKAGE_ID: PackageID = bun_install_types::INVALID_PACKAGE_ID - 1;
 
 use bun_install_types::DependencyGroup;
 // Order preserved: deps→dev→peer→optional.
@@ -237,7 +237,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     debug!("begin lockfile migration");
 
     this.init_empty();
-    Install::initialize_store();
+    crate::initialize_store();
 
     let json_src = bun_ast::Source::init_path_string(abs_path, data);
     let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log)
@@ -696,18 +696,18 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             Bin::init()
         };
 
-        let meta_value = lockfile::Meta {
+        let meta_value = lockfile::package::Meta {
             id: package_id,
 
             origin: if package_id == 0 {
-                lockfile::Origin::Local
+                crate::Origin::Local
             } else {
-                lockfile::Origin::Npm
+                crate::Origin::Npm
             },
 
             arch: if let Some(cpu_array) = pkg.get(b"cpu") {
                 'arch: {
-                    let mut arch = Npm::Architecture::NONE.negatable();
+                    let mut arch = Architecture::NONE.negatable();
                     let Some(arr) = cpu_array.as_array() else {
                         return Err(err!("InvalidNPMLockfile"));
                     };
@@ -724,18 +724,18 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     break 'arch arch.combine();
                 }
             } else {
-                Npm::Architecture::ALL
+                Architecture::ALL
             },
 
             os: if let Some(cpu_array) = pkg.get(b"os") {
                 'arch: {
-                    let mut os = Npm::OperatingSystem::NONE.negatable();
+                    let mut os = OperatingSystem::NONE.negatable();
                     let Some(arr) = cpu_array.as_array() else {
                         return Err(err!("InvalidNPMLockfile"));
                     };
                     let items = arr.items();
                     if items.is_empty() {
-                        break 'arch Npm::OperatingSystem::ALL;
+                        break 'arch OperatingSystem::ALL;
                     }
                     for item in items {
                         let Some(s) = item.as_str() else {
@@ -746,7 +746,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     break 'arch os.combine();
                 }
             } else {
-                Npm::OperatingSystem::ALL
+                OperatingSystem::ALL
             },
 
             man_dir: SemverString::default(),
@@ -756,12 +756,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     return Err(err!("InvalidNPMLockfile"));
                 };
                 if *b {
-                    lockfile::HasInstallScript::True
+                    lockfile::package::meta::HasInstallScript::True
                 } else {
-                    lockfile::HasInstallScript::False
+                    lockfile::package::meta::HasInstallScript::False
                 }
             } else {
-                lockfile::HasInstallScript::False
+                lockfile::package::meta::HasInstallScript::False
             },
 
             integrity: if let Some(integrity) = pkg.get(b"integrity") {
@@ -774,7 +774,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 Integrity::default()
             },
 
-            ..lockfile::Meta::default()
+            ..lockfile::package::Meta::default()
         };
 
         // Instead of calling this.appendPackage, manually append
@@ -835,7 +835,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         return Err(err!("InvalidNPMLockfile"));
     }
     this.packages.items_resolution_mut()[0] = Resolution::init(ResTagged::Root);
-    this.packages.items_meta_mut()[0].origin = lockfile::Origin::Local;
+    this.packages.items_meta_mut()[0].origin = crate::Origin::Local;
     let root_name_hash = this.packages.items_name_hash()[0];
     this.get_or_put_id(0, root_name_hash)?;
 
@@ -993,7 +993,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                         bstr::BStr::new(name_bytes),
                         bstr::BStr::new(version_bytes)
                     );
-                    let Some(version) = Dependency::parse(
+                    let Some(version) = dependency::parse(
                         dep_name,
                         Some(name_hash),
                         sliced.slice,
@@ -1322,8 +1322,8 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                 this.packages.items_resolution_mut()[id as usize] = res;
                                 this.packages.items_meta_mut()[id as usize].origin = match res.tag {
                                     // This works?
-                                    resolution::Tag::Root => lockfile::Origin::Local,
-                                    _ => lockfile::Origin::Npm,
+                                    resolution::Tag::Root => crate::Origin::Local,
+                                    _ => crate::Origin::Npm,
                                 };
 
                                 let nh = this.packages.items_name_hash()[id as usize];
@@ -1381,7 +1381,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 });
                                                 this.buffers
                                                     .resolutions
-                                                    .push(Install::INVALID_PACKAGE_ID);
+                                                    .push(bun_install_types::INVALID_PACKAGE_ID);
                                                 continue 'dep_loop;
                                             }
                                         }
@@ -1489,8 +1489,8 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
             resolution::Tag::Root | resolution::Tag::Npm => {}
             _ => {
                 let meta = &mut lockfile.packages.items_meta_mut()[i];
-                meta.arch = Npm::Architecture::ALL;
-                meta.os = Npm::OperatingSystem::ALL;
+                meta.arch = Architecture::ALL;
+                meta.os = OperatingSystem::ALL;
             }
         }
     }

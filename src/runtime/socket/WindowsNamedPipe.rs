@@ -26,33 +26,33 @@ use bun_boringssl_sys as boringssl;
 #[cfg(windows)]
 use bun_collections::ByteVecExt;
 use bun_core::timespec;
+use bun_http::ssl_config::SSLConfig;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
+use bun_libuv_sys as uv;
+#[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};
+use bun_uws::ssl_wrapper::{self, SSLWrapper};
 use bun_uws::us_bun_verify_error_t;
 
-use crate::socket::SSLConfig;
-use crate::socket::ssl_wrapper::{self, SSLWrapper};
 #[cfg(windows)]
-use crate::timer::EventLoopTimerTag;
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
+use bun_jsc::timer::EventLoopTimerTag;
+use bun_jsc::timer::{EventLoopTimer, EventLoopTimerState};
 
-bun_output::declare_scope!(WindowsNamedPipe, visible);
+bun_core::declare_scope!(WindowsNamedPipe, visible);
 
 pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use bun_jsc::timer::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
@@ -69,8 +69,8 @@ pub struct WindowsNamedPipe {
     /// honest model here rather than a threaded lifetime.
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
+    /// (`bun_io::EventLoopCtx` wraps `*const EventLoopHandle`).
+    pub event_loop_handle: bun_event_loop::EventLoopHandle,
 
     pub writer: StreamingWriter<WindowsNamedPipe>,
 
@@ -87,7 +87,20 @@ pub struct WindowsNamedPipe {
     pub flags: Flags,
 }
 
-bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
+impl WindowsNamedPipe {
+    /// Recover `*mut Self` from a pointer to its intrusive `event_loop_timer`
+    /// [`EventLoopTimer`] slot.
+    /// # Safety
+    /// `t` must point at the `event_loop_timer` field of a live `Self`.
+    #[inline]
+    pub unsafe fn from_timer_ptr(
+        t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    ) -> *mut Self {
+        // SAFETY: caller contract — `t` addresses `Self.event_loop_timer` with
+        // whole-`Self` provenance.
+        unsafe { ::bun_core::from_field_ptr!(Self, event_loop_timer, t) }
+    }
+}
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -228,7 +241,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_writable(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
+        bun_core::scoped_log!(WindowsNamedPipe, "onWritable");
         // flush pending data
         self.flush();
         // call onWritable (will flush on demand)
@@ -249,7 +262,7 @@ impl WindowsNamedPipe {
     // `on_read_alloc`, and we no longer hold the original pointer here.
     #[cfg(windows)]
     fn on_read(&mut self, nread: usize) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
+        bun_core::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
         unsafe { self.incoming.uv_commit(nread) };
 
@@ -313,7 +326,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             WindowsNamedPipe,
             "onWrite {} {}",
             amount,
@@ -345,7 +358,7 @@ impl WindowsNamedPipe {
 
     #[cfg(windows)]
     fn on_read_error(&mut self, err: bun_sys::E) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
+        bun_core::scoped_log!(WindowsNamedPipe, "onReadError");
         // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
         // this type is Windows-only at runtime so the comparison is gated.
         #[cfg(windows)]
@@ -360,28 +373,28 @@ impl WindowsNamedPipe {
     }
 
     fn on_error(&mut self, err: bun_sys::Error) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onError");
+        bun_core::scoped_log!(WindowsNamedPipe, "onError");
         (self.handlers.on_error)(self.handlers.ctx, err);
         self.close();
     }
 
     fn on_open(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onOpen");
+        bun_core::scoped_log!(WindowsNamedPipe, "onOpen");
         (self.handlers.on_open)(self.handlers.ctx);
     }
 
     fn on_data(&mut self, decoded_data: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
         (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
     fn on_session(&mut self, session: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
         (self.handlers.on_session)(self.handlers.ctx, session);
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onKeylog ({})", line.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "onKeylog ({})", line.len());
         (self.handlers.on_keylog)(self.handlers.ctx, line);
     }
 
@@ -421,7 +434,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
+        bun_core::scoped_log!(WindowsNamedPipe, "onHandshake");
 
         self.ssl_error = CertError {
             error_no: ssl_error.error_no,
@@ -438,7 +451,7 @@ impl WindowsNamedPipe {
     }
 
     fn on_close(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        bun_core::scoped_log!(WindowsNamedPipe, "onClose");
         #[cfg(windows)]
         {
             // `self.pipe` is a non-owning `NonNull` alias of the
@@ -520,7 +533,6 @@ impl WindowsNamedPipe {
         self.call_write_or_end(Some(encoded_data), true);
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__resume_stream")]
     pub fn resume_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
@@ -543,7 +555,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__pause_stream")]
     pub fn pause_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
@@ -559,7 +570,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub fn flush(&mut self) {
         if let Some(w) = self.wrapper_ptr() {
             // Re-entrancy guard: `SSLWrapper::flush → handle_traffic` can fire
@@ -593,7 +603,7 @@ impl WindowsNamedPipe {
     }
 
     pub fn on_timeout(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
+        bun_core::scoped_log!(WindowsNamedPipe, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
             || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
@@ -618,7 +628,7 @@ impl WindowsNamedPipe {
         // `uv::Pipe`.
         WindowsNamedPipe {
             vm,
-            event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
+            event_loop_handle: bun_event_loop::EventLoopHandle::init(vm.event_loop().cast::<()>()),
             // Leak the `Box` and keep only a non-owning `NonNull` alias.
             // Ownership of the allocation is later transferred to
             // `self.writer.source` via `start_with_pipe` in `start()`, which
@@ -979,7 +989,9 @@ impl WindowsNamedPipe {
         }
         if let Some(tls) = ssl_options {
             self.flags.set_is_ssl(true);
-            self.wrapper = match ssl_wrapper::init(&tls, true, handlers) {
+            self.wrapper = match SSLWrapper::init_from_options(&tls.as_usockets(), true, handlers)
+                .map_err(bun_core::Error::from)
+            {
                 Ok(w) => Some(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
@@ -1001,20 +1013,23 @@ impl WindowsNamedPipe {
     ) -> Result<(), bun_core::Error> {
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
-            self.wrapper = Some(ssl_wrapper::init(
-                ssl_options,
-                is_client,
-                ssl_wrapper::Handlers {
-                    ctx: std::ptr::from_mut(self),
-                    on_open: Self::ssl_on_open,
-                    on_handshake: Self::ssl_on_handshake,
-                    on_data: Self::ssl_on_data,
-                    on_close: Self::ssl_on_close,
-                    write: Self::ssl_write,
-                    on_session: Some(Self::ssl_on_session),
-                    on_keylog: Some(Self::ssl_on_keylog),
-                },
-            )?);
+            self.wrapper = Some(
+                SSLWrapper::init_from_options(
+                    &ssl_options.as_usockets(),
+                    is_client,
+                    ssl_wrapper::Handlers {
+                        ctx: std::ptr::from_mut(self),
+                        on_open: Self::ssl_on_open,
+                        on_handshake: Self::ssl_on_handshake,
+                        on_data: Self::ssl_on_data,
+                        on_close: Self::ssl_on_close,
+                        write: Self::ssl_write,
+                        on_session: Some(Self::ssl_on_session),
+                        on_keylog: Some(Self::ssl_on_keylog),
+                    },
+                )
+                .map_err(bun_core::Error::from)?,
+            );
 
             // Re-entrancy guard: `SSLWrapper::start → handle_traffic` can fire
             // `trigger_close_callback` synchronously; see `on_read` for the
@@ -1104,9 +1119,8 @@ impl WindowsNamedPipe {
         unsafe { &mut *self.vm.uv_loop() }
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
+        bun_core::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(w) = self.wrapper_ptr() {
             // Re-entrancy guard: `SSLWrapper::write_data` calls
             // `trigger_close_callback` on SSL_ERROR_SSL/SYSCALL and
@@ -1137,13 +1151,11 @@ impl WindowsNamedPipe {
         i32::try_from(data.len()).expect("int cast")
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__raw_write")]
     pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
         self.internal_write(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&mut self) {
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `SSLWrapper::shutdown` re-enters via the handler vtable
@@ -1192,7 +1204,6 @@ impl WindowsNamedPipe {
         unsafe { (*this).writer.end() };
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub fn shutdown(&mut self) {
         // PORT_NOTES_PLAN R-2: see `close` above — same `noalias`-cached-`flags`
         // miscompile across `(*w).shutdown(false)`'s re-entry (ASM-verified
@@ -1238,7 +1249,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]
     pub fn shutdown_read(&mut self) {
         if let Some(wrapper) = self.wrapper.as_mut() {
             let _ = wrapper.shutdown_read();
@@ -1252,7 +1262,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_shutdown", no_catch)]
     pub fn is_shutdown(&self) -> bool {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.is_shutdown();
@@ -1261,7 +1270,6 @@ impl WindowsNamedPipe {
         self.flags.disconnected() || self.writer.is_done
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]
     pub fn is_closed(&self) -> bool {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.is_closed();
@@ -1269,7 +1277,6 @@ impl WindowsNamedPipe {
         self.flags.disconnected()
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_established", no_catch)]
     pub fn is_established(&self) -> bool {
         !self.is_closed()
     }
@@ -1281,7 +1288,6 @@ impl WindowsNamedPipe {
         None
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
         us_bun_verify_error_t {
             error_no: self.ssl_error.error_no,
@@ -1315,19 +1321,13 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
+        self.event_loop_timer.next = next;
         timer_all().insert(&raw mut self.event_loop_timer);
     }
 
-    #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
     pub fn set_timeout(&mut self, seconds: c_uint) {
-        bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
+        bun_core::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
         self.set_timeout_in_milliseconds(seconds * 1000);
     }
 
@@ -1336,7 +1336,7 @@ impl WindowsNamedPipe {
     // Owned fields (writer, wrapper, ssl_error) free themselves via their own Drop impls; only
     // the side effects (timer cancel, read_stop, take()) remain explicit here.
     fn release_resources(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "deinit");
+        bun_core::scoped_log!(WindowsNamedPipe, "deinit");
         // clear the timer
         self.set_timeout(0);
         #[cfg(windows)]
@@ -1408,26 +1408,111 @@ impl Drop for WindowsNamedPipe {
     }
 }
 
-// Hand-written `ssl` shim for the `bun_uws` cycle-break extern — the safe
-// method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
-// raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
-// `#[uws_callback(export = …)]` on the inherent methods above.
+// ── `bun_uws_sys::WindowsNamedPipe` link-time shims ─────────────────────────
+// `bun_uws_sys::socket` dispatches `InternalSocket::Pipe` through the opaque
+// `bun_uws_sys::WindowsNamedPipe` handle, whose inherent methods forward to
+// these `extern "Rust"` symbols (see `src/uws_sys/lib.rs` §shim).
+// `this` is always the live `WindowsNamedPipe` that `named_pipe_handle` was built from.
+#[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
-    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
-    unsafe {
-        (*this.cast::<WindowsNamedPipe>())
-            .ssl()
-            .unwrap_or(core::ptr::null_mut())
-    }
+pub(crate) extern "Rust" fn WindowsNamedPipe__ssl_error(
+    this: &WindowsNamedPipe,
+) -> us_bun_verify_error_t {
+    this.ssl_error()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool {
+    this.is_established()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool {
+    this.is_closed()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool {
+    this.is_shutdown()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut boringssl::SSL {
+    this.ssl().unwrap_or(core::ptr::null_mut())
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__set_timeout(
+    this: &mut WindowsNamedPipe,
+    seconds: c_uint,
+) {
+    this.set_timeout(seconds)
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe) {
+    this.flush()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "Rust" fn WindowsNamedPipe__encode_and_write(
+    this: *mut WindowsNamedPipe,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: `this` is the live pipe behind the opaque handle; (`ptr`, `len`)
+    // is the caller's byte buffer, valid for the duration of the call.
+    unsafe { (*this).encode_and_write(core::slice::from_raw_parts(ptr, len)) }
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "Rust" fn WindowsNamedPipe__raw_write(
+    this: *mut WindowsNamedPipe,
+    ptr: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: see `WindowsNamedPipe__encode_and_write`.
+    unsafe { (*this).raw_write(core::slice::from_raw_parts(ptr, len)) }
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe) {
+    this.shutdown()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe) {
+    this.shutdown_read()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe) {
+    this.close()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool {
+    this.pause_stream()
+}
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool {
+    this.resume_stream()
 }
 
-// Windows-only at runtime; the POSIX impl exists purely so the
-// `StreamingWriter<Self>` field type-checks (poll_tag::NULL keeps the
-// dispatch table from being silently wrong if a poll is ever created).
+/// Erase a live `*mut WindowsNamedPipe` to the opaque `bun_uws_sys` handle.
+#[cfg(windows)]
+pub(crate) fn named_pipe_handle(
+    this: *mut WindowsNamedPipe,
+) -> NonNull<bun_uws_sys::WindowsNamedPipe> {
+    NonNull::new(this.cast()).expect("live named pipe")
+}
+
+// Windows-only at runtime; noop_on_poll: the POSIX impl exists purely so the
+// `StreamingWriter<Self>` field type-checks; a poll is never created.
 bun_io::impl_streaming_writer_parent! {
     WindowsNamedPipe;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::NULL,
+    on_poll    = bun_io::posix_event_loop::noop_on_poll,
     borrow     = mut,
     on_write   = on_write,
     on_error   = on_error,
@@ -1455,7 +1540,7 @@ impl uv::StreamReader for WindowsNamedPipe {
         // negative code `translate_uv_error_to_e` already
         // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
         // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        let e = bun_core::errno::translate_uv_error_to_e(err);
         WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]

@@ -10,8 +10,6 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use crate::node::fs as node_fs;
-use crate::node::types::PathOrFileDescriptorSerializeTag;
-use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
@@ -22,13 +20,15 @@ use crate::webcore::s3::client::{
 use bun_collections::HashMap;
 use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
+use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
+use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_url::URL;
 
 #[cfg(unix)]
 use super::SizeType;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Re-export the canonical data types from `bun_jsc`.
+// Store — data definition: `bun_jsc::webcore_types::store` (canonical).
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::store::{
@@ -38,9 +38,10 @@ pub use bun_jsc::webcore_types::store::{
 pub type Map = HashMap<u64, *mut Store>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
-// data types. Inherent data-only methods (`size`/`shared_view`/`ref_`/`deref`/
-// `init`/…) live on the `bun_jsc` types directly.
+// Extension traits — this module owns the runtime behaviour layer (`StoreExt`
+// / …) on the canonical `bun_jsc::webcore_types` data types. Inherent
+// data-only methods (`size`/`shared_view`/`ref_`/`deref`/`init`/…) live on
+// the `bun_jsc` types directly.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait StoreExt {

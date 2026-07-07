@@ -7,10 +7,11 @@
 //! this layer never names a variant.
 //!
 //! To add a new task to the queue:
-//! 1. Add a tag constant to `bun_event_loop::task_tag` (the canonical list).
-//! 2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`
+//! 1. Add a variant to the `bun_event_loop::TaskTag` enum (the canonical list).
+//! 2. `impl bun_jsc::Taskable for YourType { const TAG = TaskTag::YourType; }`
 //!    in the crate that owns `YourType`.
-//! 3. Add a match arm in `bun_runtime::dispatch::run_tasks`.
+//! 3. Add a match arm in `bun_runtime::dispatch::run_task` — the match is
+//!    exhaustive, so the compiler enforces this pair.
 
 use crate::event_loop::JsTerminated;
 use crate::{JSGlobalObject, JsError};
@@ -19,7 +20,7 @@ use crate::{JSGlobalObject, JsError};
 // The struct + tag table + type→tag trait are defined once in `bun_event_loop`
 // (lowest tier on the hot-path list) and re-exported here so callers can write
 // `bun_jsc::Task` / `bun_jsc::Taskable` without reaching down a tier.
-pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+pub use bun_event_loop::{Task, TaskTag, Taskable};
 
 /// `Task::new<T: Taskable>(ptr)` — typed constructor. Kept as a free fn for
 /// back-compat with existing call sites; equivalent to [`Task::init`].

@@ -3,13 +3,13 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
+use bun_core::PathBuffer;
 #[cfg(not(windows))]
 use bun_core::ZStr;
 use bun_core::err;
 use bun_core::{StringOrTinyString, strings};
-use bun_output::{declare_scope, scoped_log};
+use bun_core::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
-use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
 use bun_sys::{self, Fd};

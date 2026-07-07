@@ -4,8 +4,8 @@ use core::mem::{ManuallyDrop, align_of, size_of};
 use core::ptr::NonNull;
 
 use crate::{self as jsc, JSValue, Strong};
+use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 use bun_core::{WTFString, WTFStringImplStruct};
-use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 
 // `BindgenArray::convert_from_extern` reuses C++-allocated buffers by adopting
 // them into `Vec<ZigType>` even when `align_of::<ZigType>() != align_of::<ExternType>()`.
@@ -396,4 +396,4 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
 }
 
 pub type BindgenArrayBuffer = BindgenExternalShared<jsc::JSCArrayBuffer>;
-pub type BindgenBlob = BindgenExternalShared<crate::webcore::Blob>;
+pub type BindgenBlob = BindgenExternalShared<crate::webcore_types::Blob>;

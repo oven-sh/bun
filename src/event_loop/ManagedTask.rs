@@ -4,7 +4,9 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{JsResult, Task};
+use bun_core::JsResult;
+
+use crate::Task;
 
 pub struct ManagedTask {
     // Opaque userdata pointer round-tripped through `new`/`run`; raw by design.
@@ -16,7 +18,7 @@ pub struct ManagedTask {
 impl ManagedTask {
     pub fn task(this: *mut ManagedTask) -> Task {
         // Per §Dispatch (tag+ptr), name the tag explicitly.
-        Task::new(crate::task_tag::ManagedTask, this.cast())
+        Task::new(crate::TaskTag::ManagedTask, this.cast())
     }
 
     /// # Safety
@@ -48,7 +50,7 @@ impl ManagedTask {
             // ABI for all `T: Sized`; `run` passes back the exact pointer stored
             // in `ctx` below, so the callee observes its original `*mut T`.
             callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
+                bun_core::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
                     callback,
                 )
             },
@@ -66,7 +68,7 @@ impl ManagedTask {
         let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             // SAFETY: same fn-pointer ABI cast as `new`.
             callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
+                bun_core::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
                     callback,
                 )
             },

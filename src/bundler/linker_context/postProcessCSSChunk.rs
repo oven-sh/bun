@@ -160,7 +160,7 @@ pub fn post_process_css_chunk(
         // borrows the local, not `c`, avoiding the split-borrow with
         // `c.generate_source_map_for_chunk(&mut self, …)` below.
         let resolver = c.resolver.expect("resolver set in load()");
-        let output_dir = &resolver.opts.output_dir;
+        let output_dir = &resolver.opts.core.output_dir;
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,

@@ -13,7 +13,7 @@ pub(crate) fn node_module_paths_for_js(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
     let argument: JSValue = frame.argument(0);
 
     if argument.is_empty() || !argument.is_string() {
@@ -26,7 +26,7 @@ pub(crate) fn node_module_paths_for_js(
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
-    crate::mark_binding!();
+    bun_core::mark_binding!();
 
     let in_str = BunString::static_(b".");
     node_module_paths_js_value(in_str, global, false)
@@ -52,7 +52,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
     let mut buf = bun_paths::path_buffer_pool::get();
 
     let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        bun_paths::fs::FileSystem::instance().top_level_dir(),
+        bun_paths::fs::top_level_dir(),
         &mut **buf,
         &[base_path],
     );

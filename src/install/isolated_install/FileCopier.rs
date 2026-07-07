@@ -2,11 +2,12 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
+use bun_core::FileKind;
 use bun_core::{Error, err};
 #[cfg(not(windows))]
 use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
-use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
+use bun_sys::{self as sys, Dir, E, Fd, walker_skippable, walker_skippable::Walker};
 
 // The path-builder types here use the OS path unit: u8 on POSIX,
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
@@ -146,7 +147,7 @@ impl FileCopier {
             #[cfg(windows)]
             {
                 match entry.kind {
-                    EntryKind::Directory | EntryKind::File => {}
+                    FileKind::Directory | FileKind::File => {}
                     _ => continue,
                 }
 
@@ -161,7 +162,7 @@ impl FileCopier {
                 let _ = self.dest_subpath.append(entry.path.as_slice());
 
                 let result: sys::Result<()> = match entry.kind {
-                    EntryKind::Directory => {
+                    FileKind::Directory => {
                         // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
                         if unsafe {
                             bun_sys::windows::CreateDirectoryExW(
@@ -178,7 +179,7 @@ impl FileCopier {
                         }
                         sys::Result::Ok(())
                     }
-                    EntryKind::File => {
+                    FileKind::File => {
                         match bun_sys::copy_file::copy_file(
                             self.src_path.slice_z(),
                             self.dest_subpath.slice_z(),
@@ -223,7 +224,7 @@ impl FileCopier {
             }
             #[cfg(not(windows))]
             {
-                if entry.kind != EntryKind::File {
+                if entry.kind != FileKind::File {
                     continue;
                 }
 

@@ -7,28 +7,19 @@ use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
+use crate::JsEventLoop;
 use crate::MiniEventLoop::{EventLoopKind, MiniEventLoop};
-use crate::{JsEventLoop, JsEventLoopKind};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`.
 //
 // LAYERING: `bun_event_loop` is a lower tier than `bun_jsc`, so it cannot name
-// `jsc::EventLoop` / `jsc::VirtualMachine` directly. To keep
-// direct calls with no runtime registration, the concrete bodies live in
-// `bun_jsc::event_loop` as `#[no_mangle]` Rust-ABI functions and are declared
-// here as `extern "Rust"`. The linker resolves them at link time, so there is
-// no vtable, no `AtomicPtr`, and no init-order hazard.
-//
-// The `Js` variant stores a [`JsEventLoop`] handle (the `link_interface!`
-// newtype around the erased `*mut jsc::EventLoop`). The single `unsafe` is at
-// handle construction (`JsEventLoop::new`); all dispatch sites are safe method
+// `jsc::EventLoop` / `jsc::VirtualMachine` directly. The `Js` variant stores a
+// [`JsEventLoop`] handle: the erased `*mut jsc::EventLoop` owner, dispatched
+// through the `#[no_mangle]` `bun_jsc_event_loop_*` fns defined in
+// `bun_jsc::event_loop` and resolved at link time, so there is no runtime
+// registration and no init-order hazard. The single `unsafe` is at handle
+// construction (`JsEventLoop::from_ptr`); all dispatch sites are safe method
 // calls.
-unsafe extern "Rust" {
-    /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
-    /// for the current thread. Kept as a bare extern (no owner). No caller-side
-    /// preconditions: panics (not UB) if no VM is bound on this thread.
-    pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
-}
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
 /// [`JsEventLoop`] handle. The pointer is stored opaquely — never dereferenced
@@ -42,7 +33,7 @@ unsafe extern "Rust" {
 fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
     // SAFETY: stored opaquely; back-reference invariant (owner outlives every
     // dispatch) is the caller's structural guarantee.
-    unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) }
+    unsafe { JsEventLoop::from_ptr(js_event_loop.cast()) }
 }
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
@@ -51,7 +42,7 @@ fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
 pub enum AnyEventLoop<'a> {
     Js {
         /// Typed handle wrapping the erased `*mut jsc::EventLoop`. The
-        /// `link_interface!` invariant ("owner is live for every dispatch") is
+        /// invariant ("owner is live for every dispatch") is
         /// established once at construction; dispatch is safe.
         owner: JsEventLoop,
     },
@@ -391,13 +382,9 @@ impl EventLoopHandle {
     #[inline]
     pub fn as_event_loop_ctx(self) -> bun_io::EventLoopCtx {
         match self {
-            // SAFETY: `owner.bun_vm()` returns the owning `*mut VirtualMachine`,
-            // which is what the `EventLoopCtxKind::Js` `link_impl_EventLoopCtx!`
-            // (in `bun_jsc`) is written for. Both are per-thread singletons
-            // that outlive the ctx.
-            EventLoopHandle::Js { owner } => unsafe {
-                bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
-            },
+            // The Js vtable lives in `bun_jsc` (next to `VirtualMachine`), so
+            // the handle is built by the owner's `as_event_loop_ctx` slot.
+            EventLoopHandle::Js { owner } => owner.as_event_loop_ctx(),
             // `mini` is a `BackRef` to the live per-thread singleton (see
             // `mini_mut` doc) — valid for the ctx's lifetime.
             EventLoopHandle::Mini(mut mini) => {
@@ -409,9 +396,9 @@ impl EventLoopHandle {
     /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
     /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini.
     #[inline]
-    pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
+    pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut bun_uws::LoopParent) {
         match self {
-            EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
+            EventLoopHandle::Js { owner, .. } => (1, owner.as_ptr().cast()),
             EventLoopHandle::Mini(mini) => (2, mini.as_ptr().cast()),
         }
     }
@@ -432,14 +419,14 @@ impl EventLoopHandle {
     #[inline]
     pub unsafe fn from_tag_ptr(
         tag: core::ffi::c_char,
-        ptr: *mut core::ffi::c_void,
+        ptr: *mut bun_uws::LoopParent,
     ) -> EventLoopHandle {
         match tag {
             1 => EventLoopHandle::Js {
                 // SAFETY: `(tag, ptr)` was produced by `into_tag_ptr` on a
                 // still-live event loop, so `ptr` is a live erased
                 // `*mut jsc::EventLoop`. Same boundary as `EventLoopHandle::init`.
-                owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
+                owner: unsafe { JsEventLoop::from_ptr(ptr.cast()) },
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
             // is non-null. `BackRef: From<NonNull<T>>`.
@@ -449,20 +436,10 @@ impl EventLoopHandle {
     }
 }
 
-/// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`
-/// accepts `EventLoopHandle` directly. Kept here (not in `bun_uws`) because
-/// `bun_uws` is a lower tier than `bun_event_loop` and cannot name this enum.
-impl bun_uws::ParentEventLoopHandle for EventLoopHandle {
-    #[inline]
-    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
-        EventLoopHandle::into_tag_ptr(self)
-    }
-}
-
 impl EventLoopHandle {
-    /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
-    /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
-    /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
+    /// Convenience wrapper so callers don't need the `*mut Loop` deref dance
+    /// in scope. `uws_loop` is the process-global loop returned by
+    /// `AnyEventLoop::r#loop()` — never null.
     #[inline]
     pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
@@ -497,22 +474,6 @@ impl EventLoopHandle {
         match self {
             EventLoopHandle::Js { owner } => owner.bun_vm(),
             EventLoopHandle::Mini(_) => core::ptr::null_mut(),
-        }
-    }
-
-    /// Erased `*mut webcore::blob::Store`.
-    pub fn stdout(self) -> *mut () {
-        match self {
-            EventLoopHandle::Js { owner } => owner.stdout(),
-            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).stdout(),
-        }
-    }
-
-    /// Erased `*mut webcore::blob::Store`.
-    pub fn stderr(self) -> *mut () {
-        match self {
-            EventLoopHandle::Js { owner } => owner.stderr(),
-            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini).stderr(),
         }
     }
 

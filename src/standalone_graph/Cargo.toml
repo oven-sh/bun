@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bun_opaque.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
@@ -21,6 +20,7 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_standalone_graph_core.workspace = true
 bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true

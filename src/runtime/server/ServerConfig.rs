@@ -17,8 +17,8 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
-pub use crate::socket::ssl_config::SSLConfig;
-use crate::socket::ssl_config::SSLConfigFromJs;
+use crate::socket::ssl_config;
+pub use bun_http::ssl_config::SSLConfig;
 
 pub struct ServerConfig {
     pub address: Address,
@@ -325,7 +325,7 @@ impl ServerConfig {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
-    app: &mut uws::NewApp<SSL>,
+    app: &mut uws::App<SSL>,
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
@@ -348,7 +348,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         // of the callback; `user_data` is the `entry` pointer registered below,
         // kept alive by the route table for the lifetime of the app.
         let route = user_data.cast::<T>();
-        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
+        let resp = uws::Response::<SSL>::cast_res(resp);
         // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
         // selects the matching `AnyResponse` variant for the const-generic SSL flag.
         let any_resp = if SSL {
@@ -369,7 +369,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     ) {
         // SAFETY: see `handler` above.
         let route = user_data.cast::<T>();
-        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
+        let resp = uws::Response::<SSL>::cast_res(resp);
         let any_resp = if SSL {
             bun_uws_sys::AnyResponse::SSL(resp.cast())
         } else {
@@ -496,12 +496,6 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
         resp: bun_uws_sys::AnyResponse,
     );
 }
-
-// NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse`. Re-export the
-// real types so any straggler reference resolves to the canonical opaque.
-pub use bun_uws_sys::AnyRequest as RequestUnion;
-pub use bun_uws_sys::AnyResponse as ResponseUnion;
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
@@ -660,46 +654,6 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
-/// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
-/// (`&'static [u8]`-backed, consumed by `Framework::auto`). The duplication is a
-/// layering wart and this conversion stands in for an arena-dupe until the two
-/// structs unify. All bytes are duped into `arena` so the resulting `&'static`
-/// slices live as long as `UserOptions.arena`.
-fn convert_file_system_router_type(
-    arena: &bun_alloc::Arena,
-    src: crate::bake::FileSystemRouterType,
-) -> crate::bake::bake_body::FileSystemRouterType {
-    use crate::bake::bake_body as bb;
-    // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
-    // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically.
-    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
-    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
-    fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
-        bb::arena_erase(arena.alloc_slice_copy(bytes))
-    }
-    fn dupe_slice_of(
-        arena: &bun_alloc::Arena,
-        v: &[std::borrow::Cow<'static, [u8]>],
-    ) -> &'static [&'static [u8]] {
-        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
-        bb::arena_erase(arena.alloc_slice_copy(&inner))
-    }
-
-    bb::FileSystemRouterType {
-        root: dupe(arena, src.root.as_ref()),
-        prefix: dupe(arena, src.prefix.as_ref()),
-        entry_server: dupe(arena, src.entry_server.as_ref()),
-        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
-        ignore_underscores: src.ignore_underscores,
-        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
-        extensions: dupe_slice_of(arena, &src.extensions),
-        style: src.style,
-        allow_layouts: src.allow_layouts,
-    }
-}
-
 impl ServerConfig {
     pub fn from_js(
         global: &JSGlobalObject,
@@ -735,7 +689,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if arguments.vm.transpiler.options.production {
+        if arguments.vm.transpiler.options.resolve.production {
             args.development = DevelopmentOption::Production;
         }
 
@@ -1038,26 +992,16 @@ impl ServerConfig {
             {
                 if args.development.is_hmr_enabled() {
                     use crate::bake::bake_body as bb;
-                    use bun_options_types::schema::api::DotEnvBehavior;
+                    use bun_dotenv::DotEnvBehavior;
 
                     // NOTE: the arena is created here and moved into
                     // `UserOptions` (lives until `args.bake` is dropped).
                     let arena = bun_alloc::Arena::new();
 
-                    let root = bb::arena_dupe_z(
-                        &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                    );
+                    let root = bb::arena_dupe_z(&arena, bun_paths::fs::top_level_dir());
 
-                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Type
-                    // duplication; remove once the two structs unify.
                     let router_types: Vec<bb::FileSystemRouterType> =
-                        core::mem::take(&mut init_ctx.framework_router_list)
-                            .into_iter()
-                            .map(|t| convert_file_system_router_type(&arena, t))
-                            .collect();
+                        core::mem::take(&mut init_ctx.framework_router_list);
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
@@ -1375,7 +1319,7 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
-                        let ssl_config = match SSLConfig::from_js(vm, global, item)? {
+                        let ssl_config = match ssl_config::from_js(vm, global, item)? {
                             Some(c) => c,
                             None => {
                                 if global.has_exception() {
@@ -1404,7 +1348,7 @@ impl ServerConfig {
                     }
                 }
             } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
+                if let Some(ssl_config) = ssl_config::from_js(vm, global, tls)? {
                     args.ssl_config = Some(ssl_config);
                 }
                 if global.has_exception() {
@@ -1419,7 +1363,7 @@ impl ServerConfig {
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
-            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
+            if let Some(ssl_config) = ssl_config::from_js(vm, global, arg)? {
                 args.ssl_config = Some(ssl_config);
             }
             if global.has_exception() {

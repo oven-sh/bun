@@ -1,10 +1,7 @@
 use crate::{JSGlobalObject, JSValue};
 
-// The enum itself lives in `bun_http_types` (lower tier — `bun_http` needs it
-// without pulling in `bun_jsc`). Re-export so existing `jsc::CommonAbortReason`
-// paths keep resolving; `to_js()` stays here as an extension trait because it
-// names `JSGlobalObject` / `JSValue`.
-pub use bun_http_types::FetchRedirect::CommonAbortReason;
+// Enum lives in `bun_http_types` (lower tier); `to_js()` stays here because it names JSGlobalObject/JSValue.
+use bun_http_types::FetchRedirect::CommonAbortReason;
 
 pub trait CommonAbortReasonExt {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;

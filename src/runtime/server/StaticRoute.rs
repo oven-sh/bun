@@ -5,13 +5,13 @@ use core::cell::Cell;
 use core::mem::size_of;
 
 use bun_core::Error;
-use bun_http::headers::api::StringPointer;
+use bun_core::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 
+use bun_http_types::Method::HeaderName as HTTPHeaderName;
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};

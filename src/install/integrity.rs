@@ -454,3 +454,38 @@ const _: () = {
         i += 1;
     }
 };
+
+/// Format a SHA-512 digest as an SRI string (`sha512-<base64>`).
+///
+/// `SHORT = true` renders the abbreviated `sha512-{first13}[...]{last15}`
+/// form; `SHORT = false` renders the full base64 payload.
+pub fn fmt_sri<const SHORT: bool>(bytes: [u8; SHA512_DIGEST_LEN]) -> impl core::fmt::Display {
+    struct SriFormatter<const SHORT: bool> {
+        bytes: [u8; SHA512_DIGEST_LEN],
+    }
+
+    impl<const SHORT: bool> core::fmt::Display for SriFormatter<SHORT> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            const BUF_LEN: usize = SHA512_DIGEST_LEN.div_ceil(3) * 4;
+            let mut buf = [0u8; BUF_LEN];
+            let count = bun_simdutf_sys::simdutf::base64::encode(
+                &self.bytes[..SHA512_DIGEST_LEN],
+                &mut buf,
+                false,
+            );
+            let encoded = &buf[..count];
+            if SHORT {
+                write!(
+                    f,
+                    "sha512-{}[...]{}",
+                    bstr::BStr::new(&encoded[..13]),
+                    bstr::BStr::new(&encoded[encoded.len() - 15..]),
+                )
+            } else {
+                write!(f, "sha512-{}", bstr::BStr::new(encoded))
+            }
+        }
+    }
+
+    SriFormatter::<SHORT> { bytes }
+}

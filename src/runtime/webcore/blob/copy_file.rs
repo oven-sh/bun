@@ -4,16 +4,16 @@ use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
+use bun_core::PathBuffer;
 #[cfg(windows)]
 use bun_io as aio;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
-use bun_paths::PathBuffer;
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemErrorJsc as _};
+#[cfg(windows)]
+use bun_libuv_sys as libuv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
 use bun_sys::Stat;
-#[cfg(windows)]
-use bun_sys::windows::libuv;
 use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
@@ -21,21 +21,6 @@ use bun_sys_jsc::ErrorJsc as _;
 use core::ffi::c_int;
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
-
-// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Mapped
-// field-by-field because the two definitions order their fields differently.
-fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
-    jsc::SystemError {
-        errno: e.errno,
-        code: e.code,
-        message: e.message,
-        path: e.path,
-        syscall: e.syscall,
-        hostname: e.hostname,
-        fd: e.fd,
-        dest: e.dest,
-    }
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
@@ -86,7 +71,7 @@ impl MkdirpTarget for CopyFile<'_> {
 }
 
 impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFilePromiseTask;
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::TaskTag::CopyFilePromiseTask;
     fn run(&mut self) {
         self.run_async();
     }
@@ -142,8 +127,7 @@ impl<'a> CopyFile<'a> {
             system_error.message = bun_core::String::static_("Failed to copy file");
         }
 
-        let instance = to_jsc_system_error(&system_error)
-            .to_error_instance_with_async_stack(self.global_this, promise);
+        let instance = system_error.to_error_instance_with_async_stack(self.global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }
@@ -1751,7 +1735,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
             this.io_request.deinit();
             this.mkdirp();
@@ -1798,7 +1782,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     event_loop.unref_concurrently();
 
     let rc = this.io_request.result;
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.err_enum_or_unknown() {
         let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
         let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
@@ -1812,7 +1796,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
+fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
     bun_sys::syslog!("mkdirp complete");
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
     // by `mkdirp` above; sole owner on this concurrent path.
@@ -1822,9 +1806,9 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
-    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
-    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
+    // Shim the callback signature to match `ManagedTask::new`'s
+    // `fn(*mut T) -> bun_core::JsResult<()>`.
+    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_core::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
         // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
         // do not touch `this` afterward.

@@ -263,13 +263,15 @@ mod windows_impl {
                 kernel32::SleepConditionVariableSRW(
                     self.condition.get(),
                     // The debug build's DebugMutex wraps an inner impl holding `srwlock`.
+                    // `bun_sync::mutex::SRWLOCK` and `bun_sys::windows::SRWLOCK` are both
+                    // `#[repr(transparent)]` wrappers over the Win32 `struct { PVOID Ptr; }`.
                     #[cfg(debug_assertions)]
                     {
-                        mutex.impl_.impl_.srwlock.get()
+                        mutex.impl_.impl_.srwlock.get().cast()
                     },
                     #[cfg(not(debug_assertions))]
                     {
-                        mutex.impl_.srwlock.get()
+                        mutex.impl_.srwlock.get().cast()
                     },
                     timeout_ms,
                     0, // the srwlock was assumed to acquired in exclusive mode not shared

@@ -14,7 +14,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser::js_lexer;
 use bun_paths as path;
-use bun_paths::fs::FileSystem;
+use bun_paths::fs;
 use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
 
@@ -185,16 +185,16 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
     let process = match spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         envp: None,
-        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+        cwd: Box::<[u8]>::from(fs::top_level_dir()),
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
 
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
+            loop_: bun_event_loop::EventLoopHandle::init_mini(
+                bun_event_loop::MiniEventLoop::init_global(None, None),
+            ),
             ..Default::default()
         },
         ..Default::default()
@@ -247,11 +247,11 @@ pub fn generate_files(
     }
 
     // Normalize file paths
-    let mut normalized_buf = bun_paths::PathBuffer::uninit();
+    let mut normalized_buf = bun_core::PathBuffer::uninit();
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
-            FileSystem::instance().top_level_dir(),
+            fs::top_level_dir(),
             entry_point,
         )
     } else {
@@ -361,14 +361,14 @@ pub fn generate_files(
                 let shadcn_process = match spawn_sync::spawn(&spawn_sync::Options {
                     argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                     envp: None,
-                    cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+                    cwd: Box::<[u8]>::from(fs::top_level_dir()),
                     stderr: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stdin: spawn_sync::SyncStdio::Inherit,
 
                     #[cfg(windows)]
                     windows: bun_process::WindowsOptions {
-                        loop_: bun_jsc::EventLoopHandle::init_mini(
+                        loop_: bun_event_loop::EventLoopHandle::init_mini(
                             bun_event_loop::MiniEventLoop::init_global(None, None),
                         ),
                         ..Default::default()
@@ -423,16 +423,16 @@ pub fn generate_files(
             Box::<[u8]>::from(&b"dev"[..]),
         ],
         envp: None,
-        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+        cwd: Box::<[u8]>::from(fs::top_level_dir()),
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
 
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
+            loop_: bun_event_loop::EventLoopHandle::init_mini(
+                bun_event_loop::MiniEventLoop::init_global(None, None),
+            ),
             ..Default::default()
         },
         ..Default::default()
@@ -612,7 +612,7 @@ fn get_shadcn_components(
 // Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
 // only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
 fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::uninit();
+    let mut buf = bun_core::PathBuffer::uninit();
     bun_sys::exists_z(resolve_path::z(path, &mut buf))
 }
 

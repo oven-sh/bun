@@ -1,15 +1,16 @@
+use bun_install_types::{DependencyID, Features, PackageID, PackageNameHash, PreinstallState};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::io::Write as _;
 
-use crate::bun_fs as fs;
-use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_alloc::AllocError;
+use bun_bundler::transpiler;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_core::PathBuffer;
+use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::ZBox;
 use bun_core::{Error, Global, Output, err};
 use bun_core::{ZStr, strings};
@@ -20,11 +21,12 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_paths::{DELIMITER, SEP, SEP_STR};
+use bun_resolver::fs;
+use bun_resolver::fs::FileSystem;
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
-use bun_transpiler as transpiler;
 use bun_url::URL;
 
 /// Caches the result of a getter the first time `get()` is called.
@@ -65,35 +67,7 @@ use bun_spawn::process::WaiterThread;
 
 use crate::RunCommand;
 
-/// `Command::Context` shim — the option-carrying `ContextData` shape was lifted
-/// into `bun_options_types::context` so install can reference it without the CLI
-/// tier. Re-export here so `init()` / `install_with_manager()` /
-/// `setup_global_dir()` etc. keep their `Command::Context` signatures.
-#[allow(non_snake_case)]
-pub mod Command {
-    pub use bun_options_types::context::{Context, ContextData};
-
-    /// Hook (GENUINE b0): `bun_runtime::cli::Command::get()` returns the
-    /// process-global `*ContextData`. The static itself lives in tier-6
-    /// (`cli.rs`); install only needs a pointer for the bundler hook in
-    /// `update_package_json_and_install`. Registered once at startup by bun_cli.
-    pub(crate) static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-    /// Returns the raw process-global `*mut ContextData`.
-    /// Returns a raw pointer rather than `&'static mut`
-    /// because callers (e.g. `update_package_json_and_install`) already hold a
-    /// live `ctx: &mut ContextData` to the same allocation — materializing a
-    /// second `&mut` here would alias and is UB. Callers must deref at point
-    /// of use under their own SAFETY justification.
-    #[inline]
-    pub fn get() -> *mut ContextData {
-        // SAFETY: `GLOBAL_CTX` is set exactly once during single-threaded CLI
-        // startup (before any install entry point runs) and never cleared; we
-        // only read the pointer value here, no dereference.
-        GLOBAL_CTX.load(core::sync::atomic::Ordering::Relaxed)
-    }
-}
+use bun_options_types::context::Context;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sub-module declarations — explicit #[path] attrs for PascalCase /
@@ -133,12 +107,6 @@ pub mod update_package_json_and_install;
 pub mod update_request;
 #[path = "PackageManager/WorkspacePackageJSONCache.rs"]
 pub mod workspace_package_json_cache;
-
-/// Lower-case path alias so `package_manager::options::Options` (used by the
-/// retired stub surface) keeps resolving.
-pub mod options {
-    pub use super::package_manager_options::*;
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Only the `printHelp` text is needed by `CommandLineArguments::parse`. The
@@ -209,14 +177,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
     }
 }
 
-use crate::lockfile_real::package as Package;
+use crate::lockfile::package as Package;
+use crate::lockfile::{self, Lockfile};
 use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
-use bun_install::lockfile::{self, Lockfile};
-use bun_install::{
-    Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
-    initialize_store,
+use crate::{
+    Dependency, NetworkTask, PackageManifestMap, PackageNameAndVersionHash, PatchTask,
+    TaskCallbackContext, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -259,13 +226,7 @@ pub use enqueue::{
 };
 
 use self::package_manager_lifecycle as lifecycle;
-pub use lifecycle::{
-    LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry, determine_preinstall_state,
-    ensure_preinstall_state_list_capacity, find_trusted_dependencies_from_update_requests,
-    get_preinstall_state, has_no_more_pending_lifecycle_scripts, load_root_lifecycle_scripts,
-    report_slow_lifecycle_scripts, set_preinstall_state, sleep, spawn_package_lifecycle_scripts,
-    tick_lifecycle_scripts,
-};
+pub use lifecycle::{LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry};
 
 use self::package_manager_resolution as resolution;
 pub use resolution::{
@@ -295,7 +256,7 @@ pub use self::run_tasks::{
 };
 
 pub use self::update_package_json_and_install::{
-    update_package_json_and_install_and_cli, update_package_json_and_install_with_manager,
+    update_package_json_and_install, update_package_json_and_install_with_manager,
 };
 
 pub use self::populate_manifest_cache::populate_manifest_cache;
@@ -315,8 +276,10 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
-pub(crate) type NpmAliasMap =
-    HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
+pub(crate) type NpmAliasMap = HashMap<
+    PackageNameHash,
+    bun_install_types::dependency::Version, /* , IdentityContext<u64>, 80 */
+>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
@@ -335,7 +298,7 @@ pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 const DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL: usize = 64;
 const DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES: usize = 64;
 
-bun_output::declare_scope!(PackageManager, hidden);
+bun_core::declare_scope!(PackageManager, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PackageManager
@@ -632,7 +595,7 @@ pub enum TrackInstalledBin {
 }
 
 // MOVE_DOWN: data struct + accessors live in `bun_install_types::WakeHandler`
-// (single definition the resolver also stores). The `handler` second arg is
+// (single definition the resolver also stores). `wake`'s second arg is
 // erased to `*mut c_void` there because that crate cannot name
 // `PackageManager`; `wake_raw()` casts it back at the call site.
 pub use bun_install_types::resolver_hooks::WakeHandler;
@@ -743,7 +706,7 @@ impl PackageManager {
     /// can write `PackageManager::init(ctx, cli, subcommand)`.
     #[inline]
     pub fn init(
-        ctx: Command::Context,
+        ctx: Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
     ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
@@ -888,7 +851,7 @@ impl PackageManager {
 
     pub fn configure_env_for_scripts(
         &mut self,
-        ctx: Command::Context,
+        ctx: Context,
         log_level: package_manager_options::LogLevel,
     ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
         // Compute once and return the cached value on
@@ -941,18 +904,8 @@ impl PackageManager {
         dependency_id: DependencyID,
         err: Error,
     ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
-            unsafe {
-                (self.on_wake.get_on_dependency_error())(
-                    ctx.as_ptr(),
-                    dependency,
-                    dependency_id,
-                    err,
-                );
-            }
-        }
+        self.on_wake
+            .on_dependency_error(dependency, dependency_id, err);
     }
 
     pub fn wake(&mut self) {
@@ -979,11 +932,11 @@ impl PackageManager {
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
-            if let Some(ctx) = on_wake.context {
-                // `WakeHandler.handler`'s second arg is the erased
+            if on_wake.is_set() {
+                // `WakeHandler::wake`'s second arg is the erased
                 // `*mut PackageManager` (`bun_install_types` cannot name this
                 // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+                on_wake.wake(this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }
@@ -1097,7 +1050,7 @@ static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
-    ctx: Command::Context,
+    ctx: Context,
     log_level: package_manager_options::LogLevel,
 ) -> Result<transpiler::Transpiler<'static>, Error> {
     // We need to figure out the PATH and other environment variables
@@ -1135,10 +1088,7 @@ fn configure_env_for_scripts_run(
         };
     }
 
-    // The resolver-tier
-    // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
-    let paths_fs = bun_paths::fs::FileSystem::instance();
-    this.env_mut().load_ccache_path(paths_fs);
+    this.env_mut().load_ccache_path();
 
     {
         // Run node-gyp jobs in parallel.
@@ -1159,10 +1109,8 @@ fn configure_env_for_scripts_run(
 
     {
         let mut node_path = PathBuffer::uninit();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+        if let Some(node_path_z) = this.env_mut().get_node_path(&mut node_path) {
+            let _ = this.env_mut().load_node_js_config(node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1175,7 +1123,7 @@ fn configure_env_for_scripts_run(
                     break 'brk;
                 }
                 this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                let _ = this.env_mut().load_node_js_config(bun_path)?;
             }
         }
     }
@@ -1424,7 +1372,7 @@ pub fn get() -> *mut PackageManager {
 /// across those points). The raw [`get`] accessor remains `*mut` for those
 /// worker-side projections.
 pub fn init(
-    ctx: Command::Context,
+    ctx: Context,
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
@@ -1653,7 +1601,7 @@ pub fn init(
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
                     let parsed =
-                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
+                        bun_parsers::json::ParsedJson::parse_package_json(&json_source, unsafe {
                             &mut *ctx.log
                         })?;
                     let json = parsed.root;
@@ -1671,7 +1619,7 @@ pub fn init(
 
                     if let Some(prop) = json.as_property(b"workspaces") {
                         let value_loc =
-                            crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
+                            bun_parsers::json::property_value_loc(&json_source.contents, prop.loc)
                                 .unwrap_or(prop.loc);
                         let names = match &prop.expr.data {
                             bun_ast::ExprData::EArrayJSON(arr) => Some(
@@ -1684,7 +1632,7 @@ pub fn init(
                                 .find(|row| row.key.slice() == b"packages")
                                 .and_then(|row| match &row.value {
                                     bun_ast::E::JsonValue::Array(arr) => {
-                                        let packages_loc = crate::bun_json::property_value_loc(
+                                        let packages_loc = bun_parsers::json::property_value_loc(
                                             &json_source.contents,
                                             row.key_loc,
                                         )
@@ -1776,8 +1724,7 @@ pub fn init(
     bun_sys::chdir(&top_level_dir_z)?;
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
-    // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
-    ::bun_bunfig::arguments::load_config(
+    bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
         cli.config,
         ctx,
@@ -1792,7 +1739,10 @@ pub fn init(
         // rebound to the process-lifetime CWD_BUF (it was a transient slice
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
+        fs.set_top_level_dir(bun_opaque::ffi::slice(
+            CWD_BUF.get().cast::<u8>(),
+            tld.len(),
+        ));
         // bun_sys exposes the non-Z `get_fd_path`;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
@@ -1828,11 +1778,14 @@ pub fn init(
     };
 
     env.load_process()?;
-    // Reborrow the BSSMap-owned `*DirEntry` for the
-    // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
+    // Reborrow the BSSMap-owned `*DirEntry` only for the `has_comptime_query`
+    // reads that build the `.env*` presence set.
     env.load(
         // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
-        unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
+        dot_env::DefaultEnvFiles::probe(|n| {
+            // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
+            unsafe { &*std::ptr::from_mut::<fs::DirEntry>(entries_option) }.has_comptime_query(n)
+        }),
         &[],
         dot_env::DotEnvFileSuffix::Production,
         false,
@@ -2114,6 +2067,12 @@ pub fn init(
             // `init_global`'s uv-loop setup. The shell's IOWriter then opens
             // stdout/stderr against an under-initialised loop → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+            // Install the per-thread handle `bun_io::get_vm_ctx(Mini)` hands
+            // out, mirroring `init_global` (lifecycle-script polls need it).
+            bun_io::set_current_ctx(mini_event_loop::MiniEventLoop::as_event_loop_ctx(
+                // SAFETY: `mini_ptr` is the live embedded loop set just above.
+                unsafe { &mut *mini_ptr },
+            ));
         }
     }
     {
@@ -2419,7 +2378,7 @@ pub(crate) fn init_with_runtime_once(
             bun_sys::File::from_fd(Fd::invalid())
         );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
-        // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
+        // event loop via the `bun_io::EventLoopCtx` vtable installed by the VM.
         wr!(event_loop, AnyEventLoop::js_current());
         wr!(
             original_package_json_path,

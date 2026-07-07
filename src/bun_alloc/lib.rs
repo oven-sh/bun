@@ -10,11 +10,12 @@
 // Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
-use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
-use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU16, Ordering};
 use std::collections::HashMap;
+
+use bun_sync::Mutex;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
@@ -71,6 +72,14 @@ pub struct AllocatorVTable {
     pub resize: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool,
     pub remap: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8,
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
+    /// True when distinct allocator instances have distinct `StdAllocator.ptr`
+    /// values (so pointer-identity comparison is meaningful). Replaces the
+    /// former bun_safety vtable-address registry.
+    pub ptr_is_identity: bool,
+    /// True when `alloc`/`free` are refcount bumps on an external object
+    /// (WTF::StringImpl) rather than real allocations. Lets allocator code
+    /// identify the WTF-string vtable without naming the string types.
+    pub wtf_string_refcount: bool,
 }
 impl AllocatorVTable {
     /// `alloc` impl that always fails. For vtables that only ever `free` an
@@ -104,18 +113,18 @@ impl AllocatorVTable {
             resize: Self::NO_RESIZE,
             remap: Self::NO_REMAP,
             free,
+            ptr_is_identity: false,
+            wtf_string_refcount: false,
         }
     }
 }
 
-/// Fat allocator handle (ptr + vtable). Distinct from the `Allocator` trait below.
+/// Fat allocator handle (ptr + vtable).
 #[derive(Clone, Copy)]
 pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
     pub vtable: &'static AllocatorVTable,
 }
-/// Legacy alias for `AllocatorVTable`.
-pub type VTable = AllocatorVTable;
 
 // SAFETY: `ptr` is an opaque tag/context handle; the vtable is `&'static`.
 // Thread-safety of dispatch is the implementor's concern (mimalloc is
@@ -518,93 +527,6 @@ mod hashbrown_bridge;
 /// `allocator-api2`.
 pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
-// ── tier-0 local primitives ───────────────────────────────────────────────
-// Real, self-contained helpers used by the BSS containers below. These are the
-// canonical tier-0 definitions, re-exported by higher tiers (`bun_paths::SEP_STR`,
-// `bun_core::strings::trim_right`, `bun_core::strings::trim_right`).
-
-/// `"\\"` on Windows, `"/"` elsewhere.
-/// Canonical tier-0 definition; re-exported by `bun_paths::SEP_STR`.
-pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
-
-/// `b'\\'` on Windows, `b'/'` elsewhere.
-/// Canonical tier-0 definition; re-exported by `bun_paths::SEP` / `bun_core::SEP`.
-pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
-
-/// Canonical tier-0 definition; re-exported by `bun_core::strings::trim_right`.
-#[inline]
-pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-    let mut end = s.len();
-    while end > 0 && chars.contains(&s[end - 1]) {
-        end -= 1;
-    }
-    &s[..end]
-}
-
-/// Canonical tier-0 definition; re-exported by `bun_core::strings::trim_left`.
-#[inline]
-pub fn trim_left<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-    let mut begin = 0usize;
-    while begin < s.len() && chars.contains(&s[begin]) {
-        begin += 1;
-    }
-    &s[begin..]
-}
-
-/// Strip `chars` from both ends.
-/// Canonical tier-0 definition; re-exported by `bun_core::strings::trim`.
-#[inline]
-pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-    trim_right(trim_left(s, chars), chars)
-}
-
-// ─── ascii-lowercase helpers ──────────────────────────────────────────────
-// Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
-// them without a dep cycle (bun_core → bun_alloc, not the reverse).
-// `bun_core::strings` re-exports `copy_lowercase` and `ascii_lowercase_buf`.
-
-/// ASCII-lowercase
-/// `in_` into `out` (which must be at least `in_.len()`), returning the
-/// written prefix. Memcpy-runs + per-uppercase-byte fixup; identical output
-/// to a byte-at-a-time `to_ascii_lowercase` zip.
-pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
-    let mut in_slice = in_;
-    // Reshaped for borrowck — track output offset instead of reslicing &mut.
-    let mut out_off: usize = 0;
-
-    'begin: loop {
-        for (i, &c) in in_slice.iter().enumerate() {
-            if let b'A'..=b'Z' = c {
-                out[out_off..out_off + i].copy_from_slice(&in_slice[0..i]);
-                out[out_off + i] = c.to_ascii_lowercase();
-                let end = i + 1;
-                in_slice = &in_slice[end..];
-                out_off += end;
-                continue 'begin;
-            }
-        }
-
-        out[out_off..out_off + in_slice.len()].copy_from_slice(in_slice);
-        break;
-    }
-
-    &out[0..in_.len()]
-}
-
-/// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning
-/// `Some((buf, input.len()))` or `None` if `input.len() > N`. The unused tail
-/// of `buf` is zero-filled. Covers the ubiquitous "lowercase a short key into
-/// a stack buffer, then look it up in a length-gated map" pattern.
-#[inline]
-pub fn ascii_lowercase_buf<const N: usize>(input: &[u8]) -> Option<([u8; N], usize)> {
-    if input.len() > N {
-        return None;
-    }
-    let mut buf = [0u8; N];
-    copy_lowercase(input, &mut buf[..input.len()]);
-    Some((buf, input.len()))
-}
-
 /// Wrap a raw allocator pointer in the `Result<NonNull<[u8]>, AllocError>`
 /// shape `core::alloc::Allocator` wants. Null → `Err(AllocError)`. Generic
 /// over the pointee so mimalloc's `*mut c_void` returns pass straight in.
@@ -691,53 +613,6 @@ pub fn buf_print_len(
     let mut c = SliceCursor { buf, at: 0 };
     core::fmt::write(&mut c, args)?;
     Ok(c.at)
-}
-
-// ── RAII Mutex ────────────────────────────────────────────────────────────
-// The BSS containers below need to hold the lock across `&mut self` method calls, so
-// the returned [`MutexGuard`] deliberately erases its borrow of `self` — it
-// stores the `std::sync::MutexGuard` lifetime-extended to `'static` (lifetimes
-// are erased at codegen, so this is a layout no-op). This is sound because
-// every `Mutex` here lives inside a `'static` BSS singleton (see `instance()`
-// below), so the pointee always outlives the guard.
-//
-// LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
-// futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
-// futex-backed since Rust 1.62) is the dependency-free stand-in.
-pub struct Mutex(std::sync::Mutex<()>);
-impl Mutex {
-    pub const fn new() -> Self {
-        Self(std::sync::Mutex::new(()))
-    }
-    #[inline]
-    pub fn lock(&self) -> MutexGuard {
-        let g = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // SAFETY: lifetime extension only — `std::sync::MutexGuard<'a, ()>` and
-        // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
-        // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
-        // is in fact valid for `'static`.
-        let _guard = unsafe {
-            core::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(
-                g,
-            )
-        };
-        MutexGuard { _guard }
-    }
-}
-
-/// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
-/// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
-#[must_use = "if unused the Mutex will immediately unlock"]
-pub struct MutexGuard {
-    _guard: std::sync::MutexGuard<'static, ()>,
-}
-impl Default for Mutex {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
@@ -877,12 +752,10 @@ pub fn usable_size(ptr: *const u8) -> usize {
 // ──────────────────────────────────────────────────────────────────────────
 
 // ── out_of_memory ─────────────────────────────────────────────────────────
+
 // `bun_alloc` is T0 and cannot depend on `bun_crash_handler`, so the upward
-// call is routed through a link-time `extern "Rust"` symbol defined by
-// `bun_crash_handler`. Resolved at link time → the target lives in read-only
-// `.text`, so memory corruption cannot redirect it (the previous `AtomicPtr`
-// slot was writable). Under `cfg(test)` (this crate's standalone test binary
-// does not link `bun_crash_handler`) the fallback is a direct abort.
+// call is a link-time `extern "Rust"` symbol defined by `bun_crash_handler`.
+// Under `cfg(test)` (no `bun_crash_handler` linked) the fallback aborts.
 
 #[cold]
 #[inline(never)]
@@ -969,593 +842,6 @@ pub mod wtf {
     #[inline]
     pub fn release_fast_malloc_free_memory_for_this_thread() {
         WTF__releaseFastMallocFreeMemoryForThisThread()
-    }
-}
-
-// ── String — TYPE_ONLY landing ─────────────────────────────────────────────
-// Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
-// (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.
-// PORTING.md: "#[repr(C)] struct { tag: u8, value: StringValue } — NOT a Rust
-// enum (C++ mutates tag and value independently across FFI)."
-
-/// Discriminant for [`String`]'s representation.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tag {
-    Dead = 0,
-    WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
-    Empty = 4,
-}
-
-// `ZigString` pointer-tag scheme — single source of truth.
-// Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-pub const ZS_STATIC_BIT: usize = 1usize << 60;
-pub const ZS_UTF8_BIT: usize = 1usize << 61;
-pub const ZS_GLOBAL_BIT: usize = 1usize << 62;
-pub const ZS_16BIT_BIT: usize = 1usize << 63;
-pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
-
-/// FFI string slice — `{ ptr: *const u8, len: usize }`.
-///
-/// **Canonical storage layout.** `bun_core::string::ZigString` is a
-/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
-/// source of truth) and adds the encoding-aware/allocating methods via
-/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
-/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
-/// them without an upward dep on `bun_core`. Higher-tier callers should name
-/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
-/// intended path.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct ZigString {
-    /// Tagged pointer — never dereference directly; use `untagged()`.
-    pub _unsafe_ptr_do_not_use: *const u8,
-    pub len: usize,
-}
-
-impl ZigString {
-    pub const EMPTY: ZigString = ZigString {
-        _unsafe_ptr_do_not_use: b"".as_ptr(),
-        len: 0,
-    };
-
-    #[inline]
-    pub const fn init(slice: &[u8]) -> ZigString {
-        ZigString {
-            _unsafe_ptr_do_not_use: slice.as_ptr(),
-            len: slice.len(),
-        }
-    }
-
-    /// Construct from an already-tagged pointer + length. `ptr` is stored
-    /// verbatim — tag bits are not touched.
-    #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
-        ZigString {
-            _unsafe_ptr_do_not_use: ptr,
-            len,
-        }
-    }
-
-    /// Raw tagged pointer (top-bit flags intact). Pair with
-    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
-    #[inline]
-    pub const fn tagged_ptr(&self) -> *const u8 {
-        self._unsafe_ptr_do_not_use
-    }
-
-    #[inline]
-    pub fn init_utf16(items: &[u16]) -> ZigString {
-        let mut out = ZigString {
-            _unsafe_ptr_do_not_use: items.as_ptr().cast(),
-            len: items.len(),
-        };
-        out.mark_utf16();
-        out
-    }
-
-    #[inline]
-    pub const fn length(&self) -> usize {
-        self.len
-    }
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    #[inline]
-    pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_16BIT_BIT != 0
-    }
-    #[inline]
-    pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_UTF8_BIT != 0
-    }
-    #[inline]
-    pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_GLOBAL_BIT != 0
-    }
-    #[inline]
-    pub fn is_static(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_STATIC_BIT != 0
-    }
-    #[inline]
-    pub fn mark_utf16(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_16BIT_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_utf8(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_UTF8_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_global(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_GLOBAL_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_static(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_STATIC_BIT) as *const u8;
-    }
-
-    /// Strip the flag bits — truncate to the low 53 bits.
-    #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & ZS_UNTAG_MASK) as *const u8
-    }
-
-    /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(
-            !self.is_16bit(),
-            "ZigString::slice() on UTF-16 string; use to_slice()"
-        );
-        // SAFETY: constructor stored a valid ptr/len; flag bits stripped.
-        // Length is capped at `u32::MAX`.
-        unsafe {
-            core::slice::from_raw_parts(
-                Self::untagged(self._unsafe_ptr_do_not_use),
-                core::cmp::min(self.len, u32::MAX as usize),
-            )
-        }
-    }
-
-    /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
-    #[inline]
-    pub fn utf16_slice_aligned(&self) -> &[u16] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(self.is_16bit());
-        // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
-        // for `self.len` u16 units; flag bits stripped via `ZS_UNTAG_MASK`
-        // (inlined `untagged()` so the cast goes `usize → *const u16` directly).
-        unsafe {
-            core::slice::from_raw_parts(
-                ((self._unsafe_ptr_do_not_use as usize) & ZS_UNTAG_MASK) as *const u16,
-                self.len,
-            )
-        }
-    }
-}
-
-/// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
-///
-/// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
-/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
-/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
-/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
-/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
-/// pre-/post-FFI `ref_count()` loads). `Cell<u32>` is `repr(transparent)` over
-/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
-#[repr(C)]
-pub struct WTFStringImplStruct {
-    pub m_ref_count: core::cell::Cell<u32>,
-    pub m_length: u32,
-    pub m_ptr: WTFStringImplPtr,
-    pub m_hash_and_flags: core::cell::Cell<u32>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union WTFStringImplPtr {
-    pub latin1: *const u8,
-    pub utf16: *const u16,
-}
-
-/// `*WTFStringImplStruct` — always non-null when `tag == WTFStringImpl`.
-pub type WTFStringImpl = *mut WTFStringImplStruct;
-
-impl WTFStringImplStruct {
-    pub const MAX: u32 = u32::MAX;
-
-    // ---------------------------------------------------------------------
-    // These details must stay in sync with WTFStringImpl.h in WebKit!
-    // ---------------------------------------------------------------------
-    pub const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
-    /// The bottom bit in the ref count indicates a static (immortal) string.
-    pub const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
-    /// This allows us to ref / deref without disturbing the static string flag.
-    pub const S_REF_COUNT_INCREMENT: u32 = 0x2;
-
-    #[inline]
-    pub fn length(&self) -> u32 {
-        self.m_length
-    }
-    #[inline]
-    pub fn is_8bit(&self) -> bool {
-        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
-    }
-    #[inline]
-    pub fn byte_length(&self) -> usize {
-        if self.is_8bit() {
-            self.m_length as usize
-        } else {
-            (self.m_length as usize) * 2
-        }
-    }
-    #[inline]
-    pub fn memory_cost(&self) -> usize {
-        self.byte_length()
-    }
-    #[inline]
-    pub fn ref_count(&self) -> u32 {
-        self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT
-    }
-    #[inline]
-    pub fn is_static(&self) -> bool {
-        self.m_ref_count.get() & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
-    }
-    #[inline]
-    pub fn has_at_least_one_ref(&self) -> bool {
-        // WTF::StringImpl::hasAtLeastOneRef
-        self.m_ref_count.get() > 0
-    }
-    /// Atomic view of `m_ref_count`. The C++ field is
-    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:163); we model it as
-    /// `Cell<u32>` for the read-only accessors above but `ref`/`deref` must
-    /// issue real atomic RMWs to match `WTF::StringImpl::ref`/`deref` exactly.
-    /// `Cell<u32>` is `repr(transparent)` over `UnsafeCell<u32>` and
-    /// `AtomicU32` is `repr(C, align(4))` over `UnsafeCell<u32>`: same size,
-    /// same alignment (`m_ref_count` is the first field of a `#[repr(C)]`
-    /// struct so it is 4-aligned), so the in-place reborrow is sound.
-    #[inline(always)]
-    fn ref_count_atomic(&self) -> &AtomicU32 {
-        // SAFETY: layout-compatible reborrow of `UnsafeCell<u32>` as
-        // `AtomicU32`; see doc comment above.
-        unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
-    }
-    /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
-    ///
-    /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
-    /// shim into Rust callers (2151 out-of-line `callq` sites in the release
-    /// binary), so the one-instruction body is reimplemented here.
-    /// `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
-    #[inline]
-    pub fn r#ref(&self) {
-        let old = self
-            .ref_count_atomic()
-            .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
-        debug_assert!(old > 0); // hasAtLeastOneRef — also true for static (flag bit set)
-        debug_assert!(
-            old.wrapping_add(Self::S_REF_COUNT_INCREMENT) / Self::S_REF_COUNT_INCREMENT
-                > old / Self::S_REF_COUNT_INCREMENT
-                || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
-        );
-        let _ = old;
-    }
-    /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
-    ///
-    /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
-    /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`;
-    /// WTF relies on the static-string flag bit (0x1) to keep static strings'
-    /// counters from ever equalling `s_refCountIncrement`, so no separate
-    /// `isStatic()` check is needed.
-    #[inline]
-    pub fn deref(&self) {
-        let old = self
-            .ref_count_atomic()
-            .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
-        debug_assert!(old > 0); // hasAtLeastOneRef
-        if old != Self::S_REF_COUNT_INCREMENT {
-            return;
-        }
-        // Cold path: last reference dropped — hand the impl to C++ for
-        // destruction (handles substring/symbol/external buffer ownership).
-        // SAFETY: `old == s_refCountIncrement` ⇒ count is now 0 and we held
-        // the sole ref; `self` is not touched again after this call.
-        unsafe { Bun__WTFStringImpl__destroy(self) };
-    }
-    #[inline]
-    pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
-        StdAllocator {
-            ptr: self.cast(),
-            vtable: StringImplAllocator::VTABLE_PTR,
-        }
-    }
-    /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
-    /// union is a valid byte pointer regardless of encoding (both arms share
-    /// the same offset). Centralises the `from_raw_parts(m_ptr.latin1, …)` used
-    /// by `byte_slice` / `latin1_slice` / `utf8_slice`.
-    #[inline(always)]
-    pub fn raw_bytes(&self, len: usize) -> &[u8] {
-        // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
-        // lifetime of `self`; every caller passes `len ≤ byte_length()`.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
-    }
-    #[inline]
-    pub fn byte_slice(&self) -> &[u8] {
-        self.raw_bytes(self.byte_length())
-    }
-    #[inline]
-    pub fn latin1_slice(&self) -> &[u8] {
-        debug_assert!(self.is_8bit());
-        self.raw_bytes(self.m_length as usize)
-    }
-    #[inline]
-    pub fn utf16_slice(&self) -> &[u16] {
-        debug_assert!(!self.is_8bit());
-        // SAFETY: WebKit guarantees m_ptr.utf16 valid for m_length u16s when !8-bit.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
-    }
-    #[inline]
-    pub fn utf16_byte_length(&self) -> usize {
-        if self.is_8bit() {
-            self.m_length as usize * 2
-        } else {
-            self.m_length as usize
-        }
-    }
-    #[inline]
-    pub fn latin1_byte_length(&self) -> usize {
-        // Not all UTF-16 characters fit are representable in latin1.
-        // Those get truncated?
-        self.m_length as usize
-    }
-    #[inline]
-    pub fn is_thread_safe(&self) -> bool {
-        WTFStringImpl__isThreadSafe(self)
-    }
-    /// Compute the hash() if necessary
-    #[inline]
-    pub fn ensure_hash(&self) {
-        Bun__WTFStringImpl__ensureHash(self);
-    }
-    #[inline]
-    pub fn has_prefix(&self, text: &[u8]) -> bool {
-        // SAFETY: `self` is a valid WTF::StringImpl; text.ptr/len describe a valid slice.
-        unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
-    }
-    #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
-        if self.is_8bit() {
-            ZigString::init(self.latin1_slice())
-        } else {
-            ZigString::init_utf16(self.utf16_slice())
-        }
-    }
-}
-
-unsafe extern "C" {
-    // `&WTFStringImplStruct` is ABI-identical to the C++ `StringImpl*` (thin
-    // non-null pointer to a `#[repr(C)]` struct). C++-side mutation lands in
-    // `m_ref_count` / `m_hash_and_flags`, both `Cell<u32>`, so writes through
-    // a `&`-derived pointer are sound. The type encodes the only validity
-    // precondition, so `safe fn` discharges the link-time proof.
-    // `ref`/`deref` are inlined in Rust above; only the cold last-ref
-    // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
-    // allocation backing the pointer.
-    pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    // Rust no longer calls these.
-    pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
-    pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
-    safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
-    safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
-    fn Bun__WTFStringImpl__hasPrefix(
-        this: *const WTFStringImplStruct,
-        text_ptr: *const u8,
-        text_len: usize,
-    ) -> bool;
-}
-
-/// An [`AllocatorVTable`] whose ctx `ptr` is a `WTFStringImpl`; `alloc` bumps
-/// the refcount, `free` derefs. Hoisted into `bun_alloc` (which already owns
-/// `AllocatorVTable` and the `WTFStringImplStruct` layout) so the
-/// `is_wtf_allocator` vtable-identity check is a local pointer compare — no
-/// upward dependency on `bun_string` and no runtime fn-ptr hook.
-#[allow(non_snake_case)]
-pub mod StringImplAllocator {
-    use super::{Alignment, AllocatorVTable, WTFStringImplStruct};
-
-    unsafe fn alloc(ptr: *mut core::ffi::c_void, len: usize, _: Alignment, _: usize) -> *mut u8 {
-        // SAFETY: vtable contract — `ptr` is the non-null `WTFStringImpl` passed
-        // to `ref_count_allocator`, live with refcount ≥ 1 for this call. Single
-        // deref site (nonnull-asref reduction) — `byte_length`/`r#ref` are safe
-        // `&self` methods.
-        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
-        if this.byte_length() != len {
-            // we don't actually allocate, we just reference count
-            return core::ptr::null_mut();
-        }
-        this.r#ref();
-        // we should never actually allocate
-        // SAFETY: `m_ptr.latin1` is the byte-view union arm (both arms share
-        // offset 0); valid for `byte_length()` bytes.
-        unsafe { this.m_ptr.latin1 }.cast_mut()
-    }
-
-    unsafe fn free(ptr: *mut core::ffi::c_void, buf: &mut [u8], _: Alignment, _: usize) {
-        // SAFETY: see `alloc` — single deref site for the vtable's `WTFStringImpl`
-        // ctx pointer; `byte_slice`/`byte_length`/`deref` are safe `&self` methods.
-        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
-        debug_assert!(this.byte_slice().as_ptr() == buf.as_ptr());
-        // The buffer length is `byte_length()` (i.e. `m_length * 2` for
-        // UTF-16), not the code-unit count.
-        debug_assert!(this.byte_length() == buf.len());
-        this.deref();
-    }
-
-    pub static VTABLE: AllocatorVTable = AllocatorVTable {
-        alloc,
-        resize: AllocatorVTable::NO_RESIZE,
-        remap: AllocatorVTable::NO_REMAP,
-        free,
-    };
-
-    pub const VTABLE_PTR: &AllocatorVTable = &VTABLE;
-}
-
-/// C-layout untagged union over [`String`]'s payload representations.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union StringImpl {
-    pub zig_string: ZigString,
-    pub wtf_string_impl: WTFStringImpl,
-    // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
-}
-
-/// Known as `BunString` in C++.
-///
-/// 5-variant tagged union over WTF-backed and `ZigString`-backed strings. NOT a
-/// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct String {
-    pub tag: Tag,
-    pub value: StringImpl,
-}
-
-impl String {
-    pub const NAME: &'static str = "BunString";
-
-    /// Vtable-identity check against
-    /// [`StringImplAllocator::VTABLE`].
-    #[inline]
-    pub fn is_wtf_allocator(alloc: StdAllocator) -> bool {
-        core::ptr::eq(alloc.vtable, StringImplAllocator::VTABLE_PTR)
-    }
-
-    pub const EMPTY: String = String {
-        tag: Tag::Empty,
-        value: StringImpl {
-            zig_string: ZigString::EMPTY,
-        },
-    };
-    pub const DEAD: String = String {
-        tag: Tag::Dead,
-        value: StringImpl {
-            zig_string: ZigString::EMPTY,
-        },
-    };
-
-    /// Borrow the live `WTF::StringImpl` backing this string.
-    ///
-    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
-    /// `length` / `is_8bit` each open-coded. Callers branch on
-    /// `self.tag == WTFStringImpl` first (debug-asserted).
-    #[inline(always)]
-    fn wtf_impl(&self) -> &WTFStringImplStruct {
-        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
-        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
-        // union field and a non-null, live `*mut WTFStringImplStruct`
-        // (refcount ≥ 1 for the `String`'s lifetime).
-        unsafe { &*self.value.wtf_string_impl }
-    }
-
-    #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
-        match self.tag {
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
-                // is the active union field.
-                unsafe { self.value.zig_string }
-            }
-            Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
-            _ => ZigString::EMPTY,
-        }
-    }
-
-    #[inline]
-    pub fn length(&self) -> usize {
-        if self.tag == Tag::WTFStringImpl {
-            self.wtf_impl().length() as usize
-        } else {
-            self.to_zig_string().length()
-        }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.length() == 0
-    }
-
-    #[inline]
-    pub fn is_8bit(&self) -> bool {
-        match self.tag {
-            Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
-                // is the active union field.
-                unsafe { !self.value.zig_string.is_16bit() }
-            }
-            _ => true,
-        }
-    }
-
-    /// Compare against a (typically literal) byte slice.
-    /// PERF: this T0 version uses scalar `==` / widening compare. Re-route to
-    /// `bun_core::strings` via inlining if it shows up on a hot path.
-    pub fn eql_comptime(&self, other: &[u8]) -> bool {
-        let zs = self.to_zig_string();
-        if zs.is_16bit() {
-            let u16s = zs.utf16_slice_aligned();
-            if u16s.len() != other.len() {
-                return false;
-            }
-            u16s.iter()
-                .copied()
-                .zip(other.iter().copied())
-                .all(|(a, b)| a == b as u16)
-        } else {
-            zs.slice() == other
-        }
-    }
-}
-
-impl core::fmt::Display for String {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // utf8 → write bytes; utf16 → transcode;
-        // latin1 → widen each byte to a Unicode scalar.
-        let zs = self.to_zig_string();
-        if zs.len == 0 {
-            return Ok(());
-        }
-        if zs.is_16bit() {
-            for c in core::char::decode_utf16(zs.utf16_slice_aligned().iter().copied()) {
-                f.write_char(c.unwrap_or(core::char::REPLACEMENT_CHARACTER))?;
-            }
-            Ok(())
-        } else if zs.is_utf8() {
-            // BStr renders raw bytes without allocating.
-            write!(f, "{}", bstr::BStr::new(zs.slice()))
-        } else {
-            for &b in zs.slice() {
-                // Latin-1 byte → Unicode codepoint of the same value.
-                f.write_char(b as char)?;
-            }
-            Ok(())
-        }
     }
 }
 
@@ -2593,7 +1879,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = unsafe { (*this).mutex.lock_guard() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let this = unsafe { &mut *this };
         if this.used as usize > Self::MAX_INDEX {
@@ -2814,7 +2100,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = unsafe { (*this).mutex.lock_guard() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
         // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
@@ -2902,7 +2188,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = unsafe { (*this).mutex.lock_guard() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
         // SAFETY: `ptr` points into storage owned by `*this` (backing_buf or a
@@ -2927,7 +2213,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &[u8],
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: see `append`.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = unsafe { (*this).mutex.lock_guard() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let this_ref = unsafe { &mut *this };
 
@@ -2937,7 +2223,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // buffer's borrow does not escape.
         let (ptr, len) = if value.len() <= 256 {
             let mut scratch = [0u8; 256];
-            this_ref.do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            this_ref.do_append(&bun_ascii::copy_lowercase(
+                value,
+                &mut scratch[..value.len()],
+            ))?
         } else {
             // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
             // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
@@ -2947,7 +2236,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             }
             // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
             let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
-            let r = this_ref.do_append(&crate::copy_lowercase(value, tmp));
+            let r = this_ref.do_append(&bun_ascii::copy_lowercase(value, tmp));
             // SAFETY: `p` was allocated by `mi_malloc` above.
             unsafe { mimalloc::mi_free(p.cast()) };
             r?
@@ -3113,7 +2402,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     #[inline(always)]
     fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, SEP_STR.as_bytes())
+            bun_ascii::trim_right(denormalized_key, bun_ascii::SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -3126,7 +2415,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     ) -> core::result::Result<Result, AllocError> {
         let _key = Self::key_hash(denormalized_key);
 
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         match self.index.entry(_key) {
             std::collections::hash_map::Entry::Occupied(e) => {
                 let v = *e.get();
@@ -3157,13 +2446,13 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
         // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
         // so it does not conflict with the `&mut self` borrow in `at_index`.
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         let index = self.index.get(&_key).copied()?;
         self.at_index(index)
     }
 
     pub fn mark_not_found(&mut self, result: Result) {
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         self.index.insert(result.hash, NOT_FOUND);
     }
 
@@ -3186,7 +2475,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         result: &mut Result,
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
 
         if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
             result
@@ -3223,7 +2512,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     /// Returns true if the entry was removed.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
@@ -3381,7 +2670,7 @@ impl<
         key: &[u8],
         result: &mut Result,
     ) -> core::result::Result<(), AllocError> {
-        let _guard = self.map().mutex.lock();
+        let _guard = self.map().mutex.lock_guard();
 
         let slice: &'static [u8];
 
@@ -3422,7 +2711,7 @@ impl<
         }
 
         let slice = if REMOVE_TRAILING_SLASHES {
-            trim_right(slice, b"/")
+            bun_ascii::trim_right(slice, b"/")
         } else {
             slice
         };
@@ -3479,80 +2768,10 @@ impl<
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
-// ──────────────────────────────────────────────────────────────────────────
-//
-// The legacy allocator interface threaded an allocator
-// param through every fn. Rust has a global allocator
-// (`#[global_allocator] = Mimalloc` above), so per PORTING.md:
-//
-//   - Non-AST crates: DELETE the `allocator` param. `Box`/`Vec`/`String` use
-//     global mimalloc.
-//   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
-//
-// The trait below is kept ONLY as an empty marker so downstream code that
-// still says `&dyn bun_alloc::Allocator` continues to parse. Do not implement
-// it; do not add methods. Callers should be rewritten to drop the param
-// entirely.
-
-/// Legacy allocator marker trait. See module note.
-///
-/// Provides a `type_id()` hook so `is_instance`-style vtable-identity checks
-/// can be expressed as concrete-type identity
-/// on the trait object — every implementor gets a default `type_id()` that
-/// returns its monomorphized `TypeId`.
-pub trait Allocator: 'static {
-    #[inline]
-    fn type_id(&self) -> core::any::TypeId {
-        core::any::TypeId::of::<Self>()
-    }
-}
-
-impl dyn Allocator {
-    /// Is the concrete type behind this `&dyn Allocator` exactly `T`?
-    ///
-    /// A vtable-identity check, expressed as `TypeId`
-    /// identity via the trait's `type_id()` hook (dynamic dispatch on the
-    /// dyn receiver — NOT `Any::type_id`). All per-type
-    /// `Foo::is_instance(alloc)` associated fns delegate here.
-    #[inline]
-    pub fn is<T: Allocator>(&self) -> bool {
-        Allocator::type_id(self) == core::any::TypeId::of::<T>()
-    }
-}
-
-/// Checks whether `allocator` is the default allocator.
-///
-/// Compares identity
-/// against the global mimalloc-backed allocator. With `#[global_allocator] =
-/// Mimalloc`, the Rust default is `DefaultAlloc`; vtable-identity becomes a
-/// `TypeId` comparison.
-#[inline]
-pub fn is_default(alloc: &dyn Allocator) -> bool {
-    alloc.is::<DefaultAlloc>()
-}
-
-/// Legacy default-allocator ZST. With `#[global_allocator]` set,
+/// Default-allocator ZST. With `#[global_allocator]` set,
 /// this is just a unit marker.
 #[derive(Clone, Copy, Default)]
 pub struct DefaultAlloc;
-impl Allocator for DefaultAlloc {}
-
-static DEFAULT_ALLOC: DefaultAlloc = DefaultAlloc;
-
-/// Global mimalloc-backed allocator handle. With
-/// `#[global_allocator] = Mimalloc`, this is a marker handle; callers that
-/// thread it should be rewritten to use `Box`/`Vec` directly. Kept so ported
-/// call sites that still pass an `&dyn Allocator` resolve.
-#[inline]
-pub fn default_allocator() -> &'static dyn Allocator {
-    &DEFAULT_ALLOC
-}
-
-// `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
-// an allocator-borrowing discipline (avoid double-free), which Rust's
-// ownership already enforces.
 
 // ──────────────────────────────────────────────────────────────────────────
 // `basic` module selection

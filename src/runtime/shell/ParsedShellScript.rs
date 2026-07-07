@@ -265,7 +265,7 @@ fn create_parsed_shell_script_impl(
         match Interpreter::parse(
             arena,
             &script[..],
-            &mut jsobjs[..],
+            &jsobjs[..],
             &mut jsstrings[..],
             &mut out_parser,
             &mut out_lex_result,

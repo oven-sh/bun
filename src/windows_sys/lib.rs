@@ -9,9 +9,16 @@ pub mod externs;
 // `bun_sys::windows`'s `pub use bun_windows_sys::Foo;` re-exports resolve.
 pub use externs::*;
 
-// `bun.windows.libuv` is NOT re-exported here — this is the bottom-tier Win32
-// externs crate and must stay leaf. The `bun.windows.libuv` alias lives in the
-// higher-tier `bun_sys::windows` module (`pub use bun_libuv_sys as libuv`).
+/// `PVOID` (`winnt.h`). Distinct from [`externs::LPVOID`] only in spelling;
+/// the ntdll prototypes use `PVOID`, the Win32 ones `LPVOID`.
+pub type PVOID = *mut core::ffi::c_void;
+
+/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (`consoleapi.h`) — `SetConsoleMode`
+/// output-mode flag enabling VT100/ANSI escape sequence interpretation.
+pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
+
+// libuv bindings are NOT re-exported here — this is the bottom-tier Win32
+// externs crate and must stay leaf. Callers use `bun_libuv_sys` directly.
 
 /// `NTSTATUS` value namespace (`ntstatus.h`). The `NTSTATUS` newtype carries
 /// these as associated consts, but `bun_sys::windows` glob-imports them as
@@ -40,4 +47,21 @@ pub mod ntstatus {
     pub const DELETE_PENDING: NTSTATUS = NTSTATUS::DELETE_PENDING;
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS::SHARING_VIOLATION;
     pub const CANNOT_DELETE: NTSTATUS = NTSTATUS::CANNOT_DELETE;
+}
+
+/// `bun.O.*` — the POSIX-shaped (Linux-octal) open-flag values Bun normalises
+/// to internally on Windows. NOT MSVCRT `_O_*`. Single source of truth shared
+/// by `bun_sys::O` (windows branch) and `bun_libuv_sys::O::from_bun_o`.
+pub mod bun_o {
+    pub const WRONLY: i32 = 0o1;
+    pub const RDWR: i32 = 0o2;
+    pub const CREAT: i32 = 0o100;
+    pub const EXCL: i32 = 0o200;
+    pub const TRUNC: i32 = 0o1000;
+    pub const APPEND: i32 = 0o2000;
+    pub const NONBLOCK: i32 = 0o4000;
+    pub const DSYNC: i32 = 0o10000;
+    pub const DIRECT: i32 = 0o40000;
+    pub const NOFOLLOW: i32 = 0o400000;
+    pub const SYNC: i32 = 0o4010000;
 }

@@ -6,7 +6,7 @@
 //! methods in [`js_valkey_functions`]. RESP wire-format parsing is in the
 //! lower `bun_valkey` crate; this module owns the JSC-touching half.
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 

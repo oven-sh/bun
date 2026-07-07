@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
-use crate::mark_binding;
 use bun_core::String as BunString;
+use bun_core::mark_binding;
 
 unsafe extern "C" {
     fn Bun__createTextCodec(
@@ -92,6 +92,6 @@ impl TextCodec {
         }?;
         // SAFETY: C++ returns a pointer into static encoding-name table data, valid for `len` bytes
         // and for the lifetime of the program.
-        Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
+        Some(unsafe { bun_opaque::ffi::slice(name.as_ptr(), len) })
     }
 }

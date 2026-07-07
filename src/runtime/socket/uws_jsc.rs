@@ -3,81 +3,14 @@
 //! sites do not change.
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
-};
+use bun_uws::{AnyWebSocket, RawWebSocket, us_socket_stream_buffer_t, us_socket_t};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-// ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
-// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
-trait StreamBufferExt {
-    fn is_not_empty(&self) -> bool;
-    fn slice(&self) -> &[u8];
-    fn wrote(&mut self, amount: usize);
-    fn write(&mut self, buffer: &[u8]);
-}
-impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
-    #[inline]
-    fn is_not_empty(&self) -> bool {
-        self.list.len() > self.cursor
-    }
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        &self.list[self.cursor..]
-    }
-    #[inline]
-    fn wrote(&mut self, amount: usize) {
-        self.cursor += amount;
-    }
-    #[inline]
-    fn write(&mut self, buffer: &[u8]) {
-        self.list.extend_from_slice(buffer);
-    }
-}
-
-// ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
-pub fn create_bun_socket_error_to_js(
-    this: create_bun_socket_error_t,
-    global_object: &JSGlobalObject,
-) -> JSValue {
-    match this {
-        // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
-        // bad cert/key/DH return NULL with .none and the detail is on the
-        // BoringSSL error queue. Surfacing it here keeps every
-        // `createSSLContext(...) orelse return err.toJS()` site correct.
-        create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
-            global_object,
-            bun_boringssl_sys::ERR_get_error(),
-        ),
-        create_bun_socket_error_t::load_ca_file => global_object
-            .err(
-                bun_jsc::ErrorCode::BORINGSSL,
-                format_args!("Failed to load CA file"),
-            )
-            .to_js(),
-        create_bun_socket_error_t::invalid_ca_file => global_object
-            .err(
-                bun_jsc::ErrorCode::BORINGSSL,
-                format_args!("Invalid CA file"),
-            )
-            .to_js(),
-        create_bun_socket_error_t::invalid_ca => global_object
-            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA"))
-            .to_js(),
-        create_bun_socket_error_t::invalid_ciphers => global_object
-            .err(
-                bun_jsc::ErrorCode::BORINGSSL,
-                format_args!("Invalid ciphers"),
-            )
-            .to_js(),
-    }
-}
-
-// LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
-// crate depends on) shares the single canonical impl instead of carrying a
-// verbatim copy.
-pub use bun_jsc::system_error::verify_error_to_js;
+// ── create_bun_socket_error_t.toJS ─────────────────────────────────────────
+// LAYERING: body sunk to `bun_jsc::system_error` so `crate::sql_jsc` shares
+// the single canonical impl instead of carrying a verbatim copy.
+pub use bun_jsc::system_error::create_bun_socket_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // Declared inline; migrate into `bun_uws_sys` with the rest of the
@@ -192,7 +125,7 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < to_flush_len {
                 if !data_slice.is_empty() {
-                    stream_buffer.write(data_slice);
+                    bun_core::handle_oom(stream_buffer.write(data_slice));
                 }
                 break 'body JSValue::FALSE;
             }
@@ -202,7 +135,7 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
             let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < data_slice.len() {
-                stream_buffer.write(&data_slice[written as usize..]);
+                bun_core::handle_oom(stream_buffer.write(&data_slice[written as usize..]));
                 break 'body JSValue::FALSE;
             }
         }

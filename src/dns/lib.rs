@@ -159,6 +159,7 @@ impl Options {
 
 // Only consumed by the *_jsc extension fns; messages come from
 // `strum::IntoStaticStr` (variant name == message).
+// JS-side failures are carried separately by the jsc tier (FromJSError::Js).
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum OptionsFromJsError {
     InvalidFamily,
@@ -167,7 +168,6 @@ pub enum OptionsFromJsError {
     InvalidBackend,
     InvalidFlags,
     InvalidOptions,
-    JSError,
 }
 
 #[repr(u8)]
@@ -475,57 +475,100 @@ impl Order {
     }
 }
 
-/// The process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
-/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
-/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
-/// rather than a `bun_runtime` crate dep, which would cycle.
-pub mod internal {
-    use core::ffi::c_void;
+// `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
+// the MSVC target; route through a single `netc` shim so call sites stay
+// target-agnostic. Windows values come from ws2def.h via the libuv-sys mirror
+// (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
+#[cfg(not(windows))]
+pub mod netc {
+    pub use crate::AI_ADDRCONFIG;
+    pub use libc::{
+        AF_INET, AF_INET6, AF_UNSPEC, EAI_NONAME, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in,
+        sockaddr_in6, sockaddr_storage,
+    };
+}
+#[cfg(windows)]
+pub mod netc {
+    /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
+    /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
+    /// leave `ai_flags = 0`.
+    pub use crate::AI_ADDRCONFIG;
+    pub use bun_libuv_sys::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+    pub use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
+}
 
-    unsafe extern "C" {
-        // Defined in `bun_runtime::dns_jsc::internal` alongside the other
-        // `Bun__addrinfo_*` exports; resolved at link time.
-        fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
-    }
+pub type SockaddrStorage = netc::sockaddr_storage;
+pub type AddrInfo = netc::addrinfo;
+pub type Sockaddr = netc::sockaddr;
 
-    unsafe extern "Rust" {
-        /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
-        /// `(hostname, port)` so the result is cached by the time the connect
-        /// path needs it. The resolver/event-loop machinery lives in
-        /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
-        /// (`bun_install`) reach it via this link-time extern to avoid a crate
-        /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
-        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16);
-    }
+/// `getaddrinfo_async_*` callback signature shared by libinfo and the
+/// jsc-tier GetAddrInfoRequest backend.
+pub type GetAddrInfoAsyncCallback =
+    unsafe extern "C" fn(i32, *mut AddrInfo, *mut core::ffi::c_void);
 
-    #[inline]
-    pub fn prefetch<L>(loop_: *mut L, hostname: &[u8], port: u16) {
-        // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
-        // the call. Prefetch is a perf hint — the body short-circuits if no
-        // resolver is available.
-        unsafe {
-            __bun_dns_prefetch(
-                loop_.cast::<c_void>(),
-                hostname.as_ptr(),
-                hostname.len(),
-                port,
-            )
+#[cfg(target_os = "macos")]
+pub mod lib_info {
+    use core::ffi::{c_char, c_void};
+
+    use bun_core::mach_port;
+    use bun_sys as sys;
+
+    use crate::{AddrInfo, GetAddrInfoAsyncCallback};
+
+    // static int32_t (*getaddrinfo_async_start)(mach_port_t*, const char*, const char*,
+    //                                           const struct addrinfo*, getaddrinfo_async_callback, void*);
+    // static int32_t (*getaddrinfo_async_handle_reply)(void*);
+    // static void (*getaddrinfo_async_cancel)(mach_port_t);
+    // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
+    pub type GetaddrinfoAsyncStart = unsafe extern "C" fn(
+        *mut mach_port,
+        node: *const c_char,
+        service: *const c_char,
+        hints: *const AddrInfo,
+        callback: GetAddrInfoAsyncCallback,
+        context: *mut c_void,
+    ) -> i32;
+    pub type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
+
+    // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
+    // null = "tried and failed / not yet loaded"; LOADED disambiguates.
+    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    pub fn get_handle() -> Option<*mut c_void> {
+        use core::sync::atomic::Ordering::Relaxed;
+        if LOADED.load(Relaxed) {
+            let h = HANDLE.load(Relaxed);
+            return if h.is_null() { None } else { Some(h) };
         }
+        LOADED.store(true, Relaxed);
+        let handle = sys::dlopen(
+            bun_core::zstr!("libinfo.dylib"),
+            sys::RTLD::LAZY | sys::RTLD::LOCAL,
+        );
+        if handle.is_none() {
+            bun_core::debug!("libinfo.dylib not found");
+        }
+        HANDLE.store(handle.unwrap_or(core::ptr::null_mut()), Relaxed);
+        handle
     }
 
-    /// Register `pc` to be notified when the addrinfo `request` resolves.
-    /// Mirrors `us_getaddrinfo_set` for the QUIC client connect path, which
-    /// has no `us_connecting_socket_t` to hang the callback on.
-    ///
-    /// SAFETY: `request` must be the live addrinfo request handle returned by
-    /// `us_quic_pending_connect_addrinfo`; `pc` must be a live
-    /// `bun_http::H3::PendingConnect` that stays valid until its
-    /// `on_dns_resolved[_threadsafe]` fires.
-    #[inline]
-    pub unsafe fn register_quic(request: *mut c_void, pc: *mut c_void) {
-        // SAFETY: forwarded to the runtime export; both pointers are opaque on
-        // this side of the crate boundary and re-typed by the callee.
-        unsafe { Bun__addrinfo_registerQuic(request, pc) }
+    pub fn getaddrinfo_async_start() -> Option<GetaddrinfoAsyncStart> {
+        bun_core::Environment::only_mac();
+        sys::dlsym_with_handle!(
+            GetaddrinfoAsyncStart,
+            "getaddrinfo_async_start",
+            get_handle()
+        )
+    }
+
+    pub fn getaddrinfo_async_handle_reply() -> Option<GetaddrinfoAsyncHandleReply> {
+        bun_core::Environment::only_mac();
+        sys::dlsym_with_handle!(
+            GetaddrinfoAsyncHandleReply,
+            "getaddrinfo_async_handle_reply",
+            get_handle()
+        )
     }
 }

@@ -1,26 +1,26 @@
+use bun_install_types::DependencyID;
 use core::cell::RefCell;
 use core::fmt;
 
+use bun_core::PathBuffer;
+#[cfg(windows)]
+use bun_core::WPathBuffer;
 use bun_core::fmt::s;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_paths::strings;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
-use bun_install::install::{self as Install, DependencyID, ExtractData};
-use bun_install::integrity::Integrity;
-use bun_install::npm::{self as Npm};
-use bun_install::package_manager_real::PackageManager;
-use bun_install::package_manager_real::directories;
-use bun_install::resolution::{Resolution, Tag as ResolutionTag};
+use crate::ExtractData;
+use crate::integrity::Integrity;
+use crate::npm;
+use crate::package_manager_real::PackageManager;
+use crate::package_manager_real::directories;
+use crate::resolution::{Resolution, Tag as ResolutionTag};
 use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
-#[cfg(windows)]
-use bun_sys::FdDirExt;
 type Error = bun_core::Error;
 
 const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
@@ -237,7 +237,7 @@ impl ExtractTarball {
         let (name, basename) = self.name_and_basename();
         let truncated_basename = &basename[0..basename.len().min(32)];
         let tmpname_suffix: &[u8] =
-            if bun_install::dependency::is_safe_install_folder_name(truncated_basename) {
+            if bun_install_types::dependency::is_safe_install_folder_name(truncated_basename) {
                 truncated_basename
             } else if self.resolution.tag.is_git()
                 || self.resolution.tag == ResolutionTag::LocalTarball
@@ -282,7 +282,7 @@ impl ExtractTarball {
 
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
-            let mut zlib_pool = Npm::Registry::BodyPool::get();
+            let mut zlib_pool = npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
 
@@ -489,7 +489,7 @@ impl ExtractTarball {
             // The entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
                 ResolutionTag::Npm => {
-                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                    if !bun_install_types::dependency::is_safe_install_folder_name(name) {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -510,7 +510,7 @@ impl ExtractTarball {
                     .as_bytes()
                 }
                 ResolutionTag::Github => {
-                    if !bun_install::repository::is_safe_resolved_tag(resolved) {
+                    if !crate::repository::is_safe_resolved_tag(resolved) {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -598,7 +598,7 @@ impl ExtractTarball {
 
                     match bun_sys::windows::move_opened_file_at(
                         dir_to_move,
-                        Fd::from_std_dir(cache_dir),
+                        cache_dir.fd(),
                         path_to_use,
                         true,
                     ) {
@@ -632,9 +632,9 @@ impl ExtractTarball {
                                         let folder_name_z =
                                             ZStr::from_buf(&folder_name_z_buf, folder_name.len());
                                         match sys::renameat(
-                                            Fd::from_std_dir(cache_dir),
+                                            cache_dir.fd(),
                                             folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
+                                            tmpdir.fd(),
                                             tempdest,
                                         ) {
                                             bun_sys::Result::Err(_) => {}
@@ -829,7 +829,7 @@ impl ExtractTarball {
             {
                 // create an index storing each version of a package installed
                 if strings::index_of_char(basename, b'/').is_none()
-                    && bun_install::dependency::is_safe_install_folder_name(name)
+                    && bun_install_types::dependency::is_safe_install_folder_name(name)
                 {
                     'create_index: {
                         let dest_name: &[u8] = match self.resolution.tag {
@@ -858,7 +858,7 @@ impl ExtractTarball {
                             if sys::sys_uv::symlink_uv(
                                 final_path,
                                 dest_path,
-                                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
+                                bun_libuv_sys::UV_FS_SYMLINK_JUNCTION,
                             )
                             .is_err()
                             {
@@ -893,7 +893,7 @@ impl ExtractTarball {
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),
-                json: Some(Install::ExtractDataJson {
+                json: Some(crate::ExtractDataJson {
                     path: ret_json_path.into(),
                     buf: json_buf,
                 }),

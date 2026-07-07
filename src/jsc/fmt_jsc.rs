@@ -11,18 +11,13 @@ use bun_core::{MutableString, String};
 pub mod js_bindings {
     use super::*;
 
-    /// `bun.gen.fmt_jsc.Formatter` — bindgen-emitted enum from `fmt_jsc.bind.ts`.
-    /// Mirrored locally until `bun_gen` is reachable from this tier.
-    /// NOTE: bindgen sorts `t.stringEnum` values alphabetically before emitting
-    /// the C++ `enum class`, so discriminants must match `GeneratedFmtJsc.h`
-    /// (EscapePowershell first), not the `.bind.ts` declaration order.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Formatter {
-        EscapePowershell = 0,
-        HighlightJavascript = 1,
-        HighlightJavascriptRedacted = 2,
+    // Bindgen-emitted Rust mirrors (one `pub mod <namespace>` per .bind.ts file
+    // with stringEnums); discriminants are generated, not hand-synced.
+    #[allow(dead_code, unreachable_pub)]
+    mod generated {
+        include!(concat!(env!("BUN_CODEGEN_DIR"), "/bindgen_string_enums.rs"));
     }
+    pub use generated::fmt_jsc::Formatter;
 
     /// Internal function for testing in highlighter.test.ts
     pub fn fmt_string(

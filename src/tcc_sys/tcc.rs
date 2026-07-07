@@ -247,7 +247,7 @@ impl State {
         // (both `extern "C" fn(*mut _, *const c_char)`, differing only in the opaque
         // pointee type).
         let erased: TCCErrorFunc = Some(unsafe {
-            bun_ptr::cast_fn_ptr::<
+            bun_core::cast_fn_ptr::<
                 ErrorFunc<Context>,
                 unsafe extern "C" fn(*mut c_void, *const c_char),
             >(error_func)
@@ -475,7 +475,7 @@ impl State {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param).
         let erased = symbol_cb.map(|f| unsafe {
-            bun_ptr::cast_fn_ptr::<
+            bun_core::cast_fn_ptr::<
                 SymbolCallback,
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void),
             >(f)

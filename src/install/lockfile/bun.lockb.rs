@@ -1,13 +1,13 @@
 //! Binary lockfile (bun.lockb) serializer/deserializer.
 
 use crate::lockfile::package::PackageColumns as _;
+use bun_install_types::{PackageID, PackageNameHash};
 use core::mem::{align_of, size_of};
 
 use bun_core::Error;
 use bun_io::Write as _;
 // `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
-// `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
-// `bun_install::lockfile::*` path is the stub surface and lacks these items.
+// `lockfile` module (this file is `lockfile::bun_lockb`).
 use super::PatchedDep;
 use super::{
     FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
@@ -15,12 +15,12 @@ use super::{
 };
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use crate::config_version::ConfigVersion;
-use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;
-use crate::resolution_real::Tag as ResolutionTag;
+use crate::resolution::Tag as ResolutionTag;
+use crate::{PackageManager, PackageNameAndVersionHash};
 use bun_ast::Log;
 use bun_core::strings;
-use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
+use bun_install_types::dependency;
 use bun_semver::{self as semver, String as SemverString};
 
 // Serialized padding bytes must be deterministic; the per-field
@@ -583,7 +583,9 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
+                        package_manager: manager
+                            .as_deref_mut()
+                            .map(|m| m as &mut dyn bun_install_types::dependency::NpmAliasRegistry),
                     };
                     overrides.map.put_assume_capacity(
                         *name,
@@ -664,7 +666,9 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
+                        package_manager: manager
+                            .as_deref_mut()
+                            .map(|m| m as &mut dyn bun_install_types::dependency::NpmAliasRegistry),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
                     catalogs.default.put_assume_capacity_context(
@@ -685,7 +689,7 @@ pub(crate) fn load(
                     let catalog_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
                     // `CatalogMap::get_or_put_group` currently takes the
-                    // stub `bun_install::lockfile::Lockfile`; inline its body here
+                    // `crate::lockfile::Lockfile`; inline its body here
                     // against the split `catalogs` borrow to avoid the type
                     // mismatch and the simultaneous `&mut lockfile` self-borrow.
                     let group: &mut super::catalog_map::Map = if catalog_name.is_empty() {
@@ -708,7 +712,9 @@ pub(crate) fn load(
                         let mut context = dependency::Context {
                             log,
                             buffer: string_bytes,
-                            package_manager: manager.as_deref_mut(),
+                            package_manager: manager.as_deref_mut().map(|m| {
+                                m as &mut dyn bun_install_types::dependency::NpmAliasRegistry
+                            }),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
                         group.put_assume_capacity_context(

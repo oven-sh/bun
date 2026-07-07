@@ -25,23 +25,12 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     fn task_mut(&mut self) -> &mut Task {
         self.field_mut()
     }
-
-    /// Back-compat alias for [`bun_core::IntrusiveField::from_field_ptr`].
-    ///
-    /// # Safety
-    /// `task` must point to the [`Task`] field embedded in a live `Self`
-    /// allocation, with provenance covering the whole allocation.
-    #[inline(always)]
-    unsafe fn from_task_ptr(task: *mut Task) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { Self::from_field_ptr(task) }
-    }
 }
 
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
 /// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
-/// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
+/// `Box<Self>` via [`bun_core::IntrusiveField::from_field_ptr`], so call sites never
 /// touch `Box::into_raw`/`from_raw` directly.
 ///
 /// # Safety
@@ -62,15 +51,15 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
         // `WorkPool::schedule_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
         // `Box` here is sound.
-        let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
+        let this = unsafe { Box::from_raw(Self::from_field_ptr(task)) };
         this.run();
     }
 }
 
 /// Implements [`IntrusiveWorkTask`] for a struct that embeds an intrusive
 /// `task: Task` field. Expands to [`bun_core::intrusive_field!`] + a marker
-/// impl; brings [`IntrusiveWorkTask::from_task_ptr`] into scope for the
-/// type's `fn(*mut Task)` trampolines.
+/// impl; the type's `fn(*mut Task)` trampolines recover `Self` via
+/// [`bun_core::IntrusiveField::from_field_ptr`].
 ///
 /// ```ignore
 /// intrusive_work_task!(ReadFile, task);

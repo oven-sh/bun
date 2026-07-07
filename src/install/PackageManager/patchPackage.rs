@@ -1,30 +1,29 @@
+use bun_install_types::{DependencyID, Features, INVALID_PACKAGE_ID, PackageID};
 use core::fmt;
 use std::io::Write as _;
 
+use bun_core::PathBuffer;
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, Platform, SEP};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
+use bun_paths::{Platform, SEP};
+use bun_sys::{self as sys, Dir, Fd, FdExt as _};
 
-use crate::bun_fs::FileSystem;
-use crate::bun_json as JSON;
-use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::FileCopier;
-use crate::lockfile_real::package::{Package, PackageColumns as _};
-use crate::lockfile_real::tree;
-use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
+use crate::lockfile::package::{Package, PackageColumns as _};
+use crate::lockfile::tree;
+use crate::lockfile::{self as lockfile, Lockfile, PackageIndexEntry};
 use crate::package_manager_real::PackageManager;
-use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
-use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, buntaghashbuf_make, initialize_store,
-    invalid_package_id,
-};
+use crate::package_manager_real::package_manager_options::{LogLevel, PatchFeatures};
+use crate::{BuntagHashBuf, buntaghashbuf_make, initialize_store};
+use bun_install_types::dependency::Dependency;
+use bun_parsers::json as JSON;
+use bun_resolver::fs::FileSystem;
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -333,7 +332,7 @@ pub fn do_patch_commit(
             ]);
         };
 
-        let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
+        let random_tempdir = match bun_paths::fs::tmpname(
             b"node_modules_tmp",
             &mut buf2[..],
             bun_core::fast_random(),
@@ -369,7 +368,7 @@ pub fn do_patch_commit(
                 b"node_modules",
                 root_node_modules.fd,
                 random_tempdir.as_bytes(),
-                sys::RenameOptions {
+                sys::RenameatConcurrentlyOptions {
                     move_fallback: true,
                 },
             )
@@ -381,17 +380,14 @@ pub fn do_patch_commit(
             break 'has_nested_node_modules true;
         };
 
-        let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
-            b"patch_tmp",
-            &mut buf3[..],
-            bun_core::fast_random(),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                Output::err(e, "failed to make tempdir", ());
-                Global::crash();
-            }
-        };
+        let patch_tag_tmpname =
+            match bun_paths::fs::tmpname(b"patch_tmp", &mut buf3[..], bun_core::fast_random()) {
+                Ok(s) => s,
+                Err(e) => {
+                    Output::err(e, "failed to make tempdir", ());
+                    Global::crash();
+                }
+            };
 
         let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
@@ -424,7 +420,7 @@ pub fn do_patch_commit(
                 patch_tag,
                 root_node_modules.fd,
                 patch_tag_tmpname.as_bytes(),
-                sys::RenameOptions {
+                sys::RenameatConcurrentlyOptions {
                     move_fallback: true,
                 },
             ) {
@@ -458,7 +454,7 @@ pub fn do_patch_commit(
                         random_tempdir.as_bytes(),
                         new_folder_handle.fd,
                         b"node_modules",
-                        sys::RenameOptions { move_fallback: true },
+                        sys::RenameatConcurrentlyOptions { move_fallback: true },
                     ) {
                         bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
                     }
@@ -470,7 +466,7 @@ pub fn do_patch_commit(
                         patch_tag_tmpname.as_bytes(),
                         new_folder_handle.fd,
                         patch_tag,
-                        sys::RenameOptions { move_fallback: true },
+                        sys::RenameatConcurrentlyOptions { move_fallback: true },
                     ) {
                         bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
                     }
@@ -572,8 +568,7 @@ pub fn do_patch_commit(
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tempfile_name = bun_paths::fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());
@@ -619,7 +614,7 @@ pub fn do_patch_commit(
         tempfile_name,
         Fd::cwd(),
         path_in_patches_dir,
-        sys::RenameOptions {
+        sys::RenameatConcurrentlyOptions {
             move_fallback: true,
         },
     ) {
@@ -1121,7 +1116,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             // symlink so `module_folder`'s parent exists for the copy.
             let parent = resolve_path::dirname::<platform::Auto>(native);
             if !parent.is_empty() {
-                let _ = Fd::cwd().make_path(parent);
+                let _ = sys::mkdir_recursive_at(Fd::cwd(), parent);
             }
             return;
         }
@@ -1155,7 +1150,7 @@ fn overwrite_package_in_node_modules_folder(
     > = 'src_path: {
         #[cfg(windows)]
         {
-            let mut path_buf = bun_paths::WPathBuffer::uninit();
+            let mut path_buf = bun_core::WPathBuffer::uninit();
             let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
 
             let mut sp = bun_paths::AbsPath::<
@@ -1263,7 +1258,7 @@ fn pkg_info_for_name_and_version(
             continue;
         }
         let pkg_id = lockfile.buffers.resolutions.as_slice()[dep_id];
-        if pkg_id == invalid_package_id {
+        if pkg_id == INVALID_PACKAGE_ID {
             continue;
         }
         let pkg = *lockfile.packages.get(pkg_id as usize);
@@ -1389,7 +1384,7 @@ fn pkg_info_for_name_and_version(
     let mut i: usize = 0;
     while i < pairs.len() {
         let (_, pkgid) = pairs[i];
-        if pkgid == invalid_package_id {
+        if pkgid == INVALID_PACKAGE_ID {
             i += 1;
             continue;
         }
@@ -1405,7 +1400,7 @@ fn pkg_info_for_name_and_version(
         if i + 1 < pairs.len() {
             for p in &mut pairs[i + 1..] {
                 if p.1 == pkgid {
-                    p.1 = invalid_package_id;
+                    p.1 = INVALID_PACKAGE_ID;
                 }
             }
         }

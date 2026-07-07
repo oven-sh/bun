@@ -13,7 +13,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
-use bun_sys::{Fd, FdDirExt, FdExt};
+use bun_sys::{Dir, Fd};
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
@@ -23,7 +23,7 @@ use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::Command;
 #[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
+use crate::api::bun::PosixStdio as Stdio;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
@@ -61,7 +61,7 @@ impl WorkerTmpdir {
 impl Drop for WorkerTmpdir {
     fn drop(&mut self) {
         if let Some(d) = &self.0 {
-            let _ = Fd::cwd().delete_tree(d);
+            let _ = Dir::cwd().delete_tree(d);
         }
     }
 }
@@ -122,7 +122,7 @@ pub fn run_as_coordinator(
         )
         .into_boxed_slice();
         let dir_bytes: &[u8] = &dir;
-        if let Err(e) = Fd::cwd().make_path(dir_bytes) {
+        if let Err(e) = Dir::cwd().make_path(dir_bytes) {
             Output::err(
                 e,
                 "failed to create worker temp dir {}",
@@ -202,7 +202,7 @@ pub fn run_as_coordinator(
         vm: unsafe { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
         event_loop_handle: unsafe {
-            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
+            bun_event_loop::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
         },
         reporter,
         files: sorted,
@@ -618,7 +618,22 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(err);
             }
             crate::jsc_hooks::close_isolation_handles(vm);
-            vm.swap_global_for_test_isolation();
+            #[cfg(unix)]
+            let skip_process_ipc: *mut bun_uws::SocketGroup = match crate::ipc::ipc_instance_ptr() {
+                // SAFETY: `inst` is the live boxed IPCInstance (same liveness
+                // as the `(*inst).global_this` write below); raw field read.
+                Some(inst) => unsafe { (*inst).group },
+                None => core::ptr::null_mut(),
+            };
+            #[cfg(not(unix))]
+            let skip_process_ipc: *mut bun_uws::SocketGroup = core::ptr::null_mut();
+            let new_global = vm.swap_global_for_test_isolation(skip_process_ipc);
+            if let Some(inst) = crate::ipc::ipc_instance_ptr() {
+                // SAFETY: live boxed IPCInstance; repoint so
+                // Process__emitMessageEvent doesn't dispatch on the freed cell
+                // (was done inside the VM fn).
+                unsafe { (*inst).global_this = new_global };
+            }
             self.reporter
                 .jest
                 .bun_test_root

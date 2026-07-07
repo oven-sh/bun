@@ -12,10 +12,10 @@ use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
-use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
+use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{TaskTag, Taskable};
 use bun_io::posix_event_loop::get_vm_ctx;
 use bun_io::{AllocatorType, KeepAlive};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
@@ -36,19 +36,14 @@ use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::OwnedResolvedSource;
 use crate::resolved_source_tag::ResolvedSourceTag;
-use crate::runtime_transpiler_cache::{
-    Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
-    RuntimeTranspilerCache as JscRuntimeTranspilerCache,
-};
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, create_if_different};
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
+use crate::{JSGlobalObject, JSPromise, JSValue, JsResult, ResolvedSource};
+use bun_ast::transpiler_cache::{
+    ModuleType as CacheModuleType, OutputCode, RuntimeTranspilerCache as JscRuntimeTranspilerCache,
+};
 use bun_core::OwnedString;
 
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
-// lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
-// JSC-tier disk-backed `Entry` is round-tripped through it type-erased via
-// `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
 use bun_ast::RuntimeTranspilerCache;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
@@ -95,7 +90,7 @@ pub(crate) fn dump_source_string_failiable(
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 
-    let mut path_buf = bun_paths::PathBuffer::default();
+    let mut path_buf = bun_core::PathBuffer::default();
 
     if holder.is_none() {
         let base_name: &[u8] = if cfg!(windows) {
@@ -219,7 +214,7 @@ impl Default for RuntimeTranspilerStore {
 }
 
 impl Taskable for RuntimeTranspilerStore {
-    const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
+    const TAG: TaskTag = TaskTag::RuntimeTranspilerStore;
 }
 
 impl RuntimeTranspilerStore {
@@ -318,7 +313,7 @@ impl RuntimeTranspilerStore {
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
         // lifetime from raw-ptr deref coerces to `'static` for `bun_paths::fs::Path<'static>`.
         let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
-        let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
+        let promise: *mut JSPromise = JSPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
@@ -337,7 +332,7 @@ impl RuntimeTranspilerStore {
         }
 
         // Build the job by value and `get_init` it into the hive — the `Box`
-        // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
+        // alloc, `JSPromise::create`, and `StrongOptional::create`
         // above all happen *before* the slot is claimed, so an OOM/throw on
         // that path no longer leaves a claimed-but-uninit `TranspilerJob` (which
         // carries `Log`/`String`/`StrongOptional` drop glue) for the next
@@ -661,14 +656,7 @@ impl TranspilerJob {
         let this_tag = self.resolved_source.get().tag;
 
         // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
-        // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
-        // wired with the JSC vtable so the parser's `cache.get()` reaches the
-        // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
-        // `*mut CacheEntry` which is unboxed below.
-        let mut cache = RuntimeTranspilerCache {
-            r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-            ..Default::default()
-        };
+        let mut cache = RuntimeTranspilerCache::default();
 
         let mut log = bun_ast::Log::init();
         // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`
@@ -740,7 +728,7 @@ impl TranspilerJob {
         transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
         let mut fd: Option<Fd> = None;
-        let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
+        let mut package_json: Option<&'static PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init
@@ -834,15 +822,15 @@ impl TranspilerJob {
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
             file_hash: Some(hash),
             macro_remappings,
-            macro_js_ctx: transpiler::default_macro_js_value(),
-            jsx: transpiler.options.jsx.clone(),
+            macro_js_ctx: bun_js_parser::Macro::MacroJSCtx::ZERO,
+            jsx: transpiler.options.resolve.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
             allow_commonjs: true,
-            inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
+            inject_jest_globals: transpiler.options.resolve.rewrite_jest_for_tests,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
             set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
                 .as_ref()
@@ -967,12 +955,7 @@ impl TranspilerJob {
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 
-        if let Some(entry_ptr) = cache.entry.take() {
-            // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
-            // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
-            let mut entry: Box<CacheEntry> =
-                unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
-
+        if let Some(mut entry) = cache.entry.take() {
             // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
             // `SavedSourceMap` takes its own internal mutex.
             let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
@@ -1051,9 +1034,9 @@ impl TranspilerJob {
 
             if let Some(replacement) = HardcodedAlias::get(
                 import_record.path.text,
-                transpiler.options.target,
+                transpiler.options.resolve.target,
                 HardcodedAliasCfg {
-                    rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
+                    rewrite_jest_for_tests: transpiler.options.resolve.rewrite_jest_for_tests,
                 },
             ) {
                 import_record.path.text = replacement.path.as_bytes();
@@ -1177,10 +1160,6 @@ impl TranspilerJob {
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
-            // The `Jsc` vtable bridge `put()` does not write
-            // `cache.output_code` (only the `r#impl == None` fallback does,
-            // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
-            debug_assert!(cache.output_code.is_none());
             let result = String::clone_latin1(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.

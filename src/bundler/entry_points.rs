@@ -4,7 +4,7 @@ use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_core::{MAX_PATH_BYTES, PathBuffer};
 use bun_wyhash::{self, Wyhash11};
 
 use crate::Transpiler;
@@ -236,14 +236,7 @@ impl ClientEntryPoint {
             &entry.code_buffer[..n]
         };
 
-        // `bun_paths::fs::PathName<'static>` → `bun_paths::fs::PathName<'static>`: field-identical
-        // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.
-        let original_path_borrowed = bun_paths::fs::PathName {
-            dir: original_path.dir,
-            base: original_path.base,
-            ext: original_path.ext,
-            filename: original_path.filename,
-        };
+        let original_path_borrowed = *original_path;
         entry.source = bun_ast::Source::init_path_string(
             Self::generate_entry_point_path(&mut entry.path_buffer.0, &original_path_borrowed),
             code,

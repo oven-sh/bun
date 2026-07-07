@@ -14,10 +14,11 @@ use crate::package_install;
 use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
 use bun_clap as clap;
+use bun_core::PathBuffer;
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_install::npm as Npm;
-use bun_paths::{self as Path, PathBuffer};
+use bun_install_types::resolver_hooks::{Architecture, OperatingSystem};
+use bun_paths::{self as Path};
 
 use std::sync::OnceLock;
 
@@ -438,8 +439,8 @@ pub struct CommandLineArguments {
     pub audit_ignore_list: &'static [&'static [u8]],
 
     // CPU and OS overrides for optional dependencies
-    pub cpu: Npm::Architecture,
-    pub os: Npm::OperatingSystem,
+    pub cpu: Architecture,
+    pub os: OperatingSystem,
 }
 
 impl Default for CommandLineArguments {
@@ -521,8 +522,8 @@ impl Default for CommandLineArguments {
             audit_level: None,
             audit_ignore_list: &[],
 
-            cpu: Npm::Architecture::CURRENT,
-            os: Npm::OperatingSystem::CURRENT,
+            cpu: Architecture::CURRENT,
+            os: OperatingSystem::CURRENT,
         }
     }
 }
@@ -1253,7 +1254,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         // Parse multiple --cpu flags and combine them using Negatable
         let cpu_values = args.options(b"--cpu");
         if !cpu_values.is_empty() {
-            let mut cpu_negatable = Npm::Architecture::NONE.negatable();
+            let mut cpu_negatable = Architecture::NONE.negatable();
             for cpu_str in cpu_values {
                 // apply() already handles "any" as wildcard and negation with !
                 cpu_negatable.apply(cpu_str);
@@ -1280,7 +1281,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         // Parse multiple --os flags and combine them using Negatable
         let os_values = args.options(b"--os");
         if !os_values.is_empty() {
-            let mut os_negatable = Npm::OperatingSystem::NONE.negatable();
+            let mut os_negatable = OperatingSystem::NONE.negatable();
             for os_str in os_values {
                 // apply() already handles "any" as wildcard and negation with !
                 os_negatable.apply(os_str);

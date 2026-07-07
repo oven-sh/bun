@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 bytemuck = "1"
 bun_opaque.workspace = true
-bun_dispatch.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
@@ -28,6 +27,7 @@ bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_analytics.workspace = true
 bun_resolver.workspace = true
+bun_install_types.workspace = true
 # `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`
 # (both already in this graph), so no cycle.
 bun_resolve_builtins.workspace = true
@@ -56,6 +56,7 @@ bun_paths.workspace = true
 bun_perf.workspace = true
 bun_router.workspace = true
 bun_sourcemap.workspace = true
+bun_libuv_sys.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_url.workspace = true

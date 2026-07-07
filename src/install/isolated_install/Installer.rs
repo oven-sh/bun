@@ -1,3 +1,6 @@
+use bun_install_types::{
+    DependencyID, INVALID_DEPENDENCY_ID, PackageID, PackageNameHash, TruncatedPackageNameHash,
+};
 use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
@@ -10,20 +13,16 @@ use bun_sys::{self as sys, Fd};
 use bun_threading::{Mutex, UnboundedQueue, thread_pool};
 
 use bun_semver::String as SemverString;
-use bun_sys::{FdDirExt as _, FdExt as _};
+use bun_sys::FdExt as _;
 
-use crate::bin_real;
+use crate::lockfile::PackageIDSlice;
 use crate::lockfile::package;
-use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
-use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
-use crate::{
-    self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
-    Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
-};
+use crate::{self as install, Lockfile, PackageManager, Resolution, TaskCallbackContext, bin};
+use bun_options_types::context as Command;
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
 #[cfg(target_os = "macos")]
@@ -33,8 +32,7 @@ use super::hardlinker::Hardlinker;
 use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
 use super::symlinker::{self, Symlinker};
-use crate::bun_fs;
-use crate::lockfile_real::package::PackageColumns as _;
+use crate::lockfile::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
 
@@ -42,7 +40,7 @@ use crate::package_manager_real::package_manager_options::Do;
 type ResolutionTag = resolution::Tag;
 
 type Bitset = DynamicBitSet;
-type ProgressNode = crate::bun_progress::Node;
+type ProgressNode = bun_core::Progress::Node;
 
 // ── Store id aliases ───────────────────────────────────────────────────────
 type StoreEntryId = store::entry::Id;
@@ -58,9 +56,9 @@ type DefaultAbsPath = AbsPath<u8>;
 /// usable in `const_format::concatcp!`, so spell the literal.
 const NODE_MODULES_BUN: &str = "node_modules/.bun";
 
-bun_output::declare_scope!(IsolatedInstaller, hidden);
+bun_core::declare_scope!(IsolatedInstaller, hidden);
 macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(IsolatedInstaller, $($args)*) };
+    ($($args:tt)*) => { bun_core::scoped_log!(IsolatedInstaller, $($args)*) };
 }
 
 pub struct Installer<'a> {
@@ -518,7 +516,7 @@ impl<'a> Installer<'a> {
             let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
             let dep_id = nodes.items_dep_id()[node_id.get() as usize];
 
-            if dep_id == invalid_dependency_id {
+            if dep_id == INVALID_DEPENDENCY_ID {
                 // should be coverd by `entry_id == .root` above, but
                 // just in case
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
@@ -1829,7 +1827,7 @@ impl Task {
                             Some(p) => p,
                             None => &raw const node_modules_path,
                         };
-                    let mut bin_linker = bin_real::Linker {
+                    let mut bin_linker = bin::Linker {
                         bin,
                         global_bin_path: manager_ref.options.bin_path,
                         package_name: strings::StringOrTinyString::init(dep_name),
@@ -2329,7 +2327,7 @@ impl<'a> Installer<'a> {
                 Some(p) => p,
                 None => &raw const node_modules_path,
             };
-            let mut bin_linker = bin_real::Linker {
+            let mut bin_linker = bin::Linker {
                 bin,
                 global_bin_path: self.manager().options.bin_path,
                 package_name,
@@ -2533,7 +2531,7 @@ impl<'a> Installer<'a> {
             sys::Result::Err(err) => match err.get_errno() {
                 sys::Errno::ENOENT => {
                     if let Some(parent) = dest.dirname() {
-                        let _ = Fd::cwd().make_path(parent);
+                        let _ = sys::mkdir_recursive_at(Fd::cwd(), parent);
                     }
                 }
                 sys::Errno::EEXIST => {
@@ -2682,7 +2680,7 @@ impl<'a> Installer<'a> {
 
         match pkg_res.tag {
             ResolutionTag::Root => {
-                if dep_id != invalid_dependency_id {
+                if dep_id != INVALID_DEPENDENCY_ID {
                     let pkg_name = pkg_names[pkg_id as usize];
                     buf.append(NODE_MODULES_BUN.as_bytes());
                     buf.append_fmt(format_args!(
@@ -2692,7 +2690,7 @@ impl<'a> Installer<'a> {
                     buf.append(b"node_modules");
                     if pkg_name.is_empty() {
                         buf.append(paths::basename(
-                            bun_fs::FileSystem::instance().top_level_dir(),
+                            bun_resolver::fs::FileSystem::instance().top_level_dir(),
                         ));
                     } else {
                         buf.append(pkg_name.slice(string_buf));
@@ -2751,10 +2749,10 @@ impl<'a> Installer<'a> {
 
         match pkg_res.tag {
             ResolutionTag::Root => {
-                if dep_id != invalid_dependency_id {
+                if dep_id != INVALID_DEPENDENCY_ID {
                     if pkg_names[pkg_id as usize].is_empty() {
                         return Some(paths::basename(
-                            bun_fs::FileSystem::instance().top_level_dir(),
+                            bun_resolver::fs::FileSystem::instance().top_level_dir(),
                         ));
                     }
                     return Some(pkg_names[pkg_id as usize].slice(string_buf));

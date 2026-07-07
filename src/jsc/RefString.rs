@@ -71,7 +71,7 @@ impl RefString {
     pub fn leak(&self) -> &[u8] {
         // SAFETY: `ptr` points to a live allocation of `len` bytes for the
         // lifetime of `self` (freed only in `destroy`).
-        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
+        unsafe { bun_opaque::ffi::slice(self.ptr, self.len) }
     }
 
     pub fn deref(&self) {

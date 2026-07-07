@@ -1,11 +1,10 @@
 use core::ffi::{c_char, c_void};
 use std::sync::Arc;
 
+use crate::api::bun::Rusage;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, Status,
-};
+use crate::api::bun::process::{self as bun_process, Process, SignalCodeExt, SpawnOptions, Status};
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
 use crate::api::bun::subprocess as JscSubprocess;
@@ -191,7 +190,7 @@ impl Drop for FileSinkPtr {
     }
 }
 
-bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
+bun_core::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
 #[derive(Default)]
@@ -302,11 +301,11 @@ impl Drop for ShellSubprocess {
 //     },
 // };
 
-pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
+pub type StaticPipeWriter = ::bun_spawn::static_pipe_writer::StaticPipeWriter<ShellSubprocess>;
 
-impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
-    const POLL_OWNER_TAG: bun_io::PollTag =
-        bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
+impl ::bun_spawn::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
+    type SourcePayload = JscSubprocess::JsSourcePayload;
+
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -315,10 +314,16 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
-bun_spawn::link_impl_ProcessExit! {
-    Shell for ShellSubprocess => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, &status, rusage),
+impl bun_spawn::ProcessExitOps for ShellSubprocess {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: `this` is the live owner pointer registered via
+        // `Process::set_exit_handler`.
+        unsafe { (*this).on_process_exit(&*process, &status, rusage) }
     }
 }
 
@@ -817,9 +822,9 @@ impl ShellSubprocess {
         let subproc = unsafe { &mut *subprocess };
         // SAFETY: `subprocess` is the just-allocated `ShellSubprocess`; the
         // owning `Cmd` outlives the `Process` exit callback.
-        subproc.proc().set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
-        });
+        subproc
+            .proc()
+            .set_exit_handler(bun_spawn::ProcessExit::of(subprocess));
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
         // Wire the FileSink's close-signal back to the enclosing `Writable` so
@@ -2023,7 +2028,7 @@ impl PipeReader {
                 {
                     // TODO: are these flags correct
                     if let Some(poll) = self.reader.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
+                        poll.set_flag(bun_io::posix_event_loop::Flags::Socket);
                     }
                     self.reader
                         .flags

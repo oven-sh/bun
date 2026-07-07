@@ -8,12 +8,112 @@ use bun_jsc::{
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
-use core::ffi::c_void;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
+
+/// `FormData.Encoding` — `union(enum) { URLEncoded, Multipart: []const u8 }`.
+/// `Multipart` owns its boundary (the Box moves in directly).
+#[derive(Debug)]
+pub enum Encoding {
+    URLEncoded,
+    /// boundary
+    Multipart(Box<[u8]>),
+}
+
+impl Encoding {
+    pub fn get(content_type: &[u8]) -> Option<Encoding> {
+        // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type and subtype are
+        // case-insensitive.
+        if bun_core::strings::contains_case_insensitive_ascii(
+            content_type,
+            b"application/x-www-form-urlencoded",
+        ) {
+            return Some(Encoding::URLEncoded);
+        }
+        if !bun_core::strings::contains_case_insensitive_ascii(content_type, b"multipart/form-data")
+        {
+            return None;
+        }
+        let boundary = get_boundary(content_type)?;
+        Some(Encoding::Multipart(Box::from(boundary)))
+    }
+}
+
+/// `FormData.getBoundary` — borrow the `boundary=` value out of a
+/// `Content-Type` header. Returns `None` on malformed quoting.
+///
+/// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
+/// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
+/// `boundary=` substring inside another parameter's value is not picked up
+/// by an unanchored substring search. A `;` inside a quoted parameter
+/// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
+/// delimit parameters.
+pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
+    let mut rest = content_type;
+    loop {
+        let semi = index_of_unquoted_semicolon(rest)?;
+        rest = &rest[semi + 1..];
+        let param = bun_core::strings::trim_left(rest, b" \t");
+        // RFC 2045 §5.1: parameter attribute names are case-insensitive;
+        // the `=` value is matched byte-exact (the boundary delimiter in
+        // the body must match it verbatim).
+        let Some(eq) = bun_core::strings::index_of_char_usize(param, b'=') else {
+            continue;
+        };
+        if !param[..eq].eq_ignore_ascii_case(b"boundary") {
+            continue;
+        }
+        let begin = &param[eq + 1..];
+        if begin.is_empty() {
+            return None;
+        }
+        let end = bun_core::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
+        if begin[0] == b'"' {
+            if end > 1 && begin[end - 1] == b'"' {
+                return Some(&begin[1..end - 1]);
+            }
+            // Opening quote with no matching closing quote — malformed.
+            return None;
+        }
+        return Some(&begin[..end]);
+    }
+}
+
+/// Index of the next `;` in `s` that is not inside an RFC 7230
+/// quoted-string (`\` escapes the following byte inside quotes).
+fn index_of_unquoted_semicolon(s: &[u8]) -> Option<usize> {
+    let mut in_quotes = false;
+    let mut i = 0;
+    while i < s.len() {
+        match s[i] {
+            b'"' => in_quotes = !in_quotes,
+            b'\\' if in_quotes => i += 1,
+            b';' if !in_quotes => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
+/// Cleanup is `Drop` on the
+/// `Box`/`Box<[u8]>` fields — no explicit impl needed.
+#[derive(Debug)]
+pub struct AsyncFormData {
+    pub encoding: Encoding,
+}
+
+impl AsyncFormData {
+    #[inline]
+    pub fn init(encoding: Encoding) -> Box<AsyncFormData> {
+        // With `Box<[u8]>`, boundary ownership has already transferred.
+        Box::new(AsyncFormData { encoding })
+    }
+}
 
 pub struct FormData<'a> {
     pub fields: Map<'a>,
@@ -23,27 +123,10 @@ pub struct FormData<'a> {
 
 pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
 
-// `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
-// lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
-// without depending on `bun_runtime`. Re-exported here so `crate::webcore::
-// form_data::*` callers see the same nominal types.
-pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
-
-/// JSC-touching extension on `AsyncFormData` (lives in this crate because it
-/// needs `JSGlobalObject` + `AnyPromise`).
-pub trait AsyncFormDataExt {
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated>;
-}
-
-impl AsyncFormDataExt for AsyncFormData {
+impl AsyncFormData {
     // Only a VM-termination error can escape
     // (JS exceptions are routed into the promise rejection above).
-    fn to_js(
+    pub fn to_js(
         &self,
         global: &JSGlobalObject,
         data: &[u8],
@@ -269,12 +352,8 @@ pub fn to_js_from_multipart_data(
                     }
                 }
 
-                wrap.form.append_blob(
-                    wrap.global,
-                    &key,
-                    (&raw mut blob).cast::<c_void>(),
-                    &filename,
-                );
+                wrap.form
+                    .append_blob(wrap.global, &key, &mut blob, &filename);
                 // `append_blob` dupes the content type, so the copy boxed above
                 // is solely owned by this stack-local and must be released here.
                 blob.detach();

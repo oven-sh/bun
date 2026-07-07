@@ -3,9 +3,10 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::api::bun::Rusage;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::RunCommand;
@@ -175,12 +176,9 @@ impl<'a> ProcessHandle<'a> {
         let process = unsafe { &mut *process };
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::FilterRunHandle,
-                std::ptr::from_mut::<ProcessHandle<'a>>(handle),
-            )
-        });
+        process.set_exit_handler(bun_spawn::ProcessExit::of(std::ptr::from_mut::<
+            ProcessHandle<'a>,
+        >(handle)));
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -211,10 +209,17 @@ impl<'a> ProcessHandle<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    FilterRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, rusage),
+impl bun_spawn::ProcessExitOps for ProcessHandle<'_> {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        process: &mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) {
+        // SAFETY: per the `ProcessExitOps` contract `this` is the live owner
+        // registered for this process's exit hook; `&mut *process` reborrows
+        // the caller's `&mut`.
+        unsafe { (*this).on_process_exit(&mut *process, status, rusage) }
     }
 }
 
@@ -262,7 +267,7 @@ struct State<'a> {
     // thread-local singleton pointer; aliasing &mut would be UB.
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopCtx` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output
@@ -723,7 +728,7 @@ pub(crate) fn run_scripts_with_filter(
     let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
     // Find package.json at workspace root
-    let mut root_buf = bun_paths::PathBuffer::uninit();
+    let mut root_buf = bun_core::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded
         // and no other `&mut Log` borrow is live for the duration of this call.
@@ -811,13 +816,16 @@ pub(crate) fn run_scripts_with_filter(
             // we leak this
             let mut copy_script: Vec<u8> = Vec::with_capacity(copy_script_capacity);
 
-            RunCommand::replace_package_manager_run(&mut copy_script, original_content)?;
+            bun_install::lifecycle_script_runner::replace_package_manager_run(
+                &mut copy_script,
+                original_content,
+            )?;
             let len_command_only = copy_script.len();
 
             for part in &ctx.passthrough {
                 copy_script.push(b' ');
-                if crate::shell::needs_escape_utf8_ascii_latin1(part) {
-                    crate::shell::escape_8bit::<true>(part, &mut copy_script)?;
+                if bun_shell_parser::needs_escape_utf8_ascii_latin1(part) {
+                    bun_shell_parser::escape_8bit::<true>(part, &mut copy_script)?;
                 } else {
                     copy_script.extend_from_slice(part);
                 }
@@ -951,13 +959,13 @@ pub(crate) fn run_scripts_with_filter(
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
+                    bun_core::ffi::zeroed::<bun_libuv_sys::Pipe>(),
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
+                    bun_core::ffi::zeroed::<bun_libuv_sys::Pipe>(),
                 ))),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &script.package_json_path,

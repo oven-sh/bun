@@ -28,16 +28,14 @@ use bun_core::ZStr;
 use bun_core::{self, getenv_z, strings, zstr};
 #[cfg(not(windows))]
 use bun_core::{ZBox, env_var};
+use bun_core::{declare_scope, scoped_log};
 use bun_jsc::JSGlobalObject;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
 use bun_spawn::{self, Process};
 #[cfg(not(windows))]
-use bun_spawn::{
-    EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
-};
+use bun_spawn::{EventLoopHandle, ProcessExit, SpawnOptions, SpawnResultExt as _, Stdio};
 use bun_sys::{self, Fd};
 #[cfg(not(windows))]
 use bun_sys::{FdExt as _, O};
@@ -166,9 +164,17 @@ pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    ChromeProcess for ChromeProcess => |this| {
-        on_process_exit(_process, status, _rusage) => {
+impl bun_spawn::ProcessExitOps for ChromeProcess {
+    unsafe fn on_process_exit(
+        this: *mut Self,
+        _process: &mut Process,
+        status: bun_spawn::Status,
+        _rusage: &bun_spawn::Rusage,
+    ) {
+        // SAFETY: `this` is the live `*mut ChromeProcess` registered via
+        // `Process::set_exit_handler`; the exit hook fires once, so it is
+        // sound to reclaim ownership of the Box here.
+        unsafe {
             scoped_log!(Chrome, "chrome exited: {}", status);
             let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
             Bun__Chrome__died(signo);
@@ -178,7 +184,7 @@ bun_spawn::link_impl_ProcessExit! {
             Process::deref((*this).process.as_ptr());
             drop(bun_core::heap::take(this));
             INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-        },
+        }
     }
 }
 
@@ -321,7 +327,7 @@ fn find_playwright_shell() -> Option<ZBox> {
             Ok(None) => break,
             Err(_) => return None,
         };
-        if entry.kind != bun_sys::EntryKind::Directory {
+        if entry.kind != bun_core::FileKind::Directory {
             continue;
         }
         // The iterator requests UTF-8 names
@@ -450,11 +456,8 @@ fn spawn(
             ZBox::from_vec(v)
         } else {
             let mut name_buf = [0u8; 64];
-            let name = bun_paths::fs::FileSystem::tmpname(
-                b"bun-chrome",
-                &mut name_buf,
-                bun_core::fast_random(),
-            )?;
+            let name =
+                bun_paths::fs::tmpname(b"bun-chrome", &mut name_buf, bun_core::fast_random())?;
             let mut dir_buf = path_buffer_pool::get();
             let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
             let dir =
@@ -551,8 +554,7 @@ fn spawn(
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {
-            (*process.as_ptr())
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
+            (*process.as_ptr()).set_exit_handler(ProcessExit::of(self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
         match unsafe { (*process.as_ptr()).watch() } {

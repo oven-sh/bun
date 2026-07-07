@@ -3,10 +3,11 @@ use std::io::Write as _;
 
 use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
+use bun_core::PathBuffer;
 use bun_core::fmt::quote;
 use bun_core::{Error, err};
 use bun_core::{String as BunString, strings};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::{self as paths};
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
@@ -21,7 +22,7 @@ use crate::output_file::{
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
 use bun_sys::{
-    FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
+    PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
 };
 
@@ -120,7 +121,7 @@ pub fn write_output_files_to_disk(
                 }
 
                 if let Err(e) = bun_sys::File::write_file(
-                    bun_sys::Fd::from_std_dir(&root_dir),
+                    root_dir.fd(),
                     paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
                     &output_source_map,
                 ) {
@@ -226,9 +227,10 @@ pub fn write_output_files_to_disk(
         {
             &bv2.transpiler_for_target(options::Target::Browser)
                 .options
+                .resolve
                 .public_path
         } else {
-            &resolver_opts.public_path
+            &resolver_opts.core.public_path
         };
 
         // Take `intermediate_output` by value so its `&mut self` is
@@ -265,7 +267,7 @@ pub fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                resolver_opts.compile
+                resolver_opts.core.compile
                     && !chunk
                         .flags
                         .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
@@ -325,7 +327,7 @@ pub fn write_output_files_to_disk(
                 }
 
                 match bun_sys::File::write_file(
-                    bun_sys::Fd::from_std_dir(&root_dir),
+                    root_dir.fd(),
                     paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
                     &output_source_map,
                 ) {
@@ -409,90 +411,98 @@ pub fn write_output_files_to_disk(
                     // `defer source_provider_url.deref()` handled by Drop on OwnedString.
                     let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
-                    if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
-                        c.options.output_format,
-                        &code_result.buffer,
-                        &mut source_provider_url,
-                    ) {
-                        let source_provider_url_str = source_provider_url.to_utf8();
-                        debug!(
-                            "Bytecode cache generated {}: {}",
-                            bstr::BStr::new(source_provider_url_str.slice()),
-                            bun_core::fmt::size(
-                                bytecode.len(),
-                                bun_core::fmt::SizeFormatterOptions {
-                                    space_between_number_and_unit: true,
-                                }
-                            ),
-                        );
-                        let frp: &[u8] = &chunk.final_rel_path;
-                        fdpath[..frp.len()].copy_from_slice(frp);
-                        fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]
-                            .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
-                        match write_file_with_path_buffer(
-                            &mut pathbuf,
-                            &WriteFileArgs {
-                                data: WriteFileData::Buffer { buffer: &bytecode },
-                                encoding: WriteFileEncoding::Buffer,
-                                mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
-                                    0o755
-                                } else {
-                                    0o644
-                                },
-                                dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(
-                                    &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                ),
-                            },
+                    if let Some(generate) = c.options.bytecode_generator {
+                        if let Some(bytecode) = generate(
+                            c.options.output_format,
+                            &code_result.buffer,
+                            &mut source_provider_url,
                         ) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                c.log_mut().add_error_fmt(
-                                    None,
-                                    Loc::EMPTY,
-                                    format_args!(
-                                        "{} writing bytecode for chunk {}",
-                                        e,
-                                        quote(&chunk.final_rel_path),
+                            let source_provider_url_str = source_provider_url.to_utf8();
+                            debug!(
+                                "Bytecode cache generated {}: {}",
+                                bstr::BStr::new(source_provider_url_str.slice()),
+                                bun_core::fmt::size(
+                                    bytecode.len(),
+                                    bun_core::fmt::SizeFormatterOptions {
+                                        space_between_number_and_unit: true,
+                                    }
+                                ),
+                            );
+                            let frp: &[u8] = &chunk.final_rel_path;
+                            fdpath[..frp.len()].copy_from_slice(frp);
+                            fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]
+                                .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
+                            match write_file_with_path_buffer(
+                                &mut pathbuf,
+                                &WriteFileArgs {
+                                    data: WriteFileData::Buffer { buffer: &bytecode },
+                                    encoding: WriteFileEncoding::Buffer,
+                                    mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
+                                        0o755
+                                    } else {
+                                        0o644
+                                    },
+                                    dirfd: root_dir.fd(),
+                                    file: PathOrFileDescriptor::Path(
+                                        &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
                                     ),
-                                );
-                                return Err(err!("WriteFailed"));
+                                    ..Default::default()
+                                },
+                            ) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    c.log_mut().add_error_fmt(
+                                        None,
+                                        Loc::EMPTY,
+                                        format_args!(
+                                            "{} writing bytecode for chunk {}",
+                                            e,
+                                            quote(&chunk.final_rel_path),
+                                        ),
+                                    );
+                                    return Err(err!("WriteFailed"));
+                                }
                             }
+
+                            let mut input_path_buf: Vec<u8> = Vec::new();
+                            write!(
+                                &mut input_path_buf,
+                                "{}{}",
+                                bstr::BStr::new(&chunk.final_rel_path),
+                                BYTECODE_EXTENSION
+                            )
+                            .expect("unreachable");
+
+                            break 'brk Some(OutputFile::init(OutputFileInit {
+                                output_path: Box::<[u8]>::from(source_provider_url_str.slice()),
+                                input_path: input_path_buf.into_boxed_slice(),
+                                input_loader: Loader::File,
+                                hash: if chunk.template.placeholder.hash.is_some() {
+                                    Some(hash(&bytecode))
+                                } else {
+                                    None
+                                },
+                                output_kind: options::OutputKind::Bytecode,
+                                loader: Loader::File,
+                                size: Some(bytecode.len()),
+                                display_size: bytecode.len() as u32,
+                                data: OutputFileData::Saved(0),
+                                side: None,
+                                entry_point_index: None,
+                                is_executable: false,
+                                source_map_index: None,
+                                bytecode_index: None,
+                                module_info_index: None,
+                                referenced_css_chunks: Box::default(),
+                                source_index: IndexOptional::NONE,
+                                bake_extra: BakeExtra::default(),
+                            }));
                         }
-
-                        let mut input_path_buf: Vec<u8> = Vec::new();
-                        write!(
-                            &mut input_path_buf,
-                            "{}{}",
-                            bstr::BStr::new(&chunk.final_rel_path),
-                            BYTECODE_EXTENSION
-                        )
-                        .expect("unreachable");
-
-                        break 'brk Some(OutputFile::init(OutputFileInit {
-                            output_path: Box::<[u8]>::from(source_provider_url_str.slice()),
-                            input_path: input_path_buf.into_boxed_slice(),
-                            input_loader: Loader::File,
-                            hash: if chunk.template.placeholder.hash.is_some() {
-                                Some(hash(&bytecode))
-                            } else {
-                                None
-                            },
-                            output_kind: options::OutputKind::Bytecode,
-                            loader: Loader::File,
-                            size: Some(bytecode.len()),
-                            display_size: bytecode.len() as u32,
-                            data: OutputFileData::Saved(0),
-                            side: None,
-                            entry_point_index: None,
-                            is_executable: false,
-                            source_map_index: None,
-                            bytecode_index: None,
-                            module_info_index: None,
-                            referenced_css_chunks: Box::default(),
-                            source_index: IndexOptional::NONE,
-                            bake_extra: BakeExtra::default(),
-                        }));
+                    } else {
+                        debug_assert!(
+                            false,
+                            "generate_bytecode_cache set without a bytecode generator"
+                        );
                     }
                 }
             }
@@ -512,8 +522,9 @@ pub fn write_output_files_to_disk(
                 } else {
                     0o644
                 },
-                dirfd: bun_sys::Fd::from_std_dir(&root_dir),
+                dirfd: root_dir.fd(),
                 file: PathOrFileDescriptor::Path(&chunk.final_rel_path),
+                ..Default::default()
             },
         ) {
             Err(e) => {
@@ -662,7 +673,7 @@ pub fn write_output_files_to_disk(
             }
 
             match bun_sys::File::write_file(
-                bun_sys::Fd::from_std_dir(&root_dir),
+                root_dir.fd(),
                 paths::resolve_path::z(&src.dest_path, &mut pathbuf),
                 &bytes,
             ) {

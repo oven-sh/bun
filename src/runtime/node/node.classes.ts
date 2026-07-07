@@ -131,7 +131,7 @@ export default [
   }),
   define({
     name: "Timeout",
-    rustPath: "crate::timer::TimeoutObject",
+    rustPath: "bun_jsc::timer::TimeoutObject",
     construct: true,
     finalize: true,
     sharedThis: true,
@@ -202,7 +202,7 @@ export default [
   }),
   define({
     name: "Immediate",
-    rustPath: "crate::timer::ImmediateObject",
+    rustPath: "bun_jsc::timer::ImmediateObject",
     construct: true,
     finalize: true,
     sharedThis: true,

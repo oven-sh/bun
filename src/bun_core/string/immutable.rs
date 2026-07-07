@@ -1500,28 +1500,9 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
 
 // (UTF16Replacement / utf16_codepoint{,_with_fffd} — deleted; re-exported from unicode_draft above)
 
-/// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). `bun.w`.
-#[macro_export]
-macro_rules! w {
-    ($s:literal) => {{
-        const __B: &[u8] = $s.as_bytes();
-        const __N: usize = __B.len();
-        const __W: [u16; __N] = {
-            let mut out = [0u16; __N];
-            let mut i = 0;
-            while i < __N {
-                // Const-evaluated: a non-ASCII byte is a hard compile error in
-                // every profile (`to_utf16_literal!` forwards here, so this
-                // also keeps that alias from silently mis-encoding non-ASCII).
-                assert!(__B[i] < 0x80, "w! is ASCII-only");
-                out[i] = __B[i] as u16;
-                i += 1;
-            }
-            out
-        };
-        &__W as &'static [u16]
-    }};
-}
+// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). Canonical def in
+// `bun_opaque` (shared with the freestanding windows shim); re-exported at the
+// crate root (lib.rs) so `bun_core::w!` / `$crate::w!` keep resolving.
 
 /// Index of the first non-ASCII byte in `slice`, or `None` if all-ASCII.
 /// Thin `u32` view over the simdutf-backed [`first_non_ascii_usize`].
@@ -2346,15 +2327,16 @@ unsafe extern "C" {
         dst: *mut core::ffi::c_void,
     ) -> c_int;
 }
-// dep-graph: bun_string < bun_sys, so cannot import the canonical
-// `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-// previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
-// is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-const AF_INET: c_int = 2;
+// Same libc/ws2_32 passthroughs as the canonical `bun_sys::posix::AF` (which
+// this crate cannot import: bun_core < bun_sys).
+#[cfg(not(windows))]
+const AF_INET: c_int = libc::AF_INET as c_int;
+#[cfg(windows)]
+const AF_INET: c_int = bun_windows_sys::ws2_32::AF_INET as c_int;
 #[cfg(not(windows))]
 const AF_INET6: c_int = libc::AF_INET6 as c_int;
 #[cfg(windows)]
-const AF_INET6: c_int = 23; // ws2def.h
+const AF_INET6: c_int = bun_windows_sys::ws2_32::AF_INET6 as c_int;
 
 pub fn is_ip_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];

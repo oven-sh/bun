@@ -4,7 +4,7 @@
 //! `bun_jsc::{AnyTask, ConcurrentTask, Debugger, EventLoop, Strong, Task,
 //! VirtualMachine}` method surface, `bun_jsc::c_api::ExceptionRef`,
 //! `bun_collections::LinearFifo`, `bun_threading::{Condvar, Mutex, WorkPool}`,
-//! `bun_output` macros.
+//! `bun_core` output macros.
 
 #[path = "napi_body.rs"]
 mod napi_body;

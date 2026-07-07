@@ -4,7 +4,7 @@
 //! `Arguments::loadConfig`
 //! without a tier-6 dependency or fn-pointer hook.
 //! Every dependency of this crate was already a transitive dependency of
-//! `bun_install` (via `bun_transpiler` → `bun_bundler`), so no cycle is
+//! `bun_install` (via `bun_bundler`, which hosts the transpiler), so no cycle is
 //! introduced; this only makes the existing edge direct.
 
 #![allow(non_snake_case)]

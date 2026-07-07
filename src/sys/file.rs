@@ -4,7 +4,7 @@
 //! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
 //! are safe to drop). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
-//! All methods preserve OS errno via [`crate::Maybe`].
+//! All methods preserve OS errno via [`crate::Result`].
 #![allow(clippy::module_inception)]
 
 use super::*;
@@ -90,18 +90,18 @@ impl File {
         }
     }
 
-    pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Result<Self> {
         open(path, flags, mode).map(Self::from_fd)
     }
     /// `openat` accepting a non-sentinel `&[u8]`; `&ZStr` callers
     /// deref-coerce to `&[u8]`.
-    pub fn openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Result<Self> {
         let dir = dir.as_fd();
         openat_a(dir, path, flags, mode).map(Self::from_fd)
     }
     /// snake_case alias for [`File::openat`].
     #[inline]
-    pub fn open_at(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn open_at(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Result<Self> {
         let dir = dir.as_fd();
         Self::openat(dir, path, flags, mode)
     }
@@ -109,13 +109,13 @@ impl File {
     /// directories on the first failure (mkdir -p of `dirname(path)`, then
     /// retry once).
     #[inline]
-    pub fn make_open(path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn make_open(path: &[u8], flags: i32, mode: Mode) -> Result<Self> {
         Self::make_openat(Fd::cwd(), path, flags, mode)
     }
     /// `openat`; on failure, recursively create `dirname(path)` (errors from
     /// the mkdir are swallowed) then retry the open once. If `path` has no
     /// dirname, the original error is returned.
-    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Result<Self> {
         let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),
@@ -129,14 +129,14 @@ impl File {
         }
     }
     /// Create a file at `path` relative to `dir`, optionally truncating.
-    pub fn create(dir: impl AsFd, path: &[u8], truncate: bool) -> Maybe<Self> {
+    pub fn create(dir: impl AsFd, path: &[u8], truncate: bool) -> Result<Self> {
         let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
     /// Windows wide-path variant of [`File::create`] (truncating, write-only).
     #[cfg(windows)]
-    pub fn create_w(dir: impl AsFd, path: &[u16]) -> Maybe<Self> {
+    pub fn create_w(dir: impl AsFd, path: &[u16]) -> Result<Self> {
         let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
         openat_windows(dir, path, flags, 0o666).map(Self::from_fd)
@@ -150,19 +150,19 @@ impl File {
         path: &bun_paths::OSPathSliceZ,
         flags: i32,
         mode: Mode,
-    ) -> Maybe<File> {
+    ) -> Result<File> {
         let dir = dir.as_fd();
         openat_os_path(dir, path, flags, mode).map(|fd| File { handle: fd })
     }
 
     // ── read / write ─────────────────────────────────────────────────────
-    pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
+    pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         read(self.handle, buf)
     }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
+    pub fn write(&self, buf: &[u8]) -> Result<usize> {
         write(self.handle, buf)
     }
-    pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
+    pub fn write_all(&self, mut buf: &[u8]) -> Result<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;
             if n == 0 {
@@ -174,7 +174,7 @@ impl File {
     }
     /// Loop `read()` into a **fixed** caller-owned slice until EOF or full.
     /// Returns total bytes read.
-    pub fn read_all(&self, buf: &mut [u8]) -> Maybe<usize> {
+    pub fn read_all(&self, buf: &mut [u8]) -> Result<usize> {
         let mut rest = &mut *buf;
         let mut total_read: usize = 0;
         while !rest.is_empty() {
@@ -189,10 +189,10 @@ impl File {
     }
     /// Growable-`Vec` variant (was previously misnamed `read_all`). Kept for
     /// callers that want cursor-relative streaming into an existing `Vec`.
-    pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
+    pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Result<usize> {
         read_fill_vec(buf, 8192, |dst, _| read(self.handle, dst))
     }
-    pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
+    pub fn read_to_end(&self) -> Result<Vec<u8>> {
         let mut v = Vec::new();
         // fstat-presized, pread-from-0; not a cursor read.
         self.read_to_end_with_array_list(&mut v, SizeHint::UnknownSize)?;
@@ -201,7 +201,7 @@ impl File {
     /// Like [`File::read_to_end`] but
     /// reserves only 64 bytes initially instead of fstat-presizing; for files
     /// callers expect to be tiny (`.bun-tag`, lockfile markers, etc.).
-    pub fn read_to_end_small(&self) -> Maybe<Vec<u8>> {
+    pub fn read_to_end_small(&self) -> Result<Vec<u8>> {
         let mut v = Vec::new();
         self.read_to_end_with_array_list(&mut v, SizeHint::ProbablySmall)?;
         Ok(v)
@@ -210,7 +210,7 @@ impl File {
     /// `SizeHint` so callers can pre-reserve. Returns total bytes appended.
     /// `ProbablySmall` reserves 64; `UnknownSize` fstats and reserves
     /// `size+16`.
-    pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
+    pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Result<usize> {
         match hint {
             SizeHint::ProbablySmall => {
                 if list.try_reserve(64).is_err() {
@@ -244,7 +244,7 @@ impl File {
     }
     /// Reads until
     /// `buf` is full or EOF; returns the filled prefix.
-    pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
+    pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Result<&'b mut [u8]> {
         let mut read_amount: usize = 0;
         while read_amount < buf.len() {
             // POSIX uses pread() from offset 0 so a pre-advanced cursor
@@ -261,7 +261,7 @@ impl File {
         }
         Ok(&mut buf[..read_amount])
     }
-    pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
+    pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Result<()> {
         while !buf.is_empty() {
             let n = pwrite(self.handle, buf, off)?;
             if n == 0 {
@@ -274,7 +274,7 @@ impl File {
     }
     /// Loop `pread()` from `offset` until `buf` is
     /// full or EOF. Returns total bytes read (may be `< buf.len()` on EOF).
-    pub fn pread_all(&self, buf: &mut [u8], offset: u64) -> Maybe<usize> {
+    pub fn pread_all(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
         let mut off = offset as i64;
         let mut total: usize = 0;
         while total < buf.len() {
@@ -291,28 +291,28 @@ impl File {
     // ── seek / stat / kind ───────────────────────────────────────────────
     /// `lseek(SEEK_SET)`.
     #[inline]
-    pub fn seek_to(&self, offset: u64) -> Maybe<()> {
+    pub fn seek_to(&self, offset: u64) -> Result<()> {
         set_file_offset(self.handle, offset)
     }
     /// Current file position via `lseek(0, SEEK_CUR)`.
     /// On Windows this routes through `SetFilePointerEx(.., FILE_CURRENT)` (whence
     /// values match: `SEEK_CUR == FILE_CURRENT == 1`).
     #[inline]
-    pub fn get_pos(&self) -> Maybe<u64> {
+    pub fn get_pos(&self) -> Result<u64> {
         lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
     }
     /// The file's size in bytes.
     /// On Windows that's `GetFileSizeEx` directly on the HANDLE (NOT via
     /// libuv `fstat`, which would require a uv-kind fd).
-    pub fn get_end_pos(&self) -> Maybe<usize> {
+    pub fn get_end_pos(&self) -> Result<usize> {
         get_file_size(self.handle).map(|n| n as usize)
     }
-    pub fn stat(&self) -> Maybe<Stat> {
+    pub fn stat(&self) -> Result<Stat> {
         fstat(self.handle)
     }
     /// Be careful about using this on Linux or macOS — calls `fstat()`
     /// internally there. On Windows it routes through `GetFileType`.
-    pub fn kind(&self) -> Maybe<FileKind> {
+    pub fn kind(&self) -> Result<FileKind> {
         #[cfg(windows)]
         {
             let rt = windows::GetFileType(self.handle.native());
@@ -346,7 +346,7 @@ impl File {
     }
     /// Close now. Equivalent to dropping `self` but the syscall result is
     /// observable. Skips the same sentinels as `Drop`.
-    pub fn close(self) -> Maybe<()> {
+    pub fn close(self) -> Result<()> {
         let fd = self.into_raw();
         if fd == Fd::INVALID || fd.is_stdio() {
             return Ok(());
@@ -374,7 +374,7 @@ impl File {
     #[inline]
     pub fn get_path<'a>(
         &self,
-        buf: &'a mut bun_paths::PathBuffer,
+        buf: &'a mut bun_core::PathBuffer,
     ) -> core::result::Result<&'a [u8], bun_core::Error> {
         get_fd_path(self.handle, buf)
             .map(|s| &*s)
@@ -383,7 +383,7 @@ impl File {
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
     /// Open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.
-    pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+    pub fn read_from(dir: impl AsFd, path: &[u8]) -> Result<Vec<u8>> {
         let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
         // `Drop` closes the fd on all paths (no leak on read failure).
@@ -414,9 +414,9 @@ impl File {
         dir: impl AsFd,
         top_level_dir: &[u8],
         input_path: &[u8],
-    ) -> Maybe<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_core::PathBuffer::default();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
             &mut buf.0,
@@ -425,7 +425,7 @@ impl File {
         Self::read_from(dir, normalized.as_bytes())
     }
     /// `bun.sys.File.writeFile` — open + write + close.
-    pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {
+    pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Result<()> {
         let dir = dir.as_fd();
         // `Drop` closes the fd on all paths.
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
@@ -437,7 +437,7 @@ impl File {
         dir: impl AsFd,
         path: &bun_paths::OSPathSliceZ,
         data: &[u8],
-    ) -> Maybe<()> {
+    ) -> Result<()> {
         let dir = dir.as_fd();
         let file = File::openat_os_path(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         file.write_all(data)

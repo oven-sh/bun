@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 use core::ptr;
 
+use bun_libuv_sys as uv;
 use bun_sys::Fd;
-use bun_sys::windows::libuv as uv;
 use bun_uws_sys::WindowsLoop;
 
 use crate::posix_event_loop as posix;
@@ -202,7 +202,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    // Note: the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
+    // Note: the cycle-broken `EventLoopCtx::platform_event_loop` link fn is typed
     // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
     // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
     // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through

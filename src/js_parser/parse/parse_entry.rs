@@ -8,8 +8,11 @@ use bun_core::strings;
 use bun_core::{self, Error, err};
 use bun_wyhash::Wyhash;
 
-use crate::parser::options;
+use crate::AllowUnresolved;
+use bun_ast::Loader;
 use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
+use bun_options_types::jsx as JSX;
+use bun_options_types::{Format, ModuleType};
 
 use crate::defines::Define;
 use crate::lexer as js_lexer;
@@ -70,7 +73,7 @@ pub struct Parser<'a> {
 }
 
 pub struct Options<'a> {
-    pub jsx: options::JSX::Pragma,
+    pub jsx: JSX::Pragma,
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
@@ -89,10 +92,10 @@ pub struct Options<'a> {
 
     pub warn_about_unbundled_modules: bool,
 
-    pub allow_unresolved: &'a options::AllowUnresolved,
+    pub allow_unresolved: &'a AllowUnresolved,
 
-    pub module_type: options::ModuleType,
-    pub output_format: options::Format,
+    pub module_type: ModuleType,
+    pub output_format: Format,
 
     pub transform_only: bool,
 
@@ -102,7 +105,7 @@ pub struct Options<'a> {
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
-    pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
+    pub framework: Option<&'a bun_options_types::bake::Framework>,
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses
@@ -119,7 +122,7 @@ impl<'a> Default for Options<'a> {
         // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
         // by value) instead of bitwise-copying it and double-freeing on drop.
         Options {
-            jsx: options::JSX::Pragma::default(),
+            jsx: JSX::Pragma::default(),
             ts: false,
             keep_names: true,
             ignore_dce_annotations: false,
@@ -134,9 +137,9 @@ impl<'a> Default for Options<'a> {
             package_version: b"",
             macro_context: None,
             warn_about_unbundled_modules: true,
-            allow_unresolved: &options::AllowUnresolved::DEFAULT,
-            module_type: options::ModuleType::Unknown,
-            output_format: options::Format::Esm,
+            allow_unresolved: &AllowUnresolved::DEFAULT,
+            module_type: ModuleType::Unknown,
+            output_format: Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
@@ -267,7 +270,7 @@ impl<'a> Options<'a> {
         self.bundle
     }
 
-    pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
+    pub fn init(jsx: JSX::Pragma, loader: Loader) -> Options<'static> {
         // `macro_context` is `None`
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
@@ -289,9 +292,9 @@ impl<'a> Options<'a> {
             // before any read site `.unwrap()`s it.
             macro_context: None,
             warn_about_unbundled_modules: true,
-            allow_unresolved: &options::AllowUnresolved::DEFAULT,
-            module_type: options::ModuleType::Unknown,
-            output_format: options::Format::Esm,
+            allow_unresolved: &AllowUnresolved::DEFAULT,
+            module_type: ModuleType::Unknown,
+            output_format: Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
@@ -799,11 +802,12 @@ impl<'a> Parser<'a> {
                 let is_node_module = strings::last_index_of(name.dir, NM).is_some();
                 let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
                     || strings::has_suffix_comptime(name.filename, b".tsx");
-                if cache.get(
-                    p.source,
-                    core::ptr::NonNull::from(&p.options).cast::<()>(),
-                    p.options.jsx.parse && (!is_node_module || is_jsx_file),
-                ) {
+                let used_jsx = p.options.jsx.parse && (!is_node_module || is_jsx_file);
+                if cache.get(p.source, || {
+                    let mut h = Wyhash::init(bun_ast::transpiler_cache::FEATURES_HASH_SEED);
+                    p.options.hash_for_runtime_transpiler(&mut h, used_jsx);
+                    h.final_()
+                }) {
                     return Ok(crate::Result::Cached);
                 }
             }
@@ -1290,9 +1294,7 @@ impl<'a> Parser<'a> {
                         // and the package uses ESM syntax
                         // We should just say
                         // You're ESM and lying about it.
-                        if p.options.module_type == options::ModuleType::Esm
-                            || p.has_es_module_syntax
-                        {
+                        if p.options.module_type == ModuleType::Esm || p.has_es_module_syntax {
                             if needs_decl_count == export_names_len {
                                 force_esm = true;
                                 break 'break_optimize;
@@ -1715,7 +1717,7 @@ impl<'a> Parser<'a> {
         } else {
             match p.options.module_type {
                 // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
-                options::ModuleType::Cjs => {
+                ModuleType::Cjs => {
                     // There are no commonjs-only features used (require is allowed in ESM)
                     debug_assert!(
                         !uses_exports_ref
@@ -1730,10 +1732,10 @@ impl<'a> Parser<'a> {
                         js_ast::ExportsKind::Cjs
                     };
                 }
-                options::ModuleType::Esm => {
+                ModuleType::Esm => {
                     exports_kind = js_ast::ExportsKind::Esm;
                 }
-                options::ModuleType::Unknown => {
+                ModuleType::Unknown => {
                     // Divergence from esbuild and Node.js: we default to ESM
                     // when there are no exports.
                     //
@@ -2108,7 +2110,7 @@ impl<'a> Parser<'a> {
         // handle new way to do automatic JSX imports which fixes symbol collision issues
         if p.options.jsx.parse
             && p.options.features.auto_import_jsx
-            && p.options.jsx.runtime == options::JSX::Runtime::Automatic
+            && p.options.jsx.runtime == JSX::Runtime::Automatic
         {
             // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
             // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the

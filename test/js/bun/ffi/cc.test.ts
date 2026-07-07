@@ -1,16 +1,13 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-
-// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
-const isFFIUnavailable = isWindows && isArm64;
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-it.todoIf(isWindows || isASAN || isFFIUnavailable)("can run a .c file", () => {
+it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
     cwd: __dirname,
@@ -22,8 +19,7 @@ it.todoIf(isWindows || isASAN || isFFIUnavailable)("can run a .c file", () => {
 });
 
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-// TinyCC is disabled on Windows ARM64.
-describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () => {
+describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {
         return a + b;
@@ -391,7 +387,7 @@ describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a forei
 // Pins GC liveness: compiled trampolines survive the library wrapper being
 // collected, and a JSCallback's closure stays alive until close().
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and callbacks", () => {
+describe.skipIf(isASAN)("GC liveness of compiled symbols and callbacks", () => {
   it("keeps symbol functions and callback closures alive across forced GC", async () => {
     using dir = tempDir("bun-ffi-cc-gc-liveness", {
       "lib.c": /* c */ `
@@ -460,7 +456,7 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
 // va_arg on x86_64 SysV lowers to a call to __va_arg, which TinyCC expects
 // libtcc1 to provide; Bun replaces libtcc1 with src/runtime/ffi/libtcc1.c.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-describe.skipIf(isASAN || isFFIUnavailable)("variadic functions inside cc()-compiled C", () => {
+describe.skipIf(isASAN)("variadic functions inside cc()-compiled C", () => {
   it("va_arg over ints, doubles, and the stack overflow area", async () => {
     using dir = tempDir("bun-ffi-cc-varargs", {
       "varargs.c": /* c */ `
@@ -573,12 +569,10 @@ describe.skipIf(isASAN || isFFIUnavailable)("variadic functions inside cc()-comp
 // long double is 16 bytes on x86_64 and always va_arg'd through the stack; on
 // aarch64 it is binary128 and its arithmetic needs soft-float helpers
 // (__addtf3, ...) that Bun's TCC states do not provide, so x64 only.
-describe.skipIf(isASAN || isFFIUnavailable || process.arch !== "x64")(
-  "long double varargs inside cc()-compiled C",
-  () => {
-    it("va_arg over long double", async () => {
-      using dir = tempDir("bun-ffi-cc-varargs-ld", {
-        "ld.c": /* c */ `
+describe.skipIf(isASAN || process.arch !== "x64")("long double varargs inside cc()-compiled C", () => {
+  it("va_arg over long double", async () => {
+    using dir = tempDir("bun-ffi-cc-varargs-ld", {
+      "ld.c": /* c */ `
         #include <stdarg.h>
 
         static double sum_long_doubles(int count, ...) {
@@ -592,7 +586,7 @@ describe.skipIf(isASAN || isFFIUnavailable || process.arch !== "x64")(
 
         double long_doubles(void) { return sum_long_doubles(3, 1.5L, 2.25L, 3.25L); }
       `,
-        "fixture.js": /* js */ `
+      "fixture.js": /* js */ `
         import { cc } from "bun:ffi";
         import path from "path";
 
@@ -602,31 +596,30 @@ describe.skipIf(isASAN || isFFIUnavailable || process.arch !== "x64")(
         });
         console.log(JSON.stringify({ long_doubles: symbols.long_doubles() }));
       `,
-      });
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "fixture.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
-      expect({ results, stderr, exitCode }).toMatchObject({
-        results: { long_doubles: 7 },
-        exitCode: 0,
-      });
     });
-  },
-);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: { long_doubles: 7 },
+      exitCode: 0,
+    });
+  });
+});
 
 // TinyCC compiles thread-local variables to Local-Exec TLS, which has no
 // meaning inside an in-memory relocation (there is no PT_TLS segment): the
 // generated loads/stores alias the host process's own thread block. TinyCC
 // must reject it instead of silently corrupting Bun's thread-locals.
-describe.skipIf(isASAN || isFFIUnavailable)("thread-local storage inside cc()-compiled C", () => {
+describe.skipIf(isASAN)("thread-local storage inside cc()-compiled C", () => {
   it.each(["_Thread_local", "__thread"])("%s is a compile error", keyword => {
     const dir = tempDirWithFiles(`bun-ffi-cc-tls`, {
       "tls.c": `${keyword} int bun_test_tls_counter = 0;\nint bump(void) { return ++bun_test_tls_counter; }\n`,
@@ -640,7 +633,7 @@ describe.skipIf(isASAN || isFFIUnavailable)("thread-local storage inside cc()-co
   });
 });
 
-describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
+describe("double <-> JSValue conversions", () => {
   // JSC NaN-boxes doubles, so a NaN whose payload collides with the tag space
   // ("impure NaN", see JSC's PureNaN.h) must never be encoded as-is: it would
   // decode as a native-chosen JSValue (true, undefined, an Int32, or a cell

@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -434,8 +434,8 @@ test("cp with missing callback throws", () => {
 // source symlink to resolve its target via GetFinalPathNameByHandleW. Previously
 // that handle was never closed, leaking one OS handle per symlink copied. Over a
 // large tree (e.g. node_modules with junctions) this eventually exhausts the
-// process handle table. bun:ffi (TinyCC) is unavailable on Windows arm64.
-test.skipIf(!isWindows || isArm64)("cpSync over symlinks does not leak Windows handles", () => {
+// process handle table.
+test.skipIf(!isWindows)("cpSync over symlinks does not leak Windows handles", () => {
   const { dlopen } = require("bun:ffi");
   const k32 = dlopen("kernel32.dll", {
     GetCurrentProcess: { args: [], returns: "ptr" },

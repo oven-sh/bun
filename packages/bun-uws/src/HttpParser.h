@@ -664,9 +664,24 @@ namespace uWS
 
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
-                    // If we haven't received enough data to check if it's http:// or https://, let's try again later
-                    case -1:
-                        return ConsumeRequestLineResult::shortRead(false, isConnect);
+                    case -1: {
+                        /* Fewer than 8 target bytes. The only accepted targets here are
+                         * absolute http:// or https:// URLs, so short-read only while the
+                         * available bytes are still a valid prefix of one of those. */
+                        char *t = data + 1;
+                        size_t n = (size_t)(end - t);
+                        bool mayHttp = true, mayHttps = true;
+                        for (size_t i = 0; i < n; i++) {
+                            char c = t[i];
+                            if (c >= 'A' && c <= 'Z') c |= 0x20;
+                            if (i < 7 && c != "http://"[i]) mayHttp = false;
+                            if (i < 8 && c != "https://"[i]) mayHttps = false;
+                        }
+                        if (mayHttp || mayHttps) {
+                            return ConsumeRequestLineResult::shortRead(false, isConnect);
+                        }
+                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
+                    }
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);

@@ -634,10 +634,8 @@ impl<'a> URL<'a> {
                                 < strings::index_of_char(&base[offset as usize..], b'/')
                                     .unwrap_or(u32::MAX)
                             {
-                                offset +=
-                                    url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                                offset +=
-                                    url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                                offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
+                                offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
                             }
                         }
                     }

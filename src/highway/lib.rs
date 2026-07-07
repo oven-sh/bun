@@ -87,6 +87,16 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_count_mapping_delims(bytes: *const u8, len: usize) -> usize;
+
+    fn highway_json_index_chunk(
+        input: *const u8,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        out_dirty: *mut u64,
+        inout_state: *mut u64,
+        out_flags: *mut u32,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -587,6 +597,34 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
     }
     // SAFETY: `bytes.ptr/len` are a valid readable range.
     unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
+}
+
+/// JSON structural index (simdjson-style stage 1) for one chunk of a document.
+#[inline(always)]
+pub fn json_structural_index_chunk(
+    chunk: &[u8],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    dirty: &mut [u64],
+    state: &mut [u64; 3],
+) -> (usize, u32) {
+    assert!(out.len() >= chunk.len() + 66);
+    assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
+    assert!(base_offset.is_multiple_of(4096));
+    let mut flags: u32 = 0;
+    // SAFETY: the slices satisfy the kernel's size requirements (asserted above).
+    let n = unsafe {
+        highway_json_index_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            dirty.as_mut_ptr(),
+            state.as_mut_ptr(),
+            &raw mut flags,
+        )
+    };
+    (n, flags)
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

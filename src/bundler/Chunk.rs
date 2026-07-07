@@ -682,6 +682,12 @@ impl IntermediateOutput {
                     from_chunk_dir = b"";
                 }
 
+                // esbuild's `pathBetweenChunks`: with a public path configured, every
+                // reference is `publicPath + outdir-relative path`. Importer-relative
+                // paths would escape the prefix from chunks in subdirectories.
+                let use_outdir_relative_path =
+                    from_chunk_dir.is_empty() || force_absolute_path || !import_prefix.is_empty();
+
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
                 } else {
@@ -763,7 +769,7 @@ impl IntermediateOutput {
 
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -944,7 +950,7 @@ impl IntermediateOutput {
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<

@@ -416,6 +416,7 @@ pub mod Jest {
         let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());
         let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
         let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
+        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
         let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
@@ -428,7 +429,7 @@ pub mod Jest {
         jest.put(global_object, b"spyOn", spy_on);
         jest.put(global_object, b"restoreAllMocks", restore_all_mocks);
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
-        jest.put(global_object, b"resetAllMocks", clear_all_mocks);
+        jest.put(global_object, b"resetAllMocks", reset_all_mocks);
         jest.put(global_object, b"setSystemTime", set_system_time);
         jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
         jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
@@ -442,7 +443,7 @@ pub mod Jest {
         vi.put(global_object, b"mock", mock_module_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
-        vi.put(global_object, b"resetAllMocks", clear_all_mocks);
+        vi.put(global_object, b"resetAllMocks", reset_all_mocks);
         vi.put(global_object, b"clearAllMocks", clear_all_mocks);
         module.put(global_object, b"vi", vi);
 
@@ -459,6 +460,7 @@ pub mod Jest {
         pub(crate) fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsClearAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsResetAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 

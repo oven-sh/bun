@@ -177,7 +177,18 @@ void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
         m_uncommonHeaders[index].value = value;
 }
 
-void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const String& value)
+void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
+{
+    auto index = m_uncommonHeaders.findIf([&](auto& header) {
+        return equalIgnoringASCIICase(header.key, name);
+    });
+    if (index == notFound)
+        m_uncommonHeaders.append(UncommonHeader { name, value });
+    else
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+}
+
+void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -188,7 +199,7 @@ void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const Stri
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
     } else
-        m_uncommonHeaders[index].value = value;
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::add(const String& name, const String& value)

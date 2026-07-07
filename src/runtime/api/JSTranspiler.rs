@@ -378,7 +378,6 @@ impl Config {
                     &mut self.log,
                     &source,
                     bun_resolver::tsconfig_json::JsonMode::Json,
-                    false,
                 ) else {
                     break 'macros;
                 };

@@ -185,6 +185,18 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_write_continue(Self::ssl_flag(), self.as_raw())
     }
 
+    pub fn write_informational(&mut self, data: &[u8]) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_write_informational(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+            )
+        }
+    }
+
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -743,6 +755,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write_continue())
     }
 
+    pub fn write_informational(self, data: &[u8]) {
+        any_dispatch!(self, |r| r.write_informational(data))
+    }
+
     pub fn state(self) -> State {
         any_dispatch!(self, |r| r.state())
     }
@@ -1062,6 +1078,12 @@ pub mod c {
         pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
+        pub(crate) fn uws_res_write_informational(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+        );
         pub(crate) fn uws_res_write_status(
             ssl: i32,
             res: *mut uws_res,

@@ -438,6 +438,14 @@ public:
         return this;
     }
 
+    /* Write a caller-built 1xx informational response line + headers. Shares
+     * the AsyncSocket write path (and buffer) writeStatus/end use, so a
+     * pipelined replay stays ordered ahead of the final response bytes. */
+    HttpResponse *writeRawInformational(std::string_view data) {
+        Super::write(data.data(), (int) data.length());
+        return this;
+    }
+
     /* Write the HTTP status */
     HttpResponse *writeStatus(std::string_view status) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

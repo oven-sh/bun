@@ -3692,7 +3692,7 @@ pub(super) fn server_set_app_flags_(
 ) -> JsResult<JSValue> {
     if !server.is_object() {
         return Err(global.throw(format_args!(
-            "Failed to set requireHostHeader: The 'this' value is not a Server."
+            "Failed to set server flags: The 'this' value is not a Server."
         )));
     }
 
@@ -3715,7 +3715,7 @@ pub(super) fn server_set_app_flags_(
     handle!(DebugHTTPSServer);
 
     Err(global.throw(format_args!(
-        "Failed to set timeout: The 'this' value is not a Server."
+        "Failed to set server flags: The 'this' value is not a Server."
     )))
 }
 

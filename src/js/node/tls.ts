@@ -10,6 +10,7 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
+  normalizeRejectUnauthorized,
 } = require("internal/tls");
 const {
   validateString,
@@ -453,12 +454,6 @@ function parseCertString() {
 // script can set it after loading the module and still have it apply.
 function rejectUnauthorizedDefault() {
   return process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
-}
-
-// Node's rule for every rejectUnauthorized ingestion (_tls_wrap.js): only an explicit
-// `false` disables certificate verification — null, 0, "" and every other value keep it on.
-function normalizeRejectUnauthorized(value) {
-  return value !== false;
 }
 
 // Mirrors Node's getAllowUnauthorized(): warn (once) when certificate

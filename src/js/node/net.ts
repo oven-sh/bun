@@ -155,11 +155,7 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
-// Node's rule for every rejectUnauthorized ingestion (_tls_wrap.js): only an explicit
-// `false` disables certificate verification — null, 0, "" and every other value keep it on.
-function normalizeRejectUnauthorized(value) {
-  return value !== false;
-}
+const { normalizeRejectUnauthorized } = require("internal/tls");
 
 // A completed write whose status is a negative errno: Node hands it to the write
 // callback as errnoException(status, 'write') and destroys the stream when no
@@ -823,7 +819,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         server?.emit("tlsClientError", verifyError, self);
-        // Node's rule: anything but an explicit `false` rejects a failed verification.
+        // Node's onServerSocketSecure reads this field as truthy; the field is stored
+        // already-normalized, so `!== false` here just fails closed for undefined.
         if (self._rejectUnauthorized !== false) {
           // if we reject we still need to emit secure
           self.emit("secure", self);

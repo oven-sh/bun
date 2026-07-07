@@ -100,6 +100,13 @@ function secureProtocolToVersionRange(secureProtocol) {
   return null;
 }
 
+// Node's rule at the client-side ingestion sites (tls.connect, Server ctor,
+// setSecureContext in _tls_wrap.js): only an explicit `false` disables
+// certificate verification — undefined and every other value keep it on.
+function normalizeRejectUnauthorized(value) {
+  return value !== false;
+}
+
 let NativeSecureContext;
 
 /**
@@ -147,6 +154,7 @@ export {
   VALID_TLS_ERROR_MESSAGE_TYPES,
   isValidTLSArray,
   isValidTLSItem,
+  normalizeRejectUnauthorized,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,

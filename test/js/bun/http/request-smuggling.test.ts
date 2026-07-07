@@ -80,11 +80,11 @@ test("rejects Transfer-Encoding with chunked not last", async () => {
   });
 });
 
-// llhttp (and so node) reject any coding listed after a "chunked" token with
-// HPE_INVALID_TRANSFER_ENCODING; only rejecting the multi-header form would leave the
-// single-line "chunked, chunked" framed as chunked — a smuggling differential.
-test.each(["chunked, chunked", "chunked, foo, chunked"])(
-  "rejects duplicate chunked within a single Transfer-Encoding header (%s)",
+// llhttp (and so node) reject on the comma itself once "chunked" has been seen
+// (HPE_INVALID_TRANSFER_ENCODING) — a following coding, empty list element, or trailing
+// comma are all invalid rather than framed as chunked (a smuggling differential).
+test.each(["chunked, chunked", "chunked, foo, chunked", "chunked,", "chunked, ", "chunked,,foo"])(
+  "rejects a comma after chunked in a single Transfer-Encoding header (%s)",
   async te => {
     await using server = Bun.serve({
       port: 0,

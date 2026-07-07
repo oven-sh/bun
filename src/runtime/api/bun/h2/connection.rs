@@ -1081,6 +1081,11 @@ impl Connection {
         let mut saw_connect = false;
         let mut saw_host = false;
         let mut informational = false;
+        // nghttp2 check_path() flags for the RFC 9113 §8.3.1 :path validation.
+        let mut path_regular = false;
+        let mut path_asterisk = false;
+        let mut scheme_http = false;
+        let mut meth_options = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
@@ -1121,11 +1126,15 @@ impl Connection {
                                 b"protocol" => pseudo::PROTOCOL,
                                 _ => pseudo::UNKNOWN,
                             };
-                            // 8.3.1: requests never carry :status - a server seeing it inbound is
-                            // a malformed block. (The client direction also constrains pseudo
-                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
-                            // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            // 8.3.1/8.3.2: request blocks never carry :status; response blocks
+                            // never carry a request pseudo-header. `is_request` (not is_server)
+                            // is the right guard because a client-received PUSH_PROMISE block is
+                            // a request block and legitimately carries request pseudo-headers.
+                            let wrong_direction = if is_request {
+                                bit == pseudo::STATUS
+                            } else {
+                                bit != pseudo::STATUS && bit != pseudo::UNKNOWN
+                            };
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
@@ -1152,7 +1161,30 @@ impl Connection {
                                 informational = true;
                             }
                             seen_pseudo |= bit;
-                            saw_connect |= rest == b"method" && value_b == b"CONNECT";
+                            // nghttp2 http_request_on_header per-field flags used by
+                            // check_path()/nghttp2_http_on_request_headers below. It also
+                            // rejects :method CONNECT on an even (pushed) stream up front:
+                            // "we won't allow CONNECT for push".
+                            match rest {
+                                b"method" => {
+                                    if value_b == b"CONNECT" {
+                                        if push_parent != 0 {
+                                            malformed = true;
+                                        }
+                                        saw_connect = true;
+                                    }
+                                    meth_options |= value_b == b"OPTIONS";
+                                }
+                                b"path" => {
+                                    path_regular |= value_b.first() == Some(&b'/');
+                                    path_asterisk |= value_b == b"*";
+                                }
+                                b"scheme" => {
+                                    scheme_http |= value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                _ => {}
+                            }
                         } else {
                             seen_regular = true;
                             match name_b {
@@ -1237,7 +1269,15 @@ impl Connection {
                 (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    // nghttp2 check_path(): under http/https, :path must start with '/'
+                    // (or be '*' for OPTIONS).
+                    || (scheme_http && !(path_regular || (meth_options && path_asterisk)))
             };
+        } else if !is_trailer && !rejected && !malformed && !informational {
+            // RFC 9113 §8.3.2 (nghttp2_http_on_response_headers): a final response block must
+            // carry exactly :status and no request pseudo-header. wrong_direction above already
+            // rejected a request pseudo per-field; this catches a block with :status omitted.
+            malformed = (seen_pseudo & pseudo::STATUS) == 0;
         }
         // RFC 9113 §8.1.1: an inbound request's content-length must be coherent — the declared
         // value is attached to the stream and, at END_STREAM, must equal the DATA received
@@ -1256,16 +1296,13 @@ impl Connection {
             }
         }
         if malformed && !rejected {
-            // node (nghttp2): a malformed promised request is a connection error — the client
-            // answers the PUSH_PROMISE with GOAWAY(PROTOCOL_ERROR), never a push event.
-            if push_parent != 0 {
-                self.send_go_away(
-                    sink,
-                    ErrorCode::ProtocolError,
-                    b"Invalid PUSH_PROMISE frame",
-                );
-                return true;
-            }
+            // nghttp2 (nghttp2_session.c session_handle_invalid_stream2): a malformed request
+            // block — HEADERS or PUSH_PROMISE — is answered with RST_STREAM(PROTOCOL_ERROR) on
+            // the target stream (the promised id for a push) plus an on_invalid_frame count;
+            // the session stays alive. RFC 9113 §8.4.1 also specifies stream error for a
+            // malformed PUSH_PROMISE. The PUSH_PROMISE reservation was surfaced above so the
+            // embedder can tear the pushed stream down.
+            //
             // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
             // against maxSessionInvalidFrames; exceeding it tears the session down with
             // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).

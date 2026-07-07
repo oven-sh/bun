@@ -295,21 +295,20 @@ namespace uWS
                         }
 
                         size_t tokenLen = tokenEnd - tokenStart;
-                        if (tokenLen > 0) {
-                            /* llhttp (HPE_INVALID_TRANSFER_ENCODING): any coding listed after a
-                             * "chunked" token is invalid, so "chunked, chunked" is never framed
-                             * as chunked and "chunked, foo" never falls through to another framing. */
-                            if (sawChunkedToken) {
-                                te.invalid = true;
-                                return te;
-                            }
-                            if (tokenLen == 7 && strncasecmp(value.data() + tokenStart, "chunked", 7) == 0) {
-                                sawChunkedToken = true;
-                            }
+                        if (tokenLen == 7 && strncasecmp(value.data() + tokenStart, "chunked", 7) == 0) {
+                            sawChunkedToken = true;
                         }
 
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
+                            /* llhttp (HPE_INVALID_TRANSFER_ENCODING): rejects on the comma
+                             * itself once "chunked" has been seen — so "chunked, chunked",
+                             * "chunked, foo" and a trailing empty list element ("chunked,")
+                             * are all invalid rather than framed as chunked. */
+                            if (sawChunkedToken) {
+                                te.invalid = true;
+                                return te;
+                            }
                             pos++;
                         }
                     }

@@ -2673,6 +2673,24 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
       Buffer.from([0x01]), // :authority
       literal("localhost"),
     ]),
+    // nghttp2 check_path(): under an http/https scheme :path must start with '/', or be '*'
+    // for OPTIONS. `:path: foo` and `:method GET, :path *` are both PROTOCOL_ERROR.
+    ":path without leading slash": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x04]), // :path (literal without indexing, name index 4)
+      literal("foo"),
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+    ":path * with non-OPTIONS method": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x04]), // :path
+      literal("*"),
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
   };
 
   async function exchange(headerBlock) {
@@ -2752,6 +2770,195 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
   }
 });
 
+// RFC 8441 (nghttp2_http_on_request_headers extended-connect branch): once the server has
+// advertised SETTINGS_ENABLE_CONNECT_PROTOCOL, `:protocol` still requires :method CONNECT
+// and an :authority (a `host` header does not substitute here).
+it("http2 server rejects malformed extended-CONNECT requests", async () => {
+  const deliveredRequests = [];
+  const server = http2.createServer({ settings: { enableConnectProtocol: true } });
+  server.on("stream", (stream, headers) => {
+    deliveredRequests.push(headers);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const cases = {
+    ":protocol on a non-CONNECT method": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+      Buffer.from([0x00]),
+      literal(":protocol"),
+      literal("websocket"),
+    ]),
+    "extended CONNECT with host but no :authority": Buffer.concat([
+      Buffer.from([0x02]), // :method
+      literal("CONNECT"),
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x00]),
+      literal(":protocol"),
+      literal("websocket"),
+      Buffer.from([0x00]),
+      literal("host"),
+      literal("localhost"),
+    ]),
+  };
+  const wellFormed = Buffer.concat([
+    Buffer.from([0x02]), // :method
+    literal("CONNECT"),
+    Buffer.from([0x86]), // :scheme: http
+    Buffer.from([0x84]), // :path: /
+    Buffer.from([0x01]), // :authority
+    literal("localhost"),
+    Buffer.from([0x00]),
+    literal(":protocol"),
+    literal("websocket"),
+  ]);
+
+  async function exchange(headerBlock) {
+    const frames = [];
+    const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame(false).data);
+      socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
+      socket.write(new http2utils.PingFrame(false).data);
+    });
+    socket.on("error", onSocketError);
+    let received = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      while (received.length >= 9) {
+        const length = received.readUIntBE(0, 3);
+        if (received.length < 9 + length) break;
+        const frame = {
+          type: received[3],
+          flags: received[4],
+          streamId: received.readUInt32BE(5) & 0x7fffffff,
+          payload: Buffer.from(received.subarray(9, 9 + length)),
+        };
+        received = received.subarray(9 + length);
+        frames.push(frame);
+        if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
+          onExchanged();
+          return;
+        }
+      }
+    });
+    socket.on("close", () => onExchanged());
+    try {
+      await exchanged;
+    } finally {
+      socket.destroy();
+    }
+    return frames;
+  }
+
+  try {
+    for (const [caseName, headerBlock] of Object.entries(cases)) {
+      const frames = await exchange(headerBlock);
+      expect({ caseName, delivered: deliveredRequests.length }).toEqual({ caseName, delivered: 0 });
+      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+      expect({ caseName, rstCode: rst?.payload?.readUInt32BE(0) }).toEqual({
+        caseName,
+        rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+      });
+    }
+    // Positive control: a well-formed extended CONNECT still reaches the application, so the
+    // rejections above are the extended_connect clause and not protocol_disabled.
+    const frames = await exchange(wellFormed);
+    expect(frames.find(f => f.type === 3 && f.streamId === 1)).toBeUndefined();
+    expect(deliveredRequests.length).toBe(1);
+    expect(deliveredRequests[0][":protocol"]).toBe("websocket");
+  } finally {
+    server.close();
+  }
+});
+
+// RFC 9113 §8.3.2 (nghttp2_http_on_response_headers): a response block must carry :status
+// and must not carry a request pseudo-header. node RST_STREAMs and never emits 'response'.
+it("http2 client rejects a response missing :status or carrying a request pseudo-header", async () => {
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const cases = {
+    "no pseudo-headers": Buffer.concat([Buffer.from([0x00]), literal("x-foo"), literal("bar")]),
+    ":method in a response": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x00]),
+      literal("x-foo"),
+      literal("bar"),
+    ]),
+  };
+  for (const [caseName, responseBlock] of Object.entries(cases)) {
+    const { promise: serverListening, resolve: onListening } = Promise.withResolvers();
+    const server = net.createServer(socket => {
+      let received = Buffer.alloc(0);
+      let sawPreface = false;
+      let responded = false;
+      socket.write(new http2utils.SettingsFrame(false).data);
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        if (!sawPreface) {
+          if (received.length < http2utils.kClientMagic.length) return;
+          received = received.subarray(http2utils.kClientMagic.length);
+          sawPreface = true;
+        }
+        while (received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const type = received[3];
+          const flags = received[4];
+          const streamId = received.readUInt32BE(5) & 0x7fffffff;
+          received = received.subarray(9 + length);
+          if (type === 4 && (flags & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+          if (type === 1 && !responded) {
+            responded = true;
+            socket.write(new http2utils.HeadersFrame(streamId, responseBlock, 0, true, true).data);
+          }
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1", () => onListening());
+    await serverListening;
+
+    let client;
+    try {
+      const { promise: closed, resolve: onClose, reject: onError } = Promise.withResolvers();
+      const responses = [];
+      client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      req.on("response", headers => responses.push(headers));
+      req.on("error", () => {});
+      req.on("close", onClose);
+      req.resume();
+      req.end();
+      await closed;
+      expect({ caseName, responses: responses.length, rstCode: req.rstCode }).toEqual({
+        caseName,
+        responses: 0,
+        rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+      });
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+});
+
 // The Host rules above only apply to request blocks: nghttp2's http_response_on_header has
 // no `host` case, so a response carrying an empty or repeated Host header is delivered to
 // the client (node keeps the first value) instead of being answered with RST_STREAM.
@@ -2825,9 +3032,11 @@ it("http2 client delivers a response carrying an empty or repeated host header",
 });
 
 // A received PUSH_PROMISE is a request block: nghttp2 finalizes it with
-// nghttp2_http_on_request_headers, so a promised request missing its mandatory pseudo-headers
-// is a connection error — node answers with GOAWAY(PROTOCOL_ERROR) and never emits 'stream'.
-it("http2 client rejects a PUSH_PROMISE missing mandatory pseudo-headers", async () => {
+// nghttp2_http_on_request_headers and answers a malformed one with RST_STREAM(PROTOCOL_ERROR)
+// on the promised stream (nghttp2_session.c session_handle_invalid_stream2) — the session
+// stays alive and the parent request still completes. nghttp2 also rejects :method CONNECT
+// in a promised request per-header ("we won't allow CONNECT for push").
+it("http2 client rejects a malformed PUSH_PROMISE with RST_STREAM and keeps the session alive", async () => {
   const literal = str => {
     const bytes = Buffer.from(str, "latin1");
     return Buffer.concat([Buffer.from([bytes.length]), bytes]);
@@ -2846,11 +3055,16 @@ it("http2 client rejects a PUSH_PROMISE missing mandatory pseudo-headers", async
       Buffer.from([0x04]), // :path
       literal("/pushed"),
     ]),
+    ":method CONNECT in a promised request": Buffer.concat([
+      Buffer.from([0x02]), // :method (literal without indexing, name index 2)
+      literal("CONNECT"),
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
   };
   for (const [caseName, pushBlock] of Object.entries(cases)) {
     const clientFrames = [];
     const { promise: listening, resolve: onListening } = Promise.withResolvers();
-    const { promise: sawErrorGoAway, resolve: onErrorGoAway } = Promise.withResolvers();
     const server = net.createServer(socket => {
       let received = Buffer.alloc(0);
       let sawPreface = false;
@@ -2872,8 +3086,10 @@ it("http2 client rejects a PUSH_PROMISE missing mandatory pseudo-headers", async
           const payload = Buffer.from(received.subarray(9, 9 + length));
           received = received.subarray(9 + length);
           clientFrames.push({ type, streamId, payload });
-          if (type === 7 && payload.readUInt32BE(4) !== 0) onErrorGoAway();
           if (type === 4 && (flags & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+          // Answer the client's PING so client.ping() can serve as a barrier below.
+          if (type === 6 && (flags & 1) === 0)
+            socket.write(Buffer.concat([new http2utils.Frame(8, 6, 0x1, 0).data, payload]));
           if (type === 1 && !responded) {
             responded = true;
             // PUSH_PROMISE reserving stream 2 for the client's stream, then the stream response.
@@ -2901,25 +3117,30 @@ it("http2 client rejects a PUSH_PROMISE missing mandatory pseudo-headers", async
       });
       const req = client.request({ ":path": "/" });
       req.on("error", () => {});
-      req.on("response", () => onResponse("response"));
+      req.on("response", onResponse);
       req.resume();
       req.end();
-      // A conforming client either delivers the response (valid push) or kills the connection
-      // with an error GOAWAY before the response (malformed push) — whichever happens first.
-      const outcome = await Promise.race([responded, sawErrorGoAway.then(() => "error-goaway")]);
+      // The parent request must complete regardless of whether the sibling push was accepted:
+      // nghttp2 answers a malformed PUSH_PROMISE with a stream error, not a connection error.
+      const headers = await responded;
+      expect({ caseName, status: headers[":status"] }).toEqual({ caseName, status: 200 });
+      // Barrier: a PING round-trip guarantees any RST_STREAM the client wrote for the
+      // promised stream has already reached the server before clientFrames is inspected.
+      await new Promise((resolve, reject) => client.ping(err => (err ? reject(err) : resolve())));
       if (caseName === "valid") {
-        expect({ caseName, outcome, pushed: pushed.length }).toEqual({ caseName, outcome: "response", pushed: 1 });
+        expect({ caseName, pushed: pushed.length }).toEqual({ caseName, pushed: 1 });
         expect(pushed[0][":path"]).toBe("/pushed");
       } else {
-        expect({ caseName, outcome, pushed: pushed.length }).toEqual({
+        // No push event, and the promised stream was reset with PROTOCOL_ERROR.
+        const rst = clientFrames.find(f => f.type === 3 && f.streamId === 2);
+        expect({ caseName, pushed: pushed.length, rstCode: rst?.payload?.readUInt32BE(0) }).toEqual({
           caseName,
-          outcome: "error-goaway",
           pushed: 0,
+          rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
         });
-        // The first GOAWAY must carry the protocol error (the JS session teardown follows the
-        // engine's GOAWAY with its own; node sends only the first).
-        const goawayCodes = clientFrames.filter(f => f.type === 7).map(f => f.payload.readUInt32BE(4));
-        expect(goawayCodes[0]).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+        // The session survives: no GOAWAY carrying an error code.
+        const errorGoaways = clientFrames.filter(f => f.type === 7 && f.payload.readUInt32BE(4) !== 0);
+        expect({ caseName, errorGoaways: errorGoaways.length }).toEqual({ caseName, errorGoaways: 0 });
       }
     } finally {
       client?.destroy();

@@ -1864,6 +1864,16 @@ where
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
+                        // Option getters ran user JS which may have called res.end() /
+                        // res.destroy() / a re-entrant upgrade(). Re-check the same guards
+                        // (mirrors the native path below) so the one-shot 101 preamble is
+                        // never committed to the socket for an upgrade() that will refuse.
+                        if node_http_response.flags.get().intersects(
+                            NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED,
+                        ) || !node_http_response.can_upgrade()
+                        {
+                            return Ok(JSValue::FALSE);
+                        }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");

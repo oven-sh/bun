@@ -993,8 +993,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     let is_url_instance =
                         bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
                     // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if is_url_instance
-                        || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
+                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
                     {
                         // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
                         // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit

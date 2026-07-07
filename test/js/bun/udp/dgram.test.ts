@@ -219,6 +219,13 @@ describe.skipIf(isWindows)("cluster", () => {
   test("worker.disconnect() with a shared socket lets the worker exit", async () => {
     expect([path.join(import.meta.dir, "dgram-cluster-disconnect-fixture.ts")]).toRun();
   });
+
+  // Multi-worker traffic + close: exercises the DGRAM_FDS Owned/Adopted state
+  // machine and SharedHandle teardown. A regression removing the double-close
+  // guard would EBADF an IPC pipe and hang this fixture.
+  test("multi-worker shared socket receives traffic then tears down cleanly", async () => {
+    expect([path.join(import.meta.dir, "dgram-cluster-shared-fd-fixture.ts")]).toRun();
+  }, 40_000);
 });
 
 describe("after close()", () => {
@@ -393,6 +400,164 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
     address: undefined,
     port: undefined,
   });
+});
+
+// Every send callback must fire with (null, byteLength) — never (null, 0) or
+// EAGAIN — even if the kernel refuses some writes (they queue and drain like
+// libuv's uv_udp_try_send → uv_udp_send fallback).
+test.skipIf(isWindows)("send() reports (null, byteLength) for every callback under a burst", async () => {
+  const receiver = createSocket("udp4");
+  await new Promise<void>(resolve => receiver.bind(0, "127.0.0.1", resolve));
+  const port = receiver.address().port;
+  receiver.on("message", () => {});
+
+  const source = createSocket("udp4");
+  await new Promise<void>(resolve => source.bind(0, "127.0.0.1", resolve));
+  source.setSendBufferSize(2048);
+
+  const payload = Buffer.alloc(64, "x");
+  const N = 512;
+  const results = await Promise.all(
+    Array.from({ length: N }, () => {
+      return new Promise<{ err: any; sent: number }>(resolve =>
+        source.send(payload, port, "127.0.0.1", (err, sent) => resolve({ err, sent })),
+      );
+    }),
+  );
+
+  // getSendQueueCount()/Size() drop back to zero once every callback has run.
+  expect(source.getSendQueueCount()).toBe(0);
+  expect(source.getSendQueueSize()).toBe(0);
+  source.close();
+  receiver.close();
+
+  for (const { err, sent } of results) {
+    // Either the kernel accepted it synchronously, or the queue drained it —
+    // never (null, 0) and never a would-block error.
+    expect(err).toBeNull();
+    expect(sent).toBe(payload.byteLength);
+  }
+});
+
+// rinfo.family reflects the packet's sockaddr, not the constructor's `type`:
+// a `udp4` socket adopting an IPv6 fd receives IPv6-tagged rinfo.
+test.skipIf(isWindows)("rinfo.family follows the packet's sockaddr, not the socket type", async () => {
+  const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const wrap = new UDP();
+  const rc = wrap.bind6("::1", 0, 0);
+  if (rc < 0) {
+    // No IPv6 loopback (some CI containers).
+    wrap.close();
+    return;
+  }
+
+  const socket = createSocket("udp4");
+  const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+  socket.on("error", reject);
+  socket.on("listening", onListening);
+  socket.bind({ fd: wrap.fd });
+  await listening;
+
+  const { promise: got, resolve: onMessage } = Promise.withResolvers<any>();
+  socket.on("message", (_data, rinfo) => onMessage(rinfo));
+
+  const sender = createSocket("udp6");
+  await new Promise<void>((resolve, reject) =>
+    sender.send("hi", socket.address().port, "::1", err => (err ? reject(err) : resolve())),
+  );
+  const rinfo = await got;
+  sender.close();
+  socket.close();
+  wrap.close();
+
+  expect(rinfo.family).toBe("IPv6");
+  expect(rinfo.address).toBe("::1");
+});
+
+// Adopting an unbound descriptor: the kernel auto-binds on the first sendto(),
+// and address() must return that ephemeral port (Node calls getsockname fresh).
+test.skipIf(isWindows)("bind({ fd }) with an unbound descriptor reports the auto-bound port after send()", async () => {
+  const { newRawSocketFd, closeRawFd } = require("bun:internal-for-testing").dgramInternals;
+  const fd = newRawSocketFd(false, false);
+  expect(fd).toBeGreaterThan(0);
+
+  try {
+    const receiver = createSocket("udp4");
+    await new Promise<void>(resolve => receiver.bind(0, "127.0.0.1", resolve));
+    const receiverPort = receiver.address().port;
+
+    const socket = createSocket("udp4");
+    const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+    socket.on("error", reject);
+    socket.on("listening", onListening);
+    socket.bind({ fd });
+    await listening;
+
+    // Unbound at adoption: port is 0 until the kernel auto-binds on send.
+    expect(socket.address().port).toBe(0);
+
+    const { promise: gotRinfo, resolve: onMessage } = Promise.withResolvers<any>();
+    receiver.on("message", (_data, rinfo) => onMessage(rinfo));
+    await new Promise<void>((resolve, reject) =>
+      socket.send("hi", receiverPort, "127.0.0.1", err => (err ? reject(err) : resolve())),
+    );
+    const rinfo = await gotRinfo;
+
+    const addr = socket.address();
+    expect(addr.port).toBeGreaterThan(0);
+    expect(addr.port).toBe(rinfo.port);
+
+    socket.close();
+    receiver.close();
+  } finally {
+    // The socket adopted and closed it; closeRawFd is a no-op for adopted fds.
+    closeRawFd(fd);
+  }
+});
+
+// The membership setters throw an ErrnoException with .errno set (Node's shape),
+// not a hand-rolled error missing the field.
+test("addMembership() with a non-IP address carries .errno", () => {
+  const socket = createSocket("udp4");
+  try {
+    socket.addMembership("not-an-ip");
+    expect.unreachable();
+  } catch (err: any) {
+    expect(err.code).toBe("EINVAL");
+    expect(err.syscall).toBe("addMembership");
+    expect(typeof err.errno).toBe("number");
+  }
+  socket.close();
+});
+
+// Adopting a bound fd sets SO_REUSEADDR (like libuv's uv_udp_open), so a
+// second reuseAddr socket can bind the same port.
+test.skipIf(isWindows)("adopting a bound fd sets SO_REUSEADDR like uv_udp_open", async () => {
+  const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const wrap = new UDP();
+  expect(wrap.bind("127.0.0.1", 0, 0)).toBe(0);
+  const bound = {} as any;
+  wrap.getsockname(bound);
+
+  const socket = createSocket("udp4");
+  const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+  socket.on("error", reject);
+  socket.on("listening", onListening);
+  socket.bind({ fd: wrap.fd });
+  await listening;
+
+  // A second reuseAddr socket must bind the same port without EADDRINUSE.
+  const second = createSocket({ type: "udp4", reuseAddr: true });
+  const { promise: secondListening, resolve: onSecondListening, reject: onSecondError } = Promise.withResolvers<void>();
+  second.on("error", onSecondError);
+  second.on("listening", onSecondListening);
+  second.bind(bound.port, "127.0.0.1");
+  await secondListening;
+
+  expect(second.address().port).toBe(bound.port);
+  second.close();
+  socket.close();
+  wrap.close();
 });
 
 test("unconnected socket does not emit ICMP unreachable errors like Node", async () => {

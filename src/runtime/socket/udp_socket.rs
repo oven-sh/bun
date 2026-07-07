@@ -91,17 +91,17 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     }
 }
 
-extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
-    // Only called on Linux via IP_RECVERR — loop.c guards the recv-on-error
-    // path with #if defined(__linux__) to preserve the pre-existing
-    // close-on-error behavior on kqueue/Windows (where an error event is a
-    // fatal socket condition, not a drainable error queue). Builds a
-    // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
-    // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
+extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errqueue: c_int) {
+    // Linux-only (loop.c gates it). `is_errqueue` distinguishes an ICMP errno
+    // drained from MSG_ERRQUEUE from a real recvmmsg failure — node:dgram must
+    // drop the former on unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     let err_value = sys_err.to_js(global_this);
+    if is_errqueue != 0 {
+        err_value.put(global_this, b"errqueue", JSValue::TRUE);
+    }
     this.call_error_handler(JSValue::ZERO, err_value);
 }
 
@@ -155,10 +155,12 @@ extern "C" fn on_data(
         let hostname: Option<&[u8]>;
         let port: u16;
         let mut scope_id: Option<u32> = None;
+        let is_ipv6: bool;
 
         // SAFETY: peer points to a sockaddr_storage; family discriminates the cast.
         match peer.ss_family as c_int {
             f if f == inet::AF_INET => {
+                is_ipv6 = false;
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
                 let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
                 // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
@@ -168,6 +170,7 @@ extern "C" fn on_data(
                 port = ntohs(peer4.port);
             }
             f if f == inet::AF_INET6 => {
+                is_ipv6 = true;
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
                 let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
                 // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
@@ -224,8 +227,11 @@ extern "C" fn on_data(
         let loop_ = VirtualMachine::get().event_loop_mut();
         loop_.enter();
 
-        let flags = JSValue::create_empty_object(global_this, 1);
+        let flags = JSValue::create_empty_object(global_this, 2);
         flags.put(global_this, b"truncated", JSValue::from(truncated));
+        // Per-packet: rinfo.family must reflect the packet's sockaddr, not the
+        // socket's constructor `type` (bind({fd}) can adopt the other family).
+        flags.put(global_this, b"ipv6", JSValue::from(is_ipv6));
 
         let payload_js = match udp_socket
             .config
@@ -2141,8 +2147,31 @@ fn dgram_not_supported(global: &JSGlobalObject) -> bun_jsc::JsError {
     )
 }
 
+/// `(fd)` → whether a live `UDPSocket` already owns this descriptor. Backs
+/// node:dgram's synchronous EEXIST check on `bind({ fd })` so it does not have
+/// to keep a second, per-VM copy of DGRAM_FDS.
+#[bun_jsc::host_fn]
+pub fn js_dgram_is_fd_adopted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(not(windows))]
+    {
+        let fd = frame.argument(0).coerce_to_i32(global)?;
+        Ok(JSValue::from(
+            fd >= 0 && dgram_fd_state(fd) == Some(DgramFdState::Adopted),
+        ))
+    }
+    #[cfg(windows)]
+    {
+        let _ = frame;
+        // The registry is POSIX-only; on Windows the async adoption path
+        // reports EEXIST itself and Node skips the sync-throw test.
+        let _ = global;
+        Ok(JSValue::FALSE)
+    }
+}
+
 /// `(isIPv6, isStream)` → a fresh unbound SOCK_DGRAM (or SOCK_STREAM)
-/// descriptor (CLOEXEC + non-blocking).
+/// descriptor (CLOEXEC + non-blocking + SO_NOSIGPIPE), created through
+/// bsd_create_socket so this doesn't fork its platform gate/EINTR loop.
 #[bun_jsc::host_fn]
 pub fn js_dgram_new_socket_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(not(windows))]
@@ -2156,30 +2185,11 @@ pub fn js_dgram_new_socket_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsR
             libc::SOCK_DGRAM
         };
 
-        // Apple has no SOCK_CLOEXEC/SOCK_NONBLOCK; set both via fcntl below.
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        // SAFETY: plain socket(2); no pointers involved.
-        let fd = unsafe { libc::socket(domain, sock_type, 0) };
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        // SAFETY: plain socket(2); no pointers involved.
-        let fd = unsafe {
-            libc::socket(
-                domain,
-                sock_type | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
-                0,
-            )
-        };
+        let mut err: c_int = 0;
+        let fd = uws::udp::raw::bsd_create_socket(domain, sock_type, 0, &mut err);
         if fd < 0 {
-            let err = bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::open);
+            let err = bun_sys::Error::from_code_int(err, bun_sys::Tag::open);
             return Err(global.throw_value(err.to_js(global)));
-        }
-
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        // SAFETY: fcntl(2) on the descriptor created above.
-        unsafe {
-            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-            let flags = libc::fcntl(fd, libc::F_GETFL);
-            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
         }
 
         dgram_register_created_fd(fd);
@@ -2210,6 +2220,9 @@ pub fn js_dgram_adopt_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         // No-op for tracked descriptors: an adopted fd stays read-only rather
         // than becoming closable again through a second wrap.
         dgram_register_owned_fd(fd);
+        // libuv's uv_udp_open unconditionally sets SO_REUSEADDR (kept for
+        // backwards compat, libuv#4551); best-effort like it is there.
+        let _ = uws::udp::raw::bsd_set_reuseaddr(fd);
         Ok(JSValue::UNDEFINED)
     }
     #[cfg(windows)]
@@ -2277,57 +2290,19 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
             addr6.family = inet::AF_INET6 as inet::sa_family_t;
             addr6.port = htons(port);
             socklen = size_of::<sockaddr_in6>() as libc::socklen_t;
-
-            // UV_UDP_IPV6ONLY — disable dual-stack before binding, like libuv.
-            if flags & 1 != 0 {
-                let one: c_int = 1;
-                // SAFETY: setsockopt(2) with a stack-local int that outlives the call.
-                let rc = unsafe {
-                    libc::setsockopt(
-                        fd,
-                        libc::IPPROTO_IPV6,
-                        libc::IPV6_V6ONLY,
-                        (&raw const one).cast::<c_void>(),
-                        size_of::<c_int>() as libc::socklen_t,
-                    )
-                };
-                if rc != 0 {
-                    let err = bun_sys::Error::from_code_int(
-                        bun_sys::last_errno(),
-                        bun_sys::Tag::setsockopt,
-                    );
-                    return Err(global.throw_value(err.to_js(global)));
-                }
-            }
         }
 
-        // UV_UDP_REUSEADDR — SO_REUSEADDR on Linux, SO_REUSEPORT where that is
-        // what actually allows rebinding (matches libuv).
-        if flags & 4 != 0 {
-            let one: c_int = 1;
-            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
-            let opt = libc::SO_REUSEPORT;
-            #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
-            let opt = libc::SO_REUSEADDR;
-            // SAFETY: setsockopt(2) with a stack-local int that outlives the call.
-            let rc = unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    opt,
-                    (&raw const one).cast::<c_void>(),
-                    size_of::<c_int>() as libc::socklen_t,
-                )
-            };
-            if rc != 0 {
-                let err =
-                    bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::setsockopt);
-                return Err(global.throw_value(err.to_js(global)));
-            }
-        }
-
-        // SAFETY: bind(2); storage was initialized above for socklen bytes.
-        let rc = unsafe { libc::bind(fd, std::ptr::from_ref(&storage).cast(), socklen) };
+        // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.c
+        // so this doesn't fork its platform gate.
+        // SAFETY: storage was initialized above for socklen bytes.
+        let rc = unsafe {
+            uws::udp::raw::bsd_bind_udp_fd(
+                fd,
+                std::ptr::from_ref(&storage).cast(),
+                socklen as c_int,
+                flags,
+            )
+        };
         if rc != 0 {
             let err = bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::bind2);
             return Err(global.throw_value(err.to_js(global)));
@@ -2500,8 +2475,7 @@ pub fn js_dgram_close_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         // Adopted descriptors belong to a live UDPSocket (its close prunes
         // them); only owned ones are closed here.
         if dgram_remove_fd(fd, DgramFdState::Owned) {
-            // SAFETY: close(2) on a descriptor this module created and still owned.
-            unsafe { libc::close(fd) };
+            uws::udp::raw::bsd_close_socket(fd);
         }
         Ok(JSValue::UNDEFINED)
     }

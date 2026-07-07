@@ -1057,7 +1057,9 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     return result;
 }
 
-static int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+/* libuv's uv__sock_reuseaddr: SO_REUSEPORT on the BSDs where that is what
+ * actually allows a second bind of the same address, SO_REUSEADDR elsewhere. */
+int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
     const int one = 1;
 #if defined(SO_REUSEPORT) && !defined(__linux__) && !defined(__GNU__)
     return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
@@ -1475,10 +1477,9 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
 #endif
 
 #if defined(__linux__)
-    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
-     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
-     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
-     * rather than silently dropping them. Matches libuv. */
+    /* IP_RECVERR/IPV6_RECVERR queues ICMP errors on the socket's error queue
+     * for on_recv_error to drain. libuv gates this on UV_UDP_LINUX_RECVERR
+     * (Node's dgram never passes it); Bun opts in for sockets it creates. */
 #ifdef IP_RECVERR
     setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
 #endif
@@ -1490,9 +1491,9 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
 #endif
 }
 
-/* Prepares an externally created UDP fd for adoption by us_create_udp_socket_from_fd:
- * non-blocking + the shared receive-path options. Returns 0 on success or -1 with
- * the error in errno (WSAGetLastError on Windows). */
+/* Prepares an externally created UDP fd for adoption, matching uv_udp_open:
+ * nonblock + SO_REUSEADDR only. Recv-path options (IP_RECVERR, PKTINFO,
+ * SIO_UDP_CONNRESET) are NOT applied — mutating the caller's fd is observable. */
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     /* Refuse to adopt anything that isn't a datagram socket. */
     int sock_type = 0;
@@ -1512,8 +1513,8 @@ int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     if (getsockname(fd, (struct sockaddr *) &ss, (socklen_t *) &len)) {
         return -1;
     }
-    /* Only INET datagram sockets: the recv options, address getters and send
-     * destinations all assume AF_INET/AF_INET6. */
+    /* Only INET datagram sockets: address getters and send destinations all
+     * assume AF_INET/AF_INET6. */
     if (ss.ss_family != AF_INET && ss.ss_family != AF_INET6) {
 #ifdef _WIN32
         WSASetLastError(WSAEINVAL);
@@ -1525,7 +1526,33 @@ int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     if (bsd_set_nonblocking(fd) == LIBUS_SOCKET_ERROR) {
         return -1;
     }
-    bsd_apply_udp_recv_options(fd, ss.ss_family);
+    /* uv_udp_open unconditionally sets SO_REUSEADDR (kept for backwards
+     * compat, libuv#4551); best-effort here so a bound-and-already-set fd
+     * doesn't fail adoption. */
+    (void) bsd_set_reuseaddr(fd);
+    return 0;
+}
+
+/* Binds a raw datagram descriptor. `flags` uses libuv's UV_UDP_* bits (bit 0
+ * IPV6ONLY, bit 2 REUSEADDR). Shared by internal/dgram so it doesn't fork
+ * bsd_set_reuseaddr's platform gate. Returns 0 or -1 with the error in errno. */
+int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags) {
+#ifdef IPV6_V6ONLY
+    if ((flags & 1) && addr->sa_family == AF_INET6) {
+        int on = 1;
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &on, sizeof(on)) != 0) {
+            return -1;
+        }
+    }
+#endif
+    if (flags & 4) {
+        if (bsd_set_reuseaddr(fd) != 0) {
+            return -1;
+        }
+    }
+    if (bind(fd, addr, (socklen_t) addrlen) != 0) {
+        return -1;
+    }
     return 0;
 }
 

@@ -120,13 +120,15 @@ class ERR_SOCKET_BUFFER_SIZE extends Error {
   }
 }
 
-// uv_strerror() text for the codes the buffer-size path can produce.
-const kUvErrorMessages = {
+// uv_strerror() text and libuv Windows constants for the buffer-size path.
+// On POSIX a native err.errno is already libuv-semantic; on Windows it's
+// -(Bun's discriminant), not the -4xxx Node reports, so map by code string.
+const kUvErrors = {
   __proto__: null,
-  EBADF: "bad file descriptor",
-  EINVAL: "invalid argument",
-  ENOTSOCK: "socket operation on non-socket",
-  ENOBUFS: "no buffer space available",
+  EBADF: [-4083, "bad file descriptor"],
+  EINVAL: [-4071, "invalid argument"],
+  ENOTSOCK: [-4050, "socket operation on non-socket"],
+  ENOBUFS: [-4060, "no buffer space available"],
 };
 
 function isInt32(value) {
@@ -140,27 +142,14 @@ const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
 const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 
 const getFdFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsGetFd", 0);
-
-// Descriptors currently owned by live sockets of this module. libuv keeps the
-// same loop-wide bookkeeping so that adopting a descriptor another handle
-// already owns fails with EEXIST instead of double-polling it.
-const kBoundFds = new Set();
-
-// Errors the kernel's ICMP tables (icmp_err_convert & co) can queue via
-// IP_RECVERR, as opposed to real receive failures like ENOMEM or EBADF.
-// prettier-ignore
-const kIcmpRecvErrors = new Set([
-  "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EHOSTDOWN", "ENETDOWN", "ENONET",
-  "EPROTO", "EMSGSIZE", "EACCES", "EPERM", "ENOPROTOOPT", "EOPNOTSUPP", "ETIMEDOUT",
-]);
-
-// Releases the number recorded at reservation time: the live handle already
-// reports -1 if the native socket died first.
-function releaseBoundFd(state) {
-  if (state.boundFd === undefined) return;
-  kBoundFds.$delete(state.boundFd);
-  state.boundFd = undefined;
-}
+// Read-only query of the process-wide DGRAM_FDS registry the native layer
+// already maintains, so bind({ fd }) can synchronously report EEXIST like
+// libuv's uv_udp_open() without keeping a second per-VM copy of the same fact.
+const isFdAdoptedFn = $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1);
+// Fresh getsockname on a live socket's descriptor: the cached `.address`
+// getter can be stale for an adopted-but-unbound fd once the kernel
+// auto-binds on first sendto(); Node calls getsockname on every address().
+const getSockNameFn = $newRustFunction("udp_socket.rs", "jsDgramGetSockNameFd", 1);
 
 let BlockList;
 function isBlockList(value) {
@@ -186,13 +175,6 @@ function lookup6(lookup, address, callback) {
   return lookup(address || "::1", 6, callback);
 }
 
-function EINVAL(syscall) {
-  throw Object.assign(new Error(`${syscall} EINVAL`), {
-    code: "EINVAL",
-    syscall,
-  });
-}
-
 let dns;
 
 function newHandle(type, lookup) {
@@ -208,9 +190,14 @@ function newHandle(type, lookup) {
 
   const handle = {
     socket: undefined,
+    // Bytes/requests waiting for the kernel to accept them: entries the send
+    // queue is holding until on_drain, plus the send()s of this tick that libuv
+    // would still count as pending.
     queueSize: 0,
     queueCount: 0,
-    queueFlushScheduled: false,
+    tickFlushScheduled: false,
+    // Requests the kernel refused (send buffer full): flushed by on_drain.
+    sendQueue: undefined,
     send: handleSend,
     getSendQueueSize: handleGetSendQueueSize,
     getSendQueueCount: handleGetSendQueueCount,
@@ -231,9 +218,9 @@ function newHandle(type, lookup) {
   return handle;
 }
 
-// Mirrors the libuv UDP wrap's send(): returns sentBytes + 1 on synchronous
-// success, 0 when nothing was written, or a negative uv errno on failure.
-// The connected form omits port/address: send(req, list, count, hasCallback).
+// Mirrors the libuv UDP wrap's send(): sentBytes + 1 on synchronous success,
+// 0 when queued for the next writable event (callback fires on drain), or a
+// negative uv errno / native error. Connected form omits port/address.
 function handleSend(req, list, count, port, address, _hasCallback) {
   if (typeof port === "boolean") {
     port = undefined;
@@ -253,38 +240,120 @@ function handleSend(req, list, count, port, address, _hasCallback) {
     data = Buffer.concat(list);
   }
 
-  let success;
+  // Don't jump the queue: if earlier requests are still waiting for the kernel
+  // to accept them, this one goes behind them (libuv's uv_udp_send order).
+  if (this.sendQueue !== undefined) {
+    return handleQueueSend(this, data, port, address, req);
+  }
+
+  let accepted;
   try {
-    if (port) {
-      success = socket.send(data, port, address);
-    } else {
-      success = socket.send(data);
-    }
+    accepted = port ? socket.send(data, port, address) : socket.send(data);
   } catch (err) {
     // Hand the original error back so the caller keeps the platform-correct
     // code; a numeric return is reserved for libuv-style errno values.
     return err;
   }
 
-  // libuv keeps each request in the handle's send queue until the next loop
-  // turn; emulate that observable for getSendQueueSize/Count. On Windows the
-  // bytes are handed to WSASend immediately, so only the request count grows.
+  if (!accepted) {
+    // Kernel send buffer is full. The native send re-armed writable and
+    // on_drain will fire when it clears — queue this request until then like
+    // libuv's uv_udp_send() does when uv_udp_try_send() reports EAGAIN.
+    return handleQueueSend(this, data, port, address, req);
+  }
+
+  // libuv keeps a synchronously-written request counted until its callback
+  // runs on the next loop turn, so a same-tick getSendQueueCount() still
+  // sees it. On Windows only the request count grows (WSASend is immediate).
   this.queueCount += 1;
   if (process.platform !== "win32") {
     this.queueSize += data.byteLength;
   }
-  if (!this.queueFlushScheduled) {
-    this.queueFlushScheduled = true;
-    process.nextTick(flushSendQueueInfo, this);
+  if (!this.tickFlushScheduled) {
+    this.tickFlushScheduled = true;
+    process.nextTick(tickFlushSendQueueInfo, this);
   }
 
-  return (success ? data.byteLength : 0) + 1;
+  return data.byteLength + 1;
 }
 
-function flushSendQueueInfo(handle) {
-  handle.queueFlushScheduled = false;
-  handle.queueSize = 0;
-  handle.queueCount = 0;
+function handleQueueSend(handle, data, port, address, req) {
+  handle.sendQueue ??= [];
+  handle.sendQueue.push({ data, port, address, req });
+  handle.queueCount += 1;
+  if (process.platform !== "win32") {
+    handle.queueSize += data.byteLength;
+  }
+  return 0;
+}
+
+// Drains queued sends after the kernel signals writable. Consumes from the
+// live queue front so a send() from a completion callback lands behind the
+// remaining entries (libuv's FIFO order); stops on renewed backpressure.
+function handleDrain() {
+  let queue = this.sendQueue;
+  if (queue === undefined) return;
+  let head = 0;
+  while (head < queue.length) {
+    const entry = queue[head];
+    const socket = this.socket;
+    let err;
+    let accepted = false;
+    if (!socket) {
+      err = UV_EBADF;
+    } else {
+      try {
+        accepted = entry.port ? socket.send(entry.data, entry.port, entry.address) : socket.send(entry.data);
+      } catch (e) {
+        err = e;
+      }
+    }
+    if (err === undefined && !accepted) {
+      // Still full: leave this and everything behind it queued for the next
+      // drain (native send has re-armed writable again).
+      break;
+    }
+    head++;
+    completeQueuedSend(this, entry, err);
+  }
+  // Drop the consumed prefix in place; the queue is empty when nothing remains.
+  if (head > 0) queue.splice(0, head);
+  if (queue.length === 0) this.sendQueue = undefined;
+}
+
+function completeQueuedSend(handle, entry, err) {
+  handle.queueCount -= 1;
+  if (process.platform !== "win32") {
+    handle.queueSize -= entry.data.byteLength;
+  }
+  // Next tick, like libuv's uv__udp_run_completed: a throwing or re-entrant
+  // callback cannot skip a sibling entry or run inside close()/drain.
+  const req = entry.req;
+  if (req && typeof req.oncomplete === "function") {
+    process.nextTick(runQueuedSendComplete, req, err, err === undefined ? entry.data.byteLength : 0);
+  }
+}
+
+function runQueuedSendComplete(req, err, sent) {
+  req.oncomplete(err, sent);
+}
+
+// Decrements the same-tick counters for synchronously-written sends whose
+// callbacks fire on the next tick (queued sends decrement in completeQueuedSend
+// once the kernel accepts them, so those stay counted here).
+function tickFlushSendQueueInfo(handle) {
+  handle.tickFlushScheduled = false;
+  let count = 0;
+  let size = 0;
+  const queue = handle.sendQueue;
+  if (queue !== undefined) {
+    for (let i = 0; i < queue.length; i++) {
+      count += 1;
+      if (process.platform !== "win32") size += queue[i].data.byteLength;
+    }
+  }
+  handle.queueCount = count;
+  handle.queueSize = size;
 }
 
 function handleGetSendQueueSize() {
@@ -366,9 +435,6 @@ function Socket(type, listener) {
     sendBlockList,
     unrefOnBind: false,
     sharedHandle: undefined,
-    // The descriptor number registered in kBoundFds, recorded at reservation
-    // time: the live handle reports -1 once the native socket is gone.
-    boundFd: undefined,
   };
 
   if (options?.signal !== undefined) {
@@ -412,7 +478,7 @@ function bufferSize(self, size, buffer) {
     throw new ERR_SOCKET_BUFFER_SIZE({
       errno: UV_EINVAL,
       code: "EINVAL",
-      message: kUvErrorMessages.EINVAL,
+      message: kUvErrors.EINVAL[1],
       syscall,
     });
   }
@@ -422,10 +488,9 @@ function bufferSize(self, size, buffer) {
     // Node reports the libuv failure from the unbound handle's missing fd.
     const code = process.platform === "win32" ? "ENOTSOCK" : "EBADF";
     throw new ERR_SOCKET_BUFFER_SIZE({
-      // libuv's UV_ENOTSOCK on Windows.
-      errno: process.platform === "win32" ? -4050 : UV_EBADF,
+      errno: process.platform === "win32" ? kUvErrors[code][0] : UV_EBADF,
       code,
-      message: kUvErrorMessages[code],
+      message: kUvErrors[code][1],
       syscall,
     });
   }
@@ -433,10 +498,13 @@ function bufferSize(self, size, buffer) {
   try {
     return bufferSizeFn.$call(socket, size, buffer === RECV_BUFFER);
   } catch (err) {
+    const known = kUvErrors[err.code];
     throw new ERR_SOCKET_BUFFER_SIZE({
-      errno: err.errno,
+      // err.errno is only libuv-semantic on POSIX; on Windows it is Bun's
+      // own negated discriminant, so re-derive from the code string.
+      errno: process.platform === "win32" && known ? known[0] : err.errno,
       code: err.code,
-      message: kUvErrorMessages[err.code] ?? err.code,
+      message: known ? known[1] : err.code,
       syscall,
     });
   }
@@ -482,21 +550,26 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   // Open an existing fd instead of creating a new one.
   const fd = port !== null && typeof port === "object" ? port.fd : undefined;
   if (isInt32(fd) && fd > 0) {
+    const exclusive = !!port.exclusive;
+    // In a worker the fd number refers to the primary's descriptor space
+    // (Node's test-cluster-dgram-bind-fd sends a number over IPC), so route
+    // through the primary before touching it locally.
+    if (lazyLoadCluster().isWorker && !exclusive) {
+      bindServerHandle(this, { address: null, port: null, addressType: this.type, fd, flags: null }, err => {
+        state.bindState = BIND_STATE_UNBOUND;
+        this.emit("error", new ErrnoException(err, "open"));
+      });
+      return this;
+    }
     const type = guessHandleType(fd);
     if (type !== "UDP") {
       throw $ERR_INVALID_FD_TYPE(type);
     }
-    if (kBoundFds.$has(fd)) {
-      // Another live socket of this module already owns the descriptor, like
-      // libuv's UV_EEXIST from uv_udp_open().
+    // Query the native registry so bind({ fd }) throws synchronously like
+    // uv_udp_open (startBunSocket routes the same failure to emit('error')).
+    if (isFdAdoptedFn(fd)) {
       throw new ErrnoException(UV_EEXIST, "open");
     }
-    // Reserve the descriptor before the asynchronous adoption so a second
-    // bind({ fd }) in the same tick fails with EEXIST like libuv's
-    // loop-wide bookkeeping; released again if the adoption fails.
-    kBoundFds.$add(fd);
-    state.boundFd = fd;
-
     startBunSocket(this, state, { fd });
     return this;
   }
@@ -616,30 +689,33 @@ function bindServerHandle(self, options, errCb) {
 // (`{ fd }`). Mirrors what Node's startListening() makes observable before
 // 'listening' fires.
 function startBunSocket(self, state, createOptions) {
-  const family = self.type === "udp4" ? "IPv4" : "IPv6";
-  const familyLower = self.type === "udp4" ? "ipv4" : "ipv6";
   try {
     Bun.udpSocket({
       ...createOptions,
       socket: {
-        data: (_socket, data, port, address) => {
-          if (state.receiveBlockList?.check(address, familyLower)) {
+        data: (_socket, data, port, address, flags) => {
+          // Per-packet, from the received sockaddr's family: bind({ fd }) can
+          // adopt a descriptor of the other family than `type`.
+          const family = flags?.ipv6 ? "IPv6" : "IPv4";
+          if (state.receiveBlockList?.check(address, flags?.ipv6 ? "ipv6" : "ipv4")) {
             return;
           }
           self.emit("message", data, {
             port: port,
             address: address,
             size: data.length,
-            // TODO check if this is correct
             family,
           });
         },
+        drain: () => {
+          handleDrain.$call(state.handle);
+        },
         error: error => {
           if (error?.syscall === "recv") {
-            // Node's unconnected sockets never see ICMP errors (the kernel
-            // only queues them for connected sockets), but real receive
-            // failures are reported regardless of connect state.
-            if (state.connectState !== CONNECT_STATE_CONNECTED && kIcmpRecvErrors.$has(error.code)) {
+            // Drop errqueue-origin ICMP errors on unconnected sockets like
+            // Node (which never enables IP_RECVERR); always emit real
+            // recvmmsg failures — the errno namespaces overlap.
+            if (error.errqueue === true && state.connectState !== CONNECT_STATE_CONNECTED) {
               return;
             }
             // Node reports receive-path failures as `recvmsg` errors; keep
@@ -657,7 +733,6 @@ function startBunSocket(self, state, createOptions) {
         if (!state.handle) {
           // Closed while the bind was in flight.
           socket.close();
-          releaseBoundFd(state);
           return;
         }
         if (state.unrefOnBind) {
@@ -667,8 +742,6 @@ function startBunSocket(self, state, createOptions) {
         state.handle.socket = socket;
         state.receiving = true;
         state.bindState = BIND_STATE_BOUND;
-        state.boundFd = state.handle.fd;
-        kBoundFds.$add(state.boundFd);
 
         // Node applies these in startListening(), before 'listening' fires.
         const { recvBufferSize, sendBufferSize } = state;
@@ -683,13 +756,11 @@ function startBunSocket(self, state, createOptions) {
         self.emit("listening");
       },
       err => {
-        releaseBoundFd(state);
         state.bindState = BIND_STATE_UNBOUND;
         self.emit("error", err);
       },
     );
   } catch (err) {
-    releaseBoundFd(state);
     state.bindState = BIND_STATE_UNBOUND;
     self.emit("error", err);
   }
@@ -964,24 +1035,15 @@ function doSend(ex, self, ip, list, address, port, callback) {
     return;
   }
 
+  // The queued (async) path invokes req.oncomplete once the kernel accepts
+  // the write; the synchronous path uses the numeric return.
+  const req = { oncomplete: undefined, address, port, callback };
   let err;
-  if (port) err = state.handle.send(null, list, list.length, port, ip, !!callback);
-  else err = state.handle.send(null, list, list.length, !!callback);
+  if (port) err = state.handle.send(req, list, list.length, port, ip, !!callback);
+  else err = state.handle.send(req, list, list.length, !!callback);
 
   if (typeof err !== "number") {
-    if (err && callback) {
-      // Native send failure: keep the original error (its code is already
-      // platform-correct) and decorate it like Node's ExceptionWithHostPort,
-      // which omits the host segment when no address/port is known.
-      err.syscall = "send";
-      err.address = address;
-      if (port) err.port = port;
-      let details = "";
-      if (port && port > 0) details = ` ${address}:${port}`;
-      else if (address) details = ` ${address}`;
-      err.message = `send ${err.code}${details}`;
-      process.nextTick(callback, err);
-    }
+    if (callback) process.nextTick(callback, decorateSendError(err, address, port));
     return;
   }
 
@@ -992,11 +1054,42 @@ function doSend(ex, self, ip, list, address, port, callback) {
     return;
   }
 
-  if (err && callback) {
-    // Don't emit as error, dgram_legacy.js compatibility
-    const ex = new ExceptionWithHostPort(err, "send", address, port);
-    process.nextTick(callback, ex);
+  if (err === 0) {
+    // Queued behind kernel backpressure: completion arrives via on_drain.
+    req.oncomplete = afterQueuedSend;
+    return;
   }
+
+  if (callback) {
+    // Don't emit as error, dgram_legacy.js compatibility
+    process.nextTick(callback, new ExceptionWithHostPort(err, "send", address, port));
+  }
+}
+
+function afterQueuedSend(err, sent) {
+  const callback = this.callback;
+  if (!callback) return;
+  if (err === undefined) {
+    callback(null, sent);
+  } else if (typeof err === "number") {
+    callback(new ExceptionWithHostPort(err, "send", this.address, this.port));
+  } else {
+    callback(decorateSendError(err, this.address, this.port));
+  }
+}
+
+// Native send failure: keep the original error (its code is already
+// platform-correct) and decorate it like Node's ExceptionWithHostPort, which
+// omits the host segment when no address/port is known.
+function decorateSendError(err, address, port) {
+  err.syscall = "send";
+  err.address = address;
+  if (port) err.port = port;
+  let details = "";
+  if (port && port > 0) details = ` ${address}:${port}`;
+  else if (address) details = ` ${address}`;
+  err.message = `send ${err.code}${details}`;
+  return err;
 }
 
 Socket.prototype.close = function (callback) {
@@ -1012,9 +1105,16 @@ Socket.prototype.close = function (callback) {
 
   healthCheck(this);
   state.receiving = false;
-  releaseBoundFd(state);
+  const handle = state.handle;
   state.handle.socket?.close();
   state.handle = null;
+  // Any queued sends never complete once the descriptor is gone; callbacks
+  // fire on the next tick (via completeQueuedSend), after the socket is closed.
+  if (handle.sendQueue !== undefined) {
+    const queue = handle.sendQueue;
+    handle.sendQueue = undefined;
+    for (let i = 0; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_EBADF);
+  }
   if (state.sharedHandle) {
     // Tells the cluster primary this worker no longer uses the shared
     // descriptor (the descriptor itself was owned and closed by the socket).
@@ -1049,11 +1149,18 @@ function socketCloseNT(self) {
 Socket.prototype.address = function () {
   healthCheck(this);
 
+  const socket = this[kStateSymbol].handle.socket;
   // Node calls getsockname() on the (lazily created, still fd-less) handle,
   // which reports EBADF until the socket is bound.
-  const addr = this[kStateSymbol].handle.socket?.address;
-  if (!addr) throw new ErrnoException(UV_EBADF, "getsockname");
-  return addr;
+  if (!socket) throw new ErrnoException(UV_EBADF, "getsockname");
+  if (process.platform === "win32") {
+    // No fd registry on Windows (fd adoption isn't supported there anyway),
+    // so the cached value is never stale.
+    return socket.address;
+  }
+  // Fresh getsockname each call, like Node — the cached `.address` can be
+  // stale if an adopted-but-unbound fd auto-bound on the first sendto().
+  return getSockNameFn(getFdFn.$call(socket));
 };
 
 Socket.prototype.remoteAddress = function () {
@@ -1130,7 +1237,7 @@ Socket.prototype.setMulticastInterface = function (interfaceAddress) {
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
   if (!handle.socket.setMulticastInterface(interfaceAddress)) {
-    throw EINVAL("setMulticastInterface");
+    throw new ErrnoException(UV_EINVAL, "setMulticastInterface");
   }
 };
 
@@ -1145,7 +1252,7 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
-      throw EINVAL("addMembership");
+      throw new ErrnoException(UV_EINVAL, "addMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -1166,7 +1273,7 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
   const { handle } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
-      throw EINVAL("dropMembership");
+      throw new ErrnoException(UV_EINVAL, "dropMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -1183,7 +1290,7 @@ Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAdd
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(sourceAddress) || !isIP(groupAddress)) {
-      throw EINVAL("addSourceSpecificMembership");
+      throw new ErrnoException(UV_EINVAL, "addSourceSpecificMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -1203,7 +1310,7 @@ Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAd
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(sourceAddress) || !isIP(groupAddress)) {
-      throw EINVAL("dropSourceSpecificMembership");
+      throw new ErrnoException(UV_EINVAL, "dropSourceSpecificMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }

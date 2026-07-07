@@ -253,6 +253,14 @@ export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
 };
 
+// Raw datagram descriptor helpers for tests that need an unbound fd (which
+// the internal/dgram UDP wrap does not expose — it binds on create).
+export const dgramInternals = {
+  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
+  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
+};
+
 export const decodeURIComponentSIMD = $newCppFunction(
   "decodeURIComponentSIMD.cpp",
   "jsFunctionDecodeURIComponentSIMD",

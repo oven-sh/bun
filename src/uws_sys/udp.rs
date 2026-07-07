@@ -19,7 +19,7 @@ impl Socket {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -54,7 +54,7 @@ impl Socket {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         fd: c_int,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
@@ -204,7 +204,7 @@ unsafe extern "C" {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -238,7 +238,7 @@ unsafe extern "C" {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         fd: LIBUS_SOCKET_DESCRIPTOR,
         err: *mut c_int,
         user_data: *mut c_void,
@@ -267,6 +267,34 @@ unsafe extern "C" {
         iface: Option<&sockaddr_storage>,
         drop: c_int,
     ) -> c_int;
+}
+
+/// Raw-descriptor helpers exposed for `internal/dgram`'s UDP wrap so it does
+/// not hand-roll socket()/bind()/setsockopt() and diverge from bsd.c's
+/// platform gates (SO_REUSEPORT vs SO_REUSEADDR, CLOEXEC, EINTR retry).
+/// POSIX-only; the JS layer reports ENOTSUP on Windows.
+#[cfg(not(windows))]
+pub mod raw {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_int, c_void};
+
+    unsafe extern "C" {
+        pub safe fn bsd_create_socket(
+            domain: c_int,
+            type_: c_int,
+            protocol: c_int,
+            err: &mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub safe fn bsd_set_reuseaddr(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int;
+        /// SAFETY: `addr` must point to `addrlen` bytes of a `sockaddr_in`/`in6`.
+        pub unsafe fn bsd_bind_udp_fd(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            addr: *const c_void,
+            addrlen: c_int,
+            flags: c_int,
+        ) -> c_int;
+    }
 }
 
 bun_opaque::opaque_ffi! {

@@ -775,7 +775,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                 break;
                             }
                         }
-                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                        u->on_recv_error(u, ee ? ee : ECONNREFUSED, 1);
                     }
                 }
             }
@@ -796,7 +796,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                 int recv_err = errno;
                                 recv_error_surfaced = 1;
                                 if (u->on_recv_error) {
-                                    u->on_recv_error(u, recv_err);
+                                    u->on_recv_error(u, recv_err, 0);
                                 }
 #else
                                 /* non-Linux: fall through and close below */

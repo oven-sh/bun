@@ -397,11 +397,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
-    // Index into stdio[0..3] when "ipc" occupies stdin/stdout/stderr.
-    // Node's stdio array index is the child fd, so the channel must be dup2'd
-    // onto that fd rather than appended as an extra fd.
-    #[cfg_attr(windows, allow(unused_mut))]
-    let mut ipc_stdio_index: i32 = -1;
     let mut timeout: Option<i32> = None;
     let mut uid: Option<u32> = None;
     let mut gid: Option<u32> = None;
@@ -638,13 +633,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
                             Stdio::extract(&mut stdio[i as usize], global_this, i, value, IS_SYNC)?;
-                            // Windows still routes 'ipc' at 0-2 through an
-                            // extra_fds slot (libuv named pipe); only POSIX
-                            // can dup2 the socketpair onto stdin/out/err.
-                            #[cfg(unix)]
-                            if matches!(stdio[i as usize], Stdio::Ipc) {
-                                ipc_stdio_index = i;
-                            }
                             if i == 2 {
                                 break;
                             }
@@ -974,6 +962,23 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
+
+    // Index into stdio[0..3] when "ipc" occupies stdin/stdout/stderr. Node's
+    // stdio array index is the child fd, so the channel must be dup2'd onto
+    // that fd rather than appended as an extra fd. Computed here (after the
+    // stdio array / shortcut-option parsing and the terminal override have all
+    // finished mutating stdio[0..3]) so it reflects what spawn_process will
+    // actually see. Windows still routes 'ipc' at 0-2 through an extra_fds
+    // slot (libuv named pipe); only POSIX can dup2 the socketpair onto
+    // stdin/out/err.
+    #[cfg(unix)]
+    let ipc_stdio_index: i32 = stdio
+        .iter()
+        .position(|s| matches!(s, Stdio::Ipc))
+        .map(|i| i as i32)
+        .unwrap_or(-1);
+    #[cfg(not(unix))]
+    let ipc_stdio_index: i32 = -1;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
@@ -1580,7 +1585,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            if ipc_channel != -1 {
+            // Only when the channel actually came from extra_fds: if
+            // ipc_stdio_index is set, uws took spawned.ipc and the extra_fds
+            // slot (if any) is a separate OwnedFd that finalize_streams should
+            // still close.
+            if ipc_channel != -1 && ipc_stdio_index == -1 {
                 subprocess.stdio_pipes.with_mut(|v| {
                     v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
                 });

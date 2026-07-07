@@ -1220,21 +1220,27 @@ b {
       "/entry.css": /* css */ `
         .a { mask: url(./small.svg#m1) }
         .b { background: url("./small.svg?v=2") }
-        .c { background: url(./small.svg) }
+        .c { mask: url(./small.svg?v=2#m1) }
+        .d { background: url(./small.svg) }
       `,
       "/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"><mask id="m1"/></svg>`,
     },
     outdir: "/out",
     onAfterBundle(api) {
+      // A `?query` appended to a base64 data: URL lands in the body and fails
+      // decoding, so only the `#fragment` is kept on the inline path.
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
 /* entry.css */
 .a {
   mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
 }
 .b {
-  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==?v=2");
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
 }
 .c {
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
+}
+.d {
   background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
 }
 `);

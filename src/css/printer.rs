@@ -424,7 +424,7 @@ impl<'a> Printer<'a> {
                 b""
             };
             let arena = self.arena;
-            let with_suffix = |url: &'a [u8]| -> &'a [u8] {
+            let with_suffix = |url: &'a [u8], suffix: &[u8]| -> &'a [u8] {
                 if suffix.is_empty() {
                     return url;
                 }
@@ -433,16 +433,21 @@ impl<'a> Printer<'a> {
                 buf[url.len()..].copy_from_slice(suffix);
                 buf
             };
-            // It has an inlined url for CSS
+            // It has an inlined data: URL for CSS. A `?query` here lands in the
+            // base64 body and fails decoding, so keep only the `#fragment`.
             let urls_for_css = import_info.ast_urls_for_css[record.source_index.get() as usize];
             if !urls_for_css.is_empty() {
-                return Ok(with_suffix(urls_for_css));
+                let fragment: &[u8] = match bun_core::strings::index_of_char(suffix, b'#') {
+                    Some(i) => &suffix[i as usize..],
+                    None => b"",
+                };
+                return Ok(with_suffix(urls_for_css, fragment));
             }
-            // It is a chunk URL
+            // It is a chunk URL (copied asset): keep the full `?query#fragment`.
             let unique_key_for_additional_file =
                 import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
-                return Ok(with_suffix(unique_key_for_additional_file));
+                return Ok(with_suffix(unique_key_for_additional_file, suffix));
             }
         }
         // External URL stays as-is

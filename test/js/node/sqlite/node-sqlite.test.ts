@@ -1613,6 +1613,37 @@ test("bun:sqlite and node:sqlite share one SQLite library", async () => {
   expect(exitCode).toBe(0);
 });
 
+// The reverse ordering of the test above: node:sqlite opening FIRST used to
+// leave sqlite3 initialized before bun:sqlite's sqlite3_config() calls ran,
+// which is SQLITE_MISUSE (a hard debug assertion). See Bun__initializeSQLite.
+test("bun:sqlite still initializes correctly when node:sqlite opens a database first", async () => {
+  using dir = tempDir("node-sqlite-init-order", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { DatabaseSync } = require('node:sqlite');
+       const nodeDb = new DatabaseSync('order.db');
+       nodeDb.exec('CREATE TABLE t (x INTEGER)');
+       nodeDb.exec('INSERT INTO t VALUES (1)');
+       const { Database } = require('bun:sqlite');
+       const bunDb = new Database('order.db');
+       bunDb.run('INSERT INTO t VALUES (2)');
+       console.log('n=' + nodeDb.prepare('SELECT COUNT(*) c FROM t').get().c);
+       bunDb.close();
+       nodeDb.close();`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is drained but not pinned: ASAN/debug builds emit benign noise.
+  expect({ stdout, exitCode }).toEqual({ stdout: "n=2\n", exitCode: 0 });
+  void stderr;
+});
+
 // Worker-owned databases are closed via ~VM → lastChanceToFinalize →
 // ~JSDatabaseSync — a completely different path than the main-thread exit
 // sweep. Sibling of "unclosed file-backed database is closed on process exit".

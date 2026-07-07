@@ -85,6 +85,11 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #define SQLITE_CHANGESET_FOREIGN_KEY 5
 #endif
 
+// One-time process-global sqlite3_config() (defined in JSSQLStatement.cpp).
+// Forward-declared here rather than in lazy_sqlite3.h because that header is
+// only included on the dlopen path, and this must be visible on every build.
+extern "C" void Bun__initializeSQLite();
+
 // process.versions.sqlite — the loaded library's version on macOS (via
 // dlsym'd sqlite3_libversion), the bundled amalgamation's constant elsewhere.
 extern "C" const char* Bun__sqlite3_version()
@@ -926,6 +931,10 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         return false;
     }
 #endif
+
+    // Must run before the first sqlite3_open_v2 in the process, from either
+    // module; see the definition in JSSQLStatement.cpp.
+    Bun__initializeSQLite();
 
     // SQLITE_OPEN_URI mirrors Node's `default_flags = SQLITE_OPEN_URI`
     // (node_sqlite.cc). Strings, Uint8Arrays, and URL objects all reach
@@ -3747,6 +3756,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
 
     auto destPathUtf8 = destPath.utf8();
     sqlite3* dest = nullptr;
+    // The source db is already open (so this can never be the process's first
+    // open), but keep the "config before any open" invariant local and free.
+    Bun__initializeSQLite();
     int r = sqlite3_open_v2(destPathUtf8.data(), &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, nullptr);
     if (r != SQLITE_OK) {
         if (dest) {

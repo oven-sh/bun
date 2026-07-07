@@ -133,7 +133,10 @@ public:
     }
 };
 
-static void initializeSQLite()
+// One-time sqlite3_config() calls. Must run before the FIRST sqlite3_open_v2
+// from EITHER bun:sqlite or node:sqlite (they share one library, and config
+// is SQLITE_MISUSE after init). extern "C" for the cross-TU forward-declare.
+extern "C" void Bun__initializeSQLite()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
@@ -1209,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     }
 #endif
 
-    initializeSQLite();
+    Bun__initializeSQLite();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
 }
@@ -1262,7 +1265,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 #endif
-    initializeSQLite();
+    Bun__initializeSQLite();
 
     size_t byteLength = array->byteLength();
     void* ptr = array->vector();
@@ -1737,7 +1740,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return {};
     }
 #endif
-    initializeSQLite();
+    Bun__initializeSQLite();
 
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);

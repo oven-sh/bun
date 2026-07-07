@@ -6,6 +6,20 @@ const { suite, test } = require('node:test');
 const { pathToFileURL } = require('node:url');
 const { nextDb } = require('../sqlite/next-db.js');
 
+// BUN: on macOS bun dlopens the system libsqlite3, which Apple builds without
+// geopoly, rbu, and percentile. Probe the LOADED library, per option (a custom
+// SQLite may have any subset); a probe failure means "assume present".
+const missingSQLiteOption = typeof Bun === 'undefined' ? () => false : (option) => {
+  const probe = new DatabaseSync(':memory:');
+  try {
+    return probe.prepare(`SELECT sqlite_compileoption_used('${option}') AS v`).get().v === 0;
+  } catch {
+    return false;
+  } finally {
+    probe.close();
+  }
+};
+
 suite('accessing the node:sqlite module', () => {
   test('cannot be accessed without the node: scheme', { skip: typeof Bun !== 'undefined' }, (t) => { // BUN: require('sqlite') throws 'ResolveMessage' (MODULE_NOT_FOUND code but different message/error class); the module IS node:-only, only the error shape differs.
     t.assert.throws(() => {
@@ -204,7 +218,7 @@ suite('SQL APIs enabled at build time', () => {
     );
   });
 
-  test('percentile is enabled', (t) => {
+  test('percentile is enabled', { skip: missingSQLiteOption('SQLITE_ENABLE_PERCENTILE') }, (t) => { // BUN: not in Apple's libsqlite3; see missingSQLiteOption above.
     const db = new DatabaseSync(':memory:');
     db.exec(`
       CREATE TABLE t1 (x INTEGER);
@@ -317,7 +331,7 @@ suite('SQL APIs enabled at build time', () => {
     );
   });
 
-  test('rbu is enabled', (t) => {
+  test('rbu is enabled', { skip: missingSQLiteOption('SQLITE_ENABLE_RBU') }, (t) => { // BUN: not in Apple's libsqlite3; see missingSQLiteOption above.
     const db = new DatabaseSync(':memory:');
     t.assert.deepStrictEqual(
       db.prepare('SELECT sqlite_compileoption_used(\'SQLITE_ENABLE_RBU\') as rbu_enabled;').get(),
@@ -325,7 +339,7 @@ suite('SQL APIs enabled at build time', () => {
     );
   });
 
-  test('geopoly is enabled', (t) => {
+  test('geopoly is enabled', { skip: missingSQLiteOption('SQLITE_ENABLE_GEOPOLY') }, (t) => { // BUN: not in Apple's libsqlite3; see missingSQLiteOption above.
     const db = new DatabaseSync(':memory:');
     db.exec(`
       CREATE VIRTUAL TABLE t1 USING geopoly(a,b,c);

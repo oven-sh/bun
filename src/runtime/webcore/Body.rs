@@ -698,6 +698,22 @@ impl Value {
             _ => false,
         }
     }
+
+    /// `Content-Type` value the fetch spec's "extract a body" assigns to this
+    /// body, for appending to the header list when none was explicitly set.
+    /// `None` for body kinds that carry no implicit type (ArrayBuffer,
+    /// ReadableStream, null).
+    pub fn content_type(&self) -> Option<&[u8]> {
+        match self {
+            Value::Blob(blob) => {
+                let ct = blob.content_type_slice();
+                (!ct.is_empty()).then_some(ct)
+            }
+            Value::WTFStringImpl(_) => Some(b"text/plain;charset=utf-8"),
+            Value::InternalBlob(ib) if ib.was_string => Some(ib.content_type()),
+            _ => None,
+        }
+    }
 }
 
 impl Value {

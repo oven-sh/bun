@@ -2939,3 +2939,117 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+describe("Content-Type implied by the body init per fetch spec", () => {
+  // WHATWG fetch "extract a body": a scalar-value-string body extracts with
+  // type text/plain;charset=UTF-8, URLSearchParams with
+  // application/x-www-form-urlencoded;charset=UTF-8; that type is appended to
+  // the header list when no Content-Type was explicitly set. ArrayBuffer /
+  // typed arrays / ReadableStream carry no type.
+  const textPlain = /^text\/plain;charset=utf-8$/i;
+  const urlencoded = /^application\/x-www-form-urlencoded;charset=utf-8$/i;
+
+  it("string body: fetch() sends it on the wire", async () => {
+    let lastHead = "";
+    let nextHead = Promise.withResolvers<void>();
+    await using server = net.createServer(socket => {
+      let buf = Buffer.alloc(0);
+      socket.on("data", d => {
+        buf = Buffer.concat([buf, d]);
+        if (buf.indexOf("\r\n\r\n") < 0) return;
+        lastHead = buf.toString("latin1").split("\r\n\r\n")[0];
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        nextHead.resolve();
+      });
+      socket.on("error", () => {});
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const contentTypeHeader = (head: string) => head.split("\r\n").find(l => /^content-type:/i.test(l)) ?? null;
+
+    const doFetch = async (init: RequestInit) => {
+      nextHead = Promise.withResolvers<void>();
+      await (await fetch(`http://127.0.0.1:${port}/`, { method: "POST", ...init })).arrayBuffer();
+      await nextHead.promise;
+      return contentTypeHeader(lastHead);
+    };
+
+    // Plain string body, no headers.
+    expect(await doFetch({ body: "hello" })).toMatch(/^content-type:\s*text\/plain;charset=utf-8$/i);
+
+    // Plain string body, with unrelated headers.
+    expect(await doFetch({ body: "hello", headers: { "x-foo": "bar" } })).toMatch(
+      /^content-type:\s*text\/plain;charset=utf-8$/i,
+    );
+
+    // Non-ASCII string body (exercises the InternalBlob{was_string} path).
+    expect(await doFetch({ body: "héllo ☃" })).toMatch(/^content-type:\s*text\/plain;charset=utf-8$/i);
+
+    // Explicit Content-Type wins over the implied type.
+    expect(await doFetch({ body: "hello", headers: { "content-type": "application/json" } })).toMatch(
+      /^content-type:\s*application\/json$/i,
+    );
+
+    // URLSearchParams body (control: already worked).
+    expect(await doFetch({ body: new URLSearchParams("a=1") })).toMatch(
+      /^content-type:\s*application\/x-www-form-urlencoded;charset=utf-8$/i,
+    );
+
+    // ArrayBuffer / Uint8Array body does NOT get a Content-Type.
+    expect(await doFetch({ body: new Uint8Array([1, 2, 3]) })).toBeNull();
+    expect(await doFetch({ body: new Uint8Array([1, 2, 3]).buffer })).toBeNull();
+  });
+
+  it("string body: fetch(request) sends it on the wire", async () => {
+    let received: string | null | undefined;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received = req.headers.get("content-type");
+        return new Response();
+      },
+    });
+    const req = new Request(server.url, { method: "POST", body: "hello" });
+    await (await fetch(req)).arrayBuffer();
+    expect(received).toMatch(textPlain);
+  });
+
+  it.each([
+    ["string", "hello", textPlain],
+    ["non-ASCII string", "héllo ☃", textPlain],
+    ["URLSearchParams", new URLSearchParams("a=1"), urlencoded],
+  ] as const)("%s body: Request/Response .headers expose it", (_, body, expected) => {
+    const req = new Request("http://x/", { method: "POST", body });
+    expect(req.headers.get("content-type")).toMatch(expected);
+
+    const req2 = new Request("http://x/", { method: "POST", body, headers: { "x-foo": "bar" } });
+    expect(req2.headers.get("content-type")).toMatch(expected);
+
+    // Explicit header wins.
+    const req3 = new Request("http://x/", {
+      method: "POST",
+      body,
+      headers: { "content-type": "application/json" },
+    });
+    expect(req3.headers.get("content-type")).toBe("application/json");
+
+    const res = new Response(body);
+    expect(res.headers.get("content-type")).toMatch(expected);
+
+    const res2 = new Response(body, { headers: { "x-foo": "bar" } });
+    expect(res2.headers.get("content-type")).toMatch(expected);
+
+    const res3 = new Response(body, { headers: { "content-type": "application/json" } });
+    expect(res3.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("ArrayBuffer / typed-array body: no implicit Content-Type", () => {
+    for (const body of [new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3]).buffer]) {
+      const req = new Request("http://x/", { method: "POST", body });
+      expect(req.headers.get("content-type")).toBeNull();
+      const res = new Response(body);
+      expect(res.headers.get("content-type")).toBeNull();
+    }
+  });
+});

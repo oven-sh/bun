@@ -1,14 +1,7 @@
-// A raw JavaScript array passed as a query parameter (not via sql.array) must be
-// encoded in the Bind message as a PostgreSQL text array literal (`{1,2,3}`) with
-// format code 0 (text). Before the fix the Bind writer had no array value encoder:
-// int4[]/float4[] parameters were declared binary (format 1) yet carried a scalar
-// or ASCII payload, and other array OIDs were stringified with JS toString
-// ("1,2", no braces), so a real server rejected every array parameter with
-// `08P01 insufficient data left in message` / `malformed array literal`.
-//
-// This asserts the exact Bind frame bytes with a mock backend so it is
-// deterministic and needs no real PostgreSQL. Frame bytes come from
-// ./wire-frames.ts.
+// https://github.com/oven-sh/bun/issues/29551
+// A raw JS array bound as a query parameter must be encoded in the Bind message
+// as a PostgreSQL text array literal (`{1,2,3}`) with format code 0. Asserts the
+// exact Bind frame bytes against a mock backend so it needs no real PostgreSQL.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import {
@@ -159,8 +152,8 @@ test("primitive elements in a jsonb[] serialize as JSON", async () => {
   expect(text(bind.values[0])).toBe(`{"\\"hello\\"","42","true"}`);
 });
 
-test("Buffer elements in a bytea[] serialize as hex", async () => {
-  const bind = await captureBind(1001 /* bytea_array */, [Buffer.from([1, 2, 255]), Buffer.from([0])]);
+test("Buffer and Uint8Array elements in a bytea[] serialize as hex", async () => {
+  const bind = await captureBind(1001 /* bytea_array */, [Buffer.from([1, 2, 255]), new Uint8Array([0, 170])]);
   expect(bind.formatCodes).toEqual([0]);
-  expect(text(bind.values[0])).toBe(`{"\\\\x0102ff","\\\\x00"}`);
+  expect(text(bind.values[0])).toBe(`{"\\\\x0102ff","\\\\x00aa"}`);
 });

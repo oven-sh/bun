@@ -302,13 +302,22 @@ fn write_array_literal(
         let element = value
             .get_index(global, idx as u32)
             .map_err(js_error_to_postgres)?;
+        let is_array_buffer_like = element.is_cell() && element.js_type().is_array_buffer_like();
         if element.is_empty_or_undefined_or_null() {
             out.extend_from_slice(b"NULL");
         } else if element.is_array() {
             write_array_literal(out, element, global, tag, depth + 1)?;
-        } else if is_json
-            || (element.is_object() && !element.is_date() && !element.is_buffer(global))
-        {
+        } else if is_bytea && is_array_buffer_like {
+            let buf = element.as_array_buffer(global);
+            let bytes: &[u8] = buf.as_ref().map(|b| b.byte_slice()).unwrap_or(b"");
+            // `\x<hex>` is bytea's hex input format; write_quoted_element
+            // escapes the backslash so array_in passes it through verbatim.
+            let mut text = vec![0u8; 2 + bytes.len() * 2];
+            text[0] = b'\\';
+            text[1] = b'x';
+            bun_fmt::bytes_to_hex_lower(bytes, &mut text[2..]);
+            write_quoted_element(out, &text);
+        } else if is_json || (element.is_object() && !element.is_date() && !is_array_buffer_like) {
             // json[]/jsonb[] elements must be valid JSON text, so every scalar
             // element goes through JSON.stringify. Plain objects elsewhere use
             // the same path.
@@ -325,16 +334,6 @@ fn write_array_literal(
                 .json_stringify_fast(global, &mut str)
                 .map_err(js_error_to_postgres)?;
             out.extend_from_slice(str.to_utf8_without_ref().slice());
-        } else if is_bytea && element.is_buffer(global) {
-            let buf = element.as_array_buffer(global);
-            let bytes: &[u8] = buf.as_ref().map(|b| b.byte_slice()).unwrap_or(b"");
-            // `\x<hex>` is bytea's hex input format; write_quoted_element
-            // escapes the backslash so array_in passes it through verbatim.
-            let mut text = vec![0u8; 2 + bytes.len() * 2];
-            text[0] = b'\\';
-            text[1] = b'x';
-            bun_fmt::bytes_to_hex_lower(bytes, &mut text[2..]);
-            write_quoted_element(out, &text);
         } else {
             let str = bun_core::OwnedString::new(
                 BunString::from_js(element, global).map_err(js_error_to_postgres)?,

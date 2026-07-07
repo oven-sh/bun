@@ -94,6 +94,14 @@ impl FSWatcher {
         self.vm().event_loop()
     }
 
+    /// A worker's sticky `TerminationException` is not cleared by the emit
+    /// paths below, so a second listener call after it fires would re-enter
+    /// `executeCallImpl` under `scope.assertNoException()`.
+    #[inline]
+    fn can_call_into_js(&self) -> bool {
+        self.vm().script_execution_status() == jsc::ScriptExecutionStatus::Running
+    }
+
     /// `task` must point to a live heap-allocated `ConcurrentTask` node that
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
@@ -188,6 +196,9 @@ impl FSWatchTaskPosix {
         // this runs on JS Context Thread
 
         for i in 0..self.count as usize {
+            if !self.ctx().can_call_into_js() {
+                break;
+            }
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
             match &entry.event {
@@ -447,13 +458,15 @@ impl FSWatchTaskWindows {
         // match is sound (aliased shared borrows are fine; the old `*mut Self`
         // re-derive dance is no longer needed). `ParentRef` Derefs to `&T`.
         let ctx: &FSWatcher = &self.ctx.expect("FSWatchTask.ctx unset");
-        match &mut self.event {
-            Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
-            Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
-            Event::Error(err) => ctx.emit_error(err),
-            Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
-            Event::Abort => ctx.emit_if_aborted(),
-            Event::Close => ctx.emit::<{ EventType::Close }>(b""),
+        if ctx.can_call_into_js() {
+            match &mut self.event {
+                Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
+                Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
+                Event::Error(err) => ctx.emit_error(err),
+                Event::NoFilename(event_type) => ctx.emit_null_filename(*event_type),
+                Event::Abort => ctx.emit_if_aborted(),
+                Event::Close => ctx.emit::<{ EventType::Close }>(b""),
+            }
         }
 
         ctx.unref_task();
@@ -991,7 +1004,9 @@ impl FSWatcher {
             self.detach();
 
             if let Some(js_this) = js_this {
-                if let Some(listener) = js::listener_get_cached(js_this) {
+                if self.can_call_into_js()
+                    && let Some(listener) = js::listener_get_cached(js_this)
+                {
                     // `closed` is already true so `refTask()` would return false without
                     // incrementing; bump the counter directly so the `unrefTask()` below is
                     // balanced and the count stays > 0 while the close event is emitted.

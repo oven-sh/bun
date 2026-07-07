@@ -209,8 +209,8 @@ async function opendir(dir: string, options) {
 // Node.js closes a FileHandle's fd in its native finalizer and raises
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
-let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: unknown }> | undefined;
-function onFileHandleCollected(held: { fd: number; path: unknown }) {
+let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
+function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
   try {
     fs.closeSync(held.fd);
   } catch {}
@@ -410,7 +410,15 @@ function asyncWrap(fn: any, name: string) {
       this[kClosePromise] = null;
       this[kFlag] = flag;
       if (this[kFd] !== -1) {
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
+        // Snapshot the path as a string so the registry does not retain the
+        // caller's Buffer/URL or dispatch through user-overridable toString
+        // at finalizer time.
+        const pathForDiag = typeof path === "string" ? path : path == null ? undefined : String(path);
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
+          this,
+          { fd, path: pathForDiag },
+          this,
+        );
       }
     }
 

@@ -3898,7 +3898,8 @@ class ServerHttp2Session extends Http2Session {
     return this.#socket_proxy;
   }
   get state() {
-    return this.#parser?.getCurrentState();
+    // node: once the session is no longer usable the getter returns an empty object, not undefined.
+    return this.#parser?.getCurrentState() ?? {};
   }
 
   get [bunHTTP2Native]() {
@@ -4653,7 +4654,8 @@ class ClientHttp2Session extends Http2Session {
     return this.#socket_proxy;
   }
   get state() {
-    return this.#parser?.getCurrentState();
+    // node: once the session is no longer usable the getter returns an empty object, not undefined.
+    return this.#parser?.getCurrentState() ?? {};
   }
 
   settings(settings: Settings, callback?) {

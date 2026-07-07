@@ -282,6 +282,7 @@ JSC::JSString* JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalOb
                 RELEASE_AND_RETURN(throwScope, firstHalf);
             offset = m_lastNeed;
             m_lastNeed = 0;
+            m_lastTotal = 0;
             if (offset == length)
                 RELEASE_AND_RETURN(throwScope, firstHalf);
 
@@ -319,7 +320,6 @@ ResetScope::~ResetScope()
 {
     m_decoder->m_lastTotal = 0;
     m_decoder->m_lastNeed = 0;
-    memset(m_decoder->m_lastChar, 0, 4);
 }
 
 JSC::JSString*

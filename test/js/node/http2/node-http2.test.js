@@ -1676,7 +1676,11 @@ for (const [label, headerCount, expectProbe, expectRst1, expectSessionError] of 
       expect(out.events).not.toContain("REQ:/big");
     }
     if (expectSessionError) {
+      expect(out.goaway).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
       expect(out.events).toContain("sessionError:ERR_HTTP2_SESSION_ERROR");
+    } else {
+      expect(out.goaway).toBe(-1);
+      expect(out.events).not.toContain("sessionError:ERR_HTTP2_SESSION_ERROR");
     }
     expect(exitCode).toBe(0);
   });

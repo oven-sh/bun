@@ -346,7 +346,25 @@ describe("SocketAddress port validation", () => {
   });
 
   it("rejects non-integer, out-of-range, and non-numeric ports with ERR_SOCKET_BAD_PORT", () => {
-    const bad = [-1, 3.5, 65536, Infinity, NaN, "abc", "", "   ", true, null, {}, []];
+    const bad = [
+      -1,
+      3.5,
+      65536,
+      Infinity,
+      NaN,
+      "abc",
+      "",
+      "   ",
+      // Whitespace-only strings from the full ECMAScript set coerce to 0 but
+      // Node's validatePort trims them away and rejects (matches trim()).
+      "\u00a0", // NBSP
+      "\u3000", // ideographic space
+      "\ufeff", // BOM
+      true,
+      null,
+      {},
+      [],
+    ];
     for (const port of bad) {
       expect(() => new SocketAddress({ address: "1.2.3.4", port: port as any })).toThrowWithCode(
         Error,

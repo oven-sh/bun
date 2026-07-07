@@ -511,6 +511,10 @@ export default [
       rules: {
         getter: "rules",
       },
+      toJSON: {
+        fn: "toJSON",
+        length: 0,
+      },
     },
   }),
 ];

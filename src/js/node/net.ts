@@ -106,17 +106,9 @@ function appendTlsKeylog(line: Buffer) {
 const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
 const BlockList = $rust("node_net_binding.rs", "BlockList");
 
-// `toJSON` / `fromJSON` are the documented round-trip API for persisting and
-// sharing a BlockList (Node v22+). `toJSON` returns the rules array;
-// `fromJSON` parses that array (or its JSON string form) back into rules.
-Object.defineProperty(BlockList.prototype, "toJSON", {
-  value: function toJSON(this: any) {
-    return this.rules;
-  },
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+// `fromJSON` is the documented round-trip counterpart to the native `toJSON`
+// (Node v22+): it parses the rules array (or its JSON string form) back into
+// rules. Kept in JS because the parsing reuses the native add* methods.
 Object.defineProperty(BlockList.prototype, "fromJSON", {
   value: function fromJSON(this: any, data: any) {
     if ($isArray(data)) {

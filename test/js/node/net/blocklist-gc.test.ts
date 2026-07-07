@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { BlockList, isIPv6 } from "node:net";
+import path from "node:path";
 
 // Node's documented round-trip API (v22+): toJSON returns the rules array and
 // JSON.stringify(blockList) emits it; fromJSON rebuilds rules from that array
@@ -71,6 +72,40 @@ describe("net.BlockList JSON round-trip", () => {
     for (const data of bad) {
       const blockList = new BlockList();
       expect(() => blockList.fromJSON(data as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    }
+  });
+
+  // toJSON is defined on the native prototype, not patched in node:net, so a
+  // structured-clone wrapper created in a realm that never imported net still
+  // has it (worker fan-out via postMessage).
+  it("toJSON is available on a clone in a realm that never imported net", async () => {
+    using dir = tempDir("blocklist-xrealm", {
+      "worker.js": `
+        globalThis.onmessage = e => {
+          const bl = e.data;
+          postMessage({
+            hasToJSON: typeof bl.toJSON === "function",
+            json: JSON.stringify(bl),
+            check: bl.check("1.2.3.4"),
+          });
+        };
+      `,
+    });
+
+    const worker = new Worker(path.join(String(dir), "worker.js"));
+    try {
+      const bl = new BlockList();
+      bl.addAddress("1.2.3.4");
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = reject;
+      worker.postMessage(bl);
+      const result = await promise;
+      expect(result.hasToJSON).toBe(true);
+      expect(result.check).toBe(true);
+      expect(JSON.parse(result.json)).toEqual(["Address: IPv4 1.2.3.4"]);
+    } finally {
+      worker.terminate();
     }
   });
 });

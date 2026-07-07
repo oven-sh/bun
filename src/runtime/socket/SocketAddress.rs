@@ -147,15 +147,15 @@ impl Options {
         if !port.is_number() && !port.is_string() {
             return Err(Self::throw_bad_port(global, port));
         }
-        // An empty or whitespace-only string coerces to 0 but Node rejects it.
+        // An empty or whitespace-only string coerces to 0 via `ToNumber`, but
+        // Node rejects it because `String.prototype.trim` empties it first.
+        // `trim` strips the full ECMAScript whitespace set, not just ASCII.
         if port.is_string() {
             let s = OwnedString::new(BunString::from_js(port, global)?);
             let blank = if s.is_8bit() {
-                bun_core::strings::is_all_whitespace(s.latin1())
+                s.latin1().iter().all(|&b| is_js_whitespace(u32::from(b)))
             } else {
-                s.utf16()
-                    .iter()
-                    .all(|&c| matches!(c, 0x09 | 0x0A | 0x0B | 0x0C | 0x0D | 0x20))
+                s.utf16().iter().all(|&c| is_js_whitespace(u32::from(c)))
             };
             if blank {
                 return Err(Self::throw_bad_port(global, port));
@@ -187,6 +187,17 @@ impl Options {
             )
             .throw()
     }
+}
+
+/// ECMAScript `StrWhiteSpace`: the code points `String.prototype.trim` strips
+/// (`WhiteSpace` + `LineTerminator`). Used to match Node's `validatePort`
+/// blank-string check, which trims before coercing.
+fn is_js_whitespace(c: u32) -> bool {
+    matches!(
+        c,
+        0x09 | 0x0A | 0x0B | 0x0C | 0x0D | 0x20 | 0xA0 | 0x1680 | 0x2028 | 0x2029 | 0x202F
+            | 0x205F | 0x3000 | 0xFEFF
+    ) || (0x2000..=0x200A).contains(&c)
 }
 
 // =============================================================================

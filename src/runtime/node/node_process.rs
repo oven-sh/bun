@@ -71,7 +71,11 @@ pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
 
 /// Live user-timer counts for process.getActiveResourcesInfo():
 /// "Timeout" covers setTimeout + setInterval, "Immediate" covers
-/// setImmediate. Per-thread (workers have their own RuntimeState).
+/// setImmediate. O(1) via the same per-kind refcounts Node uses
+/// (timeout_info[0] / immediate_info()->ref_count()); the counters are
+/// maintained by `set_enable_keeping_event_loop_alive`, which already
+/// encodes Node's during-callback visibility rule (Immediate drops off
+/// before its callback, Timeout after). Per-thread.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
     timeouts: *mut usize,
@@ -87,33 +91,8 @@ pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
             return;
         }
         let timer = &(*state).timer;
-        let mut n_timeouts = 0usize;
-        let mut n_immediates = 0usize;
-        for &address in timer.live_timer_internals.keys() {
-            let internals = &*(address as *const crate::timer::TimerObjectInternals);
-            if internals.get_destroyed() {
-                continue;
-            }
-            let flags = internals.flags.get();
-            // Node's getActiveResourcesInfo() reports only ref'd handles
-            // (timeoutInfo/immediateInfo refCount): an unref'd timer is not
-            // keeping the event loop alive, so it isn't listed.
-            if !flags.has_js_ref() {
-                continue;
-            }
-            if flags.kind() == crate::timer::Kind::SetImmediate {
-                // Node counts an Immediate as already-gone while its own
-                // callback runs (unlike a Timeout, which stays visible until
-                // the callback returns).
-                if !flags.in_callback() {
-                    n_immediates += 1;
-                }
-            } else {
-                n_timeouts += 1;
-            }
-        }
-        *timeouts = n_timeouts;
-        *immediates = n_immediates;
+        *timeouts = timer.user_timeout_ref_count.max(0) as usize;
+        *immediates = timer.immediate_ref_count.max(0) as usize;
     }
 }
 

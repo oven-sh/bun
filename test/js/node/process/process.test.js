@@ -1126,6 +1126,11 @@ describe.concurrent(() => {
     expect(flags.has("--not-a-real-flag")).toBe(false);
     flags.add("--not-a-real-flag");
     expect(flags.has("--not-a-real-flag")).toBe(false);
+    // Node freezes the prototype and constructor too; the vendored upstream
+    // test only asserts on the instance.
+    expect(Object.isFrozen(flags)).toBe(true);
+    expect(Object.isFrozen(Object.getPrototypeOf(flags))).toBe(true);
+    expect(Object.isFrozen(Object.getPrototypeOf(flags).constructor)).toBe(true);
   });
 
   for (const stub of emptyArrayStubs) {
@@ -1748,4 +1753,112 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const child = spawnSync({ cmd, env });
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
+});
+
+it("delete process.env.TZ invalidates existing Date instances", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const d = new Date("2024-01-15T12:00:00Z");
+       process.env.TZ = "America/New_York";
+       const ny = d.getHours();
+       delete process.env.TZ;
+       console.log(JSON.stringify({ ny, afterDelete: d.getHours(), has: "TZ" in process.env }));`,
+    ],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // NY is UTC-5 in January; after delete the override is cleared so getHours
+  // reverts to the UTC start value (12) and the property is gone.
+  expect({ ...JSON.parse(stdout), exitCode }).toEqual({ ny: 7, afterDelete: 12, has: false, exitCode: 0 });
+});
+
+it("process.traceDeprecation set at runtime prints a stack", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.traceDeprecation = true;
+       process.emitWarning("hi", "DeprecationWarning");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/DeprecationWarning: hi\n\s+at /);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+});
+
+it("--trace-deprecation seeds process.traceDeprecation", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--trace-deprecation", "-e", `console.log(process.traceDeprecation === true)`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("true");
+  expect(exitCode).toBe(0);
+});
+
+it("removeAllListeners('warning') silences the default print", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.emitWarning("first");
+       process.nextTick(() => {
+         process.removeAllListeners("warning");
+         process.emitWarning("second");
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/Warning: first/);
+  expect(stderr).not.toMatch(/Warning: second/);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+});
+
+it("--disable-warning suppresses print but not user 'warning' listeners", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--disable-warning=TESTCODE",
+      "-e",
+      `process.on("warning", w => console.log("listener:" + w.code));
+       process.emitWarning("hi", { code: "TESTCODE" });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("listener:TESTCODE");
+  expect(stderr).not.toMatch(/TESTCODE/);
+  expect(exitCode).toBe(0);
+});
+
+it("_rawDebug never throws when fd 2 is closed", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("node:fs").closeSync(2);
+       process._rawDebug("x");
+       console.log("ok");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
 });

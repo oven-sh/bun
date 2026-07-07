@@ -600,7 +600,71 @@ export function rawDebug() {
   const { formatWithOptions } = require("node:util");
   const { writeSync } = require("node:fs");
   const { EOL } = require("node:os");
-  writeSync(2, formatWithOptions({}, ...arguments) + EOL);
+  // Node's _rawDebug is a never-throw last resort (fwrite return ignored):
+  // an EBADF on a closed fd 2 must not surface.
+  try {
+    writeSync(2, formatWithOptions({}, ...arguments) + EOL);
+  } catch {}
+}
+
+export function installOnWarningListener(process, redirectPath, isDisabled) {
+  // Port of Node's lib/internal/process/warning.js onWarning, registered as a
+  // real 'warning' listener so removeAllListeners('warning') silences it and
+  // a throwing user listener does not skip the print.
+  const { appendFileSync } = require("node:fs");
+  // Capture at install time so later tampering with globalThis.console
+  // cannot silence warnings.
+  const consoleError = console.error;
+  let redirectFailed = false;
+  let traceWarningHelperShown = false;
+
+  function writeOut(message) {
+    if (redirectPath && !redirectFailed) {
+      try {
+        appendFileSync(redirectPath, message + "\n");
+        return;
+      } catch {
+        // Node falls back to stderr on redirect failure and stops retrying.
+        redirectFailed = true;
+      }
+    }
+    // console.error goes through process.stderr, so hijackStderr in tests
+    // observes it and Windows console gets WriteConsoleW.
+    consoleError(message);
+  }
+
+  function onWarning(warning) {
+    if (!(warning instanceof Error)) return;
+    const name = warning.name || "Warning";
+    const isDeprecation = name === "DeprecationWarning";
+    if (isDeprecation && process.noDeprecation) return;
+    const code = warning.code;
+    // --disable-warning filters the *print*, not the emit — user listeners
+    // still receive the event (Node keeps this check inside onWarning).
+    if (isDisabled(name) || (code && isDisabled(code))) return;
+    const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
+    let msg = `(node:${process.pid}) `;
+    if (code) msg += `[${code}] `;
+    if (trace && warning.stack) {
+      msg += warning.stack;
+    } else {
+      const s = typeof warning.toString === "function" ? warning.toString() : `${name}: ${warning.message}`;
+      msg += s;
+    }
+    if (typeof warning.detail === "string") msg += `\n${warning.detail}`;
+    writeOut(msg);
+    if (!trace && !traceWarningHelperShown) {
+      traceWarningHelperShown = true;
+      const { basename } = require("node:path");
+      writeOut(
+        `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
+      );
+    }
+  }
+
+  // prependListener: user listeners added before the first emitWarning must
+  // still fire *after* the print, matching Node's bootstrap ordering.
+  process.prependListener("warning", onWarning);
 }
 
 export function loadEnvFile(path) {
@@ -774,5 +838,7 @@ export function buildAllowedNodeEnvironmentFlags() {
     }
   }
 
+  Object.freeze(NodeEnvironmentFlagsSet.prototype.constructor);
+  Object.freeze(NodeEnvironmentFlagsSet.prototype);
   return Object.freeze(new NodeEnvironmentFlagsSet());
 }

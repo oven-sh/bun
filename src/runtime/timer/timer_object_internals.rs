@@ -194,6 +194,7 @@ impl TimerObjectInternals {
             // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
+                (*state).timer.user_timeout_ref_count += delta;
                 (*state).timer.increment_timer_ref(delta, uws_loop)
             },
             // setImmediate has slightly different event loop logic
@@ -300,16 +301,6 @@ impl TimerObjectInternals {
             generation: unsafe { (*vm).test_isolation_generation },
             this_value: JsCell::new(JsRef::empty()),
         };
-
-        // Track for process.getActiveResourcesInfo(). Removed in `finalize`.
-        // SAFETY: `state` is the boxed per-thread `RuntimeState` (asserted
-        // non-null above); single-threaded JS heap.
-        unsafe {
-            (*state)
-                .timer
-                .live_timer_internals
-                .insert(std::ptr::from_ref(self) as usize, ());
-        }
 
         if kind == Kind::SetImmediate {
             JSImmediate::arguments_set_cached(timer, global, arguments);
@@ -1018,17 +1009,6 @@ impl TimerObjectInternals {
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
     pub fn finalize(&self) {
-        let state = crate::jsc_hooks::runtime_state();
-        if !state.is_null() {
-            // SAFETY: per-thread RuntimeState; finalizers run on the mutator
-            // thread.
-            unsafe {
-                (*state)
-                    .timer
-                    .live_timer_internals
-                    .remove(&(std::ptr::from_ref(self) as usize));
-            }
-        }
         self.this_value.with_mut(|r| r.finalize());
         self.deref();
     }

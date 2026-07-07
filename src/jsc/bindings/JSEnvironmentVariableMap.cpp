@@ -5,7 +5,6 @@
 #include "JSEnvironmentVariableMap.h"
 
 #include <JavaScriptCore/JSObject.h>
-#include <mutex>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayInlines.h>
@@ -41,8 +40,11 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
-    // Walk only the DateInstance IsoSubspace: TZ assignment must not pay an
-    // O(whole heap) traversal.
+    // HeapIterationScope::willStartIterating stops every allocator in the
+    // heap (walks all BlockDirectories); only forEachLiveCell is
+    // subspace-local. TZ assignment is rare enough that this is acceptable
+    // for now — the O(1) alternative is a tz-generation counter on
+    // DateInstanceData compared inside gregorianDateTime (V8's design).
     JSC::HeapIterationScope iterationScope(vm.heap);
     vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
         auto* date = static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell));
@@ -66,17 +68,18 @@ const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base:
 
 // Node's EnvSetter value handling, shared by put / putByIndex /
 // defineOwnProperty: DEP0104 under --pending-deprecation for non-string,
-// non-number, non-boolean values (at most once per process, matching
-// EmitProcessEnvWarning's one-shot flag), then ToString coercion.
+// non-number, non-boolean values (once per Environment/Worker — Node's flag
+// is a per-Environment member, not process-global), then ToString coercion.
 static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value)
 {
     VM& vm = globalObject->vm();
-    static std::once_flag processEnvWarningFlag;
     bool shouldEmitDeprecationWarning = false;
     if (Bun__Node__ProcessPendingDeprecation && !value.isString() && !value.isNumber() && !value.isBoolean()) [[unlikely]] {
-        std::call_once(processEnvWarningFlag, [&] {
+        auto* process = defaultGlobalObject(globalObject)->processObject();
+        if (process->m_emitEnvNonstringWarning) {
+            process->m_emitEnvNonstringWarning = false;
             shouldEmitDeprecationWarning = true;
-        });
+        }
     }
     if (shouldEmitDeprecationWarning) [[unlikely]] {
         Bun::Process::emitWarning(globalObject,
@@ -312,6 +315,31 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     // Recreate this because the property visibility needs to be set correctly
     // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
     return true;
+}
+
+bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Node's RealEnvStore::Delete calls DateTimeConfigurationChangeNotification
+    // for TZ; without this override, delete drops the CustomAccessor without
+    // reaching the TZ setter and existing Date instances keep the old offset.
+    // The accessor is NOT reinstalled: `'TZ' in process.env` must go false and
+    // a reinstalled getter would fall through to the never-unset native env
+    // map. A subsequent `process.env.TZ = ...` therefore stores a plain string
+    // without the timezone side effect (matches pre-PR delete behavior).
+    auto* uid = propertyName.publicName();
+    if (uid && WTF::equal(uid, "TZ"_s)) {
+        WTF::setTimeZoneOverride(String());
+        resetDateCachesAfterTimeZoneChange(vm);
+        auto* clientData = WebCore::clientData(vm);
+        DeletePropertySlot dataSlot;
+        Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
 }
 
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
@@ -619,9 +647,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     for (size_t j = 0; j < proxyVarCount; j++) {
         // Known limitation: `delete process.env.NO_PROXY` removes the accessor
-        // without calling the setter, leaving the native env map stale (same as TZ).
-        // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
-        // strict mode, so we leave it deletable and document the gap.
+        // without calling the setter, leaving the native env map stale.
+        // Use `process.env.NO_PROXY = ""` to unset. TZ delete is handled in
+        // deleteProperty above; proxy vars need a native unset FFI export first.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
         if (!hasProxyVar[j]) {
             attrs |= JSC::PropertyAttribute::DontEnum;

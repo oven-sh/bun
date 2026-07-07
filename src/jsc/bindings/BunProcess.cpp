@@ -1627,43 +1627,53 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
-// Resolve where process warnings are written: --redirect-warnings, then the
-// NODE_REDIRECT_WARNINGS environment variable, then stderr. Resolved once.
-static FILE* processWarningDestination(Zig::GlobalObject* globalObject)
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isWarningDisabled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    // call_once: workers can emit their first warning concurrently with the
-    // main thread, and a plain check-then-assign would be a data race.
-    static FILE* destination = nullptr;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        destination = stderr;
-        WTF::String path;
-        BunString redirect;
-        if (Bun__Node__getRedirectWarnings(&redirect)) {
-            path = redirect.transferToWTFString();
-        } else {
-            ZigString name = toZigString("NODE_REDIRECT_WARNINGS"_s);
-            ZigString value = { nullptr, 0 };
-            if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
-                path = Zig::toStringCopy(value);
-        }
-        if (!path.isEmpty()) {
-#if OS(WINDOWS)
-            // fopen() takes a narrow ANSI-code-page string on Windows; go
-            // through the wide-character API so non-ASCII paths work.
-            // wideCharacters() returns a null-terminated buffer.
-            if (FILE* file = _wfopen(path.wideCharacters().span().data(), L"a"))
-                destination = file;
-#else
-            auto utf8 = path.utf8();
-            if (FILE* file = fopen(utf8.data(), "a"))
-                destination = file;
-#endif
-        }
-    });
-    return destination;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue arg = callFrame->argument(0);
+    if (!arg.isString())
+        return JSValue::encode(jsBoolean(false));
+    auto str = arg.getString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto utf8 = str.utf8();
+    return JSValue::encode(jsBoolean(Bun__Node__isWarningDisabled(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length())));
 }
 
+// Install the JS onWarning listener (once per Process). Gated by
+// --no-warnings / NODE_NO_WARNINGS to match Node's pre_execution.js.
+static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* process)
+{
+    if (process->m_warningListenerInstalled)
+        return;
+    process->m_warningListenerInstalled = true;
+    if (Bun__NODE_NO_WARNINGS() || Bun__Node__ProcessNoWarnings)
+        return;
+    VM& vm = globalObject->vm();
+    auto* installer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInstallOnWarningListenerCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(process);
+    // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
+    JSValue redirectPath = jsUndefined();
+    BunString redirect;
+    if (Bun__Node__getRedirectWarnings(&redirect)) {
+        redirectPath = jsString(vm, redirect.transferToWTFString());
+    } else {
+        ZigString name = toZigString("NODE_REDIRECT_WARNINGS"_s);
+        ZigString value = { nullptr, 0 };
+        if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
+            redirectPath = jsString(vm, Zig::toStringCopy(value));
+    }
+    args.append(redirectPath);
+    args.append(JSFunction::create(vm, globalObject, 1, "isWarningDisabled"_s, jsFunction_isWarningDisabled, ImplementationVisibility::Private));
+    // The caller has a ThrowScope and RETURN_IF_EXCEPTION immediately after.
+    JSC::profiledCall(globalObject, ProfilingReason::API, installer, JSC::getCallData(installer), globalObject->globalThis(), args);
+}
+
+// Node's doEmitWarning: process.emit('warning', warning). The default print
+// is a real 'warning' listener (onWarning), so --disable-warning filtering,
+// trace flags, and property reads all live in JS where getter exceptions
+// propagate to uncaughtException like Node.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1672,104 +1682,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
     auto* process = globalObject->processObject();
     auto value = callFrame->argument(0);
 
-    JSObject* warningObject = value.getObject();
-
-    auto getStringProperty = [&](ASCIILiteral propertyName) -> WTF::String {
-        JSValue propertyValue = warningObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, propertyName));
-        if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            return {};
-        }
-        if (!propertyValue || !propertyValue.isString())
-            return {};
-        auto str = propertyValue.getString(globalObject);
-        if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
-            return {};
-        }
-        return str;
-    };
-
-    auto isDisabled = [](const WTF::String& entry) -> bool {
-        if (entry.isEmpty())
-            return false;
-        auto utf8 = entry.utf8();
-        return Bun__Node__isWarningDisabled(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length());
-    };
-
-    WTF::String name;
-    WTF::String code;
-    if (warningObject) {
-        name = getStringProperty("name"_s);
-        if (name.isEmpty())
-            name = "Warning"_s;
-        code = getStringProperty("code"_s);
-        // Node's doEmitWarning drops a --disable-warning'd name/code before
-        // emitting, so 'warning' listeners never observe it.
-        if (isDisabled(name) || isDisabled(code))
-            return JSValue::encode(jsUndefined());
-    }
-
-    // Node's default stderr print is itself a 'warning' listener (onWarning),
-    // so user listeners fire alongside it rather than replacing it. Emit
-    // first, then fall through to the print path unless --no-warnings.
     auto ident = builtinNames(vm).warningPublicName();
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(value);
-        process->wrapped().emit(ident, args);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    if (Bun__NODE_NO_WARNINGS() || Bun__Node__ProcessNoWarnings)
-        return JSValue::encode(jsUndefined());
-
-    // Node ignores warnings that are not Error objects.
-    if (!warningObject)
-        return JSValue::encode(jsUndefined());
-
-    WTF::String message = getStringProperty("message"_s);
-    WTF::String detail = getStringProperty("detail"_s);
-
-    bool isDeprecation = name == "DeprecationWarning"_s;
-    bool trace = Bun__Node__ProcessTraceWarnings || (isDeprecation && Bun__Node__ProcessTraceDeprecation);
-    // Only touch `.stack` when tracing: reading it materializes the lazy
-    // stack (and can run a user Error.prepareStackTrace), like Node.
-    WTF::String stack = trace ? getStringProperty("stack"_s) : WTF::String();
-
-    // Node format: "(node:PID) [CODE] Name: message", with the stack frames
-    // appended under --trace-warnings.
-    WTF::StringBuilder out;
-    out.append("(node:"_s);
-    out.append(static_cast<int64_t>(getpid()));
-    out.append(") "_s);
-    if (!code.isEmpty()) {
-        out.append('[');
-        out.append(code);
-        out.append("] "_s);
-    }
-    out.append(name);
-    if (!message.isEmpty()) {
-        out.append(": "_s);
-        out.append(message);
-    }
-    if (trace && !stack.isEmpty()) {
-        // The captured stack starts with its own "Name: message" header line;
-        // keep only the frame lines.
-        size_t newline = stack.find('\n');
-        if (newline != WTF::notFound)
-            out.append(stack.substring(newline));
-    }
-    if (!detail.isEmpty()) {
-        out.append('\n');
-        out.append(detail);
-    }
-    out.append('\n');
-
-    auto utf8 = out.toString().utf8();
-    FILE* destination = processWarningDestination(globalObject);
-    fwrite(utf8.data(), 1, utf8.length(), destination);
-    fflush(destination);
+    JSC::MarkedArgumentBuffer args;
+    args.append(value);
+    process->wrapped().emit(ident, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -2129,6 +2046,12 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = globalObject->processObject();
+
+    // Lazily install onWarning before the first emit; every emitWarning path
+    // funnels through here so the listener is present by the time the
+    // nextTick-scheduled 'warning' event fires.
+    ensureOnWarningInstalled(globalObject, process);
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto warningName = errorInstance.get(lexicalGlobalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2976,6 +2899,7 @@ JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexical
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessThrowDeprecation, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
 {
+    Bun__Node__ProcessThrowDeprecation = JSC::JSValue::decode(encodedValue).toBoolean(globalObject);
     return true;
 }
 
@@ -4960,6 +4884,13 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+    // Node defines these as plain data properties only when the flag was
+    // passed; onWarning reads them off the JS object at emit time so runtime
+    // `process.traceDeprecation = true` also takes effect.
+    if (Bun__Node__ProcessTraceWarnings)
+        putDirect(vm, Identifier::fromString(vm, "traceProcessWarnings"_s), jsBoolean(true), 0);
+    if (Bun__Node__ProcessTraceDeprecation)
+        putDirect(vm, Identifier::fromString(vm, "traceDeprecation"_s), jsBoolean(true), 0);
 }
 
 } // namespace Bun

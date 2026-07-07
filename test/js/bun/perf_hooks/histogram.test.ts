@@ -2,6 +2,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
+import { serialize as v8Serialize } from "node:v8";
 import { MessageChannel } from "node:worker_threads";
 import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
@@ -625,6 +626,12 @@ describe("Histogram", () => {
       assert.strictEqual(a.count, 1);
     });
 
+    test("v8.serialize rejects a histogram", () => {
+      const h = createHistogram();
+      h.record(5);
+      assert.throws(() => v8Serialize(h), { name: "DataCloneError" });
+    });
+
     test("MessageChannel postMessage delivers histogram", async () => {
       const h = createHistogram();
       h.record(5);
@@ -654,6 +661,7 @@ describe("Histogram", () => {
           const got = await new Promise((resolve, reject) => {
             w.on("message", resolve);
             w.on("error", reject);
+            w.on("exit", code => reject(new Error("worker exited with " + code + " before posting")));
           });
           const target = createHistogram();
           target.add(got);

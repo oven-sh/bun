@@ -87,7 +87,7 @@ pub struct ExpansionOut {
     /// Whether at least one word has been committed to `buf`. Drives boundary
     /// recording instead of `buf`/`bounds` emptiness, which cannot tell "no
     /// word yet" from "one empty word committed" (a leading empty field from
-    /// non-whitespace IFS splitting, or a leading empty brace variant).
+    /// non-whitespace IFS splitting).
     pub committed: bool,
     /// Set when IFS field splitting yielded at least one field, so a result
     /// that splits down to a single empty field (e.g. `$(echo ,)` with
@@ -352,13 +352,14 @@ impl Expansion {
         }
         drop(arena);
 
-        // Push each variant as its own word; word boundaries are recorded
-        // via `bounds`.
-        for s in expanded {
+        // Push each non-empty variant as its own word; word boundaries are
+        // recorded via `bounds`. Empty variants are dropped as unquoted null
+        // words (`{,a}` -> `a`, `{,}` -> nothing), matching bash.
+        for s in expanded.iter().filter(|s| !s.is_empty()) {
             if me.out.committed {
                 me.out.bounds.push(me.out.buf.len() as u32);
             }
-            me.out.buf.extend_from_slice(&s);
+            me.out.buf.extend_from_slice(s);
             me.out.committed = true;
         }
 

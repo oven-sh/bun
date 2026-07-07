@@ -1332,6 +1332,39 @@ describe("deno_task", () => {
       .fileEquals("foo", "hi\n")
       .doesNotExist(" foo ")
       .runAsTest("redirect target is field-split");
+
+    // A redirect target that splits into more than one field is an ambiguous
+    // redirect (bash errors), not a glued-together filename.
+    TestBuilder.command`echo hi > $(echo a b)`
+      .ensureTempDir()
+      .stderr("bun: ambiguous redirect: at `echo`\n")
+      .exitCode(1)
+      .doesNotExist("ab")
+      .runAsTest("redirect target splitting to multiple fields is ambiguous");
+    TestBuilder.command`IFS=,; echo hi > $(echo a,b)`
+      .ensureTempDir()
+      .stderr("bun: ambiguous redirect: at `echo`\n")
+      .exitCode(1)
+      .doesNotExist("ab")
+      .runAsTest("redirect target with custom IFS splitting is ambiguous");
+  });
+
+  // Brace expansion drops unquoted-null variants, matching bash:
+  // `{,a}` -> `a`, `{a,}` -> `a`, `{,}` -> nothing.
+  describe("brace empty variants", async () => {
+    const ARGV = "console.log(JSON.stringify(process.argv.slice(1)))";
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} {,a}`
+      .stdout(`["a"]\n`)
+      .runAsTest("leading empty brace variant dropped");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} {a,}`
+      .stdout(`["a"]\n`)
+      .runAsTest("trailing empty brace variant dropped");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} {a,,b}`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("middle empty brace variant dropped");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} a{,b}`
+      .stdout(`["a","ab"]\n`)
+      .runAsTest("non-empty brace variants with prefix preserved");
   });
 
   describe("shell variables", async () => {

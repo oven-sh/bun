@@ -416,14 +416,21 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    // NUL-terminate a
-                    // non-empty result; leave an empty expansion empty so the
-                    // ambiguous-redirect check in `Builtin::init_redirections`
-                    // still fires.
-                    let mut buf = out.buf;
-                    if !buf.is_empty() && buf.last() != Some(&0) {
-                        buf.push(0);
-                    }
+                    // A target that field-split into more than one word is an
+                    // ambiguous redirect; leave `redirection_file` empty so the
+                    // check in `init_redirections` / `init_subproc_redirections`
+                    // fires (matching bash). Otherwise NUL-terminate the single
+                    // word; an empty expansion also stays empty and is caught by
+                    // the same check.
+                    let buf = if out.bounds.is_empty() {
+                        let mut buf = out.buf;
+                        if !buf.is_empty() && buf.last() != Some(&0) {
+                            buf.push(0);
+                        }
+                        buf
+                    } else {
+                        Vec::new()
+                    };
                     interp.as_cmd_mut(this).redirection_file = buf;
                 }
                 _ => {}

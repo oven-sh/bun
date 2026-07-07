@@ -81,6 +81,7 @@ async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unkno
 
 const BOOL = 16;
 const INT4_ARRAY = 1007;
+const FLOAT4 = 700;
 const FLOAT8 = 701;
 const TIME = 1083;
 const TIMESTAMP = 1114;
@@ -102,9 +103,29 @@ const malformed: { name: string; oid: number; col: Buffer; code: RegExp }[] = [
     code: /ERR_POSTGRES_INVALID_BINARY_DATA/,
   },
   {
+    // parse_binary_int4 accepts len 1/2/4, so without the explicit width
+    // guard this would silently yield a garbage float.
+    name: "float4 with 2-byte datum",
+    oid: FLOAT4,
+    col: i16(0),
+    code: /ERR_POSTGRES_INVALID_BINARY_DATA/,
+  },
+  {
     name: "timestamp with 4-byte datum",
     oid: TIMESTAMP,
     col: i32(0),
+    code: /ERR_POSTGRES_INVALID_BINARY_DATA/,
+  },
+  {
+    name: "timestamp with 0-byte datum",
+    oid: TIMESTAMP,
+    col: Buffer.alloc(0),
+    code: /ERR_POSTGRES_INVALID_BINARY_DATA/,
+  },
+  {
+    name: "time with 0-byte datum",
+    oid: TIME,
+    col: Buffer.alloc(0),
     code: /ERR_POSTGRES_INVALID_BINARY_DATA/,
   },
   {

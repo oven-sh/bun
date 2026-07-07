@@ -844,13 +844,10 @@ pub(crate) fn from_bytes(
             }
         }
         tag @ (T::date | T::timestamp | T::timestamptz) => {
-            if bytes.is_empty() {
-                return Ok(SQLDataCell::null());
-            }
             if binary {
                 // Binary timestamp/timestamptz is an 8-byte int64 of
-                // microseconds. A short/long datum is rejected rather than
-                // reinterpreted as text (which produces an Invalid Date).
+                // microseconds. A 0-byte or wrong-width datum is rejected
+                // rather than surfaced as null or an Invalid Date.
                 if bytes.len() != 8 {
                     return Err(AnyPostgresError::InvalidBinaryData);
                 }
@@ -864,6 +861,9 @@ pub(crate) fn from_bytes(
                     _ => unreachable!(),
                 }
             } else {
+                if bytes.is_empty() {
+                    return Ok(SQLDataCell::null());
+                }
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
                 }
@@ -887,9 +887,6 @@ pub(crate) fn from_bytes(
             }
         }
         tag @ (T::time | T::timetz) => {
-            if bytes.is_empty() {
-                return Ok(SQLDataCell::null());
-            }
             if binary {
                 if tag == T::time && bytes.len() == 8 {
                     // PostgreSQL sends time as microseconds since midnight in binary format
@@ -924,6 +921,9 @@ pub(crate) fn from_bytes(
                     Err(AnyPostgresError::InvalidBinaryData)
                 }
             } else {
+                if bytes.is_empty() {
+                    return Ok(SQLDataCell::null());
+                }
                 // Text format - just return as string
                 Ok(SQLDataCell::string(bytes))
             }

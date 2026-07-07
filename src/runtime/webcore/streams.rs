@@ -31,6 +31,8 @@ pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // for callers that still spell it that way.
 pub mod bun_s3 {
     pub use crate::webcore::s3::MultiPartUpload;
+    pub use crate::webcore::s3::multipart::State as MultiPartUploadState;
+    pub use bun_s3_signing::error::S3Error;
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
@@ -2089,7 +2091,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         Self::end(self, err)
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    fn end_from_js(&mut self, global: &JSGlobalObject, _err: JSValue) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
     }
     fn flush(&mut self) -> bun_sys::Result<()> {
@@ -2379,7 +2381,14 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    pub fn end_from_js(
+        &mut self,
+        global_this: &JSGlobalObject,
+        err: JSValue,
+    ) -> bun_sys::Result<JSValue> {
+        if !err.is_empty_or_undefined_or_null() {
+            return self.fail_from_js(global_this, err);
+        }
         let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
@@ -2401,6 +2410,49 @@ impl NetworkSink {
         }
         // task already detached
         bun_sys::Result::Ok(JSValue::js_number(0.0))
+    }
+
+    /// Abort the upload with a caller-supplied error: reject any pending
+    /// promises with `err`, then drive the multipart task through `fail()`
+    /// so it cancels in-flight parts and issues AbortMultipartUpload.
+    fn fail_from_js(&mut self, global_this: &JSGlobalObject, err: JSValue) -> bun_sys::Result<JSValue> {
+        if self.ended {
+            if self.end_promise.has_value() {
+                return bun_sys::Result::Ok(self.end_promise.value());
+            }
+            return bun_sys::Result::Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    err,
+                ),
+            );
+        }
+        self.ended = true;
+        self.done = true;
+        self.cancel = true;
+        self.signal.close(None);
+        if self.flush_promise.has_value() {
+            let _ = self.flush_promise.reject(global_this, Ok(err));
+        }
+        if !self.end_promise.has_value() {
+            self.end_promise = JSPromiseStrong::init(global_this);
+        }
+        let value = self.end_promise.value();
+        // Reject with the caller's error before `fail()` reaches the wrapper
+        // callback; `reject()` swaps the Strong to empty so the callback's
+        // Failure branch is a no-op and only `finalize()` runs.
+        let _ = self.end_promise.reject(global_this, Ok(err));
+        if self
+            .task_mut()
+            .is_some_and(|t| t.state != bun_s3::MultiPartUploadState::Finished)
+        {
+            let _ = self.task_mut().unwrap().fail(bun_s3::S3Error {
+                code: b"UnknownError",
+                message: b"The upload was aborted by the writer",
+            });
+        }
+        value.ensure_still_alive();
+        bun_sys::Result::Ok(value)
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
@@ -2447,8 +2499,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         Self::end(self, err)
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global)
+    fn end_from_js(&mut self, global: &JSGlobalObject, err: JSValue) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, global, err)
     }
     fn flush(&mut self) -> bun_sys::Result<()> {
         Self::flush(self)

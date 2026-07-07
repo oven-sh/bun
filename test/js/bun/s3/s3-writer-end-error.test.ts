@@ -1,0 +1,184 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+
+// S3File.writer().end(new Error(...)) must abort the multipart upload and
+// reject. Previously the error argument was ignored: the buffered tail was
+// uploaded, CompleteMultipartUpload was sent, and the promise resolved,
+// silently publishing a truncated object.
+
+const fixture = `
+import * as net from "node:net";
+
+const reqs: string[] = [];
+const committed = new Set<string>();
+let nextId = 0;
+
+const server = net.createServer(sock => {
+  let buf = Buffer.alloc(0);
+  sock.on("error", () => {});
+  sock.on("data", chunk => {
+    buf = Buffer.concat([buf, chunk]);
+    for (;;) {
+      const headerEnd = buf.indexOf("\\r\\n\\r\\n");
+      if (headerEnd < 0) return;
+      const head = buf.toString("latin1", 0, headerEnd);
+      const len = Number(/^content-length: *(\\d+)/im.exec(head)?.[1] ?? 0);
+      if (buf.length < headerEnd + 4 + len) return;
+      const body = Buffer.from(buf.subarray(headerEnd + 4, headerEnd + 4 + len));
+      buf = buf.subarray(headerEnd + 4 + len);
+      const [method, target] = head.split("\\r\\n")[0].split(" ");
+      const key = decodeURIComponent(target.split("?")[0]).replace(/^\\/bucket\\//, "");
+      const q = new URLSearchParams(target.split("?")[1] ?? "");
+      let status = 200, out = "", extra = "";
+      if (method === "POST" && q.has("uploads")) {
+        const id = "up" + ++nextId;
+        reqs.push("INIT " + key);
+        out = '<?xml version="1.0"?><InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>k</Key><UploadId>' + id + '</UploadId></InitiateMultipartUploadResult>';
+      } else if (method === "PUT" && q.has("partNumber")) {
+        reqs.push("PART " + key + " " + q.get("partNumber") + " " + body.length);
+        extra = 'ETag: "p' + q.get("partNumber") + '"\\r\\n';
+      } else if (method === "POST" && q.has("uploadId")) {
+        reqs.push("COMMIT " + key);
+        committed.add(key);
+        out = '<?xml version="1.0"?><CompleteMultipartUploadResult><Key>k</Key><ETag>"e"</ETag></CompleteMultipartUploadResult>';
+      } else if (method === "DELETE" && q.has("uploadId")) {
+        reqs.push("ABORT " + key);
+        status = 204;
+      } else if (method === "PUT") {
+        reqs.push("PUT " + key + " " + body.length);
+        committed.add(key);
+      }
+      const b = Buffer.from(out);
+      sock.write("HTTP/1.1 " + status + " X\\r\\n" + extra + "Connection: keep-alive\\r\\nContent-Length: " + (status === 204 ? 0 : b.length) + "\\r\\n\\r\\n");
+      if (status !== 204 && b.length) sock.write(b);
+    }
+  });
+});
+await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+const port = (server.address() as net.AddressInfo).port;
+
+const s3 = new Bun.S3Client({
+  endpoint: "http://127.0.0.1:" + port,
+  bucket: "bucket",
+  accessKeyId: "AK",
+  secretAccessKey: "SK",
+  region: "us-east-1",
+});
+const PART = 5 * 1024 * 1024;
+
+async function settle(p: Promise<unknown>) {
+  try {
+    await p;
+    return "resolved";
+  } catch (e: any) {
+    return "rejected:" + e.message;
+  }
+}
+
+function summary(key: string) {
+  return {
+    committed: committed.has(key),
+    commits: reqs.filter(r => r.startsWith("COMMIT ")).length,
+    puts: reqs.filter(r => r.startsWith("PUT ")).length,
+    aborts: reqs.filter(r => r.startsWith("ABORT ")).length,
+    inits: reqs.filter(r => r.startsWith("INIT ")).length,
+  };
+}
+
+async function waitFor(predicate: () => boolean) {
+  for (let i = 0; i < 500 && !predicate(); i++) await Bun.sleep(10);
+}
+
+const results: Record<string, unknown> = {};
+
+{
+  // Multipart already initiated and a part uploaded; then the source fails.
+  reqs.length = 0;
+  const w = s3.file("multi.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
+  w.write(new Uint8Array(PART));
+  await w.flush();
+  w.write(new Uint8Array(100));
+  const outcome = await settle(w.end(new Error("source failed mid-stream")));
+  await waitFor(() => reqs.some(r => r.startsWith("ABORT ") || r.startsWith("COMMIT ")));
+  results.multipart = { outcome, ...summary("multi.bin") };
+}
+
+{
+  // Buffered data below partSize; multipart never started.
+  reqs.length = 0;
+  const w = s3.file("single.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
+  w.write(new Uint8Array(100));
+  const outcome = await settle(w.end(new Error("source failed mid-stream")));
+  await Bun.sleep(50);
+  results.single = { outcome, ...summary("single.bin") };
+}
+
+{
+  // Control: end() with no error still commits.
+  reqs.length = 0;
+  const w = s3.file("ok.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
+  w.write(new Uint8Array(PART));
+  w.write(new Uint8Array(100));
+  const outcome = await settle(w.end());
+  await waitFor(() => reqs.some(r => r.startsWith("COMMIT ")));
+  results.ok = { outcome, ...summary("ok.bin") };
+}
+
+console.log(JSON.stringify(results));
+server.close();
+process.exit(0);
+`;
+
+test("S3File.writer().end(error) aborts the upload and rejects", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      HTTP_PROXY: undefined,
+      HTTPS_PROXY: undefined,
+      http_proxy: undefined,
+      https_proxy: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.trim()).toBe("");
+  const result = JSON.parse(stdout.trim());
+
+  // After a part has been uploaded, end(error) must reject with the caller's
+  // error, send AbortMultipartUpload, and never send CompleteMultipartUpload.
+  expect(result.multipart).toEqual({
+    outcome: "rejected:source failed mid-stream",
+    committed: false,
+    commits: 0,
+    puts: 0,
+    aborts: 1,
+    inits: 1,
+  });
+
+  // Before anything is sent, end(error) must reject without uploading the
+  // buffered bytes as a single-file PUT.
+  expect(result.single).toEqual({
+    outcome: "rejected:source failed mid-stream",
+    committed: false,
+    commits: 0,
+    puts: 0,
+    aborts: 0,
+    inits: 0,
+  });
+
+  // end() with no error still commits normally.
+  expect(result.ok).toEqual({
+    outcome: "resolved",
+    committed: true,
+    commits: 1,
+    puts: 0,
+    aborts: 0,
+    inits: 1,
+  });
+
+  expect(exitCode).toBe(0);
+});

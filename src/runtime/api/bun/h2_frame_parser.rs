@@ -1358,6 +1358,9 @@ pub struct H2FrameParser {
     streams: JsCell<BunHashMap<u32, *mut Stream>>,
 
     hpack: JsCell<Option<lshpack::HpackHandle>>,
+    /// Encoder dynamic-table capacity queued by the peer's SETTINGS_HEADER_TABLE_SIZE. Applied and
+    /// announced (RFC 7541 §6.3) at the start of the next outbound header block.
+    hpack_pending_enc_capacity: Cell<Option<u32>>,
 
     has_nonnative_backpressure: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
@@ -2250,6 +2253,28 @@ impl H2FrameParser {
                 Err(e)
             }
         }
+    }
+
+    /// Start a new outbound header block. If the peer changed SETTINGS_HEADER_TABLE_SIZE, resize
+    /// the encoder's dynamic table and emit the RFC 7541 §6.3 Dynamic Table Size Update opcode so
+    /// the peer's decoder evicts in lockstep.
+    fn begin_encoded_header_block(&self, encoded_headers: &mut Vec<u8>) {
+        let Some(cap) = self.hpack_pending_enc_capacity.take() else {
+            return;
+        };
+        self.hpack.with_mut(|hpack| {
+            if let Some(hpack) = hpack.as_mut() {
+                hpack.set_encoder_max_capacity(cap);
+            }
+        });
+        let old_len = encoded_headers.len();
+        encoded_headers.resize(old_len + crate::api::h2::hpack::MAX_SIZE_UPDATE_BYTES, 0);
+        let n = crate::api::h2::hpack::write_table_size_update(
+            encoded_headers.as_mut_slice(),
+            old_len,
+            cap,
+        );
+        encoded_headers.truncate(old_len + n);
     }
 
     pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
@@ -5589,6 +5614,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_remote_settings(&self, settings: &crate::api::h2::settings::Settings) {
+        // RFC 7541 §4.2: the peer's SETTINGS_HEADER_TABLE_SIZE bounds OUR encoder. Queue the
+        // capacity so the next outbound header block resizes and emits the §6.3 size update.
+        let old_hts = self.remote_settings.get().unwrap_or_default().header_table_size;
+        if settings.header_table_size != old_hts {
+            self.hpack_pending_enc_capacity
+                .set(Some(settings.header_table_size));
+        }
         // Bridge: the legacy outbound (frame sizing, window init) reads the remote_settings Cell.
         let fp = FullSettingsPayload {
             header_table_size: settings.header_table_size,
@@ -7292,6 +7324,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
+        this.begin_encoded_header_block(&mut encoded_headers);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
@@ -7786,6 +7819,7 @@ impl H2FrameParser {
 
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
+        this.begin_encoded_header_block(&mut encoded_headers);
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
         // Pseudo-headers must be encoded first, so iterate twice.
@@ -8172,6 +8206,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
+        this.begin_encoded_header_block(&mut encoded_headers);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
@@ -9240,6 +9275,7 @@ impl H2FrameParser {
             outbound_queue_size: Cell::new(0),
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
+            hpack_pending_enc_capacity: Cell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),

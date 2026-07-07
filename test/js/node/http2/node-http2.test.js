@@ -3158,6 +3158,126 @@ it("http2 allowHTTP1 fallback writes no terminating chunk after a keep-alive HEA
   }
 });
 
+// RFC 7541 §4.2/§6.3: when the peer lowers SETTINGS_HEADER_TABLE_SIZE, the encoder must
+// shrink its dynamic table AND emit a Dynamic Table Size Update at the start of the next
+// header block. A conforming decoder (nghttp2) treats a missing update as COMPRESSION_ERROR.
+describe.each([0, 2048, 4095])(
+  "http2 honors the peer's SETTINGS_HEADER_TABLE_SIZE=%d (RFC 7541 §6.3)",
+  headerTableSize => {
+    it.skipIf(!nodeExe())("server: a node client that lowers its decoder table gets responses", async () => {
+      const server = http2.createServer();
+      server.on("session", s => s.on("error", () => {}));
+      server.on("stream", (stream, headers) => {
+        stream.on("error", () => {});
+        stream.respond({
+          ":status": 200,
+          "content-type": "text/plain",
+          "x-const": "the-same-value-every-time",
+          "x-path": headers[":path"],
+        });
+        stream.end("ok:" + headers[":path"]);
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const port = server.address().port;
+      try {
+        // nghttp2's decoder (via real node) is the conformance oracle: it hard-enforces §4.2.
+        const cli = `
+          const http2 = require("node:http2");
+          const out = [];
+          const s = http2.connect("http://127.0.0.1:${port}", { settings: { headerTableSize: ${headerTableSize} } });
+          s.on("error", e => out.push("session-error:" + (e.code || e.message)));
+          const fin = () => { process.stdout.write(JSON.stringify(out)); try { s.destroy(); } catch {} };
+          let done = 0;
+          for (let i = 0; i < 3; i++) {
+            const q = s.request({ ":path": "/r" + i });
+            q.resume();
+            q.on("response", h => out.push("r" + i + ":status=" + h[":status"]));
+            q.on("error", e => out.push("r" + i + ":error:" + (e.code || e.message)));
+            q.on("close", () => { out.push("r" + i + ":close:rst=" + q.rstCode); if (++done === 3) fin(); });
+          }`;
+        await using proc = Bun.spawn({
+          cmd: [nodeExe(), "-e", cli],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const out = JSON.parse(stdout);
+        expect({ out: out.sort(), stderr, exitCode }).toEqual({
+          out: [
+            "r0:close:rst=0",
+            "r0:status=200",
+            "r1:close:rst=0",
+            "r1:status=200",
+            "r2:close:rst=0",
+            "r2:status=200",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        server.close();
+      }
+    });
+
+    it.skipIf(!nodeExe())("client: requests to a node server that lowers its decoder table succeed", async () => {
+      const srv = `
+        const http2 = require("node:http2");
+        const srv = http2.createServer({ settings: { headerTableSize: ${headerTableSize} } });
+        srv.on("session", s => s.on("error", () => {}));
+        srv.on("stream", (st, h) => {
+          st.on("error", () => {});
+          st.respond({ ":status": 200, "x-echo": h[":path"] });
+          st.end("ok");
+        });
+        srv.listen(0, "127.0.0.1", () => process.stdout.write(srv.address().port + "\\n"));`;
+      await using proc = Bun.spawn({
+        cmd: [nodeExe(), "-e", srv],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = proc.stdout.getReader();
+      let buf = "";
+      while (!buf.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("node server exited before reporting a port");
+        buf += new TextDecoder().decode(value);
+      }
+      reader.releaseLock();
+      const port = parseInt(buf, 10);
+
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      try {
+        const { promise: sessionErr, reject } = Promise.withResolvers();
+        client.on("error", reject);
+        // Wait for the server's SETTINGS so the first request header block is the one that must
+        // carry the §6.3 size update.
+        await Promise.race([new Promise(r => client.once("remoteSettings", r)), sessionErr]);
+        expect(client.remoteSettings.headerTableSize).toBe(headerTableSize);
+
+        const results = [];
+        for (let i = 0; i < 3; i++) {
+          const { promise, resolve, reject: rej } = Promise.withResolvers();
+          const req = client.request({ ":path": "/r" + i, "x-a": "aaa", "x-b": "bbb" });
+          req.resume();
+          req.on("error", rej);
+          req.on("response", h => resolve({ status: h[":status"], echo: h["x-echo"] }));
+          results.push(await Promise.race([promise, sessionErr]));
+        }
+        expect(results).toEqual([
+          { status: 200, echo: "/r0" },
+          { status: 200, echo: "/r1" },
+          { status: 200, echo: "/r2" },
+        ]);
+      } finally {
+        client.destroy();
+        proc.kill();
+      }
+    });
+  },
+);
+
 it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited response when the user removed it", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
     res.removeHeader("content-length");

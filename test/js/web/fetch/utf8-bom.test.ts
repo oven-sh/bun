@@ -215,14 +215,9 @@ describe("UTF-8 BOM should be preserved in formData()", () => {
 
   it("in multipart/form-data part values", async () => {
     const boundary = "----x";
-    const body = [
-      `------x`,
-      `Content-Disposition: form-data; name="field"`,
-      ``,
-      `\uFEFFvalue`,
-      `------x--`,
-      ``,
-    ].join("\r\n");
+    const body = [`------x`, `Content-Disposition: form-data; name="field"`, ``, `\uFEFFvalue`, `------x--`, ``].join(
+      "\r\n",
+    );
     const response = new Response(body, {
       headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
     });

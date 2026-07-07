@@ -78,7 +78,7 @@ test.skipIf(!isLinux || !cc)(
         stderr: "pipe",
         stdout: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
     }
@@ -182,7 +182,7 @@ test.skipIf(!isLinux || !cc || !isDebug)(
         stderr: "pipe",
         stdout: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
     }

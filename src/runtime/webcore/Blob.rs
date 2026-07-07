@@ -2144,11 +2144,7 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        // Bytes.stored_name is the DOM File name carried on the shared store;
-        // only surface it on an actual File so `file.slice().name` stays undefined.
-        if !self.is_jsdom_file.get()
-            && matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::Bytes(_)))
-        {
+        if self.hides_bytes_stored_name() {
             return None;
         }
         if let Some(path) = self.get_file_name() {
@@ -4421,11 +4417,7 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    // Bytes.stored_name is the DOM File name on the shared store; don't hand
-    // it to FormData for a plain Blob (e.g. the result of `file.slice()`).
-    if !this.is_jsdom_file.get()
-        && matches!(this.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::Bytes(_)))
-    {
+    if this.hides_bytes_stored_name() {
         return BunString::empty();
     }
     if let Some(filename) = this.get_file_name() {

@@ -669,6 +669,30 @@ impl MultiPartUpload {
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
+            // Already failed while the init request was in flight. If the
+            // server created an upload, roll it back instead of orphaning it.
+            if let S3DownloadResult::Success(response) = result {
+                let slice = response.body.list.as_slice();
+                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
+                    let value_start = start + b"<UploadId>".len();
+                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
+                        if end >= value_start {
+                            this.upload_id = Box::<[u8]>::from(&slice[value_start..end]);
+                        }
+                    }
+                }
+                if !this.upload_id.is_empty()
+                    && this.upload_id.len() <= Self::MAX_UPLOAD_ID_LEN
+                    && this
+                        .upload_id
+                        .iter()
+                        .all(|b| b.is_ascii() && !b.is_ascii_control())
+                {
+                    // rollback consumes one ref via its completion callback
+                    this.ref_();
+                    return this.rollback_multi_part_request();
+                }
+            }
             return Ok(());
         }
         match result {

@@ -104,6 +104,18 @@ const results: Record<string, unknown> = {};
 }
 
 {
+  // end(error) in the same JS turn as the write that triggered the init
+  // request; the UploadId arrives after fail() and must still be rolled back.
+  reqs.length = 0;
+  const w = s3.file("race.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
+  w.write(new Uint8Array(PART));
+  w.write(new Uint8Array(100));
+  const outcome = await settle(w.end(new Error("source failed mid-stream")));
+  await waitFor(() => reqs.some(r => r.startsWith("ABORT ") || r.startsWith("COMMIT ")));
+  results.race = { outcome, ...summary("race.bin") };
+}
+
+{
   // Buffered data below partSize; multipart never started.
   reqs.length = 0;
   const w = s3.file("single.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
@@ -161,6 +173,17 @@ test("S3File.writer().end(error) aborts the upload and rejects", async () => {
   // After a part has been uploaded, end(error) must reject with the caller's
   // error, send AbortMultipartUpload, and never send CompleteMultipartUpload.
   expect(result.multipart).toEqual({
+    outcome: "rejected:source failed mid-stream",
+    committed: false,
+    commits: 0,
+    puts: 0,
+    aborts: 1,
+    inits: 1,
+  });
+
+  // end(error) in the same turn as the write that dispatched the init request
+  // must still roll back the UploadId once it arrives.
+  expect(result.race).toEqual({
     outcome: "rejected:source failed mid-stream",
     committed: false,
     commits: 0,

@@ -579,12 +579,29 @@ async function runTests() {
   console.log("parallelism", parallelism);
   const limit = pLimit(parallelism);
 
+  // Separate limiter for test paths that are process-parallel safe by naming
+  // convention (js/node/test/parallel/, js/bun/test/parallel/). These are ~2.8k
+  // files with a ~50ms median that spend almost all their wall time in `bun`
+  // startup; running a handful at once overlaps that startup without touching
+  // the serial contract for every other test file. `--parallel` already widens
+  // `limit` above, so that flag supersedes this. Width is capped so CI shards
+  // (which already fan out across machines) do not oversubscribe a runner.
+  const parallelSafeWidth = Math.max(parallelism, Math.min(4, availableParallelism()));
+  const parallelSafeLimit = pLimit(parallelSafeWidth);
+  const isParallelSafeTest = testPath => {
+    const p = testPath.replaceAll("\\", "/");
+    return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
+  };
+  const limitFor = testPath => (isParallelSafeTest(testPath) ? parallelSafeLimit : limit);
+  console.log("parallel-safe width", parallelSafeWidth);
+
   /**
    * @param {string} title
    * @param {function} fn
+   * @param {boolean} [concurrent] this call may overlap with other runTest calls
    * @returns {Promise<TestResult>}
    */
-  const runTest = async (title, fn) => {
+  const runTest = async (title, fn, concurrent = parallelism > 1) => {
     const index = ++i;
 
     let result, failure, flaky;
@@ -597,11 +614,11 @@ async function runTests() {
       let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
       if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
 
-      if (parallelism > 1) {
+      if (concurrent) {
         console.log(grouptitle);
         result = await fn(index);
       } else {
-        result = await startGroup(grouptitle, fn);
+        result = await startGroup(grouptitle, () => fn(index));
       }
 
       const { ok, stdoutPreview, error } = result;
@@ -618,7 +635,7 @@ async function runTests() {
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
-        if (parallelism > 1) return;
+        if (concurrent) return;
         if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
@@ -725,9 +742,10 @@ async function runTests() {
 
     await Promise.all(
       tests.map(testPath =>
-        limit(() => {
+        limitFor(testPath)(() => {
           const absoluteTestPath = join(testsPath, testPath);
           const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+          const concurrent = isParallelSafeTest(testPath) ? parallelSafeWidth > 1 : parallelism > 1;
           if (isNodeTest(testPath)) {
             const testContent = readFileSync(absoluteTestPath, "utf-8");
             let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
@@ -751,40 +769,53 @@ async function runTests() {
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
-            return runTest(title, async () => {
-              const { ok, error, stdout, crashes } = await spawnBun(execPath, {
-                cwd: cwd,
-                args: [
-                  subcommand,
-                  "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
-                  absoluteTestPath,
-                ],
-                timeout: getNodeParallelTestTimeout(title),
-                env,
-                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
-              });
-              const mb = 1024 ** 3;
-              let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
-              if (crashes) stdoutPreview += crashes;
-              return {
-                testPath: title,
-                ok: ok,
-                status: ok ? "pass" : "fail",
-                error: error,
-                errors: [],
-                tests: [],
-                stdout: stdout,
-                stdoutPreview: stdoutPreview,
-              };
-            });
+            return runTest(
+              title,
+              async index => {
+                const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+                  cwd: cwd,
+                  args: [
+                    subcommand,
+                    "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
+                    absoluteTestPath,
+                  ],
+                  timeout: getNodeParallelTestTimeout(title),
+                  env: {
+                    ...env,
+                    // test/common/tmpdir.js derives `.tmp.${TEST_SERIAL_ID}` from this;
+                    // a unique value per test file keeps concurrent tmpdir.refresh()
+                    // calls from wiping each other when parallelSafeWidth > 1.
+                    TEST_SERIAL_ID: String(index),
+                  },
+                  stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                  stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+                });
+                const mb = 1024 ** 3;
+                let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+                if (crashes) stdoutPreview += crashes;
+                return {
+                  testPath: title,
+                  ok: ok,
+                  status: ok ? "pass" : "fail",
+                  error: error,
+                  errors: [],
+                  tests: [],
+                  stdout: stdout,
+                  stdoutPreview: stdoutPreview,
+                };
+              },
+              concurrent,
+            );
           } else {
-            return runTest(title, async () =>
-              spawnBunTest(execPath, join("test", testPath), {
-                cwd,
-                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
-              }),
+            return runTest(
+              title,
+              async () =>
+                spawnBunTest(execPath, join("test", testPath), {
+                  cwd,
+                  stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                  stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+                }),
+              concurrent,
             );
           }
         }),

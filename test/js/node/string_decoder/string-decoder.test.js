@@ -275,7 +275,15 @@ describe("lastNeed/lastTotal/lastChar state matches Node after completing a spli
     ["utf8", [[0xe2, 0x82], [0xac]], "€", [226, 130, 172, 0]],
     ["utf8", [[0xcc], [0xcc, 0x8c]], "\ufffd\u030c", [204, 0, 0, 0]],
     ["utf16le", [[0x41], [0x00, 0x42, 0x00]], "AB", [65, 0, 0, 0]],
-    ["utf16le", [[0x3d, 0xd8], [0x00, 0xde]], "😀", [61, 216, 0, 222]],
+    [
+      "utf16le",
+      [
+        [0x3d, 0xd8],
+        [0x00, 0xde],
+      ],
+      "😀",
+      [61, 216, 0, 222],
+    ],
     ["base64", [[0x41], [0x42, 0x43]], "QUJD", [65, 66, 67, 0]],
     ["base64url", [[0x41], [0x42, 0x43]], "QUJD", [65, 66, 67, 0]],
   ])("%s %j", (encoding, chunks, expected, lastChar) => {

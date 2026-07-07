@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import * as net from "node:net";
 import { once } from "node:events";
+import * as net from "node:net";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {

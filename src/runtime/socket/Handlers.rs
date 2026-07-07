@@ -53,9 +53,17 @@ pub struct Handlers {
     /// idle release; ownership itself is the `Rc`.
     pub active_connections: Cell<u32>,
     pub mode: SocketMode,
-    /// The owning listener, for `mode == Server`. Set once by `Listener::listen`
-    /// and cleared by `Listener::deinit`, which outlives every accepted socket's
-    /// use of it (deinit force-closes them first).
+    /// The listener that accepted these sockets, for `mode == Server`.
+    ///
+    /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
+    /// promises the pointee outlives the holder, and this one does not. Every
+    /// accepted socket holds an `Rc<Handlers>` that routinely outlives the
+    /// `Listener` (uws defers the close of a force-closed socket past
+    /// `Listener::deinit`). What keeps it sound is that `deinit` clears this
+    /// field before freeing itself — so reads must go through [`listener`] and
+    /// handle `None`.
+    ///
+    /// [`listener`]: Self::listener
     listener: Cell<Option<NonNull<SocketListener>>>,
 }
 
@@ -93,18 +101,21 @@ impl Handlers {
         self.cell.root(global)
     }
 
-    /// Records the listener that owns this `Handlers` (server mode only).
+    /// Records the listener that accepted these sockets (server mode only), or
+    /// clears it as that listener frees itself.
     pub fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
         debug_assert!(self.mode == SocketMode::Server || listener.is_none());
         self.listener.set(listener);
     }
 
-    /// The owning listener, or `None` for client-mode handlers and for a
+    /// The accepting listener, or `None` for client-mode handlers and for a
     /// listener already torn down by `Listener::deinit`.
     pub fn listener(&self) -> Option<&SocketListener> {
-        // SAFETY: `Listener::listen` stores its `heap::into_raw` root here and
-        // `Listener::deinit` clears it before the free, after force-closing
-        // every accepted socket — so a `Some` is live.
+        // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
+        // here, and `Listener::deinit` clears it before freeing that allocation
+        // (after force-closing every accepted socket), so a `Some` is live. The
+        // borrow cannot outlive `&self`, and nothing frees a `Listener` while a
+        // caller holds one — `deinit` runs from GC finalize, not from dispatch.
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 

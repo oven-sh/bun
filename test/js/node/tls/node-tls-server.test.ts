@@ -1359,9 +1359,10 @@ describe("tls.createServer crl option", () => {
     client.on("error", () => {});
     let data = "";
     client.on("data", d => (data += d));
+    const closed = once(client, "close");
     try {
       expect(await result.promise).toBe("CERT_REVOKED");
-      await once(client, "close");
+      await closed;
       expect(data).toBe("");
     } finally {
       client.destroy();

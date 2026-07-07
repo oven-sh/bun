@@ -116,9 +116,11 @@ impl ReadDuringJSOnPullResult {
 
 pub enum Lazy {
     None,
-    /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`) so the
-    /// raw pointer carries mutable provenance from `heap::alloc` for the
-    /// direct field writes in `open_file_blob`.
+    /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`)
+    /// because `Store` carries its own intrusive refcount and frees itself
+    /// when it hits zero; `Arc` would add a second, conflicting
+    /// refcount/deallocation path (see the `StoreRef` doc in
+    /// `webcore_types.rs`).
     Blob(blob::StoreRef),
 }
 
@@ -355,16 +357,45 @@ impl FileReader {
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
-            // `StoreRef` liveness invariant (single-threaded JS event loop; we
-            // hold the only mutating handle).
-            match store.data_mut() {
+            // Shared borrow of the backing `Store` is always sound; clone
+            // the `File` out so `open_file_blob` can take `&mut File` on
+            // its own copy rather than needing `data_mut()` to materialize
+            // `&mut Data` on the shared `Store` (multiple `StoreRef` clones
+            // to the same allocation exist, e.g. the originating JS `Blob`
+            // — see the `Lazy::Blob(store.clone())` source in
+            // `ReadableStream::from_blob_copy_ref`). The clone is cheap:
+            // `PathLike` bumps its intrusive refcount, `last_modified` is
+            // an `AtomicU64` snapshot, `mime_type` clones its `Cow`
+            // (typically `Borrowed`), the rest is `Copy`.
+            //
+            // BEHAVIOR NOTE (vs Zig `FileReader.zig:58,109`): `open_file_blob`
+            // writes `file.is_atty = Some(true)` on the `&mut File`. Because
+            // we hand it the local clone, that cache value is discarded when
+            // `file_local` drops — the shared `Store` is not updated. This
+            // is intentional: writing back would require `data_mut()` on a
+            // `StoreRef` that may be aliased by the originating JS `Blob`
+            // and other holders, reintroducing the exact soundness hole
+            // #30800 closes. The cost is a repeat `open_as_nonblocking_tty` /
+            // `isatty` probe on a *second* `.stream()` of `Bun.file(0|1|2)`;
+            // the canonical `Bun.stdin`/`Bun.stdout`/`Bun.stderr` Stores are
+            // constructed with `is_atty` already populated (see
+            // `__bun_stdio_blob_store_new`), so they're unaffected. The
+            // `destination_file_store.is_atty` reads in `copy_file.rs` copy
+            // from the `File` clone at `CopyFile::create` time, so a
+            // `Bun.write(Bun.file(0), ...)` after a `.stream()` on the same
+            // `Blob` will see `None` where previously it saw `Some(true)`
+            // — a benign fallback from the optimized copy strategy to the
+            // plain one. Acknowledged as an intentional loss here rather
+            // than re-opening the aliasing hazard to preserve a 1-syscall
+            // micro-optimization on a `Bun.file(0).stream()` re-entry path.
+            match &store.data {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
-                    let open_result = Lazy::open_file_blob(file);
-                    // drop the StoreRef; `lazy` was already cleared above
+                    let mut file_local = file.clone();
+                    let open_result = Lazy::open_file_blob(&mut file_local);
+                    // drop the StoreRef (Zig: this.lazy.blob.deref()); `lazy` was already cleared above
                     drop(store);
                     match open_result {
                         Err(err) => {

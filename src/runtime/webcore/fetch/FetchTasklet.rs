@@ -999,12 +999,17 @@ impl FetchTasklet {
             return Ok(());
         }
 
+        // WHATWG fetch: once the response head is available the promise
+        // resolves; post-head failures (body decompression etc.) surface on
+        // the body reader regardless of whether head+body arrived in one read.
+        let success = self.result.is_success() || self.metadata.is_some();
+
         // Paired with the microtask drain after
         // startRequestStream above: the request-body sink may have set `abort_reason`
         // via writeEndRequest while the HTTP result is still a success — server HEADERS
         // raced ahead of the scheduled shutdown. Reject with that reason instead of
         // resolving a 200 Response. Makes wpt-h2 number-chunk test deterministic.
-        if self.result.is_success() && self.abort_reason.has() {
+        if success && self.abort_reason.has() {
             let promise = promise_value.as_any_promise().unwrap();
             let tracker = self.tracker;
             // get_abort_error consumes abort_reason and clears the signal handler.
@@ -1027,11 +1032,19 @@ impl FetchTasklet {
             this.promise = jsc::JSPromiseStrong::empty();
         };
 
-        // WHATWG fetch: once the response head is available the promise
-        // resolves; post-head failures (body decompression etc.) surface on
-        // the body reader regardless of whether head+body arrived in one read.
-        let success = self.result.is_success() || self.metadata.is_some();
         let result = if success {
+            // Head arrived together with a body failure: cancel any in-flight
+            // request-body sink with the real error so its `cancel(reason)`
+            // matches the split-read `on_body_received` path.
+            if self.result.fail.is_some() && self.sink_mut().is_some() {
+                let mut err = self.on_reject();
+                let err_js = err.to_js(&global_this);
+                err_js.ensure_still_alive();
+                if let Some(sink) = self.sink_mut() {
+                    sink.cancel(err_js);
+                }
+                err.reset();
+            }
             StrongOptional::create(self.on_resolve(), &global_this)
         } else {
             // in this case we wanna a jsc.Strong.Optional so we just convert it

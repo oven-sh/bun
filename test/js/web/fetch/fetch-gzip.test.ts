@@ -494,6 +494,34 @@ describe("corrupt compressed responses", () => {
       });
     }
   }
+
+  it("followed redirect with a malformed chunked body rejects fetch()", async () => {
+    // The intermediate 3xx head is not the caller's Response under
+    // redirect:"follow", so a body parse failure there must reject fetch()
+    // rather than resolving with the 302.
+    const srv = createNetServer(sock => {
+      sock.on("error", () => {});
+      sock.end(
+        "HTTP/1.1 302 Found\r\n" +
+          "Location: http://127.0.0.1:1/unreached\r\n" +
+          "Transfer-Encoding: chunked\r\n" +
+          "Connection: close\r\n\r\n" +
+          "ZZ\r\n",
+      );
+    });
+    const port = await listen(srv);
+    try {
+      await expect(fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" })).rejects.toThrow();
+
+      // With redirect:"manual" the 302 *is* the final response.
+      const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("http://127.0.0.1:1/unreached");
+      await expect(res.arrayBuffer()).rejects.toThrow();
+    } finally {
+      srv.close();
+    }
+  });
 });
 
 describe("empty compressed responses", () => {

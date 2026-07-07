@@ -4854,18 +4854,8 @@ impl H2FrameParser {
                         self.remote_window_size.get()
                     );
 
-                    if remote_settings.initial_window_size as u64 >= self.remote_window_size.get() {
-                        for (_, item) in self.streams.get().iter() {
-                            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-                            let stream = unsafe { &mut **item };
-                            if remote_settings.initial_window_size as u64
-                                >= stream.remote_window_size
-                            {
-                                stream.remote_window_size =
-                                    remote_settings.initial_window_size as u64;
-                            }
-                        }
-                    }
+                    // First remote SETTINGS is empty: INITIAL_WINDOW_SIZE stays at the default, so
+                    // the §6.9.2 per-stream delta is zero and no adjustment is needed.
                     let global = self.handlers.get().global();
                     self.dispatch(
                         JSH2FrameParser::Gc::onRemoteSettings,
@@ -4884,6 +4874,11 @@ impl H2FrameParser {
             return 0;
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
+            let old_initial_window = self
+                .remote_settings
+                .get()
+                .map(|s| s.initial_window_size)
+                .unwrap_or(DEFAULT_WINDOW_SIZE as u32);
             let mut remote_settings: FullSettingsPayload =
                 self.remote_settings.get().unwrap_or_default();
             let mut i: usize = 0;
@@ -4956,13 +4951,16 @@ impl H2FrameParser {
                 self.remote_used_window_size.get(),
                 self.remote_window_size.get()
             );
-            if remote_settings.initial_window_size as u64 >= self.remote_window_size.get() {
+            let delta = remote_settings.initial_window_size as i64 - old_initial_window as i64;
+            if delta != 0 {
                 for (_, item) in self.streams.get().iter() {
                     // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
                     let stream = unsafe { &mut **item };
-                    if remote_settings.initial_window_size as u64 >= stream.remote_window_size {
-                        stream.remote_window_size = remote_settings.initial_window_size as u64;
-                    }
+                    stream.remote_window_size = if delta >= 0 {
+                        stream.remote_window_size.saturating_add(delta as u64)
+                    } else {
+                        stream.remote_window_size.saturating_sub((-delta) as u64)
+                    };
                 }
             }
             let global = self.handlers.get().global();
@@ -5590,6 +5588,11 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn on_remote_settings(&self, settings: &crate::api::h2::settings::Settings) {
         // Bridge: the legacy outbound (frame sizing, window init) reads the remote_settings Cell.
+        let old_initial_window = self
+            .remote_settings
+            .get()
+            .map(|s| s.initial_window_size)
+            .unwrap_or(DEFAULT_WINDOW_SIZE as u32);
         let fp = FullSettingsPayload {
             header_table_size: settings.header_table_size,
             enable_push: settings.enable_push,
@@ -5601,14 +5604,20 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             ..Default::default()
         };
         self.remote_settings.set(Some(fp));
-        // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
-        // send window of streams opened before its SETTINGS arrived (a client's first request is
-        // typically sent before the server's SETTINGS lands), then resume queued sends.
-        for (_, item) in self.streams.get().iter() {
-            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
-            if settings.initial_window_size as u64 >= stream.remote_window_size {
-                stream.remote_window_size = settings.initial_window_size as u64;
+        // §6.9.2: a change to INITIAL_WINDOW_SIZE shifts every stream's send window by
+        // (new - old); a decrease can drive the effective window negative. The legacy outbound
+        // tracks (remote_window_size, remote_used_window_size) as cumulative u64 with
+        // available = saturating_sub, so adjust the grant side by the delta.
+        let delta = settings.initial_window_size as i64 - old_initial_window as i64;
+        if delta != 0 {
+            for (_, item) in self.streams.get().iter() {
+                // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
+                let stream = unsafe { &mut **item };
+                stream.remote_window_size = if delta >= 0 {
+                    stream.remote_window_size.saturating_add(delta as u64)
+                } else {
+                    stream.remote_window_size.saturating_sub((-delta) as u64)
+                };
             }
         }
         let _ = self.flush();

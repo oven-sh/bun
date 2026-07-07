@@ -35,12 +35,14 @@ if (!token) {
   process.exit(1);
 }
 
-// One release lane and one asan lane: both are linux-x64-debian-13, which is
-// the lowest-variance runner pool. Other OSes/arches reuse the same relative
-// ordering, so a second per-target dimension is not worth the file size.
+// default + asan are both linux-x64-debian-13 (lowest-variance runner pool);
+// windows gets its own column because process-spawn cost and per-test skip
+// behaviour differ enough from linux to leave 150-300s of shard spread when
+// packed with the linux timings.
 const lanes = {
   default: "linux-x64-debian-13-test-bun",
   asan: "linux-x64-asan-debian-13-test-bun",
+  windows: "windows-x64-2019-test-bun",
 };
 
 const api = path =>
@@ -152,7 +154,7 @@ if (builds.length === 0) {
 console.error(`using builds: ${builds.join(", ")}`);
 
 // lane -> path -> [ms, ...]
-const samples = { default: {}, asan: {} };
+const samples = Object.fromEntries(Object.keys(lanes).map(lane => [lane, {}]));
 for (const b of builds) {
   for (const [lane, step] of Object.entries(lanes)) {
     console.error(`  build ${b} ${lane}`);
@@ -160,7 +162,7 @@ for (const b of builds) {
   }
 }
 
-const paths = new Set([...Object.keys(samples.default), ...Object.keys(samples.asan)]);
+const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
 // Guard the implicit contract with utils.mjs startGroup(): if the group-header
 // format ever changes, parseLog() quietly returns nothing. Fail loudly rather
 // than committing an empty table that would collapse every shard onto shard 0.
@@ -181,8 +183,9 @@ const out = {
 };
 for (const p of [...paths].sort()) {
   const entry = {};
-  if (samples.default[p]?.length) entry.default = median(samples.default[p]);
-  if (samples.asan[p]?.length) entry.asan = median(samples.asan[p]);
+  for (const lane of Object.keys(lanes)) {
+    if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+  }
   out[p] = entry;
 }
 

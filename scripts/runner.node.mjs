@@ -579,16 +579,15 @@ async function runTests() {
   console.log("parallelism", parallelism);
   const limit = pLimit(parallelism);
 
-  // Separate limiter for test paths that are process-parallel safe by naming
-  // convention (js/node/test/parallel/, js/bun/test/parallel/). These are ~2.8k
-  // files with a ~50ms median that spend almost all their wall time in `bun`
-  // startup; running a handful at once overlaps that startup without touching
-  // the serial contract for every other test file. `--parallel` already widens
-  // `limit` above, so that flag supersedes this (everything goes through the
-  // single global limiter). Width is capped so CI shards, which already fan
-  // out across machines, do not oversubscribe a runner. Windows caps lower:
-  // process creation is heavier there and 4-wide surfaced new retry-flakes in
-  // stdin-EPIPE / tight-timeout tests (test-repl-close, test-https-timeout).
+  // Test paths that are process-parallel safe by naming convention
+  // (js/node/test/parallel/, js/bun/test/parallel/): ~2.8k files with a ~50ms
+  // median that spend almost all their wall time in `bun` startup. These run
+  // as a separate N-wide phase AFTER every other test in the shard has
+  // finished, so no parallel-safe process ever overlaps a serial test (an
+  // overlap surfaced new flakes in tight-timeout / port-bind tests such as
+  // dns-tcp-bidirectional-poll and test-https-timeout). `--parallel` already
+  // widens `limit` above and supersedes this split. Windows caps lower
+  // because process creation is heavier there.
   const parallelSafeCap = isWindows ? 2 : 4;
   const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
@@ -596,7 +595,6 @@ async function runTests() {
     const p = testPath.replaceAll("\\", "/");
     return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
   };
-  const limitFor = testPath => (isParallelSafeTest(testPath) ? parallelSafeLimit : limit);
   console.log("parallel-safe width", parallelSafeWidth);
 
   /**
@@ -744,87 +742,86 @@ async function runTests() {
       }
     }
 
-    await Promise.all(
-      tests.map(testPath =>
-        limitFor(testPath)(() => {
-          const absoluteTestPath = join(testsPath, testPath);
-          const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-          const concurrent = isParallelSafeTest(testPath) ? parallelSafeWidth > 1 : parallelism > 1;
-          if (isNodeTest(testPath)) {
-            const testContent = readFileSync(absoluteTestPath, "utf-8");
-            let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
-            // don't wanna have a filter for includes("bun:test") but these need our mocks
-            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
-            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
-            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
-            const subcommand = runWithBunTest ? "test" : "run";
-            const env = {
-              FORCE_COLOR: "0",
-              NO_COLOR: "1",
-              BUN_DEBUG_QUIET_LOGS: "1",
-            };
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
-              env.BUN_JSC_validateExceptionChecks = "1";
-              env.BUN_JSC_dumpSimulatedThrows = "1";
-            }
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
-              env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
-              // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
-            }
-            return runTest(
-              title,
-              async index => {
-                const { ok, error, stdout, crashes } = await spawnBun(execPath, {
-                  cwd: cwd,
-                  args: [
-                    subcommand,
-                    "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
-                    absoluteTestPath,
-                  ],
-                  timeout: getNodeParallelTestTimeout(title),
-                  env: {
-                    ...env,
-                    // test/common/tmpdir.js derives `.tmp.${TEST_SERIAL_ID}` from this;
-                    // a unique value per test file keeps concurrent tmpdir.refresh()
-                    // calls from wiping each other when parallelSafeWidth > 1.
-                    TEST_SERIAL_ID: String(index),
-                  },
-                  stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-                  stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
-                });
-                const mb = 1024 ** 3;
-                let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
-                if (crashes) stdoutPreview += crashes;
-                return {
-                  testPath: title,
-                  ok: ok,
-                  status: ok ? "pass" : "fail",
-                  error: error,
-                  errors: [],
-                  tests: [],
-                  stdout: stdout,
-                  stdoutPreview: stdoutPreview,
-                };
+    const runOneTest = (testPath, concurrent) => {
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+      if (isNodeTest(testPath)) {
+        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
+        // don't wanna have a filter for includes("bun:test") but these need our mocks
+        runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
+        runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
+        runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
+        const subcommand = runWithBunTest ? "test" : "run";
+        const env = {
+          FORCE_COLOR: "0",
+          NO_COLOR: "1",
+          BUN_DEBUG_QUIET_LOGS: "1",
+        };
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+          env.BUN_JSC_validateExceptionChecks = "1";
+          env.BUN_JSC_dumpSimulatedThrows = "1";
+        }
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+          env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+          env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
+          // prettier-ignore
+          env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+        }
+        return runTest(
+          title,
+          async index => {
+            const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+              cwd: cwd,
+              args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
+              timeout: getNodeParallelTestTimeout(title),
+              env: {
+                ...env,
+                // test/common/tmpdir.js derives `.tmp.${TEST_SERIAL_ID}` from this;
+                // a unique value per test file keeps concurrent tmpdir.refresh()
+                // calls from wiping each other when parallelSafeWidth > 1.
+                TEST_SERIAL_ID: String(index),
               },
-              concurrent,
-            );
-          } else {
-            return runTest(
-              title,
-              async () =>
-                spawnBunTest(execPath, join("test", testPath), {
-                  cwd,
-                  stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-                  stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
-                }),
-              concurrent,
-            );
-          }
-        }),
-      ),
-    );
+              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+            });
+            const mb = 1024 ** 3;
+            let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+            if (crashes) stdoutPreview += crashes;
+            return {
+              testPath: title,
+              ok: ok,
+              status: ok ? "pass" : "fail",
+              error: error,
+              errors: [],
+              tests: [],
+              stdout: stdout,
+              stdoutPreview: stdoutPreview,
+            };
+          },
+          concurrent,
+        );
+      } else {
+        return runTest(
+          title,
+          async () =>
+            spawnBunTest(execPath, join("test", testPath), {
+              cwd,
+              stdout: concurrent ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+              stderr: concurrent ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+            }),
+          concurrent,
+        );
+      }
+    };
+
+    // Phase 1: every non-parallel-safe test, one at a time (or `--parallel`
+    // wide). Phase 2: the parallel-safe set, N-wide. The phases do not
+    // overlap so a parallel-safe process never contends with a serial test.
+    const serialTests = tests.filter(t => !isParallelSafeTest(t));
+    const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
+    await Promise.all(serialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
   }
 
   if (vendorTests?.length) {
@@ -2121,10 +2118,11 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     let durations = {};
     try {
       const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
-      const lane = (options["step"] || "").includes("asan") ? "asan" : "default";
+      const step = options["step"] || "";
+      const lane = step.includes("asan") ? "asan" : isWindows || step.includes("windows") ? "windows" : "default";
       for (const [path, entry] of Object.entries(raw)) {
         if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan;
+        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.windows;
         if (typeof ms === "number") durations[path] = ms;
       }
     } catch (e) {

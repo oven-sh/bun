@@ -24,7 +24,6 @@ export const prestartMap = {
   "js/bun/s3/": ["minio"],
   "js/web/websocket/autobahn": ["autobahn"],
   "js/web/websocket/websocket-proxy": ["squid"],
-  "cli/install/bun-install-proxy": ["squid"],
   "integration/mysql2/": ["mysql_plain", "mysql_native_password"],
   "regression/issue/21311": ["postgres_plain"],
   "regression/issue/24850": ["mysql_plain"],

@@ -247,7 +247,10 @@ describe("zlib.brotli", () => {
 
   it("streaming encode doesn't wait for entire input", async () => {
     const readStream = new stream.Readable();
-    const brotliStream = zlib.createBrotliCompress();
+    // Quality 4: the test asserts the transform emits multiple output chunks
+    // rather than buffering, which is quality-independent; the default (11)
+    // pushes 8 MB of random input past the 15s budget on a contended runner.
+    const brotliStream = zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } });
     let all = [];
 
     const { promise, resolve, reject } = Promise.withResolvers();

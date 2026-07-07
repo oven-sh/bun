@@ -1,15 +1,42 @@
 import { beforeAll, it } from "bun:test";
+import { exec } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { ensure } from "../../docker/index.ts";
-
-// Published host port for the shared squid service; resolved in beforeAll.
-let SQUID_URL: string;
+import { promisify } from "util";
+const execAsync = promisify(exec);
+const dockerCLI = dockerExe() as string;
+const SQUID_URL = "http://127.0.0.1:3128";
 if (isDockerEnabled()) {
   beforeAll(async () => {
-    const info = await ensure("squid");
-    SQUID_URL = `http://${info.host}:${info.ports[3128]}`;
+    async function isSquidRunning() {
+      const text = await fetch(SQUID_URL)
+        .then(res => res.text())
+        .catch(() => {});
+      return text?.includes("squid") ?? false;
+    }
+    if (!(await isSquidRunning())) {
+      // try to create or error if is already created
+      await execAsync(
+        `${dockerCLI} run -d --name squid-container -e TZ=UTC -p 3128:3128 ubuntu/squid:5.2-22.04_beta`,
+      ).catch(() => {});
+
+      async function waitForSquid(max_wait = 60_000) {
+        const start = Date.now();
+        while (true) {
+          if (await isSquidRunning()) {
+            return;
+          }
+          if (Date.now() - start > max_wait) {
+            throw new Error("Squid did not start in time");
+          }
+
+          await Bun.sleep(1000);
+        }
+      }
+      // wait for squid to start
+      await waitForSquid();
+    }
   });
 
   it("bun install with proxy with big packages", async () => {

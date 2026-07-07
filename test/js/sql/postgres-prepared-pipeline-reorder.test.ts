@@ -95,10 +95,6 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const b = sql`SELECT 'B'::text AS v`.simple();
     const c = sql`SELECT ${"C"}::text AS v`;
 
-    expect(await Promise.all([a, b, c])).toEqual([
-      [{ v: "A" }],
-      [{ v: "B" }],
-      [{ v: "C" }],
-    ]);
+    expect(await Promise.all([a, b, c])).toEqual([[{ v: "A" }], [{ v: "B" }], [{ v: "C" }]]);
   });
 });

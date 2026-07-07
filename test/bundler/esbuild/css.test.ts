@@ -1253,9 +1253,7 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(
-        /* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`,
-      );
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
     },
   });
 

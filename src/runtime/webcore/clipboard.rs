@@ -571,11 +571,22 @@ mod platform {
     }
 
     /// Extracts the fragment of a `CF_HTML` payload; other producers wrote
-    /// it, so the offsets are validated rather than trusted.
+    /// it, so the offsets are validated rather than trusted, falling back to
+    /// the fragment comment markers some producers get right instead.
     fn cf_html_fragment(payload: &[u8]) -> Option<Vec<u8>> {
-        let start = cf_html_offset(payload, b"StartFragment:")?;
-        let end = cf_html_offset(payload, b"EndFragment:")?;
-        (start <= end && end <= payload.len()).then(|| payload[start..end].to_vec())
+        if let (Some(start), Some(end)) = (
+            cf_html_offset(payload, b"StartFragment:"),
+            cf_html_offset(payload, b"EndFragment:"),
+        ) && start <= end
+            && end <= payload.len()
+        {
+            return Some(payload[start..end].to_vec());
+        }
+        const START_MARK: &[u8] = b"<!--StartFragment-->";
+        const END_MARK: &[u8] = b"<!--EndFragment-->";
+        let start = bun_core::strings::index_of(payload, START_MARK)? + START_MARK.len();
+        let end = start + bun_core::strings::index_of(&payload[start..], END_MARK)?;
+        Some(payload[start..end].to_vec())
     }
 
     /// `OpenClipboard` is system-wide exclusive, so a single attempt fails
@@ -654,12 +665,13 @@ mod platform {
                 return Ok(Some(bytes));
             }
             // "HTML Format" payloads are NUL-padded UTF-8 with an offset
-            // header; hand back just the fragment.
+            // header; an envelope we cannot parse is not a usable
+            // representation, so it reads as absent.
             let end = bytes
                 .iter()
                 .position(|&byte| byte == 0)
                 .unwrap_or(bytes.len());
-            return Ok(Some(cf_html_fragment(&bytes[..end]).unwrap_or(bytes)));
+            return Ok(cf_html_fragment(&bytes[..end]));
         }
         Ok(None)
     }

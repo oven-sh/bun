@@ -250,9 +250,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
     WTF::String str = decodedValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    // TODO: only check "0". Node doesn't check both. But we already did. So we
-    // should wait to do that until Bun v1.2.0.
-    if (str == "0"_s || str == "false"_s) {
+    if (str == "0"_s) {
         Bun__setTLSRejectUnauthorizedValue(0);
     } else {
         Bun__setTLSRejectUnauthorizedValue(1);

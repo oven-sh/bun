@@ -1638,7 +1638,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       server.on("clientError", (err: any, socket) => {
         replyBadRequest(socket);
         try {
-          expect(err.code).toBe("HPE_INTERNAL");
+          expect(err.code).toBe("HPE_INVALID_CHUNK_SIZE");
           resolve();
         } catch (err) {
           reject(err);
@@ -1667,7 +1667,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       server.on("clientError", (err: any, socket) => {
         replyBadRequest(socket);
         try {
-          expect(err.code).toBe("HPE_INTERNAL");
+          expect(err.code).toBe("HPE_INVALID_CHUNK_SIZE");
           resolve();
         } catch (err) {
           reject(err);

@@ -209,9 +209,7 @@ test("createServer({maxHeaderSize:0}) still bounds trailer section", async () =>
   const err = await promise;
   clearTimeout(timer);
   socket.destroy();
-  // Tightened to HPE_HEADER_OVERFLOW once the trailer-overflow error code is
-  // wired distinctly (currently reported as HPE_INTERNAL).
-  expect(err.code).toMatch(/^HPE_/);
+  expect(err.code).toBe("HPE_HEADER_OVERFLOW");
 });
 
 test("pipelined non-chunked request does not read prior request's trailers", async () => {

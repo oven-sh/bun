@@ -74,6 +74,45 @@ function tlsStringToProtocolVersion(v) {
   }
 }
 
+// Matches Node: SSLv2/SSLv3 methods are disabled, anything unrecognized is an
+// unknown method (THROW_ERR_TLS_INVALID_PROTOCOL_METHOD in
+// src/crypto/crypto_context.cc SecureContext::Init).
+let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
+function validateSecureProtocol(secureProtocol) {
+  if (secureProtocol === undefined || secureProtocol === null) return;
+  if (typeof secureProtocol !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
+  }
+  let message: string | undefined;
+  if (secureProtocol.startsWith("SSLv2_")) message = "SSLv2 methods disabled";
+  else if (secureProtocol.startsWith("SSLv3_")) message = "SSLv3 methods disabled";
+  else {
+    _SECURE_PROTOCOL_METHODS ??= new Set([
+      "TLS_method",
+      "TLS_client_method",
+      "TLS_server_method",
+      "SSLv23_method",
+      "SSLv23_client_method",
+      "SSLv23_server_method",
+      "TLSv1_method",
+      "TLSv1_client_method",
+      "TLSv1_server_method",
+      "TLSv1_1_method",
+      "TLSv1_1_client_method",
+      "TLSv1_1_server_method",
+      "TLSv1_2_method",
+      "TLSv1_2_client_method",
+      "TLSv1_2_server_method",
+    ]);
+    if (!_SECURE_PROTOCOL_METHODS.has(secureProtocol)) message = `Unknown method: ${secureProtocol}`;
+  }
+  if (message !== undefined) {
+    const error = new TypeError(message);
+    error.code = "ERR_TLS_INVALID_PROTOCOL_METHOD";
+    throw error;
+  }
+}
+
 // Node's legacy secureProtocol string pins both bounds to a single version
 // (e.g. 'TLSv1_2_method'); 'TLS_method'/'SSLv23_method' leave the range open.
 // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L120
@@ -151,4 +190,5 @@ export {
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
+  validateSecureProtocol,
 };

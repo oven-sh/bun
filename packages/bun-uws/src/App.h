@@ -773,10 +773,11 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser) {
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
         httpContext->getSocketContextData()->flags.useInsecureHTTPParser = useInsecureHTTPParser;
+        httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
         return std::move(*this);
     }
 

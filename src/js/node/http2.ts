@@ -6193,7 +6193,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // the socket to the HTTP/1 connection listener.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
-  const { HTTPParser } = require("node:_http_common");
+  const { HTTPParser, prepareError } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
@@ -6236,21 +6236,7 @@ function connectionListenerHTTP1(server, socket, options) {
     req.url = url;
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
-    req.rawHeaders = rawHeaders;
-    const headers = {};
-    for (let i = 0; i < rawHeaders.length; i += 2) {
-      const name = rawHeaders[i].toLowerCase();
-      const value = rawHeaders[i + 1];
-      const existing = headers[name];
-      if (existing === undefined) {
-        headers[name] = name === "set-cookie" ? [value] : value;
-      } else if (name === "set-cookie") {
-        existing.push(value);
-      } else if (name !== "content-length" && name !== "host") {
-        headers[name] = `${existing}, ${value}`;
-      }
-    }
-    req.headers = headers;
+    req._addHeaderLines(rawHeaders, rawHeaders.length);
     // The body is fed by the parser callbacks below; reading just resumes the socket.
     req._read = function (_size) {
       if (socket.readable) socket.resume();
@@ -6286,19 +6272,31 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   };
 
+  function onHttp1SocketError(err, rawPacket) {
+    // Match Node's http _connectionListener: attach err.rawPacket and, when no
+    // 'clientError' listener is present, write the same raw error response
+    // Node's socketOnError does before destroying.
+    prepareError(err, parser, rawPacket);
+    if (!server.emit("clientError", err, socket)) {
+      if (socket.writable && !socket.destroyed) {
+        const code = err?.code;
+        socket.write(
+          code === "HPE_HEADER_OVERFLOW"
+            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+            : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+          "latin1",
+        );
+      }
+      socket.destroy(err);
+    }
+  }
   socket.on("data", data => {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
-      if (!server.emit("clientError", ret, socket)) {
-        socket.destroy(ret);
-      }
+      onHttp1SocketError(ret, data);
     }
   });
-  socket.on("error", function onHttp1SocketError(error) {
-    if (!server.emit("clientError", error, socket)) {
-      this.destroy(error);
-    }
-  });
+  socket.on("error", err => onHttp1SocketError(err, undefined));
   socket.once("close", () => {
     connections.delete(socket);
     try {

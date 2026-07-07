@@ -176,10 +176,10 @@ JSC::JSValue JSNodeHTTPServerSocket::takeRequestTrailers(JSC::JSGlobalObject* gl
 }
 
 template<bool SSL>
-static void setResponseTrailersImpl(us_socket_t* socket, const WTF::CString& trailers)
+static std::string& responseTrailersFor(us_socket_t* socket)
 {
     auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
-    httpResponseData->nodeHttpResponseTrailers.assign(trailers.data(), trailers.length());
+    return httpResponseData->nodeHttpResponseTrailers;
 }
 
 void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
@@ -187,11 +187,19 @@ void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
     if (!socket || us_socket_is_closed(socket) || trailers.isEmpty()) {
         return;
     }
-    WTF::CString utf8 = trailers.utf8();
-    if (is_ssl) {
-        setResponseTrailersImpl<true>(socket, utf8);
+    // Node writes trailers with encoding 'latin1' (lib/_http_outgoing.js);
+    // checkInvalidHeaderChar has already rejected any code point > 0xFF,
+    // so 16-bit chars truncate 1:1 to bytes. UTF-8 would emit two bytes for
+    // obs-text (0x80–0xFF) where Node emits one.
+    std::string& dest = is_ssl ? responseTrailersFor<true>(socket) : responseTrailersFor<false>(socket);
+    dest.resize(trailers.length());
+    if (trailers.is8Bit()) {
+        auto span = trailers.span8();
+        memcpy(dest.data(), span.data(), span.size());
     } else {
-        setResponseTrailersImpl<false>(socket, utf8);
+        auto span = trailers.span16();
+        for (size_t i = 0; i < span.size(); i++)
+            dest[i] = static_cast<char>(span[i]);
     }
 }
 

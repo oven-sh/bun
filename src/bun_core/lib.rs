@@ -1176,7 +1176,8 @@ pub mod time {
     // Defined in `util::time`; re-exported so `bun_core::time::*` resolves uniformly.
     pub use crate::util::time::{
         MS_PER_DAY, MS_PER_S, NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US,
-        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp, nano_timestamp, timestamp,
+        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp,
+        milli_timestamp_allow_mocked_time, nano_timestamp, timestamp,
     };
 
     #[derive(Clone, Copy)]

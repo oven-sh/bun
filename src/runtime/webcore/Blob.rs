@@ -2067,9 +2067,18 @@ impl BlobExt for Blob {
         // The W3C relative-start/end clamp below needs the real size. For a
         // lazy `Bun.file()` the size is still the `MAX_SIZE` sentinel, so
         // negative `end` (and `start`) would be computed against that and
-        // over/under-read. Resolve now, same as `.size` does.
+        // over/under-read. Resolve now, same as `.size` does. A non-seekable
+        // file (pipe, FIFO) has no meaningful size; on macOS fstat reports the
+        // currently-buffered byte count there, which must not cap the slice.
         if self.size.get() == MAX_SIZE && self.needs_to_read_file() {
             self.resolve_size();
+            if let Some(store) = self.store.get() {
+                if let store::Data::File(file) = store.data_mut() {
+                    if file.seekable == Some(false) {
+                        self.size.set(MAX_SIZE);
+                    }
+                }
+            }
         }
 
         // No `size == 0` early return: the clamp below already yields

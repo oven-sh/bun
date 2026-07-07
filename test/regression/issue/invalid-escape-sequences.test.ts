@@ -204,6 +204,28 @@ test("invalid \\u{ followed by multi-byte codepoint does not panic (#30893)", as
   expect(exitCode).toBe(1);
 });
 
+// https://github.com/oven-sh/bun/issues/30825
+// A `\u{...}` escape with enough hex digits to overflow i64 used to panic
+// the debug lexer (`attempt to multiply with overflow`). It must report
+// the out-of-range error instead of crashing.
+test("Out-of-range \\u{} escape sequence reports a range error", async () => {
+  using dir = tempDir("escape-test", {
+    "test.js": `\\u{3333333316aaaaaaa}a`,
+  });
+
+  const { stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), join(dir, "test.js")],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+    cwd: String(dir),
+  });
+
+  const err = stderr.toString();
+  expect(err).toContain("Unicode escape sequence is out of range");
+  expect(exitCode).toBe(1);
+});
+
 test("Valid unicode escapes in identifiers should work", async () => {
   // Test valid \u escape with 4 hex digits
   {

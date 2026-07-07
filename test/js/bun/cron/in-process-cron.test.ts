@@ -2,6 +2,14 @@ import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
+// Snippet prepended to subprocess/worker bodies so they can fire a cron
+// deterministically without waiting for a real minute boundary.
+const mockClock = `
+  const { jest } = require("bun:test");
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+`;
+
 describe("Bun.cron (in-process)", () => {
   test("validates cron expression", () => {
     expect(() => Bun.cron("invalid expr", () => {})).toThrow(/Invalid cron expression/);
@@ -80,47 +88,17 @@ describe("Bun.cron (in-process)", () => {
     expect(job.cron).toBe("0 9 * JAN-DEC MON-FRI");
   });
 
-  test("keeps process alive by default; unref() allows exit", async () => {
-    // ref'd: process stays alive (would block forever), so we spawn with timeout via cron
-    // unref'd: process exits immediately
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const job = Bun.cron("* * * * *", () => {});
-        job.unref();
-        console.log("scheduled");
-      `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(normalizeBunSnapshot(stdout)).toBe("scheduled");
-    expect(exitCode).toBe(0);
+  test("distinguishes callback overload from OS-level overload", () => {
+    // Callable 2nd arg → in-process; 3-string-arg → OS-level.
+    // We only verify the callback path here; the string path is covered elsewhere.
+    using job = Bun.cron("* * * * *", () => {});
+    // CronJob has stop(); Promise would not
+    expect(typeof job.stop).toBe("function");
+    expect(job).not.toBeInstanceOf(Promise);
   });
+});
 
-  test("ref'd job prevents process exit", async () => {
-    // The cron keeps the loop alive; we stop it after a short delay to let the process exit.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const job = Bun.cron("* * * * *", () => {});
-        console.log("scheduled");
-        setTimeout(() => { job.stop(); console.log("stopped"); }, 50);
-      `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(normalizeBunSnapshot(stdout)).toBe("scheduled\nstopped");
-    expect(exitCode).toBe(0);
-  });
-
+describe("Bun.cron (in-process) — firing under fake timers", () => {
   test("honors jest fake timers", () => {
     jest.useFakeTimers();
     try {
@@ -163,70 +141,112 @@ describe("Bun.cron (in-process)", () => {
     }
   });
 
-  test("distinguishes callback overload from OS-level overload", () => {
-    // Callable 2nd arg → in-process; 3-string-arg → OS-level.
-    // We only verify the callback path here; the string path is covered elsewhere.
-    using job = Bun.cron("* * * * *", () => {});
-    // CronJob has stop(); Promise would not
-    expect(typeof job.stop).toBe("function");
-    expect(job).not.toBeInstanceOf(Promise);
+  test("callback fires at minute boundary, this === job", () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      let fired = 0;
+      let thisInCallback: unknown;
+      const job = Bun.cron("* * * * *", function () {
+        fired++;
+        thisInCallback = this;
+      });
+      jest.advanceTimersByTime(60_000);
+      expect(fired).toBe(1);
+      expect(thisInCallback).toBe(job);
+      job.stop();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("async callback: stop() during await prevents reschedule", async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      let fires = 0;
+      const handler = Promise.withResolvers<void>();
+      const fire = Promise.withResolvers<void>();
+
+      const job = Bun.cron("* * * * *", async () => {
+        fires++;
+        fire.resolve();
+        await handler.promise;
+      });
+
+      jest.advanceTimersByTime(60_000);
+      await fire.promise;
+      expect(fires).toBe(1);
+      job.stop();
+      handler.resolve();
+      await Promise.resolve();
+      // After the async callback settles, stop() should have prevented the re-arm.
+      jest.advanceTimersByTime(120_000);
+      expect(fires).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("unreferenced running job survives GC", () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      let fired = 0;
+      // No local binding: the JS wrapper is immediately unreachable.
+      Bun.cron("* * * * *", () => void fired++).unref();
+      Bun.gc(true);
+      Bun.gc(true);
+      jest.advanceTimersByTime(60_000);
+      expect(fired).toBe(1);
+      // jest.useRealTimers() drains the fake heap, cancelling the re-armed timer.
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
-describe.concurrent("Bun.cron (in-process) — firing", () => {
-  test("callback fires at minute boundary, this === job", async () => {
-    let fired = 0;
-    let thisInCallback: unknown;
-    const { promise, resolve } = Promise.withResolvers<void>();
-
-    using job = Bun.cron("* * * * *", function () {
-      fired++;
-      thisInCallback = this;
-      resolve();
-    });
-
-    await promise;
-    expect(fired).toBe(1);
-    expect(thisInCallback).toBe(job);
-  }, 70_000);
-
-  test("async callback: stop() during await prevents reschedule", async () => {
-    let fires = 0;
-    const handler = Promise.withResolvers<void>();
-    const fire = Promise.withResolvers<void>();
-
-    using job = Bun.cron("* * * * *", async () => {
-      fires++;
-      fire.resolve();
-      await handler.promise;
-    });
-
-    await fire.promise;
-    expect(fires).toBe(1);
-    job.stop();
-    handler.resolve();
-    await Promise.resolve();
-    expect(fires).toBe(1);
-  }, 70_000);
-
-  test("unreferenced running job survives GC", async () => {
+describe.concurrent("Bun.cron (in-process) — subprocess", () => {
+  test("keeps process alive by default; unref() allows exit", async () => {
+    // ref'd: process stays alive (would block forever), so we spawn with timeout via cron
+    // unref'd: process exits immediately
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        Bun.cron("* * * * *", () => { console.log("fired"); process.exit(0); });
-        Bun.gc(true);
-        Bun.gc(true);
+        const job = Bun.cron("* * * * *", () => {});
+        job.unref();
+        console.log("scheduled");
       `,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("fired");
+    expect(normalizeBunSnapshot(stdout)).toBe("scheduled");
     expect(exitCode).toBe(0);
-  }, 70_000);
+  });
+
+  test("ref'd job prevents process exit", async () => {
+    // The cron keeps the loop alive; we stop it after a short delay to let the process exit.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const job = Bun.cron("* * * * *", () => {});
+        console.log("scheduled");
+        setTimeout(() => { job.stop(); console.log("stopped"); }, 50);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toBe("scheduled\nstopped");
+    expect(exitCode).toBe(0);
+  });
 
   test("ref() after stop() does not keep process alive", async () => {
     await using proc = Bun.spawn({
@@ -248,15 +268,128 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("sync throw in callback emits uncaughtException", async () => {
+    // Matches setTimeout: sync throw → uncaughtException. Process exits 1 without a handler.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        mockClock +
+          `
+        let caught;
+        process.on("uncaughtException", e => { caught = e.message; });
+        const job = Bun.cron("* * * * *", () => { throw new Error("sync-boom"); });
+        jest.advanceTimersByTime(60_000);
+        job.stop();
+        console.log("caught=" + caught);
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("caught=sync-boom");
+    expect(exitCode).toBe(0);
+  });
+
+  test("async throw in callback emits unhandledRejection", async () => {
+    // Matches setTimeout: rejected promise → unhandledRejection.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        mockClock +
+          `
+        process.on("unhandledRejection", (e, p) => {
+          console.log("caught=" + e.message + ":" + (p instanceof Promise));
+          process.exit(0);
+        });
+        const job = Bun.cron("* * * * *", async () => {
+          await Bun.sleep(1);
+          throw new Error("async-boom");
+        });
+        jest.advanceTimersByTime(60_000);
+        // Bun.sleep is itself a mocked timer; resolve it so the callback rejects
+        // after on_timer_fire has returned (exercises the pending .then() path).
+        jest.advanceTimersByTime(100);
+        job.stop();
+        jest.useRealTimers();
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("caught=async-boom:true");
+    expect(exitCode).toBe(0);
+  });
+
+  test("stop() while async callback pending still surfaces unhandledRejection with promise", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        mockClock +
+          `
+        process.on("unhandledRejection", (e, p) => {
+          console.log("caught=" + e.message + ":" + (p instanceof Promise));
+          process.exit(0);
+        });
+        let job = Bun.cron("* * * * *", async () => {
+          job.stop();
+          job = null;
+          Bun.gc(true);
+          Bun.gc(true);
+          await Bun.sleep(10);
+          throw new Error("after-stop");
+        });
+        jest.advanceTimersByTime(60_000);
+        // on_timer_fire has returned; the wrapper is now only kept alive by
+        // pending_ref. GC again, then resolve the Bun.sleep so the callback rejects.
+        Bun.gc(true);
+        jest.advanceTimersByTime(100);
+        jest.useRealTimers();
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("caught=after-stop:true");
+    expect(exitCode).toBe(0);
+  });
+
+  test("unhandled cron error exits process like setTimeout does", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        mockClock +
+          `
+        Bun.cron("* * * * *", () => { throw new Error("boom"); });
+        jest.advanceTimersByTime(60_000);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("boom");
+    expect(exitCode).toBe(1);
+  });
+
   test("worker terminate while async callback pending releases cleanly", async () => {
     using dir = tempDir("cron-worker", {
-      "worker.ts": `
-        let fired = false;
+      "worker.ts":
+        mockClock +
+        `
         Bun.cron("* * * * *", async () => {
-          fired = true;
           self.postMessage("fired");
           await new Promise(() => {}); // never settles
         });
+        jest.advanceTimersByTime(60_000);
       `,
     });
     // Wait for "close" before forcing GC so main-VM destruct-on-exit (ASAN
@@ -283,7 +416,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     if (exitCode !== 0) console.error(stderr);
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
-  }, 130_000);
+  });
 
   test("worker terminate mid-callback does not report TerminationException as uncaught", async () => {
     // The callback busy-spins after postMessage so terminate() interrupts
@@ -291,17 +424,20 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     // When the VMEntryScope unwinds, JSC clears hasTerminationRequest but
     // leaves the exception pending; cron's catch block must not hand that to
     // uncaughtException(), or the lazy process-object init asserts in
-    // VMTraps::deferTerminationSlow. Use several workers so the timing lines
-    // up at least once per minute-boundary.
+    // VMTraps::deferTerminationSlow. Fake timers make the fire deterministic
+    // so a handful of workers is enough.
     using dir = tempDir("cron-worker-term", {
-      "worker.ts": `
+      "worker.ts":
+        mockClock +
+        `
         Bun.cron("* * * * *", () => {
           self.postMessage("fired");
           while (true) { for (let i = 0; i < 1e6; i++); }
         });
+        jest.advanceTimersByTime(60_000);
       `,
       "main.ts": `
-        const N = 20;
+        const N = 4;
         let closed = 0, errors = 0;
         for (let i = 0; i < N; i++) {
           const w = new Worker("./worker.ts");
@@ -327,101 +463,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     if (exitCode !== 0) console.error(stderr);
     expect(stdout.trim()).toBe("errors=0");
     expect(exitCode).toBe(0);
-  }, 130_000);
-
-  test("sync throw in callback emits uncaughtException", async () => {
-    // Matches setTimeout: sync throw → uncaughtException. Process exits 1 without a handler.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        let caught;
-        process.on("uncaughtException", e => { caught = e.message; });
-        const job = Bun.cron("* * * * *", () => {
-          setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
-          throw new Error("sync-boom");
-        });
-      `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("caught=sync-boom");
-    expect(exitCode).toBe(0);
-  }, 130_000);
-
-  test("async throw in callback emits unhandledRejection", async () => {
-    // Matches setTimeout: rejected promise → unhandledRejection.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        let caught;
-        process.on("unhandledRejection", (e, p) => { caught = e.message + ":" + (p instanceof Promise); });
-        const job = Bun.cron("* * * * *", async () => {
-          setTimeout(() => { job.stop(); console.log("caught=" + caught); process.exit(0); }, 100);
-          await Bun.sleep(1);
-          throw new Error("async-boom");
-        });
-      `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("caught=async-boom:true");
-    expect(exitCode).toBe(0);
-  }, 130_000);
-
-  test("stop() while async callback pending still surfaces unhandledRejection with promise", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        process.on("unhandledRejection", (e, p) => {
-          console.log("caught=" + e.message + ":" + (p instanceof Promise));
-          process.exit(0);
-        });
-        let job = Bun.cron("* * * * *", async () => {
-          job.stop();
-          job = null;
-          Bun.gc(true);
-          Bun.gc(true);
-          await Bun.sleep(10);
-          throw new Error("after-stop");
-        });
-      `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("caught=after-stop:true");
-    expect(exitCode).toBe(0);
-  }, 70_000);
-
-  test("unhandled cron error exits process like setTimeout does", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        Bun.cron("* * * * *", () => { throw new Error("boom"); });
-        setTimeout(() => console.log("still alive"), 61000);
-      `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("");
-    expect(stderr).toContain("boom");
-    expect(exitCode).toBe(1);
-  }, 70_000);
+  });
 
   test("--hot reload clears jobs deleted from source", async () => {
     // Markers live OUTSIDE the --hot-watched dir so inotify doesn't deliver
@@ -429,15 +471,13 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     using markers = tempDir("cron-hot-markers", {});
     const m = (f: string) => join(String(markers), f);
     using dir = tempDir("cron-hot", {
-      "app.ts": `
+      "app.ts":
+        mockClock +
+        `
         import { writeFileSync, existsSync } from "node:fs";
         const m = process.env.MARKERS;
         writeFileSync(m + "/v1.evaluated", "");
-        // A fire before the v2 reload is legitimate (not a ghost) — only
-        // write the marker if v2 has already evaluated.
-        Bun.cron("* * * * *", () => {
-          if (existsSync(m + "/v2.evaluated")) writeFileSync(m + "/ghost.fired", "");
-        });
+        Bun.cron("* * * * *", () => writeFileSync(m + "/ghost.fired", ""));
       `,
     });
 
@@ -459,18 +499,19 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
 
     await waitFor("v1.evaluated");
 
-    // Delete the ghost cron; replace with a sentinel that fires on the same
-    // boundary. When the sentinel fires, ghost.fired must NOT exist.
+    // Delete the ghost cron; advance the fake clock past its fire time.
+    // If clear_all_for_vm(.reload) did not remove v1's cron from the fake
+    // heap, advanceTimersByTime would fire it and ghost.fired would exist.
     await Bun.write(
       join(String(dir), "app.ts"),
       `
         import { writeFileSync, existsSync } from "node:fs";
+        const { jest } = require("bun:test");
         const m = process.env.MARKERS;
         writeFileSync(m + "/v2.evaluated", "");
-        Bun.cron("* * * * *", () => {
-          writeFileSync(m + "/result", existsSync(m + "/ghost.fired") ? "GHOST_FIRED" : "ok");
-          process.exit(0);
-        });
+        jest.advanceTimersByTime(120_000);
+        writeFileSync(m + "/result", existsSync(m + "/ghost.fired") ? "GHOST_FIRED" : "ok");
+        process.exit(0);
       `,
     );
 
@@ -481,5 +522,5 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(exitCode).toBe(0);
     expect(await Bun.file(m("result")).text()).toBe("ok");
     expect(await Bun.file(m("ghost.fired")).exists()).toBe(false);
-  }, 130_000);
+  });
 });

@@ -1550,8 +1550,6 @@ X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
         }
         return CheckMatch::MATCH;
     }
-    case -2:
-        return CheckMatch::INVALID_NAME;
     default:
         return CheckMatch::OPERATION_FAILED;
     }
@@ -1571,8 +1569,6 @@ X509View::CheckMatch X509View::checkEmail(const std::span<const char> email,
         return CheckMatch::NO_MATCH;
     case 1:
         return CheckMatch::MATCH;
-    case -2:
-        return CheckMatch::INVALID_NAME;
     default:
         return CheckMatch::OPERATION_FAILED;
     }

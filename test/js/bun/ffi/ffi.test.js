@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibcVersionAtLeast, tempDir } from "harness";
 import { platform } from "os";
 
 import {

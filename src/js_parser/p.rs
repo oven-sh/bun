@@ -621,13 +621,33 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub decorator_class_name: Option<&'a [u8]>,
 
-    /// `bundle || minify_identifiers || tree_shaking || hot_module_reloading`.
-    /// When false, the per-part `symbol_uses` map and `declared_symbols` list
-    /// are never read by the printer or any later pass, so `record_usage` /
-    /// `record_declared_symbol` skip populating them. The per-symbol
+    /// `bundle || minify_identifiers || hot_module_reloading` — the three
+    /// consumers of the per-part `symbol_uses` map: `MinifyRenamer::
+    /// accumulate_symbol_use_counts`, `LinkerGraph`, and `ConvertESMExportsForHmr`.
+    /// When false, `record_usage` skips the map. The per-symbol
     /// `use_count_estimate` is always maintained — TS unused-import dropping
     /// and `__dirname`/`__filename`/`module` detection read it unconditionally.
+    ///
+    /// `tree_shaking` is deliberately *not* here. It adds no reader of the map
+    /// itself; it only splits the file into one part per top-level statement,
+    /// which makes `clear_symbol_usages_from_dead_part` reachable. That revert
+    /// needs a per-part list of what was counted, not a `Ref`-keyed hash map —
+    /// see [`Self::part_use_log`].
     pub track_symbol_usage: bool,
+
+    /// Append-only record of every `Ref` counted into `use_count_estimate` while
+    /// visiting the current part. Maintained instead of `symbol_uses` when
+    /// `tree_shaking && !track_symbol_usage`, solely so `append_part` can revert
+    /// the counts of a part that visits down to zero statements
+    /// (`const a = 1; a;` — the bare-identifier statement is dropped by
+    /// `SideEffects::simplify_unused_expr` *after* its use was recorded).
+    /// Duplicates are intentional: the revert subtracts one per entry.
+    pub part_use_log: BumpVec<'a, Ref>,
+
+    /// `tree_shaking && !track_symbol_usage` — maintain [`Self::part_use_log`]
+    /// and `declared_symbols` (both plain list appends) without paying for the
+    /// `Ref`-keyed `symbol_uses` hash map.
+    pub log_part_uses: bool,
 
     /// Set in `prepare_for_visit_pass` when the visit-pass `EIdentifier` arm
     /// would be a no-op for printed output: no symbol-usage tracking, no
@@ -1779,6 +1799,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable")
                     .value_ptr
                     .count_estimate += 1;
+            } else if self.log_part_uses {
+                self.part_use_log.push(ref_);
             }
         }
 
@@ -5324,6 +5346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This is reusable if the last part turned out to be dead
         self.symbol_uses.clear_retaining_capacity();
         self.declared_symbols.clear_retaining_capacity();
+        self.part_use_log.clear();
         self.scopes_for_current_part.clear();
         self.import_records_for_current_part.clear();
         self.import_symbol_property_uses.clear_retaining_capacity();
@@ -5427,14 +5450,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `symbol_uses` / `import_symbol_property_uses` were already reset
             // to empty by `core::mem::take` above; no second assignment needed.
             self.had_commonjs_named_exports_this_visit = false;
-        } else if self.declared_symbols.len() > 0 || self.symbol_uses.count() > 0 {
+        } else if self.declared_symbols.len() > 0
+            || self.symbol_uses.count() > 0
+            || !self.part_use_log.is_empty()
+        {
             // if the part is dead, invalidate all the usage counts
+            let symbols = self.symbols.as_mut_slice();
+            for r#ref in self.part_use_log.iter() {
+                let slot = &mut symbols[r#ref.inner_index() as usize].use_count_estimate;
+                *slot = slot.saturating_sub(1);
+            }
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
                 declared_symbols: self.declared_symbols.clone()?,
                 symbol_uses: self.symbol_uses.clone()?,
                 ..Default::default()
             });
             self.declared_symbols.clear_retaining_capacity();
+            self.part_use_log.clear();
             self.import_records_for_current_part.clear();
         }
         Ok(())
@@ -6247,6 +6279,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .use_count_estimate
                 .saturating_sub(1);
             if !self.track_symbol_usage {
+                if self.log_part_uses {
+                    // Drop one logged occurrence so the dead-part revert in
+                    // `append_part` does not subtract this use a second time.
+                    // Mirrors the `symbol_uses` decrement below, including the
+                    // no-op when the ref was recorded in an earlier part.
+                    // Scanning from the end is what keeps this O(1): every
+                    // caller ignores a use that the same visit just recorded.
+                    if let Some(i) = self.part_use_log.iter().rposition(|r| r.eql(r#ref)) {
+                        self.part_use_log.swap_remove(i);
+                    }
+                }
                 return;
             }
             let Some(mut use_) = self.symbol_uses.get(&r#ref).copied() else {
@@ -9073,10 +9116,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             false
         };
 
-        let track_symbol_usage = opts.bundle
-            || opts.features.minify_identifiers
-            || opts.tree_shaking
-            || opts.features.hot_module_reloading;
+        let track_symbol_usage =
+            opts.bundle || opts.features.minify_identifiers || opts.features.hot_module_reloading;
+        let log_part_uses = opts.tree_shaking && !track_symbol_usage;
 
         let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
         if opts.features.top_level_await || SCAN_ONLY {
@@ -9099,6 +9141,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out.write(Self {
             legacy_cjs_import_stmts: BumpVec::new_in(arena),
             track_symbol_usage,
+            log_part_uses,
+            part_use_log: BumpVec::new_in(arena),
             skip_identifier_visit: false,
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file

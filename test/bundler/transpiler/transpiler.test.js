@@ -1551,6 +1551,38 @@ export default class {
     });
   });
 
+  describe("treeShaking parts that visit down to zero statements", () => {
+    // Under treeShaking each top-level statement is its own part. A statement
+    // like `a;` records a use of `a` and is then dropped by simplify_unused_expr,
+    // leaving a part with recorded usage and no statements. The parser must undo
+    // that part's contribution to each symbol's use count.
+    const shaken = new Bun.Transpiler({ loader: "ts", treeShaking: true });
+    const defined = new Bun.Transpiler({
+      loader: "ts",
+      treeShaking: true,
+      define: { user_undefined: "undefined" },
+    });
+
+    it.each([
+      ["bound const", `const a = 1;\na;\nconsole.log("keep");`, `const a = 1;\nconsole.log("keep");\n`],
+      ["bound let", `let b = {};\nb;\nconsole.log("keep");`, `let b = {};\nconsole.log("keep");\n`],
+      ["function decl", `function f() {}\nf;\nconsole.log("keep");`, `function f() {}\nconsole.log("keep");\n`],
+      ["repeated use", `const c = 1;\nc;\nc;\nconsole.log(c);`, `const c = 1;\nconsole.log(c);\n`],
+    ])("drops the dead part and keeps the rest: %s", (_name, input, expected) => {
+      expect(shaken.transformSync(input)).toBe(expected);
+    });
+
+    it("an identifier define whose statement becomes pure leaves no residue", () => {
+      expect(defined.transformSync(`user_undefined;\nconsole.log("keep");`)).toBe(`console.log("keep");\n`);
+    });
+
+    it("a symbol still used elsewhere survives the dead part's revert", () => {
+      // `d;` is dropped, but `console.log(d)` still uses `d` — the revert must
+      // subtract exactly one, not zero the symbol.
+      expect(shaken.transformSync(`const d = 1;\nd;\nconsole.log(d);`)).toBe(`const d = 1;\nconsole.log(d);\n`);
+    });
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

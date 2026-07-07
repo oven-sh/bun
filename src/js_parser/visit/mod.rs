@@ -75,7 +75,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn record_declared_symbol(&mut self, r#ref: Ref) {
         debug_assert!(r#ref.is_symbol());
-        if !self.track_symbol_usage {
+        // `log_part_uses` still needs the list: `clear_symbol_usages_from_dead_part`
+        // zeroes the counts of a dead part's declared symbols. It is a plain
+        // list append — the cost this gate avoids is the `symbol_uses` hash map.
+        if !self.track_symbol_usage && !self.log_part_uses {
             return;
         }
         self.declared_symbols

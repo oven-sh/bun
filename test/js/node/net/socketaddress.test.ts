@@ -169,45 +169,49 @@ describe("SocketAddress constructor", () => {
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================
 
-  it("does not leak memory", () => {
-    const growthFactor = 3.0; // allowed growth factor for memory usage
-    const warmup = 1_000; // # of warmup iterations
-    const iters = 100_000; // # of iterations
-    const debug = false;
+  it(
+    "does not leak memory",
+    () => {
+      const growthFactor = 3.0; // allowed growth factor for memory usage
+      const warmup = 1_000; // # of warmup iterations
+      const iters = 100_000; // # of iterations
+      const debug = false;
 
-    // we want to hit both cached and uncached code paths
-    const options = [
-      undefined,
-      { family: "ipv6" },
-      { family: "ipv4", address: "1.2.3.4", port: 3000 },
-      { family: "ipv6", address: "::3", port: 9 },
-    ] as SocketAddressInitOptions[];
+      // we want to hit both cached and uncached code paths
+      const options = [
+        undefined,
+        { family: "ipv6" },
+        { family: "ipv4", address: "1.2.3.4", port: 3000 },
+        { family: "ipv6", address: "::3", port: 9 },
+      ] as SocketAddressInitOptions[];
 
-    // warmup
-    var sa;
-    for (let i = 0; i < warmup; i++) {
-      sa = new SocketAddress(options[i % options.length]);
-    }
-    sa = undefined;
-    Bun.gc(true);
+      // warmup
+      var sa;
+      for (let i = 0; i < warmup; i++) {
+        sa = new SocketAddress(options[i % options.length]);
+      }
+      sa = undefined;
+      Bun.gc(true);
 
-    const before = process.memoryUsage();
-    if (debug) console.log("before", before);
+      const before = process.memoryUsage();
+      if (debug) console.log("before", before);
 
-    // actual test
-    for (let i = 0; i < iters; i++) {
-      sa = new SocketAddress(options[i % 2]);
-    }
-    sa = undefined;
-    Bun.gc(true);
+      // actual test
+      for (let i = 0; i < iters; i++) {
+        sa = new SocketAddress(options[i % 2]);
+      }
+      sa = undefined;
+      Bun.gc(true);
 
-    const after = process.memoryUsage();
-    if (debug) console.log("after", after);
+      const after = process.memoryUsage();
+      if (debug) console.log("after", after);
 
-    expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
-    // 100k allocations + two full GCs run 10-100x slower under debug+ASAN,
-    // overshooting the 5s default; give it room rather than shrink the sample.
-  }, isDebug ? 60_000 : 20_000);
+      expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
+      // 100k allocations + two full GCs run 10-100x slower under debug+ASAN,
+      // overshooting the 5s default; give it room rather than shrink the sample.
+    },
+    isDebug ? 60_000 : 20_000,
+  );
 }); // </SocketAddress constructor>
 
 describe("SocketAddress.isSocketAddress", () => {

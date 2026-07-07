@@ -30,9 +30,7 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // None for empty, any non-[0-9] byte, or overflow. Callers rely on
-        // the non-digit None case for pre-release identifier ordering
-        // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
+        // None for empty, any non-[0-9] byte, or overflow.
         bun_core::parse_unsigned::<u64>(s, 10).ok()
     }
 }
@@ -974,6 +972,26 @@ impl<T: VersionInt> Partial<T> {
 // Tag
 // ──────────────────────────────────────────────────────────────────────────
 
+#[inline]
+fn is_numeric_identifier(part: &[u8]) -> bool {
+    !part.is_empty() && part.iter().all(u8::is_ascii_digit)
+}
+
+/// Compare two all-digit identifiers numerically without bounding their
+/// magnitude: strip leading zeros, then compare by length, then lexically.
+fn order_numeric_identifiers(lhs: &[u8], rhs: &[u8]) -> Ordering {
+    fn strip_leading_zeros(s: &[u8]) -> &[u8] {
+        let i = s.iter().position(|&b| b != b'0').unwrap_or(s.len() - 1);
+        &s[i..]
+    }
+    let lhs = strip_leading_zeros(lhs);
+    let rhs = strip_leading_zeros(rhs);
+    match lhs.len().cmp(&rhs.len()) {
+        Ordering::Equal => strings::order(lhs, rhs),
+        not_equal => not_equal,
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Tag {
@@ -1018,31 +1036,25 @@ impl Tag {
             let lhs_part = lhs_part.unwrap();
             let rhs_part = rhs_part.unwrap();
 
-            let lhs_uint: Option<u64> = u64::parse_ascii(lhs_part);
-            let rhs_uint: Option<u64> = u64::parse_ascii(rhs_part);
-
-            // a part that doesn't parse as an integer is greater than a part that does
+            // SemVer 2.0 §11.4: an identifier is numeric iff it consists only of
+            // digits. Classify by character class, not by whether the value fits
+            // in a u64 — an all-digit identifier that overflows u64 is still numeric.
             // https://github.com/npm/node-semver/blob/816c7b2cbfcb1986958a290f941eddfd0441139e/internal/identifiers.js#L12
-            if lhs_uint.is_some() && rhs_uint.is_none() {
-                return Ordering::Less;
-            }
-            if lhs_uint.is_none() && rhs_uint.is_some() {
-                return Ordering::Greater;
-            }
+            let lhs_numeric = is_numeric_identifier(lhs_part);
+            let rhs_numeric = is_numeric_identifier(rhs_part);
 
-            if lhs_uint.is_none() && rhs_uint.is_none() {
-                match strings::order(lhs_part, rhs_part) {
-                    Ordering::Equal => {
-                        // continue to the next part
-                        continue;
-                    }
+            match (lhs_numeric, rhs_numeric) {
+                // numeric identifiers always have lower precedence than non-numeric
+                (true, false) => return Ordering::Less,
+                (false, true) => return Ordering::Greater,
+                (false, false) => match strings::order(lhs_part, rhs_part) {
+                    Ordering::Equal => continue,
                     not_equal => return not_equal,
-                }
-            }
-
-            match lhs_uint.unwrap().cmp(&rhs_uint.unwrap()) {
-                Ordering::Equal => continue,
-                not_equal => return not_equal,
+                },
+                (true, true) => match order_numeric_identifiers(lhs_part, rhs_part) {
+                    Ordering::Equal => continue,
+                    not_equal => return not_equal,
+                },
             }
         }
     }

@@ -112,6 +112,9 @@ main();`,
     // The sourcemap output should appear in build result outputs
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
     expect(sourcemapOutputs.length).toBe(1);
+    // The entry-point's .sourcemap should be that artifact.
+    expect(executableOutput.sourcemap).toBe(sourcemapOutputs[0]);
+    expect(executableOutput.sourcemap!.kind).toBe("sourcemap");
 
     // The .map file should exist next to the executable
     const mapPath = sourcemapOutputs[0].path;
@@ -178,6 +181,13 @@ export function greet() {
     // (one for the entry chunk, one for the lazy-loaded chunk)
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
     expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(2);
+
+    // The entry-point's .sourcemap must be the entry chunk's own map (a sourcemap
+    // artifact whose JSON lists entry.js as a source), not another chunk's map.
+    expect(executableOutput.sourcemap?.kind).toBe("sourcemap");
+    expect(sourcemapOutputs).toContain(executableOutput.sourcemap);
+    const entryMapContent = JSON.parse(await executableOutput.sourcemap!.text());
+    expect(entryMapContent.sources.some((s: string) => s.endsWith("entry.js"))).toBe(true);
 
     // Each sourcemap should be a valid .map file on disk
     const mapPaths = new Set<string>();

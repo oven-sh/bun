@@ -441,6 +441,7 @@ impl JSBundleCompletionTask {
         // keep them in the output array. Destroy all other non-entry-point files.
         // With --splitting, there can be multiple sourcemap files (one per chunk).
         let mut kept: usize = 0;
+        let mut old_to_new = vec![u32::MAX; output_files.len()];
         // Swap-compact in place via index iteration so each loop body holds
         // at most one `&mut` into `output_files`.
         for i in 0..output_files.len() {
@@ -527,12 +528,20 @@ impl JSBundleCompletionTask {
             };
 
             if keep_this {
+                old_to_new[i] = kept as u32;
                 output_files.swap(kept, i);
                 kept += 1;
             }
             // Trailing (dropped) entries are freed by `truncate` below.
         }
         output_files.truncate(kept);
+        // `source_map_index` stored pre-compaction positions; remap so the
+        // later `output_files_js[source_map_index]` lookup stays correct.
+        for f in output_files.iter_mut() {
+            if f.source_map_index != u32::MAX {
+                f.source_map_index = old_to_new[f.source_map_index as usize];
+            }
+        }
 
         result
     }

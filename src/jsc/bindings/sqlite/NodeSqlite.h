@@ -1,13 +1,12 @@
 // node:sqlite — native implementation of Node.js's `node:sqlite` module.
 //
-// This uses the bundled sqlite3 amalgamation (sqlite3_local.h / sqlite3.c)
-// on all platforms, matching Node.js which always bundles its own SQLite.
-// bun:sqlite links the same object by default (staticSqlite=true) so both
-// modules share one library and one POSIX-lock inode map — two SQLite
-// copies in one process is a documented corruption vector
-// (howtocorrupt.html §2.2.1). A --static-sqlite=off build restores the
-// macOS dlopen path for bun:sqlite; opening the same file via both APIs
-// in that configuration is unsafe.
+// This uses the SAME sqlite3 library as bun:sqlite so exactly one copy is
+// loaded per process (two copies is a POSIX-lock corruption vector,
+// howtocorrupt.html §2.2.1). On macOS that is the dlopen'd system
+// libsqlite3.dylib (LAZY_LOAD_SQLITE=1); features Apple omits
+// (loadExtension, and the session extension on older releases) runtime-
+// gate on the dlsym result and point at Database.setCustomSQLite(). On
+// Linux/Windows the bundled amalgamation is linked (LAZY_LOAD_SQLITE=0).
 //
 // Reference: https://github.com/nodejs/node/blob/main/src/node_sqlite.cc
 #pragma once

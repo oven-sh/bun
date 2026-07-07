@@ -628,11 +628,24 @@ db.loadExtension("myext");
 ```
 
 <Note>
-  Bun bundles its own SQLite build on all platforms with extension loading enabled, so `loadExtension()` works out of
-  the box on macOS. `Database.setCustomSQLite(path)` is retained for backward compatibility but is a no-op in the
-  default build; it only takes effect on custom builds compiled with `--static-sqlite=off`. Mixing a custom SQLite with
-  `node:sqlite` (which always uses the bundled copy) on the same file is unsafe — see [SQLite: How To Corrupt
-  §2.2.1](https://www.sqlite.org/howtocorrupt.html#posix_close_bug).
+**macOS users** By default, macOS ships with Apple's proprietary build of SQLite, which doesn't support extensions. To use extensions, install a vanilla build of SQLite.
+
+```bash terminal icon="terminal"
+brew install sqlite
+which sqlite # get path to binary
+```
+
+To point `bun:sqlite` to the new build, call `Database.setCustomSQLite(path)` before creating any `Database` instances. (On other operating systems, this is a no-op.) Pass a path to the SQLite `.dylib` file, _not_ the executable. With recent versions of Homebrew this is something like `/opt/homebrew/Cellar/sqlite/<version>/libsqlite3.dylib`.
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+Database.setCustomSQLite("/path/to/libsqlite.dylib");
+
+const db = new Database();
+db.loadExtension("myext");
+```
+
 </Note>
 
 ### `.fileControl(cmd: number, value: any)`

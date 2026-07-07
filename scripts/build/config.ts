@@ -855,11 +855,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
-  // Link the bundled sqlite3 into bun:sqlite (LAZY_LOAD_SQLITE=0). Default
-  // true everywhere: node:sqlite requires it regardless, and two SQLite
-  // libraries in one process is a POSIX-lock corruption vector
-  // (howtocorrupt.html §2.2.1). --static-sqlite=off restores macOS dlopen.
-  const staticSqlite = partial.staticSqlite ?? true;
+  // Whether bun:sqlite and node:sqlite link the bundled sqlite3 directly
+  // (LAZY_LOAD_SQLITE=0) or dlopen the system library at runtime. macOS
+  // defaults to dlopen so both APIs share Apple's libsqlite3 (one library,
+  // one POSIX-lock inode map — howtocorrupt.html §2.2.1); Linux/Windows
+  // link the bundled amalgamation.
+  const staticSqlite = partial.staticSqlite ?? !darwin;
 
   // Static libatomic: on by default. Arch/Manjaro don't ship libatomic.a —
   // those users pass --static-libatomic=off. Not auto-detected: the link

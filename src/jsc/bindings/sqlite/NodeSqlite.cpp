@@ -1,13 +1,21 @@
 // node:sqlite — native implementation of Node.js's `node:sqlite` module.
 // See header for overview.
 
-// Always use the bundled amalgamation for node:sqlite, regardless of
-// LAZY_LOAD_SQLITE — see the header comment for rationale. The session
-// extension (createSession/applyChangeset) is only declared in the header
-// when SQLITE_ENABLE_SESSION is defined — sqlite3.c is compiled with that
-// flag via the sqlite build target (scripts/build/deps/sqlite.ts), so turn
-// it on here as well to expose the prototypes. SQLITE_ENABLE_COLUMN_METADATA
-// likewise gates sqlite3_column_{origin,table,database}_name.
+// Use the same SQLite library bun:sqlite uses so both APIs share one POSIX-
+// lock inode map (howtocorrupt.html §2.2.1). On macOS that is the dlopen'd
+// system libsqlite3.dylib (LAZY_LOAD_SQLITE=1); Apple's build lacks
+// sqlite3_load_extension and older releases lack the session extension, so
+// those APIs runtime-gate on the dlsym result and point at
+// Database.setCustomSQLite(). On Linux/Windows the bundled amalgamation is
+// linked.
+#ifndef LAZY_LOAD_SQLITE
+#define LAZY_LOAD_SQLITE 0
+#endif
+
+#if LAZY_LOAD_SQLITE
+#include "lazy_sqlite3.h"
+#define LAZY_SQLITE_HAS_LOAD_EXTENSION() (lazy_sqlite3_load_extension != nullptr)
+#else
 #ifndef SQLITE_ENABLE_SESSION
 #define SQLITE_ENABLE_SESSION 1
 #endif
@@ -18,6 +26,10 @@
 #define SQLITE_ENABLE_COLUMN_METADATA 1
 #endif
 #include "sqlite3_local.h"
+static inline int lazyLoadSQLite() { return 0; }
+static constexpr bool lazy_sqlite3_has_session = true;
+#define LAZY_SQLITE_HAS_LOAD_EXTENSION() true
+#endif
 
 #include "NodeSqlite.h"
 
@@ -73,12 +85,14 @@
 #define SQLITE_CHANGESET_FOREIGN_KEY 5
 #endif
 
-// process.versions.sqlite — reported from this TU (not JSSQLStatement.cpp)
-// because on macOS's LAZY_LOAD_SQLITE path that file sees the *system*
-// sqlite3.h and would report Apple's SDK version, whereas node:sqlite always
-// links the bundled amalgamation included above.
+// process.versions.sqlite — the loaded library's version on macOS (via
+// dlsym'd sqlite3_libversion), the bundled amalgamation's constant elsewhere.
 extern "C" const char* Bun__sqlite3_version()
 {
+#if LAZY_LOAD_SQLITE
+    if (lazyLoadSQLite() == 0 && lazy_sqlite3_libversion)
+        return lazy_sqlite3_libversion();
+#endif
     return SQLITE_VERSION;
 }
 
@@ -906,6 +920,13 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         return false;
     }
 
+#if LAZY_LOAD_SQLITE
+    if (lazyLoadSQLite() < 0) [[unlikely]] {
+        scope.throwException(globalObject, createError(globalObject, WTF::String::fromUTF8(dlerror())));
+        return false;
+    }
+#endif
+
     // SQLITE_OPEN_URI mirrors Node's `default_flags = SQLITE_OPEN_URI`
     // (node_sqlite.cc). Strings, Uint8Arrays, and URL objects all reach
     // sqlite3ParseUri verbatim (validateDatabasePath passes a URL's raw
@@ -931,6 +952,14 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     // Register before the fallible configuration calls below: each of their
     // failure paths goes through closeInternal(), which unregisters.
     registerOpenDatabase(this, globalObject->vm());
+
+#if LAZY_LOAD_SQLITE
+    // Apple's system libsqlite3 defaults SQLITE_FCNTL_PERSIST_WAL on;
+    // clear it so the last close() unlinks the -wal/-shm sidecars like
+    // Node.js's bundled build does.
+    int off = 0;
+    sqlite3_file_control(m_db, nullptr, SQLITE_FCNTL_PERSIST_WAL, &off);
+#endif
 
     int v = m_config.enableDoubleQuotedStringLiterals ? 1 : 0;
     sqlite3_db_config(m_db, SQLITE_DBCONFIG_DQS_DML, v, nullptr);
@@ -962,6 +991,14 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
     if (m_config.allowExtension) {
+        if (!LAZY_SQLITE_HAS_LOAD_EXTENSION()) [[unlikely]] {
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_LOAD_SQLITE_EXTENSION,
+                "the loaded SQLite library was built with SQLITE_OMIT_LOAD_EXTENSION.\n"
+                "note: on macOS, install a full SQLite (e.g. `brew install sqlite`) and call "
+                "`require(\"bun:sqlite\").Database.setCustomSQLite(path)` before opening a database."_s);
+            closeInternal();
+            return false;
+        }
         if (sqlite3_db_config(m_db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, nullptr) != SQLITE_OK) {
             throwSqliteError(globalObject, scope, m_db);
             closeInternal();
@@ -1224,10 +1261,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * gl
         return throwNodeState(globalObject, scope,
             "Cannot enable extension loading because it was disabled at database creation."_s);
     }
-    int r = sqlite3_db_config(self->connection(), SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, allow ? 1 : 0, nullptr);
-    if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
-        return {};
+    // Apple's OMIT_LOAD_EXTENSION build rejects this db_config op; silently
+    // succeed for `false` (extensions were never enabled) — `true` is caught
+    // by the allowExtension constructor gate above.
+    if (LAZY_SQLITE_HAS_LOAD_EXTENSION()) {
+        int r = sqlite3_db_config(self->connection(), SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, allow ? 1 : 0, nullptr);
+        if (r != SQLITE_OK) {
+            throwSqliteError(globalObject, scope, self->connection());
+            return {};
+        }
     }
     self->setEnableLoadExtension(allow);
     return JSValue::encode(jsUndefined());
@@ -1444,10 +1486,20 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     return JSValue::encode(jsUndefined());
 }
 
+static EncodedJSValue throwSessionUnavailable(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_SQLITE_ERROR,
+        "the loaded SQLite library was built without SQLITE_ENABLE_SESSION.\n"
+        "note: on macOS, install a full SQLite (e.g. `brew install sqlite`) and call "
+        "`require(\"bun:sqlite\").Database.setCustomSQLite(path)` before opening a database."_s);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    if (!lazy_sqlite3_has_session) [[unlikely]]
+        return throwSessionUnavailable(globalObject, scope);
     JSDatabaseSync::BusyScope busy { self };
 
     WTF::String table;
@@ -1567,6 +1619,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    if (!lazy_sqlite3_has_session) [[unlikely]]
+        return throwSessionUnavailable(globalObject, scope);
     JSDatabaseSync::BusyScope busy { self };
 
     auto* buf = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(0));
@@ -2694,19 +2748,12 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncColumns, (JSGlobalObject * globalObject,
         auto putStr = [&](ASCIILiteral key, const char* val) {
             col->putDirect(vm, Identifier::fromString(vm, key), val ? jsString(vm, sqliteText(val)) : jsNull(), 0);
         };
-#ifdef SQLITE_ENABLE_COLUMN_METADATA
+        // On the dlopen path these are stubbed to return nullptr when the
+        // loaded library was built without SQLITE_ENABLE_COLUMN_METADATA.
         putStr("column"_s, sqlite3_column_origin_name(self->statement(), i));
         putStr("database"_s, sqlite3_column_database_name(self->statement(), i));
-#else
-        putStr("column"_s, nullptr);
-        putStr("database"_s, nullptr);
-#endif
         putStr("name"_s, sqlite3_column_name(self->statement(), i));
-#ifdef SQLITE_ENABLE_COLUMN_METADATA
         putStr("table"_s, sqlite3_column_table_name(self->statement(), i));
-#else
-        putStr("table"_s, nullptr);
-#endif
         putStr("type"_s, sqlite3_column_decltype(self->statement(), i));
         out->putDirectIndex(globalObject, i, col);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3051,8 +3098,8 @@ GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
         return {};                                                                                                     \
     }
 
-template<int (*Fn)(sqlite3_session*, int*, void**)>
-static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallFrame* callFrame)
+static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallFrame* callFrame,
+    int (*fn)(sqlite3_session*, int*, void**))
 {
     THIS_SESSION();
     JSDatabaseSync* db = self->database();
@@ -3064,7 +3111,7 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
     }
     int nChangeset = 0;
     void* pChangeset = nullptr;
-    int r = Fn(self->session(), &nChangeset, &pChangeset);
+    int r = fn(self->session(), &nChangeset, &pChangeset);
     if (r != SQLITE_OK) {
         if (pChangeset) sqlite3_free(pChangeset);
         throwSqliteError(globalObject, scope, db->connection());
@@ -3082,12 +3129,12 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
 
 JSC_DEFINE_HOST_FUNCTION(jsSessionChangeset, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return sessionChangesetCommon<sqlite3session_changeset>(globalObject, callFrame);
+    return sessionChangesetCommon(globalObject, callFrame, sqlite3session_changeset);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSessionPatchset, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return sessionChangesetCommon<sqlite3session_patchset>(globalObject, callFrame);
+    return sessionChangesetCommon(globalObject, callFrame, sqlite3session_patchset);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFrame* callFrame))

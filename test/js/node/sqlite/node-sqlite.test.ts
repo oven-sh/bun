@@ -7,6 +7,28 @@ import path from "node:path";
 import { DatabaseSync, SQLTagStore, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
+// On macOS bun dlopens the system libsqlite3.dylib, which Apple builds
+// without SQLITE_ENABLE_SESSION. createSession()/applyChangeset() throw
+// with a hint to use Database.setCustomSQLite(); tests that need the
+// session extension skip on such a library.
+const sqliteHasSession = (() => {
+  try {
+    new DatabaseSync(":memory:").createSession();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+// Apple's system libsqlite3 is built with SQLITE_OMIT_LOAD_EXTENSION.
+const sqliteHasLoadExtension = (() => {
+  try {
+    new DatabaseSync(":memory:", { allowExtension: true }).close();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 test("node:sqlite is a built-in module", () => {
   expect(isBuiltin("node:sqlite")).toBe(true);
   // Like node:test, node:sqlite is only available with the node: prefix.
@@ -281,26 +303,28 @@ describe("DatabaseSync", () => {
 
     // And to xFilter inside applyChangeset (where sqlite would otherwise
     // continue using a freed — not zombied — connection).
-    const dst = new DatabaseSync(":memory:");
-    dst.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)");
-    db.exec("CREATE TABLE s (a INTEGER PRIMARY KEY)");
-    const session = db.createSession();
-    db.exec("INSERT INTO s VALUES (1)");
-    const cs = session.changeset();
-    let filterCloseErr: unknown;
-    dst.applyChangeset(cs, {
-      filter: () => {
-        try {
-          dst.close();
-        } catch (e) {
-          filterCloseErr = e;
-        }
-        return false;
-      },
-    });
-    expect(filterCloseErr).toMatchObject({ code: "ERR_INVALID_STATE" });
-    expect(dst.isOpen).toBe(true);
-    dst.close();
+    if (sqliteHasSession) {
+      const dst = new DatabaseSync(":memory:");
+      dst.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)");
+      db.exec("CREATE TABLE s (a INTEGER PRIMARY KEY)");
+      const session = db.createSession();
+      db.exec("INSERT INTO s VALUES (1)");
+      const cs = session.changeset();
+      let filterCloseErr: unknown;
+      dst.applyChangeset(cs, {
+        filter: () => {
+          try {
+            dst.close();
+          } catch (e) {
+            filterCloseErr = e;
+          }
+          return false;
+        },
+      });
+      expect(filterCloseErr).toMatchObject({ code: "ERR_INVALID_STATE" });
+      expect(dst.isOpen).toBe(true);
+      dst.close();
+    }
     db.close();
   });
 
@@ -618,7 +642,21 @@ describe("StatementSync.prototype.iterate()", () => {
   });
 });
 
-describe("Session / changeset", () => {
+test.skipIf(sqliteHasSession)(
+  "createSession() throws with a setCustomSQLite hint when the session extension is unavailable",
+  () => {
+    const db = new DatabaseSync(":memory:");
+    expect(() => db.createSession()).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/SQLITE_ENABLE_SESSION/) }),
+    );
+    expect(() => db.applyChangeset(new Uint8Array())).toThrow(
+      expect.objectContaining({ code: "ERR_SQLITE_ERROR", message: expect.stringMatching(/setCustomSQLite/) }),
+    );
+    db.close();
+  },
+);
+
+describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
   test("captures changes and applies them to another database", () => {
     const src = new DatabaseSync(":memory:");
     src.exec("CREATE TABLE s (id INTEGER PRIMARY KEY, v TEXT)");
@@ -1003,7 +1041,7 @@ describe("createTagStore()", () => {
   });
 });
 
-test("deserialize() frees open sessions instead of orphaning their preupdate hook", () => {
+test.skipIf(!sqliteHasSession)("deserialize() frees open sessions instead of orphaning their preupdate hook", () => {
   // deserialize() bumps the open-generation to invalidate existing
   // wrappers. Sessions become stale — but deleteSession() (and the
   // destructor) assume "stale ⇒ closeInternal() already freed", so
@@ -1221,27 +1259,30 @@ test("unclosed sqlite database does not use-after-free on VM teardown", async ()
 // process.exit() inside a UDF reaches ~JSDatabaseSync with a BusyScope still
 // on the stack; that path must still flag its session records as dbGone or
 // ~JSNodeSqliteSession writes to the already-swept database cell.
-test("teardown with a busy connection and an unclosed session does not use-after-free", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { DatabaseSync } = require('node:sqlite');
+test.skipIf(!sqliteHasSession)(
+  "teardown with a busy connection and an unclosed session does not use-after-free",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync } = require('node:sqlite');
        const db = new DatabaseSync(':memory:');
        db.exec('CREATE TABLE t(x INTEGER PRIMARY KEY)');
        db.createSession();
        db.function('die', () => process.exit(0));
        db.exec('SELECT die()');`,
-    ],
-    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("heap-use-after-free");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("heap-use-after-free");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // The process-exit handler must close (or at least WAL-checkpoint) unclosed
 // file-backed databases the way Node and bun:sqlite do; see
@@ -1392,24 +1433,27 @@ describe("GC lifetime", () => {
     db.close();
   });
 
-  test("sessions dropped without close() are reclaimed once the database is used again", () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
-    for (let i = 0; i < 100; i++) {
-      db.createSession();
-    }
-    Bun.gc(true);
-    // The next entry point sweeps the orphaned native sessions; the
-    // connection keeps working and a fresh session records normally.
-    db.exec("INSERT INTO t VALUES (1, 'x')");
-    const fresh = db.createSession();
-    db.exec("INSERT INTO t VALUES (2, 'y')");
-    expect(fresh.changeset().length).toBeGreaterThan(0);
-    fresh.close();
-    db.close();
-  });
+  test.skipIf(!sqliteHasSession)(
+    "sessions dropped without close() are reclaimed once the database is used again",
+    () => {
+      const db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+      for (let i = 0; i < 100; i++) {
+        db.createSession();
+      }
+      Bun.gc(true);
+      // The next entry point sweeps the orphaned native sessions; the
+      // connection keeps working and a fresh session records normally.
+      db.exec("INSERT INTO t VALUES (1, 'x')");
+      const fresh = db.createSession();
+      db.exec("INSERT INTO t VALUES (2, 'y')");
+      expect(fresh.changeset().length).toBeGreaterThan(0);
+      fresh.close();
+      db.close();
+    },
+  );
 
-  test("a failed deserialize() leaves existing sessions and the database untouched", () => {
+  test.skipIf(!sqliteHasSession)("a failed deserialize() leaves existing sessions and the database untouched", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
     const session = db.createSession();
@@ -1446,7 +1490,7 @@ describe("module exports", () => {
     expect(() => new SQLTagStore()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
-    expect(db.createSession()).toBeInstanceOf(Session);
+    if (sqliteHasSession) expect(db.createSession()).toBeInstanceOf(Session);
     expect(db.createTagStore()).toBeInstanceOf(SQLTagStore);
     db.close();
   });
@@ -1465,6 +1509,18 @@ describe("module exports", () => {
 });
 
 describe("loadExtension() / enableLoadExtension()", () => {
+  test.skipIf(sqliteHasLoadExtension)(
+    "{allowExtension: true} throws with a setCustomSQLite hint when the library was built with OMIT_LOAD_EXTENSION",
+    () => {
+      expect(() => new DatabaseSync(":memory:", { allowExtension: true })).toThrow(
+        expect.objectContaining({
+          code: "ERR_LOAD_SQLITE_EXTENSION",
+          message: expect.stringMatching(/SQLITE_OMIT_LOAD_EXTENSION/),
+        }),
+      );
+    },
+  );
+
   test("loadExtension() on {allowExtension: false} throws ERR_INVALID_STATE", () => {
     const db = new DatabaseSync(":memory:");
     expect(() => db.loadExtension("/nonexistent")).toThrow(
@@ -1489,20 +1545,20 @@ describe("loadExtension() / enableLoadExtension()", () => {
     db.close();
   });
 
-  test("enableLoadExtension() with no argument throws ERR_INVALID_ARG_TYPE", () => {
+  test.skipIf(!sqliteHasLoadExtension)("enableLoadExtension() with no argument throws ERR_INVALID_ARG_TYPE", () => {
     const db = new DatabaseSync(":memory:", { allowExtension: true });
     expect(() => db.enableLoadExtension()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     db.close();
   });
 
-  test("loadExtension() after enableLoadExtension(false) throws", () => {
+  test.skipIf(!sqliteHasLoadExtension)("loadExtension() after enableLoadExtension(false) throws", () => {
     const db = new DatabaseSync(":memory:", { allowExtension: true });
     db.enableLoadExtension(false);
     expect(() => db.loadExtension("/nonexistent")).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
     db.close();
   });
 
-  test("loadExtension() on a nonexistent path throws ERR_LOAD_SQLITE_EXTENSION", () => {
+  test.skipIf(!sqliteHasLoadExtension)("loadExtension() on a nonexistent path throws ERR_LOAD_SQLITE_EXTENSION", () => {
     // Exercises the sqlite3_free(errmsg) path.
     const db = new DatabaseSync(":memory:", { allowExtension: true });
     db.enableLoadExtension(true);
@@ -1513,12 +1569,12 @@ describe("loadExtension() / enableLoadExtension()", () => {
   });
 });
 
-// bun:sqlite and node:sqlite share the bundled amalgamation (staticSqlite=true
-// on every platform), so opening the same file via both is safe. This is
-// platform-differential coverage: on a --static-sqlite=off build the two
-// modules would use separate SQLite libraries with separate POSIX-lock inode
-// maps (howtocorrupt.html §2.2.1).
-test("bun:sqlite and node:sqlite can open the same on-disk file concurrently", async () => {
+// bun:sqlite and node:sqlite share ONE sqlite3 library (dlopen'd on macOS,
+// linked on Linux/Windows) — two libraries in one process is a POSIX-lock
+// corruption vector (howtocorrupt.html §2.2.1). Assert both modules report
+// the same sqlite_version() and that closing one module's handle does not
+// drop the other's fcntl locks.
+test("bun:sqlite and node:sqlite share one SQLite library", async () => {
   using dir = tempDir("node-sqlite-cross-module", {});
   await using proc = Bun.spawn({
     cmd: [
@@ -1531,6 +1587,9 @@ test("bun:sqlite and node:sqlite can open the same on-disk file concurrently", a
        bunDb.exec('CREATE TABLE t (x INTEGER)');
        bunDb.exec('INSERT INTO t VALUES (1)');
        const nodeDb = new DatabaseSync('shared.db');
+       const bv = bunDb.query('SELECT sqlite_version() v').get().v;
+       const nv = nodeDb.prepare('SELECT sqlite_version() v').get().v;
+       console.log('same=' + (bv === nv && bv === process.versions.sqlite));
        // node:sqlite sees bun:sqlite's committed row.
        console.log('n1=' + nodeDb.prepare('SELECT x FROM t').get().x);
        // Write via node:sqlite; bun:sqlite sees it.
@@ -1549,7 +1608,7 @@ test("bun:sqlite and node:sqlite can open the same on-disk file concurrently", a
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("n1=1\nb1=2\nok=ok\n");
+  expect(stdout).toBe("same=true\nn1=1\nb1=2\nok=ok\n");
   void stderr;
   expect(exitCode).toBe(0);
 });
@@ -1639,16 +1698,20 @@ describe("GC stress", () => {
     db.close();
   });
 
-  test("session churn under GC pressure (finalizer ordering)", () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
-    for (let i = 0; i < 500; i++) {
-      const s = db.createSession();
-      Bun.gc(true);
-      s.changeset();
-      // Half explicitly close, half drop — races wrapperGone/dbGone.
-      if (i & 1) s.close();
-    }
-    db.close();
-  }, 30_000);
+  test.skipIf(!sqliteHasSession)(
+    "session churn under GC pressure (finalizer ordering)",
+    () => {
+      const db = new DatabaseSync(":memory:");
+      db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+      for (let i = 0; i < 500; i++) {
+        const s = db.createSession();
+        Bun.gc(true);
+        s.changeset();
+        // Half explicitly close, half drop — races wrapperGone/dbGone.
+        if (i & 1) s.close();
+      }
+      db.close();
+    },
+    30_000,
+  );
 });

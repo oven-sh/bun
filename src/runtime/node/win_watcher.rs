@@ -257,9 +257,9 @@ impl PathWatcher {
             timestamp,
             is_file,
             if events & FS_EVENT_RENAME != 0 {
-                EventType::Rename
+                WatchEventKind::Rename
             } else {
-                EventType::Change
+                WatchEventKind::Change
             },
         );
     }

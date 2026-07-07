@@ -767,9 +767,10 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool insecureHTTPParser) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        httpContext->getSocketContextData()->flags.insecureHTTPParser = insecureHTTPParser;
         return std::move(*this);
     }
 

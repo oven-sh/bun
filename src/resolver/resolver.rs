@@ -4382,12 +4382,12 @@ impl<'a> Resolver<'a> {
 
                             // OHOS: Ancestor directories like "/" or "/storage/" may return
                             // EACCES due to sandbox restrictions. Skip the unreadable ancestor
-                            // and continue processing child directories in the queue. Not enabled
-                            // on other platforms: there, an EACCES/EPERM on a directory in the
-                            // resolve path is a real error the generic handling below should report.
-                            if cfg!(target_env = "ohos")
-                                && (err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                    || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM))
+                            // and continue processing child directories in the queue.
+                            // Guard: if the queue is now empty, there is nothing left to walk —
+                            // return Ok(None) instead of `continue`-ing into the while-exit path
+                            // that would hit the post-loop `unreachable!()` (BUG-01).
+                            if err == bun_core::err!("EACCES")
+                                || err == bun_core::err!("EPERM")
                             {
                                 if queue_slice_len == 0 {
                                     return Ok(None);

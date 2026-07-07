@@ -41,7 +41,11 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
   const trace = JSON.parse(stdout.trim());
   // The socket closes on the first datagram. Node ordering: 'close' event
   // first, then the close() callback (both via queueMicrotask in dgram.ts).

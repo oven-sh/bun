@@ -712,10 +712,9 @@ impl CompileC {
         #[cfg(target_env = "ohos")]
         {
             // OHOS: add sysroot include/lib paths from $OHOS_SDK env var.
-            let ohos_sdk_path: Option<&[u8]> = std::env::var_os("OHOS_SDK")
-                .and_then(|os| os.to_str())
-                .map(|s| s.as_bytes());
-            if let Some(sdk) = ohos_sdk_path {
+            let ohos_sdk_bytes: Option<Vec<u8>> = std::env::var_os("OHOS_SDK")
+                .map(|os| os.to_string_lossy().into_owned().into_bytes());
+            if let Some(ref sdk) = ohos_sdk_bytes {
                 // Helper: build path from components and add to TCC
                 macro_rules! add_ohos_path {
                     ($is_lib:expr, $($seg:expr),+) => {{

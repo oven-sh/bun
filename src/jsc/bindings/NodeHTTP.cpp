@@ -652,6 +652,13 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
+
+        // RFC 9112 §9.6: a server that sends "Connection: close" MUST close the
+        // connection after the response. Mark the uWS state so end()/tryEnd()
+        // shut the socket down instead of returning it to the keep-alive pool.
+        if (header.key == WebCore::HTTPHeaderName::Connection && equalLettersIgnoringASCIICase(value, "close"_s)) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 

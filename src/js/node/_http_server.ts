@@ -513,7 +513,11 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+    // TODO: http.Server routes through Bun.serve directly (not net.Server), so
+    // it cannot yet adopt a shared fd or a round-robin connection fd from
+    // cluster._getServer. Until Bun.serve accepts {fd}, workers keep binding
+    // independently with reusePort. IPC handle passing itself now works — the
+    // remaining gap is Bun.serve fd adoption.
 
     // const serverQuery = {
     //   // address: address,

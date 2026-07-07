@@ -1168,6 +1168,18 @@ pub struct Pipe {
 pub type uv_pipe_t = Pipe;
 
 impl Pipe {
+    /// The pipe's IPC peer PID as computed by `uv_pipe_open(ipc=1)` via
+    /// `GetNamedPipe{Client,Server}ProcessId` — the kernel's answer for who is
+    /// on the other end of THIS pipe, independent of process ancestry. 0 when
+    /// unknown (non-IPC pipe or not yet opened).
+    #[inline]
+    pub fn ipc_remote_pid(&self) -> DWORD {
+        // SAFETY: `conn` is the active variant for a connected IPC pipe (init
+        // ipc=1 + open). Reading a possibly-inactive union arm is defined for
+        // `Copy` fields; on serv the value is meaningless but we return 0 for
+        // an unopened pipe anyway (libuv zero-inits the storage).
+        unsafe { self.pipe.conn.ipc_remote_pid }
+    }
     /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.

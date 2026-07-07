@@ -56,6 +56,7 @@ impl Socket {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int),
         fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        err: Option<&mut c_int>,
         user_data: *mut c_void,
     ) -> *mut Socket {
         // SAFETY: thin wrapper over us_create_udp_socket_from_fd; the caller
@@ -68,6 +69,7 @@ impl Socket {
                 close_cb,
                 recv_error_cb,
                 fd,
+                err.map_or(core::ptr::null_mut(), |e| e as *mut _),
                 user_data,
             )
         }
@@ -189,6 +191,7 @@ unsafe extern "C" {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int),
         fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;
     fn us_udp_socket_connect(socket: *mut Socket, hostname: *const c_char, port: c_uint) -> c_int;

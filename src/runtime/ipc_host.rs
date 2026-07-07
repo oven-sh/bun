@@ -268,11 +268,25 @@ pub(crate) fn do_send(
     // instead of a NODE_HANDLE wrapper the receiver could never pair.
     if zig_handle.is_none() {
         message = original_message;
-    } else if !pause_target.is_undefined() && pause_target.is_object() {
-        // Only now - with the handle confirmed transferable - stop reading on
-        // the sender's copy. Doing this earlier (it used to live in Ipc.ts
-        // serialize()) left the socket paused forever when the send was
-        // reverted, and ignored keepOpen.
+        pause_target = JSValue::UNDEFINED;
+    }
+
+    let status = ipc_data.serialize_and_send(
+        global_object,
+        message,
+        IsInternal::External,
+        callback,
+        zig_handle,
+    );
+
+    if status != SerializeAndSendResult::Failure
+        && !pause_target.is_undefined()
+        && pause_target.is_object()
+    {
+        // Only now — with the handle enqueued and the payload serialized — stop
+        // reading on the sender's copy. Earlier (in Ipc.ts serialize() or
+        // before serialize_and_send) left the socket paused forever when the
+        // send was reverted or serialization threw.
         match pause_target.get(global_object, "pause") {
             Ok(Some(f)) if f.is_callable() => {
                 if f.call(global_object, pause_target, &[]).is_err() {
@@ -285,14 +299,6 @@ pub(crate) fn do_send(
             }
         }
     }
-
-    let status = ipc_data.serialize_and_send(
-        global_object,
-        message,
-        IsInternal::External,
-        callback,
-        zig_handle,
-    );
 
     if status == SerializeAndSendResult::Failure {
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
@@ -356,10 +362,21 @@ pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> 
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
     let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
-    // The peer of a child process's IPC channel is its parent.
+    // Windows: target WSADuplicateSocketW at the pipe's actual peer (computed
+    // by uv_pipe_open via GetNamedPipe{Client,Server}ProcessId), not the OS
+    // process-tree parent — a shim/wrapper between spawner and child, or a
+    // grandchild inheriting NODE_CHANNEL_FD, would make getppid() wrong. Fall
+    // back to getppid() only when the pipe hasn't cached a peer.
     #[cfg(windows)]
-    // SAFETY: trivial libuv accessor, no preconditions.
-    let peer_pid = unsafe { bun_libuv_sys::uv_os_getppid() } as u32;
+    let peer_pid = {
+        let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
+        if from_pipe != 0 {
+            from_pipe
+        } else {
+            // SAFETY: trivial libuv accessor, no preconditions.
+            unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
+        }
+    };
     #[cfg(not(windows))]
     let peer_pid = 0;
     do_send(ipc, global, frame, FromEnum::Process, peer_pid)

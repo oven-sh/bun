@@ -7,6 +7,8 @@ const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
 
 let child_process;
 
@@ -40,10 +42,9 @@ let schedulingPolicy = 0;
 if (schedulingPolicyEnv === "rr") schedulingPolicy = SCHED_RR;
 else if (schedulingPolicyEnv === "none") schedulingPolicy = SCHED_NONE;
 else if (process.platform === "win32") {
-  // // Round-robin doesn't perform well on
-  // // Windows due to the way IOCP is wired up.
-  // schedulingPolicy = SCHED_NONE;
-  // TODO
+  // TCP SCHED_NONE works via WSADuplicateSocketW; keeping SCHED_RR default
+  // (unlike Node) until named-pipe DuplicateHandle export lands so
+  // listen(pipe) doesn't ENOTSUP under the default policy.
   schedulingPolicy = SCHED_RR;
 } else schedulingPolicy = SCHED_RR;
 cluster.schedulingPolicy = schedulingPolicy;
@@ -233,18 +234,38 @@ function queryServer(worker, message) {
   if (worker.exitedAfterDisconnect) return;
 
   // node: the per-listen `index` only disambiguates port-0 listens; fixed
-  // ports/pipes/fds share one handle across every worker that asks.
+  // ports/pipes/fds share one handle across every worker that asks. A worker
+  // re-asking for a key it already holds gets a fresh handle instead (which
+  // will EADDRINUSE) — nodejs/node#60141.
   const key =
     `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
     (message.port === 0 ? `:${message.index}` : "");
-  let handle = handles.get(key);
+  const cachedHandle = handles.get(key);
+  let handle;
+  if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
     // A TLS worker cannot adopt round-robin connection fds (the native
     // listener owns the TLS accept lifecycle), but another worker already
     // claimed this key as round-robin. Fail this listen loudly instead of
     // handing plaintext connections to the TLS server.
-    send(worker, { errno: -1, errcode: "EINVAL", key, ack: message.seq, data: handle.data }, null);
+    send(worker, { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data }, null);
+    return;
+  }
+  if (
+    schedulingPolicy === SCHED_RR &&
+    handle !== undefined &&
+    message.sharedOnly !== true &&
+    handle instanceof SharedHandle &&
+    handle.sharedOnly &&
+    message.addressType !== "udp4" &&
+    message.addressType !== "udp6"
+  ) {
+    // Symmetric guard: a plain worker asking for a key a TLS worker already
+    // claimed as shared-only would silently downgrade to SCHED_NONE. Refuse
+    // the same way so mixed-TLS/plain behavior does not depend on listen()
+    // order.
+    send(worker, { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data }, null);
     return;
   }
 
@@ -272,7 +293,7 @@ function queryServer(worker, message) {
       handle = new RoundRobinHandle(key, address, message);
     }
 
-    handles.set(key, handle);
+    if (!cachedHandle) handles.set(key, handle);
   }
 
   if (!handle.data) handle.data = message.data;
@@ -283,7 +304,9 @@ function queryServer(worker, message) {
     // deletes the key, so guard the second lookup.
     const data = handles.get(key)?.data;
 
-    if (errno) handles.delete(key); // Gives other workers a chance to retry.
+    // Gives other workers a chance to retry. Don't drop the cached (shared)
+    // handle when the fresh one fails — nodejs/node#60141.
+    if (!cachedHandle && errno) handles.delete(key);
 
     const sent = send(
       worker,
@@ -302,7 +325,7 @@ function queryServer(worker, message) {
       // Deliver a bind error instead of leaving the worker's listen()
       // hanging forever. The handle itself stays registered: other workers
       // may be using it, and this worker's removal cleans up its slot.
-      send(worker, { errno: -1, errcode: "ENOBUFS", key, ack: message.seq, data }, null);
+      send(worker, { errno: enobufsErrorCode(), key, ack: message.seq, data }, null);
     }
   });
 }

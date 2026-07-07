@@ -39,6 +39,48 @@ pub(crate) fn enobufs_error_code(
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn einval_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number_from_int32(-UV_E::INVAL))
+}
+
+/// Translate a positive platform errno (as Bun's listen/connect errors carry
+/// on `err.errno`) to the negative uv-style value the cluster protocol and
+/// `util.getSystemErrorName` expect. On POSIX these coincide (`-errno`); on
+/// Windows the WSA/Win32 code goes through `uv_translate_sys_error`.
+#[bun_jsc::host_fn]
+pub(crate) fn uv_translate_sys_error(
+    _global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arg = frame.arguments_old::<1>().ptr[0];
+    if !arg.is_number() {
+        return Ok(JSValue::js_number_from_int32(-UV_E::INVAL));
+    }
+    let n = arg.to_int32();
+    // Already a negative uv-domain code (or zero): pass through.
+    if n <= 0 {
+        return Ok(JSValue::js_number_from_int32(n));
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: pure translation function.
+        let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(n) };
+        return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
+            uv_err
+        } else {
+            -UV_E::INVAL
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(JSValue::js_number_from_int32(-n))
+    }
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///

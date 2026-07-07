@@ -159,9 +159,11 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     void (*close_cb)(struct us_udp_socket_t *),
     void (*recv_error_cb)(struct us_udp_socket_t *, int),
     LIBUS_SOCKET_DESCRIPTOR fd,
+    int *err,
     void *user
 ) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    if (err) *err = ENOTSUP;
     return 0;
 #else
     apple_no_sigpipe(fd);
@@ -192,7 +194,16 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
 
-    us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* Match us_socket_group_listen_fd: surface epoll_ctl/kqueue registration
+     * failure (EBADF/EPERM/ENOSPC) instead of returning a socket that never
+     * receives. Do NOT close the fd — the caller owns it. */
+    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        us_poll_free(p, loop);
+        if (err) *err = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     return (struct us_udp_socket_t *) udp;
 #endif

@@ -3174,6 +3174,9 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
+  // Bump first so a listen() reply arriving after close() is discarded (node
+  // does the same in lib/net.js Server.prototype.close, nodejs/node#51929).
+  this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3746,29 +3749,10 @@ function listenInCluster(
     }
     err = checkBindError(err, port, handle);
     if (err) {
-      let ex;
-      if (typeof reply?.errcode === "string") {
-        // Prefer the code string the primary forwarded: the numeric errno is
-        // only meaningful on POSIX (negated platform errno == uv code) and
-        // would render as "Unknown system error" on Windows.
-        // Match ExceptionWithHostPort: pipes and fds carry no meaningful
-        // port (-1 / null), so only positive ports go in the message.
-        let details = "";
-        if (port && port > 0) {
-          details = ` ${address}:${port}`;
-        } else if (address) {
-          details = ` ${address}`;
-        }
-        ex = new Error(`bind ${reply.errcode}${details}`);
-        ex.code = reply.errcode;
-        ex.errno = err;
-        ex.syscall = "bind";
-        ex.address = address;
-        if (port) ex.port = port;
-      } else {
-        ex = new ExceptionWithHostPort(err, "bind", address, port);
-      }
-      server.emit("error", ex);
+      // The primary sends a uv-domain errno (translated at source via
+      // uv_translate_sys_error), so ExceptionWithHostPort renders the right
+      // code on every platform — same shape as node's net.js:2022.
+      server.emit("error", new ExceptionWithHostPort(err, "bind", address, port));
       return;
     }
     const sharedFd = handle?.sharedFd;
@@ -3896,6 +3880,11 @@ function onClusterConnection(err, clientHandle) {
   socket.server = self;
   self._connections++;
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  // The fd path fires onOpen synchronously (setting connecting=false), then
+  // Socket.prototype.connect's non-pauseOnConnect branch stamps
+  // connecting=true after doConnect returns. Clear it so remoteAddress/_write
+  // and readyState observe the accepted-socket state node's onconnection does.
+  socket.connecting = false;
   // Mirror ServerHandlers.open(): the constructor-supplied connection
   // listener is invoked via a once-listener per accepted connection.
   const connectionListener = self[bunSocketServerOptions]?.connectionListener;

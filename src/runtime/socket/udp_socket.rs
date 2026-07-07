@@ -587,6 +587,7 @@ impl UDPSocket {
                 on_close,
                 on_recv_error,
                 fd as uws::LIBUS_SOCKET_DESCRIPTOR,
+                Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )
         } else {
@@ -605,10 +606,8 @@ impl UDPSocket {
         };
         drop(hostname_z);
         if created.is_null() && err == 0 && config.fd.is_some() {
-            // create_from_fd has no error out-param (it only fails on
-            // unsupported platforms or allocation); report EINVAL so the
-            // thrown error carries a code instead of the bare
-            // "Failed to bind socket".
+            // create_from_fd surfaces the poll-registration errno now; the
+            // only remaining zero-err failure is allocation on the C side.
             err = libc::EINVAL;
         }
         this.socket.set(if created.is_null() {

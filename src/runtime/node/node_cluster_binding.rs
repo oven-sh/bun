@@ -562,21 +562,14 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             JSValue::js_number_from_int32(-bun_core::ffi::errno())
         }
 
-        unsafe fn close_fd(fd: c_int) {
-            // SAFETY: caller passes an fd it owns.
-            unsafe {
-                libc::close(fd);
-            }
+        fn close_fd(fd: c_int) {
+            bun_sys::FdExt::close(bun_sys::Fd::from_native(fd));
         }
 
         fn set_cloexec_nonblock(fd: c_int) {
-            // SAFETY: plain fcntl flag updates on a live caller-owned fd.
-            unsafe {
-                let fl = libc::fcntl(fd, libc::F_GETFD);
-                libc::fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC);
-                let fl = libc::fcntl(fd, libc::F_GETFL);
-                libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
-            }
+            let fd = bun_sys::Fd::from_native(fd);
+            let _ = bun_sys::set_close_on_exec(fd);
+            let _ = bun_sys::set_nonblocking(fd);
         }
 
         // Pipe (UNIX domain) server: bind to the path.
@@ -837,15 +830,18 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             // No address: node's createServerHandle binds the IPv6 wildcard
             // (dual-stack) regardless of addressType, falling back to the
             // IPv4 wildcard on machines without IPv6 — same as the Windows
-            // branch above. Unlike Windows, EADDRINUSE needs no carve-out
-            // from the fallback: a POSIX v4-wildcard bind conflicts with a
-            // live dual-stack listener, so the retry re-surfaces the same
-            // error instead of masking it.
+            // branch above. EADDRINUSE must not trigger the fallback: libuv's
+            // uv__tcp_bind returns 0 on EADDRINUSE (deferring it), so node's
+            // fallback never fires on it — and against a v6-only occupant a
+            // v4-wildcard retry would succeed and mask the error.
             let (ss6, len6) = wildcard_sockaddr(libc::AF_INET6, port);
             match create_and_bind(libc::AF_INET6, socktype, is_udp, flags, &ss6, len6) {
                 Ok(bound) => {
                     fd = bound;
                     bound_family = libc::AF_INET6;
+                }
+                Err(e) if e == -(libc::EADDRINUSE) => {
+                    return Ok(JSValue::js_number_from_int32(e));
                 }
                 Err(_) => {
                     let (ss4, len4) = wildcard_sockaddr(libc::AF_INET, port);
@@ -883,6 +879,61 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
+/// `clusterValidateFd(fd)` — check that a worker-supplied numeric fd is a
+/// listenable socket in *this* process before SharedHandle stores (and later
+/// closes) it. Node routes fd through `createHandle` → `guessHandleType`,
+/// which returns EINVAL for non-socket fds; without this a worker's
+/// `listen({fd:2})` would make the primary close its own stderr on remove().
+/// Returns 0 for a socket, or a negative uv-style errno.
+#[bun_jsc::host_fn]
+pub(crate) fn cluster_validate_fd(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let _ = global;
+    let value = frame.arguments_old::<1>().ptr[0];
+    if !value.is_number() {
+        return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+    }
+    #[cfg(not(windows))]
+    {
+        let fd = value.to_int32();
+        if fd < 0 {
+            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::BADF));
+        }
+        // getsockopt(SO_TYPE) is the cheapest "is this fd a socket" probe;
+        // ENOTSOCK/EBADF surface as the errno the worker gets back.
+        let mut ty: libc::c_int = 0;
+        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
+        // properly sized locals.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&raw mut ty).cast(),
+                &raw mut len,
+            )
+        };
+        if rc != 0 {
+            return Ok(JSValue::js_number_from_int32(-bun_core::ffi::errno()));
+        }
+        // A socket, but not a listenable stream/datagram type.
+        if ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM {
+            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+        }
+        Ok(JSValue::js_number_from_int32(0))
+    }
+    #[cfg(windows)]
+    {
+        // Windows shared handles never take the pre-bound-fd path (UDP/pipe
+        // return ENOTSUP earlier); accept so the ENOTSUP is the visible error.
+        let _ = value;
+        Ok(JSValue::js_number_from_int32(0))
+    }
+}
+
 /// `clusterCloseHandle(fd)` — close a numeric fd held by cluster JS (shared
 /// listen handles that were never adopted by a native socket). On Windows the
 /// number is a raw SOCKET, which must go through closesocket();
@@ -909,8 +960,7 @@ pub(crate) fn cluster_close_handle(
         {
             let fd = value.to_int32();
             if fd >= 0 {
-                // SAFETY: closing a caller-owned descriptor.
-                unsafe { libc::close(fd) };
+                bun_sys::FdExt::close(bun_sys::Fd::from_native(fd));
             }
         }
     }

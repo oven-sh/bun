@@ -4,6 +4,7 @@ const { kHandle } = require("internal/shared");
 let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
 
 const ArrayIsArray = Array.isArray;
 
@@ -63,7 +64,7 @@ export default class RoundRobinHandle {
   }
 
   add(worker, send) {
-    // $assert(this.all.has(worker.id) === false);
+    $assert(this.all.has(worker.id) === false);
     this.all.set(worker.id, worker);
 
     const done = () => {
@@ -85,15 +86,18 @@ export default class RoundRobinHandle {
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      // Bun's listen errors carry positive platform errnos; the cluster
-      // protocol (checkBindError, getSystemErrorName) expects negative
-      // uv-style values. That negation is only correct on POSIX (Windows
-      // platform errnos are not uv codes, and pipe errors may carry no
-      // number at all), so also forward the code string - it is the ground
-      // truth the worker rebuilds the error from.
-      const errno = typeof err.errno === "number" && err.errno !== 0 ? -Math.abs(err.errno) : -1;
-      send(errno, typeof err.code === "string" ? { errcode: err.code } : null, null);
+      // Bun's listen errors carry positive platform errnos; translate to the
+      // negative uv-style value the cluster protocol (checkBindError,
+      // getSystemErrorName) expects. On Windows the WSA code goes through
+      // uv_translate_sys_error so `getSystemErrorName(errno)` matches
+      // `err.code` — same as node's send(err.errno, null).
+      const errno = uvTranslateSysError(typeof err.errno === "number" ? err.errno : 0) || uvTranslateSysError(-1);
+      send(errno, null, null);
     });
+  }
+
+  has(worker) {
+    return this.all.has(worker.id);
   }
 
   remove(worker) {

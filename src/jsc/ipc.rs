@@ -808,25 +808,62 @@ impl SendHandle {
                 // drop. NOT terminate(): that arms SO_LINGER{1,0} on the
                 // *shared* socket object and aborts the transferred
                 // connection with RST on Windows.
+                // Deferred: TCPSocket.close synchronously dispatches on_close
+                // → net.ts handlers → user 'close' listeners, and every caller
+                // holds &mut SendQueue here (on_ack_nack, _on_write_complete).
                 let js = handle.js.value();
                 if js.is_object() {
-                    match js.get(global, "close") {
-                        Ok(Some(f)) if f.is_callable() => {
-                            if f.call(global, js, &[]).is_err() {
-                                global.clear_exception();
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(_) => {
-                            global.clear_exception();
-                        }
-                    }
+                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
                 }
             }
         }
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
+
+    /// Drop a queued item whose bytes never left the process (channel closed
+    /// before send). The dup'd wire fd is released via Drop; the user's socket
+    /// is closed so it doesn't hold the loop, but the send callback is NOT
+    /// fired with `null` — node never affirms success for an unsent message.
+    pub fn abort_unsent(self, global: &JSGlobalObject) {
+        if let Some(handle) = &self.handle {
+            if handle.close_on_complete {
+                let js = handle.js.value();
+                if js.is_object() {
+                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                }
+            }
+        }
+        // callbacks/handle drop here without call_next_tick.
+    }
+}
+
+#[bun_jsc::host_fn]
+fn close_sent_handle(
+    global: &JSGlobalObject,
+    callframe: &crate::CallFrame,
+) -> JsResult<JSValue> {
+    let [js] = callframe.arguments_as_array::<1>();
+    if js.is_object() {
+        if let Ok(Some(f)) = js.get(global, "close") {
+            if f.is_callable() {
+                if f.call(global, js, &[]).is_err() {
+                    global.clear_exception();
+                }
+            }
+        }
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
+    crate::JSFunction::create(
+        global,
+        BunString::empty(),
+        __jsc_host_close_sent_handle,
+        1,
+        Default::default(),
+    )
 }
 
 // SendHandle.deinit: all fields Drop; no explicit impl needed.
@@ -1158,10 +1195,18 @@ impl SendQueue {
         // forever (node closes undeliverable handles on channel close too).
         let global = this.get_global_this();
         if let Some(item) = this.waiting_for_ack.take() {
+            // The write already went out; treat like an implicit ack (node
+            // fires this callback with null too).
             item.complete(&global);
         }
         for item in std::mem::take(&mut this.queue) {
-            item.complete(&global);
+            if item.data.cursor > 0 {
+                // Partially written: bytes left the process, treat as sent.
+                item.complete(&global);
+            } else {
+                // Never written: drop without reporting success (node parity).
+                item.abort_unsent(&global);
+            }
         }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
         unsafe { (*this.owner).handle_ipc_close() };
@@ -1459,6 +1504,17 @@ impl SendQueue {
         let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
         // Note: reshaped for borrowck — work on msg via local then drop borrow before continue_send.
         let mode = self.mode;
+        // Remember whether start_message will push a fresh entry (always true
+        // for handle sends): on serialize failure that entry must be popped so
+        // the next drain doesn't spuriously .close() the user's socket via
+        // close_on_complete and re-fire the callback with null.
+        let will_push_fresh = handle.is_some()
+            || self.queue.is_empty()
+            || self.queue.last().map_or(true, |l| {
+                l.handle.is_some()
+                    || l.is_ack_nack()
+                    || (self.queue.len() == 1 && self.write_in_progress)
+            });
         let msg = match self.start_message(global, callback, handle) {
             Ok(m) => m,
             Err(_) => return SerializeAndSendResult::Failure,
@@ -1467,7 +1523,15 @@ impl SendQueue {
 
         let payload_length = match serialize(mode, &mut msg.data, global, value, is_internal) {
             Ok(n) => n,
-            Err(_) => return SerializeAndSendResult::Failure,
+            Err(_) => {
+                if will_push_fresh {
+                    // Drop the just-pushed SendHandle: its Drop closes the
+                    // dup'd wire fd; the callback is not enqueued (do_send_err
+                    // fires it with the real error).
+                    let _ = self.queue.pop();
+                }
+                return SerializeAndSendResult::Failure;
+            }
         };
         debug_assert!(msg.data.list.len() == start_offset + payload_length);
 
@@ -1506,6 +1570,18 @@ impl SendQueue {
         match &self.socket {
             SocketUnion::Open(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Windows: the IPC pipe's peer PID as computed by `uv_pipe_open(ipc=1)`
+    /// via `GetNamedPipe{Client,Server}ProcessId` — the target for
+    /// `WSADuplicateSocketW`. 0 when the pipe is closed or unknown.
+    #[cfg(windows)]
+    pub fn ipc_peer_pid(&self) -> u32 {
+        match &self.socket {
+            // SAFETY: `p` is a live uv_pipe_t owned until _windowsOnClosed.
+            SocketUnion::Open(p) => unsafe { (**p).ipc_remote_pid() as u32 },
+            _ => 0,
         }
     }
 

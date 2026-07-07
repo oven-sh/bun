@@ -3751,6 +3751,26 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
         return {};
     }
 
+    // Sample all heap statistics before allocating the result object so that
+    // constructEmptyObject() cannot trigger a collection between the caller's
+    // last allocation and the heap walk below.
+    JSC::DeferGC deferGC(vm);
+
+    size_t heapTotal = vm.heap.blockBytesAllocated();
+    size_t heapUsed = vm.heap.sizeAfterLastEdenCollection();
+
+    // heap.arrayBufferSize() misses OversizeTypedArray backing stores and adds
+    // sizeof(ArrayBuffer) overhead per entry, so walk the relevant subspaces
+    // and report exact byteLength like Node.js does.
+    size_t arrayBuffers = computeArrayBuffersBytes(vm);
+
+    // Node documents arrayBuffers as a subset of external. extraMemorySize()
+    // only re-accumulates OversizeTypedArray bytes during GC marking, so clamp
+    // external to be at least arrayBuffers to preserve that relationship.
+    size_t external = vm.heap.extraMemorySize() + vm.heap.externalMemorySize();
+    if (external < arrayBuffers)
+        external = arrayBuffers;
+
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
     if (throwScope.exception()) [[unlikely]] {
         return {};
@@ -3766,24 +3786,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     // }
 
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
-
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
-
-    // heap.arrayBufferSize() misses OversizeTypedArray backing stores and adds
-    // sizeof(ArrayBuffer) overhead per entry, so walk the relevant subspaces
-    // and report exact byteLength like Node.js does.
-    size_t arrayBuffers = computeArrayBuffersBytes(vm);
-
-    // Node documents arrayBuffers as a subset of external. extraMemorySize()
-    // only re-accumulates OversizeTypedArray bytes during GC marking, so clamp
-    // external to be at least arrayBuffers to preserve that relationship.
-    size_t external = vm.heap.extraMemorySize() + vm.heap.externalMemorySize();
-    if (external < arrayBuffers)
-        external = arrayBuffers;
-
+    result->putDirectOffset(vm, 1, JSC::jsNumber(heapTotal));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed));
     result->putDirectOffset(vm, 3, JSC::jsNumber(external));
     result->putDirectOffset(vm, 4, JSC::jsNumber(arrayBuffers));
 

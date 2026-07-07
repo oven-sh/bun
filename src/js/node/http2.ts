@@ -2299,10 +2299,9 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      // Node only ends the readable here for a pending stream (id not yet assigned); ids are
-      // assigned eagerly here, so "no response yet" is the closest equivalent. Once the peer has
-      // started a body the readable must be ended by _destroy so 'end' is suppressed for rstCodes
-      // that synthesize an error.
+      // Node only push(null)s here for a pending stream; ids are assigned eagerly so "no response
+      // yet" is the closest equivalent. Once a body has started _destroy ends the readable so 'end'
+      // is suppressed for rstCodes that synthesize an error.
       if ((this[bunHTTP2StreamStatus] & StreamState.StreamResponded) === 0) {
         this.push(null);
       }

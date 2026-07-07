@@ -1646,6 +1646,7 @@ unsafe extern "system" {
 /// `ws2_32` — Winsock2 surface (subset).
 pub mod ws2_32 {
     use super::*;
+    use core::sync::atomic::{AtomicBool, Ordering};
 
     pub const AF_UNSPEC: c_int = 0;
     pub const AF_UNIX: c_int = 1;
@@ -1669,19 +1670,6 @@ pub mod ws2_32 {
         pub ai_canonname: *mut c_char,
         pub ai_addr: *mut sockaddr,
         pub ai_next: *mut addrinfo,
-    }
-
-    #[link(name = "ws2_32")]
-    unsafe extern "system" {
-        pub fn getaddrinfo(
-            node: *const c_char,
-            service: *const c_char,
-            hints: *const addrinfo,
-            res: *mut *mut addrinfo,
-        ) -> c_int;
-        pub fn freeaddrinfo(ai: *mut addrinfo);
-        /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
-        pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
 
     /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
@@ -1860,22 +1848,6 @@ pub mod ws2_32 {
         pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
     }
 
-    #[link(name = "ws2_32")]
-    unsafe extern "system" {
-        /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
-        /// because `SystemErrno` is a higher-tier type. No preconditions; reads
-        /// thread-local Winsock error slot.
-        pub safe fn WSAGetLastError() -> c_int;
-        /// No preconditions; writes the thread-local Winsock error slot.
-        pub safe fn WSASetLastError(err: c_int);
-        pub fn closesocket(s: usize) -> c_int;
-        pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
-        pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
-        /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
-        /// or `SOCKET_ERROR` (-1) on failure (`WSAGetLastError` for the code).
-        pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int;
-    }
-
     /// `WSAPOLLFD` (`winsock2.h`). `fd` is a `SOCKET` (= `UINT_PTR`).
     #[repr(C)]
     #[derive(Copy, Clone)]
@@ -2002,58 +1974,273 @@ pub mod ws2_32 {
     /// between the two calls leaks the handle). // quirk: POLL-10
     pub const WSA_FLAG_NO_HANDLE_INHERIT: DWORD = 0x80;
 
-    #[link(name = "ws2_32")]
-    unsafe extern "system" {
-        pub fn WSASocketW(
-            af: c_int,
-            ty: c_int,
-            protocol: c_int,
-            lpProtocolInfo: *mut WSAPROTOCOL_INFOW,
-            g: c_uint,
-            dwFlags: DWORD,
-        ) -> SOCKET;
-        pub fn WSAIoctl(
-            s: SOCKET,
-            dwIoControlCode: DWORD,
-            lpvInBuffer: *mut c_void,
-            cbInBuffer: DWORD,
-            lpvOutBuffer: *mut c_void,
-            cbOutBuffer: DWORD,
-            lpcbBytesReturned: *mut DWORD,
-            lpOverlapped: *mut OVERLAPPED,
-            lpCompletionRoutine: *mut c_void,
-        ) -> c_int;
-        pub fn ioctlsocket(s: SOCKET, cmd: c_long, argp: *mut c_ulong) -> c_int;
-        pub fn getsockopt(
-            s: SOCKET,
-            level: c_int,
-            optname: c_int,
-            optval: *mut u8,
-            optlen: *mut c_int,
-        ) -> c_int;
-        pub fn setsockopt(
-            s: SOCKET,
-            level: c_int,
-            optname: c_int,
-            optval: *const u8,
-            optlen: c_int,
-        ) -> c_int;
-        /// `select` (`winsock2.h`). `nfds` is ignored on Windows. The set
-        /// pointers use the `{u_int fd_count; SOCKET fd_array[]}` ABI prefix,
-        /// so callers may pass shorter-than-`fd_set` single-slot sets.
-        /// // quirk: POLL-40
-        pub fn select(
-            nfds: c_int,
-            readfds: *mut c_void,
-            writefds: *mut c_void,
-            exceptfds: *mut c_void,
-            timeout: *const TIMEVAL,
-        ) -> c_int;
-        pub fn bind(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
-        pub fn listen(s: SOCKET, backlog: c_int) -> c_int;
-        pub fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
-        pub fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET;
-        pub fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+    // ── Lazy Winsock initialisation (quirk: HIST-06) ─────────────────────
+    //
+    // Every ws2_32 function below routes through `ensure_winsock()` so a
+    // caller physically cannot reach Winsock before `WSAStartup` has run. The
+    // gate is a single acquire load after first use. `WSAStartup` itself is
+    // refcounted (MSDN: "An application can call WSAStartup more than once"),
+    // so the rare cold-path race where two threads both miss the flag is
+    // harmless — no spin or Once blocking is needed, which keeps this
+    // `no_std` crate dependency-free.
+
+    static WINSOCK_UP: AtomicBool = AtomicBool::new(false);
+
+    #[inline]
+    pub fn ensure_winsock() {
+        if !WINSOCK_UP.load(Ordering::Acquire) {
+            ensure_winsock_slow();
+        }
+    }
+
+    #[cold]
+    fn ensure_winsock_slow() {
+        // Safe mode (SM_CLEANBOOT == 1) has no Winsock: skip like libuv does
+        // and let socket calls fail with WSANOTINITIALISED instead of aborting.
+        if user32::GetSystemMetrics(user32::SM_CLEANBOOT) != 1 {
+            let mut wsa_data = core::mem::MaybeUninit::<WSADATA>::zeroed();
+            // SAFETY: valid out-pointer; Winsock 2.2 is always present.
+            let r = unsafe { raw::WSAStartup(0x0202, wsa_data.as_mut_ptr()) };
+            assert!(r == 0, "WSAStartup failed: {r}");
+        }
+        WINSOCK_UP.store(true, Ordering::Release);
+    }
+
+    /// Raw ws2_32 externs. Unreachable outside this module; every public
+    /// `ws2_32::fn` routes through `ensure_winsock()` first.
+    mod raw {
+        use super::*;
+        #[link(name = "ws2_32")]
+        unsafe extern "system" {
+            pub(super) fn getaddrinfo(
+                node: *const c_char,
+                service: *const c_char,
+                hints: *const addrinfo,
+                res: *mut *mut addrinfo,
+            ) -> c_int;
+            pub(super) fn freeaddrinfo(ai: *mut addrinfo);
+            /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
+            pub(super) fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
+            /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
+            /// because `SystemErrno` is a higher-tier type. No preconditions; reads
+            /// thread-local Winsock error slot.
+            pub(super) safe fn WSAGetLastError() -> c_int;
+            /// No preconditions; writes the thread-local Winsock error slot.
+            pub(super) safe fn WSASetLastError(err: c_int);
+            pub(super) fn closesocket(s: usize) -> c_int;
+            pub(super) fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
+            pub(super) fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
+            /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
+            /// or `SOCKET_ERROR` (-1) on failure (`WSAGetLastError` for the code).
+            pub(super) fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int;
+            pub(super) fn WSASocketW(
+                af: c_int,
+                ty: c_int,
+                protocol: c_int,
+                lpProtocolInfo: *mut WSAPROTOCOL_INFOW,
+                g: c_uint,
+                dwFlags: DWORD,
+            ) -> SOCKET;
+            pub(super) fn WSAIoctl(
+                s: SOCKET,
+                dwIoControlCode: DWORD,
+                lpvInBuffer: *mut c_void,
+                cbInBuffer: DWORD,
+                lpvOutBuffer: *mut c_void,
+                cbOutBuffer: DWORD,
+                lpcbBytesReturned: *mut DWORD,
+                lpOverlapped: *mut OVERLAPPED,
+                lpCompletionRoutine: *mut c_void,
+            ) -> c_int;
+            pub(super) fn ioctlsocket(s: SOCKET, cmd: c_long, argp: *mut c_ulong) -> c_int;
+            pub(super) fn getsockopt(
+                s: SOCKET,
+                level: c_int,
+                optname: c_int,
+                optval: *mut u8,
+                optlen: *mut c_int,
+            ) -> c_int;
+            pub(super) fn setsockopt(
+                s: SOCKET,
+                level: c_int,
+                optname: c_int,
+                optval: *const u8,
+                optlen: c_int,
+            ) -> c_int;
+            /// `select` (`winsock2.h`). `nfds` is ignored on Windows. The set
+            /// pointers use the `{u_int fd_count; SOCKET fd_array[]}` ABI prefix,
+            /// so callers may pass shorter-than-`fd_set` single-slot sets.
+            /// // quirk: POLL-40
+            pub(super) fn select(
+                nfds: c_int,
+                readfds: *mut c_void,
+                writefds: *mut c_void,
+                exceptfds: *mut c_void,
+                timeout: *const TIMEVAL,
+            ) -> c_int;
+            pub(super) fn bind(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
+            pub(super) fn listen(s: SOCKET, backlog: c_int) -> c_int;
+            pub(super) fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
+            pub(super) fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET;
+            pub(super) fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+        }
+    }
+
+    // `WSAStartup` is the init itself; the error accessors are thread-local
+    // slot reads/writes with no init requirement. Ungated forwarders.
+    #[inline]
+    pub unsafe fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int {
+        unsafe { raw::WSAStartup(wVersionRequested, lpWSAData) }
+    }
+    #[inline]
+    pub fn WSAGetLastError() -> c_int {
+        raw::WSAGetLastError()
+    }
+    #[inline]
+    pub fn WSASetLastError(err: c_int) {
+        raw::WSASetLastError(err)
+    }
+
+    // ── Gated wrappers: every call routes through `ensure_winsock()`. ─────
+    // SAFETY contracts for each are unchanged from the raw externs.
+
+    #[inline]
+    pub unsafe fn getaddrinfo(
+        node: *const c_char,
+        service: *const c_char,
+        hints: *const addrinfo,
+        res: *mut *mut addrinfo,
+    ) -> c_int {
+        ensure_winsock();
+        unsafe { raw::getaddrinfo(node, service, hints, res) }
+    }
+    #[inline]
+    pub unsafe fn freeaddrinfo(ai: *mut addrinfo) {
+        ensure_winsock();
+        unsafe { raw::freeaddrinfo(ai) }
+    }
+    #[inline]
+    pub unsafe fn closesocket(s: usize) -> c_int {
+        ensure_winsock();
+        unsafe { raw::closesocket(s) }
+    }
+    #[inline]
+    pub unsafe fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::recv(s, buf, len, flags) }
+    }
+    #[inline]
+    pub unsafe fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::send(s, buf, len, flags) }
+    }
+    #[inline]
+    pub unsafe fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::WSAPoll(fdArray, fds, timeout) }
+    }
+    #[inline]
+    pub unsafe fn WSASocketW(
+        af: c_int,
+        ty: c_int,
+        protocol: c_int,
+        lpProtocolInfo: *mut WSAPROTOCOL_INFOW,
+        g: c_uint,
+        dwFlags: DWORD,
+    ) -> SOCKET {
+        ensure_winsock();
+        unsafe { raw::WSASocketW(af, ty, protocol, lpProtocolInfo, g, dwFlags) }
+    }
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn WSAIoctl(
+        s: SOCKET,
+        dwIoControlCode: DWORD,
+        lpvInBuffer: *mut c_void,
+        cbInBuffer: DWORD,
+        lpvOutBuffer: *mut c_void,
+        cbOutBuffer: DWORD,
+        lpcbBytesReturned: *mut DWORD,
+        lpOverlapped: *mut OVERLAPPED,
+        lpCompletionRoutine: *mut c_void,
+    ) -> c_int {
+        ensure_winsock();
+        unsafe {
+            raw::WSAIoctl(
+                s,
+                dwIoControlCode,
+                lpvInBuffer,
+                cbInBuffer,
+                lpvOutBuffer,
+                cbOutBuffer,
+                lpcbBytesReturned,
+                lpOverlapped,
+                lpCompletionRoutine,
+            )
+        }
+    }
+    #[inline]
+    pub unsafe fn ioctlsocket(s: SOCKET, cmd: c_long, argp: *mut c_ulong) -> c_int {
+        ensure_winsock();
+        unsafe { raw::ioctlsocket(s, cmd, argp) }
+    }
+    #[inline]
+    pub unsafe fn getsockopt(
+        s: SOCKET,
+        level: c_int,
+        optname: c_int,
+        optval: *mut u8,
+        optlen: *mut c_int,
+    ) -> c_int {
+        ensure_winsock();
+        unsafe { raw::getsockopt(s, level, optname, optval, optlen) }
+    }
+    #[inline]
+    pub unsafe fn setsockopt(
+        s: SOCKET,
+        level: c_int,
+        optname: c_int,
+        optval: *const u8,
+        optlen: c_int,
+    ) -> c_int {
+        ensure_winsock();
+        unsafe { raw::setsockopt(s, level, optname, optval, optlen) }
+    }
+    #[inline]
+    pub unsafe fn select(
+        nfds: c_int,
+        readfds: *mut c_void,
+        writefds: *mut c_void,
+        exceptfds: *mut c_void,
+        timeout: *const TIMEVAL,
+    ) -> c_int {
+        ensure_winsock();
+        unsafe { raw::select(nfds, readfds, writefds, exceptfds, timeout) }
+    }
+    #[inline]
+    pub unsafe fn bind(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::bind(s, name, namelen) }
+    }
+    #[inline]
+    pub unsafe fn listen(s: SOCKET, backlog: c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::listen(s, backlog) }
+    }
+    #[inline]
+    pub unsafe fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::connect(s, name, namelen) }
+    }
+    #[inline]
+    pub unsafe fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET {
+        ensure_winsock();
+        unsafe { raw::accept(s, addr, addrlen) }
+    }
+    #[inline]
+    pub unsafe fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int {
+        ensure_winsock();
+        unsafe { raw::getsockname(s, name, namelen) }
     }
 }
 pub use ws2_32::WSAGetLastError;

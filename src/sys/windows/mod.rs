@@ -24,15 +24,10 @@ pub use bun_windows_sys::ws2_32;
 
 pub use bun_errno::win_error;
 
-/// Lazy process-wide Winsock init — the engine owns the `Once`; consumers
-/// that may touch a socket first (recv/send on inherited fds) call through.
-pub fn ensure_winsock() {
-    unsafe extern "C" {
-        fn Bun__ensure_winsock();
-    }
-    // SAFETY: no-arg C fn exported by bun_iocp, linked into every binary.
-    unsafe { Bun__ensure_winsock() };
-}
+/// Lazy process-wide Winsock init. The canonical gate lives at the
+/// `bun_windows_sys::ws2_32` module boundary (every ws2_32 call routes
+/// through it); this re-export remains for callers outside that surface.
+pub use bun_windows_sys::ws2_32::ensure_winsock;
 
 /// Re-exports the tier-0 `bun_windows_sys::kernel32`
 /// surface and layers the additional externs higher-tier crates reach for

@@ -450,7 +450,6 @@ unsafe fn peer_socket_for(lp: *mut Loop, info: &WSAPROTOCOL_INFOW) -> SOCKET {
 /// # Safety
 /// `lp` must be a valid pinned loop.
 unsafe fn create_peer_socket(lp: *mut Loop, info: &WSAPROTOCOL_INFOW) -> SOCKET {
-    crate::init::ensure_winsock();
     // From the watched socket's own (base) catalog entry — bypasses any LSP
     // layered on the default chain — overlapped, and never inheritable
     // (atomic at creation; no SetHandleInformation race).

@@ -13,7 +13,6 @@ use core::ffi::c_void;
 use std::sync::{Mutex, Once};
 
 use bun_windows_sys::kernel32::{PostQueuedCompletionStatus, SetErrorMode};
-use bun_windows_sys::ws2_32::{WSADATA, WSAStartup};
 use bun_windows_sys::{
     DEVICE_NOTIFY_CALLBACK, DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, HANDLE, PBT_APMRESUMEAUTOMATIC,
     PBT_APMRESUMESUSPEND, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX,
@@ -162,23 +161,14 @@ pub fn process_init() {
     });
 }
 
-/// Winsock 2.2, process-wide, initialized at the first ACTUAL WSA consumer
-/// (socket creation, AFD peer setup, work-pool `getaddrinfo`) — never at
-/// startup, so network-free invocations skip the service-provider catalog
-/// load entirely (libuv paid it in `uv__winsock_init` on every run).
-/// Safe mode (SM_CLEANBOOT) has no winsock: skip like libuv does and let
-/// socket calls fail with WSANOTINITIALISED instead of aborting.
-pub fn ensure_winsock() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        if bun_windows_sys::user32::GetSystemMetrics(bun_windows_sys::user32::SM_CLEANBOOT) != 1 {
-            let mut wsa_data = core::mem::MaybeUninit::<WSADATA>::zeroed();
-            // SAFETY: valid out-pointer; winsock 2.2 always available.
-            let r = unsafe { WSAStartup(0x0202, wsa_data.as_mut_ptr()) };
-            assert_eq!(r, 0, "WSAStartup failed: {r}");
-        }
-    });
-}
+/// Winsock 2.2, process-wide, initialized at the first ACTUAL WSA consumer —
+/// never at startup, so network-free invocations skip the service-provider
+/// catalog load entirely (libuv paid it in `uv__winsock_init` on every run).
+/// The canonical gate lives at the `bun_windows_sys::ws2_32` module boundary
+/// (every ws2_32 function routes through it); this re-export remains for
+/// callers that must initialize before reaching the module — chiefly the C
+/// side, which calls ws2_32 directly.
+pub use bun_windows_sys::ws2_32::ensure_winsock;
 
 /// C-ABI twin for the C consumers (usockets `bsd_create_socket`, the uv
 /// polyfills).

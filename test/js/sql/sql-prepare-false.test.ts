@@ -163,4 +163,12 @@ describe("PostgreSQL prepare: false", async () => {
     const [{ v }] = await db`SELECT ${arr}::jsonb AS v`;
     expect(v).toEqual(arr);
   });
+
+  // The prepared path declares OID 25 (text) for a `::text` slot, which is not
+  // a binary type, so an object there also used to become "[object Object]".
+  test("object param is JSON text for a text column with prepare: true", async () => {
+    await using db = new SQL({ ...options, prepare: true });
+    const [{ v }] = await db`SELECT ${obj}::text AS v`;
+    expect(v).toBe(JSON.stringify(obj));
+  });
 });

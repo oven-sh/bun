@@ -18,13 +18,14 @@ test.skipIf(!isPosix)(
 
       const server = http.createServer((req, res) => res.end("ok"));
       const result = await new Promise<any>(resolve => {
-        server.once("error", (e: any) => resolve({ event: "error", code: e.code, syscall: e.syscall }));
+        server.once("error", (e: any) => resolve({ event: "error", code: e.code, errno: e.errno, syscall: e.syscall }));
         server.once("listening", () => resolve({ event: "listening", address: server.address() }));
         server.listen({ fd });
       });
       server.close();
 
-      expect(result).toEqual({ event: "error", code: "EINVAL", syscall: "listen" });
+      // POSIX-only test, so the libuv errno is -22 (Windows reports -4071).
+      expect(result).toEqual({ event: "error", code: "EINVAL", errno: -22, syscall: "listen" });
     } finally {
       donor.close();
     }

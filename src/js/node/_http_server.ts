@@ -507,7 +507,7 @@ Server.prototype.listen = function () {
     if (typeof fd === "number" && fd >= 0) {
       const error: any = new Error("listen EINVAL: Bun does not support listening on a file descriptor");
       error.code = "EINVAL";
-      error.errno = -22;
+      error.errno = process.platform === "win32" ? -4071 : -22;
       error.syscall = "listen";
       throw error;
     }

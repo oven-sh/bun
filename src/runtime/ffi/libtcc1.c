@@ -604,3 +604,56 @@ unsigned long long __fixunsxfdi (long double a1)
     else
         return 0;
 }
+
+/* TinyCC's lib/va_list.c: __va_arg is no longer inlined by tccdefs.h, and Bun
+   replaces libtcc1 with this file. Only referenced by x86_64 SysV codegen.
+   Deviation from upstream: no extern abort() — Bun never injects that symbol,
+   so referencing it would make every cc() fail with an unresolved reference. */
+#if defined(__x86_64__) && !defined(_WIN32)
+
+enum __va_arg_type {
+    __va_gen_reg, __va_float_reg, __va_stack
+};
+
+void *__va_arg(__builtin_va_list ap,
+               int arg_type,
+               int size, int align)
+{
+    size = (size + 7) & ~7;
+    align = (align + 7) & ~7;
+    switch ((enum __va_arg_type)arg_type) {
+    case __va_gen_reg:
+        if (ap->gp_offset + size <= 48) {
+            ap->gp_offset += size;
+            return ap->reg_save_area + ap->gp_offset - size;
+        }
+        goto use_overflow_area;
+
+    case __va_float_reg:
+        if (ap->fp_offset < 128 + 48) {
+            ap->fp_offset += 16;
+            if (size == 8)
+                return ap->reg_save_area + ap->fp_offset - 16;
+            if (ap->fp_offset < 128 + 48) {
+                double *p = (double *)(ap->reg_save_area + ap->fp_offset);
+                p[-1] = p[0];
+                ap->fp_offset += 16;
+                return ap->reg_save_area + ap->fp_offset - 32;
+            }
+        }
+        goto use_overflow_area;
+
+    case __va_stack:
+    use_overflow_area:
+        ap->overflow_arg_area += size;
+        ap->overflow_arg_area = (char*)((long long)(ap->overflow_arg_area + align - 1) & -align);
+        return ap->overflow_arg_area - size;
+
+    default:
+        /* unreachable: the compiler only emits the three classes above.
+           Trap with a null write like TinyCC's old inline __va_arg did. */
+        *(volatile char *)0 = 0;
+        return 0;
+    }
+}
+#endif /* __x86_64__ && !_WIN32 */

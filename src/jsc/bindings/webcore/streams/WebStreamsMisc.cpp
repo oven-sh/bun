@@ -3,8 +3,13 @@
 #include <JavaScriptCore/MicrotaskQueue.h>
 #include "WebStreamsInternals.h"
 
+#include "JSDirectStreamController.h"
+#include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
+#include "JSReadableStreamDefaultController.h"
+#include "JSTransformStream.h"
 #include "JSWritableStream.h"
+#include "JSWritableStreamDefaultController.h"
 
 #include "BunClientData.h"
 #include "JSDOMConvertNumbers.h"
@@ -442,6 +447,43 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
     }
     stream->m_closedPromise.set(vm, stream, promise);
     return promise;
+}
+
+// node:stream's addAbortSignal errors a web stream via Node's kControllerErrorFunction own
+// property, which is controller.error bound to the stream's controller. Bun's web streams are
+// native and never carry that property, so route through the real controller-error op instead.
+void webStreamControllerError(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    switch (stream->m_controllerKind) {
+    case ControllerKind::Default:
+        RELEASE_AND_RETURN(scope, readableStreamDefaultControllerError(globalObject, uncheckedDowncast<WebCore::JSReadableStreamDefaultController>(stream->m_controller.get()), error));
+    case ControllerKind::Byte:
+        RELEASE_AND_RETURN(scope, readableByteStreamControllerError(globalObject, uncheckedDowncast<WebCore::JSReadableByteStreamController>(stream->m_controller.get()), error));
+    case ControllerKind::Direct:
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->handleError(globalObject, error));
+    case ControllerKind::None:
+    case ControllerKind::NativeSink:
+        if (stream->m_state == ReadableStreamState::Readable)
+            RELEASE_AND_RETURN(scope, readableStreamError(globalObject, stream, error));
+        return;
+    }
+}
+
+void webStreamControllerError(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* controller = stream->m_controller.get())
+        RELEASE_AND_RETURN(scope, writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, error));
+}
+
+void webStreamControllerError(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, transformStreamError(globalObject, stream, error));
 }
 
 // The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion

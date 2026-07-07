@@ -1,12 +1,6 @@
-// RFC 5802 §3: AuthMessage = client-first-message-bare + "," + server-first-message
-// + "," + client-final-message-without-proof. The server-first-message grammar permits
-// extension attributes after "i=", and those bytes are part of the signed AuthMessage.
-// A scripted SCRAM server that knows the password derives the RFC proof directly and
-// checks the client's ClientProof against it, then completes the handshake so connect()
-// resolving is the end-to-end assertion.
-//
-// Fault-injection: today's PostgreSQL emits exactly r=,s=,i= so a live container cannot
-// exercise the extension case. Frame builders come from test/js/sql/wire-frames.ts.
+// RFC 5802 §3: AuthMessage signs the server-first/server-final bytes as received,
+// including any extension attributes. A live PostgreSQL never sends extensions, so
+// this scripted SCRAM server injects them and checks ClientProof against the RFC value.
 
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
@@ -26,13 +20,9 @@ const pgAuthenticationSASLContinue = (msg: string) => pgRaw("R", Buffer.concat([
 // AuthenticationSASLFinal: Byte1('R') Int32(len) Int32(12) Byte[n](server-final-message)
 const pgAuthenticationSASLFinal = (msg: string) => pgRaw("R", Buffer.concat([pgInt32(12), Buffer.from(msg)]));
 
-/**
- * Drive a full SCRAM-SHA-256 handshake against Bun.SQL, verifying the ClientProof
- * against the RFC 5802 AuthMessage (computed from the messages as exchanged on the
- * wire), then send a valid server-final so connect() resolves iff both sides agree.
- * @param firstExt appended verbatim to the server-first-message after "i=N"
- * @param finalExt appended verbatim to the server-final-message after "v=<sig>"
- */
+// Drive a full SCRAM-SHA-256 handshake: `firstExt` is appended to server-first after
+// "i=N", `finalExt` to server-final after "v=<sig>". connect() resolving proves the
+// client accepted the RFC-derived v= signature.
 async function runScramHandshake(firstExt: string, finalExt: string): Promise<void> {
   const {
     promise: gotProofs,
@@ -50,7 +40,10 @@ async function runScramHandshake(firstExt: string, finalExt: string): Promise<vo
     let clientFirstBare = "";
     let serverFirst = "";
     let salted = Buffer.alloc(0);
-    socket.on("error", () => {});
+    socket.on("error", reject);
+    socket.on("close", () => {
+      if (saslState < 2) reject(new Error("socket closed before SCRAM handshake completed"));
+    });
     socket.on("data", chunk => {
       buf = Buffer.concat([buf, chunk]);
       try {

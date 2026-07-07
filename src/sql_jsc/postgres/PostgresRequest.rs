@@ -493,7 +493,11 @@ pub(crate) fn on_data<Context: ReaderContext>(
                         );
                         return Ok(());
                     }
-                    continue;
+                    // sslmode=prefer: fall back to a plaintext startup. Return
+                    // Ok(()) to drop any trailing bytes in this read: nothing
+                    // sent before our StartupMessage is legitimate (CVE-2021-23222).
+                    connection.start();
+                    return Ok(());
                 }
 
                 connection.on(M::NoticeResponse, reader.reborrow())?;

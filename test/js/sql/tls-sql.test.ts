@@ -2,7 +2,18 @@ import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled } from "harness";
 import path from "node:path";
-import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
+import {
+  listeningServer,
+  pgAuthenticationCleartextPassword,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgErrorResponse,
+  pgReadyForQuery,
+  pgRowDescription,
+  pgSSLRequest,
+  pgSSLResponse,
+} from "./wire-frames";
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
@@ -416,5 +427,171 @@ test("postgres client aborts the connection when the server declines TLS that wa
       for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
+  }
+});
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+test("postgres sslmode=prefer falls back to a plaintext startup when the server declines TLS", async () => {
+  // libpq docs for sslmode=prefer: "first try an SSL connection; if that fails,
+  // try a non-SSL connection". When the server answers the SSLRequest with 'N',
+  // the client must send a plaintext StartupMessage on the same socket and
+  // continue in plaintext — not idle until connectionTimeout.
+  const wire: string[] = [];
+  const sockets = new Set<import("node:net").Socket>();
+
+  const { server, port } = await listeningServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let buf = Buffer.alloc(0);
+    let started = false;
+    socket.on("data", data => {
+      buf = Buffer.concat([buf, data]);
+      for (;;) {
+        if (!started) {
+          if (buf.length < 8) return;
+          const len = buf.readInt32BE(0);
+          if (buf.length < len) return;
+          if (len === 8 && buf.readInt32BE(4) === 80877103) {
+            wire.push("SSLRequest");
+            buf = buf.subarray(8);
+            socket.write(pgSSLResponse("N"));
+            continue;
+          }
+          wire.push("StartupMessage");
+          started = true;
+          buf = buf.subarray(len);
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+          continue;
+        }
+        if (buf.length < 5) return;
+        const len = buf.readInt32BE(1);
+        if (buf.length < 1 + len) return;
+        const type = String.fromCharCode(buf[0]);
+        buf = buf.subarray(1 + len);
+        if (type === "Q") {
+          wire.push("Query");
+          socket.write(
+            Buffer.concat([
+              pgRowDescription([{ name: "x", typeOid: 25 /* text */ }]),
+              pgDataRow([Buffer.from("1")]),
+              pgCommandComplete("SELECT 1"),
+              pgReadyForQuery(),
+            ]),
+          );
+        }
+      }
+    });
+  });
+
+  try {
+    await using sql = new SQL({
+      url: `postgres://u:pw@127.0.0.1:${port}/db?sslmode=prefer`,
+      adapter: "postgres",
+      max: 1,
+      connectionTimeout: 3,
+    });
+    const result = await sql`select 1`.simple().then(
+      rows => ({ kind: "ok" as const, rows }),
+      e => ({ kind: "error" as const, code: e?.code ?? String(e) }),
+    );
+    expect({ wire, result }).toEqual({
+      wire: ["SSLRequest", "StartupMessage", "Query"],
+      result: { kind: "ok", rows: [{ x: "1" }] },
+    });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+test("postgres sslmode=prefer discards bytes that arrive alongside the 'N' SSLRequest answer", async () => {
+  // The server may only answer an SSLRequest with a single byte; any further
+  // bytes in the same read precede our StartupMessage and so cannot be a
+  // legitimate backend response. They must be discarded rather than dispatched
+  // (libpq CVE-2021-23222). The fallback plaintext startup then proceeds
+  // normally.
+  const wire: string[] = [];
+  const sockets = new Set<import("node:net").Socket>();
+
+  const { server, port } = await listeningServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let buf = Buffer.alloc(0);
+    let started = false;
+    socket.on("data", data => {
+      buf = Buffer.concat([buf, data]);
+      for (;;) {
+        if (!started) {
+          if (buf.length < 8) return;
+          const len = buf.readInt32BE(0);
+          if (buf.length < len) return;
+          if (len === 8 && buf.readInt32BE(4) === 80877103) {
+            wire.push("SSLRequest");
+            buf = buf.subarray(8);
+            // 'N' plus an ErrorResponse in the same write: the ErrorResponse
+            // precedes any StartupMessage and must not reach the dispatch loop.
+            socket.write(
+              Buffer.concat([
+                pgSSLResponse("N"),
+                pgErrorResponse({ S: "FATAL", C: "XX000", M: "injected before startup" }),
+              ]),
+            );
+            continue;
+          }
+          wire.push("StartupMessage");
+          started = true;
+          buf = buf.subarray(len);
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+          continue;
+        }
+        if (buf.length < 5) return;
+        const len = buf.readInt32BE(1);
+        if (buf.length < 1 + len) return;
+        const type = String.fromCharCode(buf[0]);
+        buf = buf.subarray(1 + len);
+        if (type === "Q") {
+          wire.push("Query");
+          socket.write(
+            Buffer.concat([
+              pgRowDescription([{ name: "x", typeOid: 25 /* text */ }]),
+              pgDataRow([Buffer.from("1")]),
+              pgCommandComplete("SELECT 1"),
+              pgReadyForQuery(),
+            ]),
+          );
+        }
+      }
+    });
+  });
+
+  try {
+    await using sql = new SQL({
+      url: `postgres://u:pw@127.0.0.1:${port}/db?sslmode=prefer`,
+      adapter: "postgres",
+      max: 1,
+      connectionTimeout: 3,
+    });
+    const result = await sql`select 1`.simple().then(
+      rows => ({ kind: "ok" as const, rows }),
+      e => ({ kind: "error" as const, code: e?.code ?? String(e), message: String(e?.message ?? e) }),
+    );
+    // The injected ErrorResponse must not surface; the plaintext startup
+    // must have been sent and the query must succeed.
+    expect({ wire, result }).toEqual({
+      wire: ["SSLRequest", "StartupMessage", "Query"],
+      result: { kind: "ok", rows: [{ x: "1" }] },
+    });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });

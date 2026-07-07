@@ -750,15 +750,9 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  // https://github.com/oven-sh/bun/issues/33700
-  // SSRI (W3C SRI §3.3.4) and npm's `ssri` accept a tarball that matches ANY
-  // digest of the strongest algorithm, regardless of entry order. Bun kept
-  // only the first digest of the strongest algorithm, so a tarball matching a
-  // later same-algorithm digest hard-failed. A multi-digest integrity string
-  // only appears in hand-edited / migrated lockfiles, so this is exercised via
-  // a URL tarball pinned in a hand-written lockfile (a URL tarball verifies
-  // against the lockfile integrity on every platform, unlike a local tarball
-  // whose path is re-resolved).
+  // https://github.com/oven-sh/bun/issues/33700 — SSRI any-match: a tarball
+  // matching any digest of the strongest algorithm must verify. Uses a URL
+  // tarball (local-tarball paths are re-resolved per platform).
   function serveTarball(tgz: Buffer) {
     return Bun.serve({
       port: 0,
@@ -799,8 +793,8 @@ describe.concurrent("tarball integrity metadata forms", () => {
     });
     const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(stderr + stdout).not.toContain("Integrity check failed");
-    expect(await readdirSorted(join(String(dir), "node_modules", "baz"))).toContain("package.json");
     expect(exitCode).toBe(0);
+    expect(await readdirSorted(join(String(dir), "node_modules", "baz"))).toContain("package.json");
 
     // The multi-digest shape round-trips: re-emitted next to the primary.
     const lockContent = await file(join(String(dir), "bun.lock")).text();

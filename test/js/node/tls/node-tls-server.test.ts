@@ -1510,6 +1510,42 @@ describe("tls.Server secure-context options", () => {
     }
   });
 
+  it("accepts a cert-less client on a STARTTLS-wrapped connection when the server has `ca` but no requestCert", async () => {
+    // A shared SecureContext built with `ca` carries FAIL_IF_NO_PEER_CERT on
+    // its SSL_CTX; Node's TLSWrap::SetVerifyMode overrides it per socket to
+    // SSL_VERIFY_NONE for !requestCert, so an ordinary client still connects:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1225-L1234
+    const tlsServer = createServer({ key: agent6Key, cert: agent6CertChain, ca: [ca3Cert, ca1Cert] });
+    const judged = Promise.withResolvers<{ secure: boolean }>();
+    tlsServer.on("secureConnection", s => {
+      judged.resolve({ secure: true });
+      s.end();
+    });
+    tlsServer.on("tlsClientError", judged.reject);
+    const rawServer = net.createServer(raw => tlsServer.emit("connection", raw));
+    let client: TLSSocket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      rawServer.once("listening", listening.resolve);
+      rawServer.once("error", listening.reject);
+      rawServer.listen(0);
+      await listening.promise;
+      const connected = Promise.withResolvers<void>();
+      // No client key/cert: the handshake must still complete.
+      client = connect(
+        { port: (rawServer.address() as AddressInfo).port, rejectUnauthorized: false },
+        connected.resolve,
+      );
+      client.on("error", connected.reject);
+      await connected.promise;
+      expect(await judged.promise).toEqual({ secure: true });
+    } finally {
+      client?.destroy();
+      rawServer.close();
+      tlsServer.close();
+    }
+  });
+
   it("requests the client certificate on a direct server wrap whose secure context lacks requestCert", async () => {
     // The shared SecureContext carries no requestCert, so only the per-socket
     // option on the wrap can make the CertificateRequest go out - Node applies

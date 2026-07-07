@@ -2373,13 +2373,16 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
    * `new tls.TLSSocket(acceptedSocket, { isServer: true })`); there is no
    * listener for an adopted socket, so SNI resolves from the single ssl_ctx. */
   us_internal_ssl_attach(new_s, ssl_ctx, is_client, sni, NULL);
-  if (!is_client && request_cert && new_s->ssl) {
-    /* No listener carries the verify mode here and a SecureContext's SSL_CTX
-     * is deliberately mode-neutral (see us_internal_ssl_attach): apply Node's
-     * TLSWrap::SetVerifyMode per socket so the CertificateRequest goes out. */
+  if (!is_client && new_s->ssl) {
+    /* Node's TLSWrap::SetVerifyMode runs unconditionally on server sockets:
+     * !requestCert must force SSL_VERIFY_NONE, or a shared SSL_CTX built with
+     * `ca` leaks its FAIL_IF_NO_PEER_CERT mode and rejects cert-less clients. */
     SSL_set_verify(new_s->ssl,
-                   SSL_VERIFY_PEER |
-                       (reject_unauthorized ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0),
+                   request_cert
+                       ? SSL_VERIFY_PEER | (reject_unauthorized
+                                                ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                                                : 0)
+                       : SSL_VERIFY_NONE,
                    us_verify_callback);
   }
   us_socket_resume(new_s);

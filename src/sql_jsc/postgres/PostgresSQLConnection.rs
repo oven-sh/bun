@@ -2782,10 +2782,7 @@ impl PostgresSQLConnection {
                         };
 
                         if !first_attr.starts_with(b"v=")
-                            || !BoringSSL::c::constant_time_eq(
-                                server_signature,
-                                &first_attr[2..],
-                            )
+                            || !BoringSSL::c::constant_time_eq(server_signature, &first_attr[2..])
                         {
                             debug!(
                                 "SASLFinal - SASL Server signature mismatch\nExpected: {}\nActual: {}",

@@ -12,7 +12,7 @@ use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};
-use bun_install::integrity::Integrity;
+use bun_install::integrity::{Integrity, IntegrityAlternates};
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
@@ -38,6 +38,9 @@ pub struct ExtractTarball {
     pub skip_verify: bool, // = false
     pub in_trusted_dependencies: bool,
     pub integrity: Integrity, // = Integrity::default()
+    /// Other accepted digests of `integrity.tag` (SSRI any-match). Empty in
+    /// the common single-digest case.
+    pub integrity_alternates: IntegrityAlternates,
     pub url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub package_manager: bun_ptr::BackRef<PackageManager>,
@@ -47,7 +50,11 @@ impl ExtractTarball {
     #[inline]
     pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
-            if !self.integrity.verify(bytes) {
+            if !self.integrity.verify(bytes)
+                && !self
+                    .integrity_alternates
+                    .verify_bytes(self.integrity.tag, bytes)
+            {
                 log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,

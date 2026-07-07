@@ -100,6 +100,45 @@ impl Integrity {
         strongest
     }
 
+    /// Like [`parse`], but also returns the other digests of the strongest
+    /// algorithm present in a multi-entry SSRI string. W3C SRI §3.3.4 and
+    /// npm's `ssri` pick the strongest algorithm and accept a match against
+    /// *any* of its digests, so a tarball matching a non-first digest must
+    /// still verify. The primary (first strongest) digest is returned in the
+    /// `Integrity`; the remaining ones go into `IntegrityAlternates`.
+    pub fn parse_with_alternates(buf: &[u8]) -> (Integrity, IntegrityAlternates) {
+        let primary = Self::parse(buf);
+        let mut alternates = IntegrityAlternates::default();
+        if primary.tag == Tag::UNKNOWN {
+            return (primary, alternates);
+        }
+        let len = primary.tag.digest_len();
+        for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
+            let parsed = Self::parse_entry(entry);
+            if parsed.tag != primary.tag {
+                continue;
+            }
+            // Skip the primary digest itself and any duplicate already stored.
+            if strings::eql_long(&parsed.value[0..len], &primary.value[0..len], true) {
+                continue;
+            }
+            let mut dup = false;
+            for i in 0..alternates.count as usize {
+                if strings::eql_long(&alternates.values[i][0..len], &parsed.value[0..len], true) {
+                    dup = true;
+                    break;
+                }
+            }
+            if dup {
+                continue;
+            }
+            if !alternates.push(primary.tag, &parsed.value) {
+                break;
+            }
+        }
+        (primary, alternates)
+    }
+
     fn parse_entry(buf: &[u8]) -> Integrity {
         if buf.len() < b"sha256-".len() {
             return Integrity {
@@ -267,6 +306,94 @@ impl fmt::Display for Integrity {
     }
 }
 
+/// Maximum number of *alternate* digests (of the strongest algorithm) carried
+/// alongside the primary `Integrity`. SSRI allows any number of digests per
+/// algorithm; beyond this cap the extra ones are ignored. npm publishes a
+/// single digest per algorithm, so multiple same-algorithm digests only appear
+/// in hand-edited or migrated lockfiles and unusual third-party registries.
+pub const MAX_INTEGRITY_ALTERNATES: usize = 3;
+
+/// Additional digests of the strongest algorithm found in a multi-entry SSRI
+/// string (see [`Integrity::parse_with_alternates`]). The primary digest lives
+/// in a companion [`Integrity`]; these are the others that must also be
+/// accepted at verify time. Runtime-only: never serialized to the lockfile or
+/// the npm manifest cache. The lockfile writer re-emits them next to the
+/// primary so the multi-digest shape round-trips.
+#[derive(Clone, Copy)]
+pub struct IntegrityAlternates {
+    pub tag: Tag,
+    pub count: u8,
+    pub values: [[u8; DIGEST_BUF_LEN]; MAX_INTEGRITY_ALTERNATES],
+}
+
+impl Default for IntegrityAlternates {
+    fn default() -> Self {
+        Self {
+            tag: Tag::UNKNOWN,
+            count: 0,
+            values: [EMPTY_DIGEST_BUF; MAX_INTEGRITY_ALTERNATES],
+        }
+    }
+}
+
+impl IntegrityAlternates {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    fn push(&mut self, tag: Tag, value: &[u8; DIGEST_BUF_LEN]) -> bool {
+        let i = self.count as usize;
+        if i >= MAX_INTEGRITY_ALTERNATES {
+            return false;
+        }
+        self.tag = tag;
+        self.values[i] = *value;
+        self.count += 1;
+        true
+    }
+
+    /// Iterate the stored alternate digests as `Integrity` values, for
+    /// re-emitting them in the lockfile next to the primary.
+    pub fn iter(&self) -> impl Iterator<Item = Integrity> + '_ {
+        let tag = self.tag;
+        self.values[0..self.count as usize]
+            .iter()
+            .map(move |value| Integrity { tag, value: *value })
+    }
+
+    /// True if `digest` (already computed with `tag`) equals any alternate.
+    pub fn matches(&self, tag: Tag, digest: &[u8]) -> bool {
+        if self.tag != tag || self.count == 0 {
+            return false;
+        }
+        let len = tag.digest_len();
+        if len == 0 || digest.len() < len {
+            return false;
+        }
+        for i in 0..self.count as usize {
+            if strings::eql_long(&self.values[i][0..len], &digest[0..len], true) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True if `bytes` hashed with `tag` matches any alternate. Used by the
+    /// non-streaming extract path, which has no precomputed digest.
+    pub fn verify_bytes(&self, tag: Tag, bytes: &[u8]) -> bool {
+        if self.tag != tag || self.count == 0 {
+            return false;
+        }
+        for i in 0..self.count as usize {
+            if Integrity::verify_by_tag(tag, bytes, &self.values[i]) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 // Any u8 must be a valid bit pattern, since this is read from on-disk
 // lockfiles. A `#[repr(u8)] enum` would be UB for unknown discriminants, so we
 // use a transparent newtype with associated consts instead.
@@ -334,6 +461,8 @@ impl Tag {
 /// tarball) we default to SHA-512 to match `for_bytes`.
 pub(crate) struct Streaming {
     pub expected: Integrity,
+    /// Other accepted digests of `expected.tag` (SSRI any-match).
+    pub alternates: IntegrityAlternates,
     pub hasher: Hasher,
 }
 
@@ -346,9 +475,14 @@ pub(crate) enum Hasher {
 }
 
 impl Streaming {
-    pub(crate) fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
+    pub(crate) fn init(
+        expected: &Integrity,
+        alternates: &IntegrityAlternates,
+        compute_if_missing: bool,
+    ) -> Streaming {
         Streaming {
             expected: *expected,
+            alternates: *alternates,
             hasher: match expected.tag {
                 Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
                 Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),
@@ -441,7 +575,11 @@ impl Streaming {
             return false;
         }
         let len = self.expected.tag.digest_len();
-        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true)
+        if strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true) {
+            return true;
+        }
+        // SSRI any-match: accept any other digest of the strongest algorithm.
+        self.alternates.matches(computed.tag, &computed.value)
     }
 }
 

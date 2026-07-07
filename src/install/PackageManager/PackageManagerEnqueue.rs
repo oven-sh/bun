@@ -1924,6 +1924,7 @@ fn enqueue_local_tarball(
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
                     integrity: *integrity,
+                    integrity_alternates: this.lockfile.integrity_alternates_for(integrity),
                     url: StringOrTinyString::init_append_if_needed(
                         path,
                         &mut crate::network_task::filename_store_appender(),

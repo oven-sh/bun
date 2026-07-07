@@ -749,6 +749,88 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/33700
+  // SSRI (W3C SRI §3.3.4) and npm's `ssri` accept a tarball that matches ANY
+  // digest of the strongest algorithm, regardless of entry order. Bun kept
+  // only the first digest of the strongest algorithm, so a tarball matching a
+  // later same-algorithm digest hard-failed. A multi-digest integrity string
+  // only appears in hand-edited / migrated lockfiles, so this is exercised via
+  // a lockfile-pinned local tarball.
+  it("accepts a local tarball matching a non-first digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"baz","version":"1.0.0"}\n'));
+    const bogus = buildTarball(Buffer.from('{"name":"bogus","version":"9.9.9"}\n'));
+
+    using dir = tempDir("integrity-alt-match", {});
+    const tgzPath = join(String(dir), "baz.tgz");
+    await writeFile(tgzPath, real.tgz);
+    await writeFile(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: tgzPath } }),
+    );
+    // Bogus digest first (the one Bun used to pin to), real digest second. A
+    // tarball matching only the second entry must still verify.
+    await writeFile(
+      join(String(dir), "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { baz: tgzPath } } },
+        packages: { baz: [`baz@${tgzPath}`, {}, `${bogus.sha512} ${real.sha512}`] },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(await readdirSorted(join(String(dir), "node_modules", "baz"))).toContain("package.json");
+    expect(exitCode).toBe(0);
+
+    // The multi-digest shape round-trips: re-emitted next to the primary.
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(bogus.sha512);
+    expect(lockContent).toContain(real.sha512);
+  });
+
+  it("rejects a local tarball matching no digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"baz","version":"1.0.0"}\n'));
+    const bogus1 = buildTarball(Buffer.from('{"name":"bogus1","version":"9.9.9"}\n'));
+    const bogus2 = buildTarball(Buffer.from('{"name":"bogus2","version":"8.8.8"}\n'));
+
+    using dir = tempDir("integrity-alt-none", {});
+    const tgzPath = join(String(dir), "baz.tgz");
+    await writeFile(tgzPath, real.tgz);
+    await writeFile(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: tgzPath } }),
+    );
+    await writeFile(
+      join(String(dir), "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { baz: tgzPath } } },
+        packages: { baz: [`baz@${tgzPath}`, {}, `${bogus1.sha512} ${bogus2.sha512}`] },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {

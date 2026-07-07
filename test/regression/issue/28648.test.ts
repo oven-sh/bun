@@ -7,7 +7,7 @@
 // re-entry guard in `VirtualMachine::uncaught_exception` assumed `process_exit`
 // never returns, which is only true on the main thread. On a worker it returns
 // after arming termination, so the guard must return instead of panicking.
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 describe.concurrent("nested uncaught exceptions in a worker don't abort the process", () => {

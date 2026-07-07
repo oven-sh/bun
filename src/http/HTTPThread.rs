@@ -1155,8 +1155,16 @@ fn start_queued_task(
     // Note: AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
-    let cloned = bun_core::heap::release(cloned);
-    in_flight.push(NonNull::from(&*cloned).cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    //
+    // `in_flight` keeps the allocation's own pointer, not a `&*cloned`
+    // reborrow of it: the writes below go through `cloned`, and a shared
+    // reborrow would be frozen by the first of them.
+    let cloned_ptr = bun_core::heap::into_raw(cloned);
+    let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
+    in_flight.push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    // SAFETY: freshly leaked; this thread is its sole owner until the request
+    // completes and `in_flight` gives the pointer back.
+    let cloned = unsafe { &mut *cloned_ptr };
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
     // which may point to other AsyncHTTP structs that could be freed before the callback

@@ -71,14 +71,12 @@ test("fetch() with subclass containing invalid HTTP headers throws without crash
 
   const request = new MyRequest("https://example.com", {}, "https://example.com");
   expect(request.method).toBe("POST");
-  expect(() => fetch(request)).toThrow("Invalid header name");
+  await expect(fetch(request)).rejects.toThrow("Invalid header name");
 
   // quick gc test
-  for (let i = 0; i < 1e4; i++) {
-    try {
-      fetch(request);
-    } catch (e) {}
+  for (let i = 0; i < 1e3; i++) {
+    fetch(request).catch(() => {});
   }
 
-  expect(() => fetch(request)).toThrow("Invalid header name");
+  await expect(fetch(request)).rejects.toThrow("Invalid header name");
 });

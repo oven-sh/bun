@@ -355,13 +355,37 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    fetch_impl::<false>(ctx, callframe)
+    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
 }
 
 /// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn]
 pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    fetch_impl::<true>(ctx, callframe)
+    reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))
+}
+
+/// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
+/// rejects the returned promise; `fetch()` never throws synchronously.
+fn reject_on_exception(
+    global_this: &JSGlobalObject,
+    result: JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let err = match result {
+        Ok(v) if !v.is_empty() => return Ok(v),
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
+        Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
+            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
+            Some(exc) => exc.to_error().unwrap_or(exc),
+            None => return result,
+        },
+    };
+    Ok(
+        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+            global_this,
+            err,
+        ),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────

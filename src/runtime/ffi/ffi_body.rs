@@ -432,11 +432,11 @@ enum DeferredError {
 // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
 // `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type
 // (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "ohos"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "ohos"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
 static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "ohos"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
 impl CompileC {
@@ -530,7 +530,7 @@ impl CompileC {
             }
             let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_bytes(trimmed));
         }
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "ohos"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
         {
             // On Debian/Ubuntu, the lib and include paths are suffixed with {arch}-linux-gnu
             // e.g. x86_64-linux-gnu or aarch64-linux-gnu
@@ -591,7 +591,7 @@ impl CompileC {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "ohos"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos"))]
     fn get_system_include_dir() -> Option<&'static ZStr> {
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
@@ -600,7 +600,7 @@ impl CompileC {
             .filter(|d| !d.is_empty())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "ohos"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
     fn get_system_library_dir() -> Option<&'static ZStr> {
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
         CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
@@ -709,7 +709,7 @@ impl CompileC {
                 }
             }
         }
-        #[cfg(target_os = "ohos")]
+        #[cfg(target_env = "ohos")]
         {
             // OHOS: add sysroot include/lib paths from $OHOS_SDK env var.
             // The SDK layout is: $OHOS_SDK/sysroot/usr/include/{,aarch64-linux-ohos/}
@@ -752,7 +752,7 @@ impl CompileC {
                 }
             }
         }
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "ohos"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
         {
             if let Some(include_dir) = Self::get_system_include_dir() {
                 if state.add_sys_include_path(include_dir).is_err() {

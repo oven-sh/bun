@@ -5483,6 +5483,35 @@ describe("row-returning detection (column count, not tokenizer)", () => {
     expect((await sql.unsafe(`select*from t`)).command).toBe("SELECT");
   });
 
+  test("INSERT ... SELECT without RETURNING reports affected row count (#30811)", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE company (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)`;
+    await sql`INSERT INTO company (name) VALUES (${"ACME"}), (${"FOO"})`;
+
+    const result = await sql`INSERT INTO company (name) SELECT name || ${" 2"} FROM company`;
+    expect(result.command).toBe("INSERT");
+    expect(result.count).toBe(2);
+    expect(result.lastInsertRowid).toBe(4);
+  });
+
+  test("WITH ... INSERT without RETURNING reports affected row count (#30811)", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE src (id INTEGER PRIMARY KEY, name TEXT)`;
+    await sql`CREATE TABLE dst (id INTEGER PRIMARY KEY, name TEXT)`;
+    await sql`INSERT INTO src VALUES (1, 'a'), (2, 'b'), (3, 'c')`;
+
+    const ins = await sql`WITH cte AS (SELECT id + 10 AS id, name FROM src) INSERT INTO dst SELECT id, name FROM cte`;
+    expect(ins.count).toBe(3);
+    expect(ins.lastInsertRowid).toBe(13);
+
+    // WITH ... SELECT must still return rows (not over-corrected).
+    const sel = await sql`WITH cte AS (SELECT id, name FROM src WHERE id > 1) SELECT * FROM cte ORDER BY id`;
+    expect(Array.from(sel)).toEqual([
+      { id: 2, name: "b" },
+      { id: 3, name: "c" },
+    ]);
+  });
+
   test("INSERT helper detected past a comment containing a quote", async () => {
     await using sql = new SQL("sqlite://:memory:");
     await sql`CREATE TABLE items (name TEXT)`;

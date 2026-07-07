@@ -608,6 +608,57 @@ it("rejects an unsupported ecdhCurve with Node's error shape", () => {
   });
 });
 
+it("rejects an unparseable crl with Node's error shape", () => {
+  // Node's SetCRL wraps the parse in ClearErrorOnReturn and throws
+  // ERR_CRYPTO_OPERATION_FAILED("Failed to parse CRL"), no OpenSSL decoration:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1893-L1903
+  // https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-crypto.js#L291-L298
+  let err: any;
+  try {
+    tls.createSecureContext({ crl: "not a CRL" });
+  } catch (e) {
+    err = e;
+  }
+  expect({
+    name: err?.name,
+    code: err?.code,
+    message: err?.message,
+    hasOpensslErrorStack: "opensslErrorStack" in (err ?? {}),
+  }).toEqual({
+    name: "Error",
+    code: "ERR_CRYPTO_OPERATION_FAILED",
+    message: "Failed to parse CRL",
+    hasOpensslErrorStack: false,
+  });
+});
+
+it("validates crl the same way on both createSecureContext and Server.setSecureContext", () => {
+  // Node validates crl via validateKeyOrCertOption in configSecureContext,
+  // which both createSecureContext and tls.Server use:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L261-L269
+  for (const build of [
+    () => tls.createSecureContext({ crl: 123 as never }),
+    () => tls.createServer({ crl: 123 as never }),
+  ]) {
+    let err: any;
+    try {
+      build();
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+  }
+});
+
+it("accepts BoringSSL kCipherAliases selectors that are not literal suite names", () => {
+  // vendor/boringssl/ssl/ssl_cipher.cc kCipherAliases: AES128, AES256, kPSK,
+  // aPSK, FIPS all match a non-empty cipher list. Node built against BoringSSL
+  // accepts them; a JS-side pre-check must not reject what the parser accepts.
+  for (const ciphers of ["AES128", "AES256", "FIPS", "kPSK", "aPSK"]) {
+    expect(() => tls.createSecureContext({ ciphers })).not.toThrow();
+  }
+});
+
 it("validates sigalgs on every secure context like Node's configSecureContext", () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L213-L217
   expect(() => tls.createSecureContext({ sigalgs: "" })).toThrow(

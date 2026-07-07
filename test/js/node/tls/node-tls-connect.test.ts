@@ -154,6 +154,18 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   expect(error).toBeDefined();
   expect((error as Error).code as string).toBe("ECONNRESET");
 });
+it("initializes authorizationError to null in the TLSSocket constructor", () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
+  // Node's onServerSocketSecure/onConnectSecure only assign on failure; a
+  // clean handshake leaves the constructor's null untouched.
+  const socket = new tls.TLSSocket();
+  expect({ value: socket.authorizationError, hasOwn: "authorizationError" in socket }).toEqual({
+    value: null,
+    hasOwn: true,
+  });
+  socket.destroy();
+});
+
 it("should be able to grab the JSStreamSocket constructor", () => {
   // this keep http2-wrapper compatibility with node.js
   const socket = new tls.TLSSocket(new stream.PassThrough());
@@ -977,6 +989,44 @@ it("a `ca` that parses to zero certificates is an empty pin set, never the defau
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
     stdout: "error=UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("tls.connect({rejectUnauthorized: undefined}) with NODE_TLS_REJECT_UNAUTHORIZED=0 still rejects", async () => {
+  // Node's spread `{rejectUnauthorized: !allowUnauthorized, ...options}`:
+  // an explicit own-property `undefined` overrides the env-derived default and
+  // then coerces to true via `!== false`; only an OMITTED key falls through to
+  // the env var. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1732-L1781
+  const script = `
+    const tls = require("node:tls");
+    const { once } = require("node:events");
+    const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, s => s.end());
+    server.listen(0);
+    server.on("listening", () => {
+      const socket = tls.connect({ port: server.address().port, rejectUnauthorized: undefined });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        socket.destroy();
+        server.close();
+      });
+      socket.on("secureConnect", () => {
+        console.log("secureConnect authorized=" + socket.authorized);
+        socket.end();
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=DEPTH_ZERO_SELF_SIGNED_CERT",
     exitCode: 0,
     failureDetail: "",
   });

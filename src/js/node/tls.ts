@@ -92,7 +92,11 @@ const CIPHER_LIST_SELECTORS = new Set([
   "ECDSA",
   "aDSS",
   "DSS",
+  "kPSK",
+  "aPSK",
   "AES",
+  "AES128",
+  "AES256",
   "AESGCM",
   "AESCCM",
   "CHACHA20",
@@ -113,6 +117,7 @@ const CIPHER_LIST_SELECTORS = new Set([
   "TLSv1.2",
   "TLSv1.3",
   "SSLv3",
+  "FIPS",
 ]);
 
 function validateCiphers(ciphers: string, name: string = "options") {
@@ -653,6 +658,9 @@ function normalizePemKeyOption(key, ctxPassphrase) {
   });
 }
 
+// OpenSSL/BoringSSL SSL_OP_CIPHER_SERVER_PREFERENCE (vendor/boringssl/include/openssl/ssl.h).
+const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
+
 // The digest cache is opt-in: the internal connect/listen paths pass
 // `cached = true` explicitly. A forgotten opt-in on a future entry point is a
 // perf regression, not a shared trust store.
@@ -708,6 +716,12 @@ function newNativeSecureContext(options, cached = false) {
     if (allowPartialTrustChain !== undefined && typeof allowPartialTrustChain !== "boolean") {
       options = { ...options, allowPartialTrustChain: !!allowPartialTrustChain };
     }
+    // Node folds honorCipherOrder into secureOptions inside createSecureContext
+    // (lib/internal/tls/common.js:108), so every context path — STARTTLS wrap,
+    // addContext, SNICallback — carries it, not just Server.setSecureContext.
+    if (options.honorCipherOrder) {
+      options = { ...options, secureOptions: options.secureOptions | 0 | SSL_OP_CIPHER_SERVER_PREFERENCE };
+    }
   }
   if (options) {
     // Read each option once. Translate minVersion/maxVersion/secureProtocol to
@@ -757,6 +771,8 @@ var InternalSecureContext = class SecureContext {
       if (key) throwOnInvalidTLSArray("options.key", key);
       const ca = options.ca;
       if (ca) throwOnInvalidTLSArray("options.ca", ca);
+      const crl = options.crl;
+      if (crl) throwOnInvalidTLSArray("options.crl", crl);
       if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
@@ -816,11 +832,8 @@ function translatePeerCertificate(c) {
   return c;
 }
 
-// OpenSSL/BoringSSL SSL_OP_CIPHER_SERVER_PREFERENCE (vendor/boringssl/include/openssl/ssl.h).
-const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
-
 const ksecureContext = Symbol("ksecureContext");
-const kserverTLSOptions = Symbol("kserverTLSOptions");
+const ksharedCredsOptions = Symbol("ksharedCredsOptions");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
@@ -846,7 +859,9 @@ function TLSSocket(socket?, options?) {
   this._SNICallback = undefined;
   this.servername = undefined;
   this.authorized = false;
-  void this.authorizationError;
+  // Node initializes to null in the constructor (lib/internal/tls/wrap.js:556)
+  // and only assigns on failure; a clean handshake leaves the null untouched.
+  this.authorizationError = null;
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
@@ -1291,6 +1306,7 @@ function Server(options, secureConnectionListener): void {
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  this._sharedCreds = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -1313,9 +1329,10 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext = function (options) {
-    // The raw argument is what the STARTTLS 'connection' listener below wraps
-    // plain sockets with; it is published only once validation has succeeded,
-    // so a throwing call cannot leave the wrap path on rejected options.
+    // The STARTTLS 'connection' listener below wraps plain sockets with
+    // _sharedCreds, built at the end of this function only once validation has
+    // succeeded, so a throwing call cannot leave the wrap path on rejected
+    // options.
     const serverTLSOptions = options;
     if (options instanceof InternalSecureContext) {
       options = options.context;
@@ -1479,7 +1496,15 @@ function Server(options, secureConnectionListener): void {
       this.minVersion = options.minVersion;
       this.maxVersion = options.maxVersion;
     }
-    this[kserverTLSOptions] = serverTLSOptions;
+    // Node builds one _sharedCreds per setSecureContext (wrap.js:1520) and
+    // reuses it for every connection. The native accept path builds its own
+    // SSL_CTX at listen time (via `this[buntls]`) and reports key/cert
+    // failures on the server's 'error' event; keep that lazy contract by
+    // stashing the post-normalized options here and building _sharedCreds on
+    // first STARTTLS wrap so it uses the same secureOptions (with the
+    // server's honorCipherOrder default) as the native path.
+    this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
+    this[ksharedCredsOptions] = serverTLSOptions;
   };
 
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
@@ -1559,12 +1584,37 @@ function Server(options, secureConnectionListener): void {
   // and skip the wrap.
   this.on("connection", socket => {
     if (!socket || socket.encrypted || socket instanceof TLSSocket) return;
-    const ctxOptions = this[kserverTLSOptions];
-    const secureContext =
-      ctxOptions instanceof InternalSecureContext ? ctxOptions : createSecureContext(ctxOptions || {});
+    // Build _sharedCreds once per setSecureContext, from the post-normalized
+    // server fields, so every emitted socket reuses one SSL_CTX with the
+    // server's honorCipherOrder default and pfx-derived CA (Node wrap.js:1520).
+    let secureContext = this._sharedCreds;
+    if (!secureContext) {
+      secureContext = this._sharedCreds = new InternalSecureContext(
+        {
+          ...this[ksharedCredsOptions],
+          // pfx was already parsed into this.key/cert/ca by setSecureContext.
+          pfx: undefined,
+          _pfxExtraCACerts: undefined,
+          key: this.key,
+          cert: this.cert,
+          ca: this.ca,
+          crl: this.crl,
+          ciphers: this.ciphers,
+          secureOptions: this.secureOptions,
+          allowPartialTrustChain: this.allowPartialTrustChain,
+          sessionTimeout: this.sessionTimeout,
+          sigalgs: this.sigalgs,
+          passphrase: this.passphrase,
+          secureProtocol: this.secureProtocol,
+          minVersion: this.minVersion,
+          maxVersion: this.maxVersion,
+        },
+        true,
+      );
+    }
     const wrapped = new TLSSocket(socket, {
-      isServer: true,
       secureContext,
+      isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
       SNICallback: this._SNICallback,
@@ -1662,9 +1712,12 @@ function connect(...args) {
 
   const tlssock = new TLSSocket(connectOptions);
   // tls.connect() is secure by default - only a literal `false` opts out
-  // (the bare TLSSocket constructor is truthiness-based, per Node's _init):
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1781
-  if (options.rejectUnauthorized === undefined) {
+  // (the bare TLSSocket constructor is truthiness-based, per Node's _init).
+  // Node's spread `{rejectUnauthorized: !allowUnauthorized, ...options}` means
+  // an explicit `undefined` overrides the env-derived default and then coerces
+  // to true via `!== false`; only an OMITTED key falls through to the env var:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1732-L1781
+  if (!("rejectUnauthorized" in options)) {
     tlssock._rejectUnauthorized = rejectUnauthorizedDefault();
   } else {
     tlssock._rejectUnauthorized = options.rejectUnauthorized !== false;

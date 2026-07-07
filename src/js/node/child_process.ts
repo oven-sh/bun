@@ -1120,7 +1120,7 @@ class ChildProcess extends EventEmitter {
     {
       if (this.#stdin) {
         this.#stdin.destroy();
-      } else {
+      } else if (this.#stdioOptions[0] === "pipe") {
         this.#stdioOptions[0] = "destroyed";
       }
 

@@ -651,7 +651,7 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   // must still decode successfully (prior Bun behavior, and what browsers /
   // curl / Go do). The multi-member loop only resumes on 0x1f so stray
   // CRLF/footer junk from misconfigured origins does not fail the fetch.
-  it.each(["0", "1"])("single member with trailing garbage (NO_LIBDEFLATE=%s)", async noLibdeflate => {
+  it.concurrent.each(["0", "1"])("single member with trailing garbage (NO_LIBDEFLATE=%s)", async noLibdeflate => {
     const body = Buffer.concat([M1, Buffer.from("\r\ngarbage")]);
     const server = createNetServer(socket => {
       socket.on("error", () => {});
@@ -693,7 +693,7 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
   // the libdeflate fast path takes the decompress_to_vec branch, which must
   // also detect unconsumed input and fall through.
-  it("content-length, last member > 512 KiB (decompress_to_vec branch)", async () => {
+  it.concurrent("content-length, last member > 512 KiB (decompress_to_vec branch)", async () => {
     const big = Buffer.alloc(600 * 1024, "BIG-LAST-MEMBER-");
     const body = Buffer.concat([M1, gzipSync(big)]);
     const server = createNetServer(socket => {
@@ -737,7 +737,7 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   // Streaming body path (ResponseBodyStreaming signal set): exercises the
   // per-chunk Decompressor::decompress_chunk path with a member boundary
   // between chunks.
-  it("streaming body, member boundary between chunks", async () => {
+  it.concurrent("streaming body, member boundary between chunks", async () => {
     const server = createNetServer(socket => {
       socket.on("error", () => {});
       socket.setNoDelay(true);

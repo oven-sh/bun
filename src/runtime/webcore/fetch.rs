@@ -614,21 +614,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url_type = URLType::Blob;
     }
 
-    // https://fetch.spec.whatwg.org/#dom-request step 6
-    if !ALLOW_GET_BODY && (!url.username.is_empty() || !url.password.is_empty()) {
-        let err = ctx.to_type_error(
-            jsc::ErrorCode::INVALID_URL,
-            format_args!(
-                "Request cannot be constructed from a URL that includes credentials: {}",
-                bstr::BStr::new(url.href)
-            ),
-        );
-        return Ok(
-            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err,
-            ),
-        );
+    // Bun diverges from Fetch #dom-request step 6: instead of rejecting a URL
+    // that includes credentials, derive `Authorization: Basic` and strip the
+    // userinfo so it never reaches `response.url` or the wire.
+    let mut url_derived_auth: Option<Vec<u8>> = None;
+    if !ALLOW_GET_BODY && url_type == URLType::Remote {
+        if let Some(auth) = http::basic_auth_from_url_userinfo(url.username, url.password) {
+            url_derived_auth = Some(auth);
+            url_proxy_buffer = http::href_without_userinfo(&url_proxy_buffer);
+            url = parse_url_detached!(&url_proxy_buffer[..]);
+        }
     }
 
     // **Start with the harmless ones.**
@@ -1609,6 +1604,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
+    }
+
+    if let Some(auth) = url_derived_auth {
+        let h = headers.get_or_insert_with(Headers::default);
+        if h.get(b"Authorization").is_none() {
+            h.append(b"Authorization", &auth);
+        }
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then

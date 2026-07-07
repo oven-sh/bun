@@ -2,60 +2,107 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import * as http from "node:http";
 
-// https://fetch.spec.whatwg.org/#dom-request step 6:
-//   "If parsedURL includes credentials, then throw a TypeError."
-// https://fetch.spec.whatwg.org/#http-redirect-fetch steps 10-11:
-//   "If locationURL includes credentials, then return a network error."
+// Bun-specific divergence from https://fetch.spec.whatwg.org/#dom-request step 6:
+// instead of rejecting a URL that includes credentials, derive an
+// `Authorization: Basic` header and strip the userinfo from the stored URL.
+// Redirects to a Location that includes credentials are still rejected per
+// https://fetch.spec.whatwg.org/#http-redirect-fetch steps 10-11.
+
+const basic = (userpass: string) => "Basic " + Buffer.from(userpass).toString("base64");
 
 describe("URL credentials", () => {
   test.each([
-    "http://user:pass@example.com/",
-    "http://user@example.com/",
-    "http://:pass@example.com/",
-    "https://user:pass@example.com/path?query#hash",
-  ])("new Request(%j) throws a TypeError", url => {
-    expect(() => new Request(url)).toThrow(TypeError);
-    expect(() => new Request(url)).toThrow("includes credentials");
-    expect(() => new Request(new URL(url))).toThrow(TypeError);
+    ["http://user:pass@example.com/", "http://example.com/", basic("user:pass")],
+    ["http://user@example.com/", "http://example.com/", basic("user:")],
+    ["http://:pass@example.com/", "http://example.com/", basic(":pass")],
+    ["http://user%40x:p%40ss@example.com/", "http://example.com/", basic("user@x:p@ss")],
+    ["https://user:pass@example.com/path?q=1#h", "https://example.com/path?q=1#h", basic("user:pass")],
+  ])("new Request(%j) derives Authorization and strips userinfo", (input, expectedUrl, expectedAuth) => {
+    const req = new Request(input);
+    expect({ url: req.url, auth: req.headers.get("authorization") }).toEqual({
+      url: expectedUrl,
+      auth: expectedAuth,
+    });
+
+    // same behaviour when the input is a URL object
+    const req2 = new Request(new URL(input));
+    expect({ url: req2.url, auth: req2.headers.get("authorization") }).toEqual({
+      url: expectedUrl,
+      auth: expectedAuth,
+    });
   });
 
-  test("new Request() with a URL that has no credentials does not throw", () => {
-    expect(() => new Request("http://example.com/")).not.toThrow();
-    // serialized credentials get percent-encoded into the path, which is fine
-    expect(() => new Request("http://example.com/user:pass@x")).not.toThrow();
-    // '@' in the query string is fine
-    expect(() => new Request("http://example.com/?x=@y")).not.toThrow();
+  test("new Request() does not derive Authorization when the caller supplied one", () => {
+    const req = new Request("http://user:pass@example.com/", {
+      headers: { authorization: "Bearer TOKEN" },
+    });
+    expect({ url: req.url, auth: req.headers.get("authorization") }).toEqual({
+      url: "http://example.com/",
+      auth: "Bearer TOKEN",
+    });
+  });
+
+  test("new Request() with a URL that has no credentials is unchanged", () => {
+    const cases = ["http://example.com/", "http://example.com/user:pass@x", "http://example.com/?x=@y"];
+    for (const url of cases) {
+      const req = new Request(url);
+      expect({ url: req.url, auth: req.headers.get("authorization") }).toEqual({
+        url,
+        auth: null,
+      });
+    }
     // empty user+password is serialized without the '@'
     expect(new Request("http://@example.com/").url).toBe("http://example.com/");
   });
 
-  test("fetch() with a URL that includes credentials rejects with a TypeError and never connects", async () => {
-    let hits = 0;
+  test("fetch() with a URL that includes credentials sends Authorization: Basic and strips userinfo", async () => {
+    const seen: (string | undefined)[] = [];
     await using server = Bun.serve({
       port: 0,
-      fetch() {
-        hits++;
+      fetch(req) {
+        seen.push(req.headers.get("authorization") ?? undefined);
         return new Response("OK");
       },
     });
-    const url = `http://user:pass@${server.hostname}:${server.port}/`;
+    const base = `${server.hostname}:${server.port}`;
+    const res = await fetch(`http://user:pass@${base}/x`);
+    expect({
+      status: res.status,
+      url: res.url,
+      seen,
+    }).toEqual({
+      status: 200,
+      url: `http://${base}/x`,
+      seen: [basic("user:pass")],
+    });
+  });
 
-    const err = await fetch(url).then(
-      () => null,
-      e => e,
-    );
-    expect(err).toBeInstanceOf(TypeError);
-    expect(err.message).toContain("includes credentials");
-    // the server must not have been contacted
-    expect(hits).toBe(0);
+  test("fetch() does not derive Authorization when the caller supplied one", async () => {
+    const seen: (string | undefined)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("authorization") ?? undefined);
+        return new Response("OK");
+      },
+    });
+    const res = await fetch(`http://user:pass@${server.hostname}:${server.port}/`, {
+      headers: { authorization: "Bearer TOKEN" },
+    });
+    expect({ status: res.status, seen }).toEqual({ status: 200, seen: ["Bearer TOKEN"] });
+  });
 
-    // same thing via a URL object
-    const err2 = await fetch(new URL(url)).then(
-      () => null,
-      e => e,
-    );
-    expect(err2).toBeInstanceOf(TypeError);
-    expect(hits).toBe(0);
+  test("fetch(new Request(url)) sends the Request's derived Authorization", async () => {
+    const seen: (string | undefined)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("authorization") ?? undefined);
+        return new Response("OK");
+      },
+    });
+    const res = await fetch(new Request(`http://user:pass@${server.hostname}:${server.port}/`));
+    expect({ status: res.status, seen }).toEqual({ status: 200, seen: [basic("user:pass")] });
   });
 
   async function withRedirectServers(fn: (portA: number, portB: number, seen: string[]) => Promise<void>) {
@@ -97,7 +144,6 @@ describe("URL credentials", () => {
       );
       expect(err).toBeInstanceOf(TypeError);
       expect(err.message).toContain("includes credentials");
-      // only the redirect endpoint on B was contacted, never the credentialed target on A
       expect(seen.some(u => u.startsWith("/redirected"))).toBe(false);
     });
   });

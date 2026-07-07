@@ -50,6 +50,7 @@ pub mod zlib;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
+pub use async_http::{basic_auth_from_url_userinfo, href_without_userinfo};
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;

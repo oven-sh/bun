@@ -4272,9 +4272,12 @@ private:
             break;
         }
 
-        // Version 1 did not serialize the key type and relied on importRaw
-        // inferring it from the sign usage, which is wrong for X25519.
+        // Version 1 did not serialize the key type; importRaw infers it from the
+        // sign usage, which is wrong for X25519. v1 builds rejected X25519 here
+        // outright, so keep rejecting it rather than reconstructing a mislabeled key.
         if (keyFormatVersion < 2) {
+            if (namedCurve == CryptoKeyOKP::NamedCurve::X25519)
+                return false;
             Vector<uint8_t> keyData;
             if (!read(keyData))
                 return false;

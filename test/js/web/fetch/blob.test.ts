@@ -244,6 +244,66 @@ describe("new File() lastModified option", () => {
   });
 });
 
+test("File.prototype.slice() returns a Blob, not a File", async () => {
+  const file = new File(["0123456789"], "secret-report.pdf", { type: "text/plain", lastModified: 1234 });
+  const sliced = file.slice(2, 5);
+
+  expect({
+    isFile: sliced instanceof File,
+    isBlob: sliced instanceof Blob,
+    name: (sliced as any).name,
+    size: sliced.size,
+    text: await sliced.text(),
+  }).toEqual({
+    isFile: false,
+    isBlob: true,
+    name: undefined,
+    size: 3,
+    text: "234",
+  });
+  expect((sliced as any).lastModified).not.toBe(1234);
+
+  // empty File: slice() takes the size==0 early return
+  const emptySlice = new File([], "empty.txt", { lastModified: 999 }).slice();
+  expect(emptySlice instanceof File).toBe(false);
+  expect((emptySlice as any).name).toBeUndefined();
+
+  // new Blob([file]) is a plain Blob, not a File
+  const wrapped = new Blob([file]);
+  expect({
+    isFile: wrapped instanceof File,
+    isBlob: wrapped instanceof Blob,
+    name: (wrapped as any).name,
+  }).toEqual({
+    isFile: false,
+    isBlob: true,
+    name: undefined,
+  });
+
+  // original File is untouched
+  expect({
+    isFile: file instanceof File,
+    name: file.name,
+    lastModified: file.lastModified,
+  }).toEqual({
+    isFile: true,
+    name: "secret-report.pdf",
+    lastModified: 1234,
+  });
+
+  // structuredClone of a File still yields a File
+  const cloned = structuredClone(file);
+  expect({
+    isFile: cloned instanceof File,
+    name: cloned.name,
+    lastModified: cloned.lastModified,
+  }).toEqual({
+    isFile: true,
+    name: "secret-report.pdf",
+    lastModified: 1234,
+  });
+});
+
 test("new Blob('123') is NOT supported", async () => {
   expect(() => new Blob("123")).toThrow();
 });

@@ -7796,7 +7796,7 @@ CREATE TABLE ${table_name} (
           -3.45
         ]::float4[] as negative_values
       `;
-        expect(result[0].negative_values).toEqual([-1.23, -2.34, -3.45]);
+        expect(result[0].negative_values).toEqual([-1.23, -2.34, -3.45].map(Math.fround));
       });
 
       test("float4[] - zero values", async () => {
@@ -7820,7 +7820,7 @@ CREATE TABLE ${table_name} (
           1.23e+4
         ]::float4[] as scientific_notation
       `;
-        expect(result[0].scientific_notation.map(n => Number(n.toExponential()))).toEqual([1.23e-4, 1.23e4, 1.23e4]);
+        expect(result[0].scientific_notation).toEqual([1.23e-4, 1.23e4, 1.23e4].map(Math.fround));
       });
 
       test("float4[] - special values", async () => {
@@ -7845,9 +7845,7 @@ CREATE TABLE ${table_name} (
         ]::float4[] as boundary_values
       `;
 
-        expect(result[0].boundary_values[0]).toBeCloseTo(3.4028235e38);
-        expect(result[0].boundary_values[1]).toBeCloseTo(-3.4028235e38);
-        expect(result[0].boundary_values[2]).toBeCloseTo(1.175494e-38);
+        expect(result[0].boundary_values).toEqual([3.4028235e38, -3.4028235e38, 1.175494e-38].map(Math.fround));
       });
 
       test("float4[] - array element access", async () => {
@@ -7859,9 +7857,9 @@ CREATE TABLE ${table_name} (
           (ARRAY[1.1, 2.2, 3.3]::float4[])[3] as third_element
       `;
 
-        expect(result[0].first_element).toBe(1.1);
-        expect(result[0].second_element).toBe(2.2);
-        expect(result[0].third_element).toBe(3.3);
+        expect(result[0].first_element).toBe(Math.fround(1.1));
+        expect(result[0].second_element).toBe(Math.fround(2.2));
+        expect(result[0].third_element).toBe(Math.fround(3.3));
       });
 
       test("float4[] - array contains operator", async () => {
@@ -7899,7 +7897,7 @@ CREATE TABLE ${table_name} (
           ARRAY[1.1, 2.2]::float4[] || ARRAY[3.3, 4.4]::float4[] as concatenated
       `;
 
-        expect(result[0].concatenated).toEqual([1.1, 2.2, 3.3, 4.4]);
+        expect(result[0].concatenated).toEqual([1.1, 2.2, 3.3, 4.4].map(Math.fround));
       });
 
       test("float4[] - mathematical operations", async () => {
@@ -7910,8 +7908,8 @@ CREATE TABLE ${table_name} (
           (SELECT array_agg((value + 1)::float4) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float4[]) as value) as addition
       `;
 
-        expect(result[0].multiplication).toEqual([2.2, 4.4, 6.6]);
-        expect(result[0].addition).toEqual([2.1, 3.2, 4.3]);
+        expect(result[0].multiplication).toEqual([2.2, 4.4, 6.6].map(Math.fround));
+        expect(result[0].addition).toEqual([2.1, 3.2, 4.3].map(Math.fround));
       });
 
       test("float4[] - array dimensions", async () => {

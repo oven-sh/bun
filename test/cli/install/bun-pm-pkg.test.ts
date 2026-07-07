@@ -72,30 +72,45 @@ function createTestPackageJson(overrides = {}) {
   );
 }
 
-describe("bun pm pkg", () => {
-  let testDir: string | undefined;
-
-  beforeEach(() => {
-    testDir = tempDirWithFiles("pm-pkg-test", {
-      "package.json": createTestPackageJson(),
-    });
+// Each test creates its own temp dir so the subprocess spawns can run concurrently.
+const makeTestDir = () =>
+  tempDirWithFiles("pm-pkg-test", {
+    "package.json": createTestPackageJson(),
   });
 
-  afterEach(() => {
-    if (testDir!) {
-      rmSync(testDir!, { recursive: true, force: true });
-    }
+const makeFixDir = () =>
+  tempDirWithFiles("fix-test", {
+    "package.json": JSON.stringify(
+      {
+        name: "TEST-PACKAGE",
+        version: "1.0.0",
+        description: "Test package",
+        main: "index.js",
+        bin: {
+          "mycli": "./bin/nonexistent.js",
+          "othercli": "./bin/also-missing.js",
+        },
+        dependencies: {
+          "react": "^18.0.0",
+        },
+      },
+      null,
+      2,
+    ),
   });
 
+describe.concurrent("bun pm pkg", () => {
   describe("get command", () => {
     it("should get a single property", async () => {
-      const { output, code } = await runPmPkg(["get", "name"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "name"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe('"test-package"');
     });
 
     it("should get multiple properties", async () => {
-      const { output, code } = await runPmPkg(["get", "name", "version"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "name", "version"], testDir);
       expect(code).toBe(0);
 
       expect(output).toContain('"name":');
@@ -105,7 +120,8 @@ describe("bun pm pkg", () => {
     });
 
     it("should get entire package.json when no args provided", async () => {
-      const { output, code } = await runPmPkg(["get"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get"], testDir);
       expect(code).toBe(0);
 
       const parsed = JSON.parse(output);
@@ -115,37 +131,43 @@ describe("bun pm pkg", () => {
     });
 
     it("should get nested properties with dot notation", async () => {
-      const { output, code } = await runPmPkg(["get", "scripts.test"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "scripts.test"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe("\"echo 'test'\"");
     });
 
     it("should get array elements with bracket notation", async () => {
-      const { output, code } = await runPmPkg(["get", "contributors[0].name"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "contributors[0].name"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe('"John Doe"');
     });
 
     it("should get object properties with bracket notation", async () => {
-      const { output, code } = await runPmPkg(["get", "scripts[test]"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "scripts[test]"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe("\"echo 'test'\"");
     });
 
     it("should get array elements with dot notation (npm compatibility)", async () => {
-      const { output, code } = await runPmPkg(["get", "contributors.0.name"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "contributors.0.name"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe('"John Doe"');
     });
 
     it("should get array elements with dot numeric index", async () => {
-      const { output, code } = await runPmPkg(["get", "keywords.0"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "keywords.0"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe('"test"');
     });
 
     it("should get array elements without index (entire array)", async () => {
-      const { output, code } = await runPmPkg(["get", "contributors"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "contributors"], testDir);
       expect(code).toBe(0);
 
       const parsed = JSON.parse(output);
@@ -155,13 +177,15 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle missing properties gracefully", async () => {
-      const { output, code } = await runPmPkg(["get", "nonexistent"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "nonexistent"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe("{}");
     });
 
     it("should handle mixed existing and missing properties", async () => {
-      const { output, code } = await runPmPkg(["get", "name", "nonexistent", "version"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "name", "nonexistent", "version"], testDir);
       expect(code).toBe(0);
 
       expect(output).toContain('"name":');
@@ -171,30 +195,34 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle boolean values", async () => {
-      const { output, code } = await runPmPkg(["get", "testBoolean"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "testBoolean"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe("true");
     });
 
     it("should handle number values", async () => {
-      const { output, code } = await runPmPkg(["get", "testNumber"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "testNumber"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe("42");
     });
 
     it("should handle null values", async () => {
-      const { output, code } = await runPmPkg(["get", "testNull"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["get", "testNull"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe("null");
     });
 
     it("should handle numeric property names on objects", async () => {
+      const testDir = makeTestDir();
       // First set a numeric property name
-      const { code: setCode } = await runPmPkg(["set", "config.123=test-value"], testDir!);
+      const { code: setCode } = await runPmPkg(["set", "config.123=test-value"], testDir);
       expect(setCode).toBe(0);
 
       // Then retrieve it using dot notation
-      const { output, code } = await runPmPkg(["get", "config.123"], testDir!);
+      const { output, code } = await runPmPkg(["get", "config.123"], testDir);
       expect(code).toBe(0);
       expect(output.trim()).toBe('"test-value"');
     });
@@ -212,123 +240,136 @@ describe("bun pm pkg", () => {
 
   describe("set command", () => {
     it("should set a simple string property", async () => {
-      const { code } = await runPmPkg(["set", "description=New description"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "description=New description"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "description"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "description"], testDir);
       expect(getOutput.trim()).toBe('"New description"');
     });
 
     it("should set multiple properties", async () => {
-      const { code } = await runPmPkg(["set", "version=2.0.0", "description=Updated"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "version=2.0.0", "description=Updated"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "version", "description"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "version", "description"], testDir);
       expect(getOutput).toContain('"version": "2.0.0"');
       expect(getOutput).toContain('"description": "Updated"');
     });
 
     it("should set nested properties with dot notation", async () => {
-      const { code } = await runPmPkg(["set", "scripts.newScript=echo hello"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "scripts.newScript=echo hello"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "scripts.newScript"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "scripts.newScript"], testDir);
       expect(getOutput.trim()).toBe('"echo hello"');
     });
 
     it("should create nested objects when they don't exist", async () => {
-      const { code } = await runPmPkg(["set", "config.debug=true"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "config.debug=true"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "config"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "config"], testDir);
       const parsed = JSON.parse(getOutput);
       expect(parsed.debug).toBe("true");
     });
 
     it("should handle JSON boolean true with --json flag", async () => {
-      const { code } = await runPmPkg(["set", "private=true", "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "private=true", "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "private"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "private"], testDir);
       expect(getOutput.trim()).toBe("true");
     });
 
     it("should handle JSON boolean false with --json flag", async () => {
-      const { code } = await runPmPkg(["set", "testBool=false", "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "testBool=false", "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "testBool"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "testBool"], testDir);
       expect(getOutput.trim()).toBe("false");
     });
 
     it("should handle JSON null with --json flag", async () => {
-      const { code } = await runPmPkg(["set", "testNull=null", "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "testNull=null", "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "testNull"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "testNull"], testDir);
       expect(getOutput.trim()).toBe("null");
     });
 
     it("should handle JSON integers with --json flag", async () => {
-      const { code } = await runPmPkg(["set", "testInt=42", "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "testInt=42", "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "testInt"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "testInt"], testDir);
       expect(getOutput.trim()).toBe("42");
     });
 
     it("should handle JSON floats with --json flag", async () => {
-      const { code } = await runPmPkg(["set", "testFloat=3.14", "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "testFloat=3.14", "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "testFloat"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "testFloat"], testDir);
       expect(getOutput.trim()).toBe("3.14");
     });
 
     it("should handle JSON objects with --json flag", async () => {
-      const { code } = await runPmPkg(["set", 'newObject={"key":"value","number":123}', "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", 'newObject={"key":"value","number":123}', "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "newObject"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "newObject"], testDir);
       const parsed = JSON.parse(getOutput);
       expect(parsed.key).toBe("value");
       expect(parsed.number).toBe(123);
     });
 
     it("should handle JSON arrays with --json flag", async () => {
-      const { code } = await runPmPkg(["set", 'newArray=["one","two","three"]', "--json"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", 'newArray=["one","two","three"]', "--json"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "newArray"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "newArray"], testDir);
       const parsed = JSON.parse(getOutput);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toEqual(["one", "two", "three"]);
     });
 
     it("should treat values as strings without --json flag", async () => {
+      const testDir = makeTestDir();
       const { code } = await runPmPkg(
         ["set", "stringTrue=true", "stringFalse=false", "stringNull=null", "stringNumber=42"],
-        testDir!,
+        testDir,
       );
       expect(code).toBe(0);
 
-      const { output: getTrue } = await runPmPkg(["get", "stringTrue"], testDir!);
+      const { output: getTrue } = await runPmPkg(["get", "stringTrue"], testDir);
       expect(getTrue.trim()).toBe('"true"');
 
-      const { output: getFalse } = await runPmPkg(["get", "stringFalse"], testDir!);
+      const { output: getFalse } = await runPmPkg(["get", "stringFalse"], testDir);
       expect(getFalse.trim()).toBe('"false"');
 
-      const { output: getNull } = await runPmPkg(["get", "stringNull"], testDir!);
+      const { output: getNull } = await runPmPkg(["get", "stringNull"], testDir);
       expect(getNull.trim()).toBe('"null"');
 
-      const { output: getNumber } = await runPmPkg(["get", "stringNumber"], testDir!);
+      const { output: getNumber } = await runPmPkg(["get", "stringNumber"], testDir);
       expect(getNumber.trim()).toBe('"42"');
     });
 
     it("should preserve file formatting", async () => {
-      await runPmPkg(["set", "version=1.0.1"], testDir!);
+      const testDir = makeTestDir();
+      await runPmPkg(["set", "version=1.0.1"], testDir);
 
-      const modifiedContent = await Bun.file(join(testDir!, "package.json")).text();
+      const modifiedContent = await Bun.file(join(testDir, "package.json")).text();
 
       expect(modifiedContent).toContain('  "version": "1.0.1"');
 
@@ -363,19 +404,22 @@ describe("bun pm pkg", () => {
     });
 
     it("should fail with invalid key=value format", async () => {
-      const { error, code } = await runPmPkg(["set", "invalidformat"], testDir!, false);
+      const testDir = makeTestDir();
+      const { error, code } = await runPmPkg(["set", "invalidformat"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("Invalid argument");
     });
 
     it("should fail with empty key", async () => {
-      const { error, code } = await runPmPkg(["set", "=value"], testDir!, false);
+      const testDir = makeTestDir();
+      const { error, code } = await runPmPkg(["set", "=value"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("Empty key");
     });
 
     it("should fail when no arguments provided", async () => {
-      const { error, code } = await runPmPkg(["set"], testDir!, false);
+      const testDir = makeTestDir();
+      const { error, code } = await runPmPkg(["set"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("set expects a key=value pair");
     });
@@ -383,41 +427,46 @@ describe("bun pm pkg", () => {
 
   describe("delete command", () => {
     it("should delete a property", async () => {
-      const { code } = await runPmPkg(["delete", "description"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["delete", "description"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "description"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "description"], testDir);
       expect(getOutput.trim()).toBe("{}");
     });
 
     it("should delete nested properties", async () => {
-      const { code } = await runPmPkg(["delete", "scripts.test"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["delete", "scripts.test"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "scripts.test"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "scripts.test"], testDir);
       expect(getOutput.trim()).toBe("{}");
 
-      const { output: scriptsOutput } = await runPmPkg(["get", "scripts"], testDir!);
+      const { output: scriptsOutput } = await runPmPkg(["get", "scripts"], testDir);
       const scripts = JSON.parse(scriptsOutput);
       expect(scripts.build).toBe("echo 'build'");
       expect(scripts.test).toBeUndefined();
     });
 
     it("should handle deleting non-existent properties", async () => {
-      const { code } = await runPmPkg(["delete", "nonexistent"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["delete", "nonexistent"], testDir);
       expect(code).toBe(0);
     });
 
     it("should delete multiple properties", async () => {
-      const { code } = await runPmPkg(["delete", "keywords", "author", "license"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["delete", "keywords", "author", "license"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "keywords", "author", "license"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "keywords", "author", "license"], testDir);
       expect(getOutput.trim()).toBe("{}");
     });
 
     it("should fail when no arguments provided", async () => {
-      const { error, code } = await runPmPkg(["delete"], testDir!, false);
+      const testDir = makeTestDir();
+      const { error, code } = await runPmPkg(["delete"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("delete expects key args");
     });
@@ -425,7 +474,8 @@ describe("bun pm pkg", () => {
 
   describe("help command", () => {
     it("should show help", async () => {
-      const { output, code } = await runPmPkg(["help"], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg(["help"], testDir);
       expect(code).toBe(0);
       expect(output).toContain("bun pm pkg");
       expect(output).toContain("get");
@@ -435,13 +485,15 @@ describe("bun pm pkg", () => {
     });
 
     it("should show help when no subcommand provided", async () => {
-      const { output, code } = await runPmPkg([], testDir!);
+      const testDir = makeTestDir();
+      const { output, code } = await runPmPkg([], testDir);
       expect(code).toBe(0);
       expect(output).toContain("bun pm pkg");
     });
 
     it("should show help for unknown subcommand", async () => {
-      const { output, error, code } = await runPmPkg(["unknown"], testDir!, false);
+      const testDir = makeTestDir();
+      const { output, error, code } = await runPmPkg(["unknown"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("Unknown subcommand");
       expect(output).toContain("bun pm pkg");
@@ -450,31 +502,35 @@ describe("bun pm pkg", () => {
 
   describe("edge cases and error handling", () => {
     it("should handle malformed JSON gracefully", async () => {
-      writeFileSync(join(testDir!, "package.json"), '{ "name": "test", invalid }');
+      const testDir = makeTestDir();
+      writeFileSync(join(testDir, "package.json"), '{ "name": "test", invalid }');
 
-      const { error, code } = await runPmPkg(["get", "name"], testDir!, false);
+      const { error, code } = await runPmPkg(["get", "name"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("Failed to parse package.json");
     });
 
     it("should handle non-object root gracefully", async () => {
-      writeFileSync(join(testDir!, "package.json"), '["not", "an", "object"]');
+      const testDir = makeTestDir();
+      writeFileSync(join(testDir, "package.json"), '["not", "an", "object"]');
 
-      const { error, code } = await runPmPkg(["get", "name"], testDir!, false);
+      const { error, code } = await runPmPkg(["get", "name"], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("package.json root must be an object");
     });
 
     it("should handle very deeply nested properties", async () => {
-      const { code } = await runPmPkg(["set", "very.deeply.nested.property=value"], testDir!);
+      const testDir = makeTestDir();
+      const { code } = await runPmPkg(["set", "very.deeply.nested.property=value"], testDir);
       expect(code).toBe(0);
 
-      const { output: getOutput } = await runPmPkg(["get", "very.deeply.nested.property"], testDir!);
+      const { output: getOutput } = await runPmPkg(["get", "very.deeply.nested.property"], testDir);
       expect(getOutput.trim()).toBe('"value"');
     });
 
     it("should maintain npm pkg compatibility", async () => {
-      const { error, code } = await runPmPkg(["set", "emptyString="], testDir!, false);
+      const testDir = makeTestDir();
+      const { error, code } = await runPmPkg(["set", "emptyString="], testDir, false);
       expect(code).toBe(1);
       expect(error).toContain("Empty value");
     });
@@ -586,16 +642,8 @@ describe("bun pm pkg", () => {
   });
 
   describe("deeply nested directory scenarios", () => {
-    let nestedDir: string;
-
-    afterEach(() => {
-      if (nestedDir) {
-        rmSync(nestedDir, { recursive: true, force: true });
-      }
-    });
-
     it("should find package.json in deeply nested directories", async () => {
-      nestedDir = tempDirWithFiles("nested-test", {
+      const nestedDir = tempDirWithFiles("nested-test", {
         "package.json": JSON.stringify(
           {
             name: "root-package",
@@ -615,7 +663,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should find nearest package.json in nested structure", async () => {
-      nestedDir = tempDirWithFiles("nested-test", {
+      const nestedDir = tempDirWithFiles("nested-test", {
         "package.json": JSON.stringify(
           {
             name: "root-package",
@@ -657,7 +705,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle modifications from deeply nested directories", async () => {
-      nestedDir = tempDirWithFiles("nested-test", {
+      const nestedDir = tempDirWithFiles("nested-test", {
         "package.json": JSON.stringify(
           {
             name: "my-project",
@@ -690,6 +738,7 @@ describe("bun pm pkg", () => {
 
   describe("npm pkg compatibility tests", () => {
     it("should handle all data types correctly", async () => {
+      const testDir = makeTestDir();
       const testCases = [
         ["testBoolean", "true"],
         ["testNumber", "42"],
@@ -698,7 +747,7 @@ describe("bun pm pkg", () => {
       ];
 
       for (const [key, expected] of testCases) {
-        const { output: testOutput, code: testCode } = await runPmPkg(["get", key.toString()], testDir!);
+        const { output: testOutput, code: testCode } = await runPmPkg(["get", key.toString()], testDir);
         expect(testCode).toBe(0);
 
         if (typeof expected === "string") {
@@ -710,14 +759,15 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle complex nested structures", async () => {
-      const { output: scriptsOutput, code: scriptsCode } = await runPmPkg(["get", "scripts"], testDir!);
+      const testDir = makeTestDir();
+      const { output: scriptsOutput, code: scriptsCode } = await runPmPkg(["get", "scripts"], testDir);
       expect(scriptsCode).toBe(0);
 
       const scripts = JSON.parse(scriptsOutput);
       expect(scripts.test).toBe("echo 'test'");
       expect(scripts.build).toBe("echo 'build'");
 
-      const { output: contribOutput, code: contribCode } = await runPmPkg(["get", "contributors[0]"], testDir!);
+      const { output: contribOutput, code: contribCode } = await runPmPkg(["get", "contributors[0]"], testDir);
       expect(contribCode).toBe(0);
 
       const firstContrib = JSON.parse(contribOutput);
@@ -726,33 +776,36 @@ describe("bun pm pkg", () => {
     });
 
     it("should produce equivalent output to npm pkg for common operations", async () => {
-      const { output: nameOutput } = await runPmPkg(["get", "name"], testDir!);
+      const testDir = makeTestDir();
+      const { output: nameOutput } = await runPmPkg(["get", "name"], testDir);
       expect(nameOutput.trim()).toBe('"test-package"');
 
-      const { output: multiOutput } = await runPmPkg(["get", "name", "version"], testDir!);
+      const { output: multiOutput } = await runPmPkg(["get", "name", "version"], testDir);
       expect(multiOutput).toContain('"name":');
       expect(multiOutput).toContain('"version":');
 
-      const { output: missingOutput } = await runPmPkg(["get", "nonexistent"], testDir!);
+      const { output: missingOutput } = await runPmPkg(["get", "nonexistent"], testDir);
       expect(missingOutput.trim()).toBe("{}");
     });
   });
 
   describe("comprehensive notation compatibility tests", () => {
     it("should handle mixed bracket and dot notation equivalently", async () => {
+      const testDir = makeTestDir();
       // Test that bracket[0] and dot.0 notation produce identical results
-      const { output: bracketOutput } = await runPmPkg(["get", "contributors[0].name"], testDir!);
-      const { output: dotOutput } = await runPmPkg(["get", "contributors.0.name"], testDir!);
+      const { output: bracketOutput } = await runPmPkg(["get", "contributors[0].name"], testDir);
+      const { output: dotOutput } = await runPmPkg(["get", "contributors.0.name"], testDir);
 
       expect(bracketOutput.trim()).toBe(dotOutput.trim());
       expect(bracketOutput.trim()).toBe('"John Doe"');
     });
 
     it("should handle complex mixed notation patterns", async () => {
+      const testDir = makeTestDir();
       // Set up a complex nested structure for testing
       const { code: setCode } = await runPmPkg(
         ["set", 'nested.array=[{"prop":"value1"},{"prop":"value2"}]', "--json"],
-        testDir!,
+        testDir,
       );
       expect(setCode).toBe(0);
 
@@ -765,13 +818,14 @@ describe("bun pm pkg", () => {
       ];
 
       for (const notation of testCases) {
-        const { output, code } = await runPmPkg(["get", notation], testDir!);
+        const { output, code } = await runPmPkg(["get", notation], testDir);
         expect(code).toBe(0);
         expect(output.trim()).toBe('"value1"');
       }
     });
 
     it("should handle string properties in bracket notation", async () => {
+      const testDir = makeTestDir();
       // Test various string property access patterns
       const testCases = [
         ["scripts[test]", "\"echo 'test'\""],
@@ -781,29 +835,31 @@ describe("bun pm pkg", () => {
       ];
 
       for (const [notation, expected] of testCases) {
-        const { output, code } = await runPmPkg(["get", notation], testDir!);
+        const { output, code } = await runPmPkg(["get", notation], testDir);
         expect(code).toBe(0);
         expect(output.trim()).toBe(expected);
       }
     });
 
     it("should handle numeric indices with different data types", async () => {
+      const testDir = makeTestDir();
       // Test numeric access on arrays vs objects
-      const { output: arrayAccess } = await runPmPkg(["get", "keywords.0"], testDir!);
+      const { output: arrayAccess } = await runPmPkg(["get", "keywords.0"], testDir);
       expect(arrayAccess.trim()).toBe('"test"');
 
-      const { output: arrayAccess2 } = await runPmPkg(["get", "keywords.1"], testDir!);
+      const { output: arrayAccess2 } = await runPmPkg(["get", "keywords.1"], testDir);
       expect(arrayAccess2.trim()).toBe('"package"');
 
       // Test numeric property on object (not array)
-      const { code: setCode } = await runPmPkg(["set", "config.0=zero-value"], testDir!);
+      const { code: setCode } = await runPmPkg(["set", "config.0=zero-value"], testDir);
       expect(setCode).toBe(0);
 
-      const { output: objectNumericAccess } = await runPmPkg(["get", "config.0"], testDir!);
+      const { output: objectNumericAccess } = await runPmPkg(["get", "config.0"], testDir);
       expect(objectNumericAccess.trim()).toBe('"zero-value"');
     });
 
     it("should gracefully handle invalid notation patterns", async () => {
+      const testDir = makeTestDir();
       const invalidCases = [
         "contributors.999", // Out of bounds array index
         "scripts[nonexistent]", // Non-existent property
@@ -812,49 +868,52 @@ describe("bun pm pkg", () => {
       ];
 
       for (const notation of invalidCases) {
-        const { output, code } = await runPmPkg(["get", notation], testDir!);
+        const { output, code } = await runPmPkg(["get", notation], testDir);
         expect(code).toBe(0);
         expect(output.trim()).toBe("{}");
       }
     });
 
     it("should reject empty bracket notation for get operations (npm compatibility)", async () => {
+      const testDir = makeTestDir();
       // Empty brackets are not valid for retrieving values, only for setting
       const invalidEmptyBracketCases = ["contributors[]", "contributors[].name", "scripts[]"];
 
       for (const notation of invalidEmptyBracketCases) {
-        const { error, code } = await runPmPkg(["get", notation], testDir!, false);
+        const { error, code } = await runPmPkg(["get", notation], testDir, false);
         expect(code).toBe(1);
         expect(error).toContain("Empty brackets are not valid syntax for retrieving values");
       }
     });
 
     it("should maintain consistency between set and get operations", async () => {
+      const testDir = makeTestDir();
       // Set using dot notation with numeric property, get using same dot notation
-      const { code: setCode1 } = await runPmPkg(["set", "test.array.0=first"], testDir!);
+      const { code: setCode1 } = await runPmPkg(["set", "test.array.0=first"], testDir);
       expect(setCode1).toBe(0);
 
-      const { output: getOutput1 } = await runPmPkg(["get", "test.array.0"], testDir!);
+      const { output: getOutput1 } = await runPmPkg(["get", "test.array.0"], testDir);
       expect(getOutput1.trim()).toBe('"first"');
 
       // Set using dot notation, get using dot notation
-      const { code: setCode2 } = await runPmPkg(["set", "test.bracket.access=success"], testDir!);
+      const { code: setCode2 } = await runPmPkg(["set", "test.bracket.access=success"], testDir);
       expect(setCode2).toBe(0);
 
-      const { output: getOutput2 } = await runPmPkg(["get", "test.bracket.access"], testDir!);
+      const { output: getOutput2 } = await runPmPkg(["get", "test.bracket.access"], testDir);
       expect(getOutput2.trim()).toBe('"success"');
     });
 
     it("should handle edge cases with special characters", async () => {
+      const testDir = makeTestDir();
       // Test properties with hyphens, dots, and other special chars
-      const { code: setCode1 } = await runPmPkg(["set", "special-key=hyphen-value"], testDir!);
+      const { code: setCode1 } = await runPmPkg(["set", "special-key=hyphen-value"], testDir);
       expect(setCode1).toBe(0);
 
-      const { output: getOutput1 } = await runPmPkg(["get", "special-key"], testDir!);
+      const { output: getOutput1 } = await runPmPkg(["get", "special-key"], testDir);
       expect(getOutput1.trim()).toBe('"hyphen-value"');
 
       // Test bracket notation with special characters
-      const { output: getOutput2 } = await runPmPkg(["get", "contributors[0][name]"], testDir!);
+      const { output: getOutput2 } = await runPmPkg(["get", "contributors[0][name]"], testDir);
       expect(getOutput2.trim()).toBe('"John Doe"');
     });
 
@@ -909,37 +968,8 @@ describe("bun pm pkg", () => {
   });
 
   describe("fix command", () => {
-    let fixTestDir: string;
-
-    beforeEach(() => {
-      fixTestDir = tempDirWithFiles("fix-test", {
-        "package.json": JSON.stringify(
-          {
-            name: "TEST-PACKAGE",
-            version: "1.0.0",
-            description: "Test package",
-            main: "index.js",
-            bin: {
-              "mycli": "./bin/nonexistent.js",
-              "othercli": "./bin/also-missing.js",
-            },
-            dependencies: {
-              "react": "^18.0.0",
-            },
-          },
-          null,
-          2,
-        ),
-      });
-    });
-
-    afterEach(() => {
-      if (fixTestDir) {
-        rmSync(fixTestDir, { recursive: true, force: true });
-      }
-    });
-
     it("should fix uppercase package names to lowercase", async () => {
+      const fixTestDir = makeFixDir();
       const { code } = await runPmPkg(["fix"], fixTestDir);
       expect(code).toBe(0);
 
@@ -948,6 +978,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should warn about missing bin files", async () => {
+      const fixTestDir = makeFixDir();
       const { code, error } = await runPmPkg(["fix"], fixTestDir);
       expect(code).toBe(0);
       expect(error).toContain("No bin file found at ./bin/nonexistent.js");
@@ -1012,6 +1043,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should preserve all other package.json fields", async () => {
+      const fixTestDir = makeFixDir();
       const { code } = await runPmPkg(["fix"], fixTestDir);
       expect(code).toBe(0);
 

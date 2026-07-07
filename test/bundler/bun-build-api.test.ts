@@ -1280,7 +1280,7 @@ export { greeting };`,
 // non-deterministic to draw a clean line between "leaking" and "not leaking"
 // for this path. Under debug/ASAN the allocator behaviour is stable enough to
 // measure reliably, so we only assert there.
-test.skipIf(!isDebug && !isASAN)(
+test.concurrent.skipIf(!isDebug && !isASAN)(
   "Bun.build sourcemap: 'inline' with no outdir does not leak sourcemap JSON",
   async () => {
     // The in-memory build path used to leak the intermediate sourcemap JSON
@@ -1436,21 +1436,25 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
 // An explicit timeout is required (not optional): this runs hundreds of real
 // bundles, far past bun:test's 5s default. The sibling leak tests above do the
 // same. 180s matches the CI runner's own per-test ceiling.
-test("Bun.build can be called thousands of times in one process without crashing", async () => {
-  const MODULES = 500;
-  const BUILDS = 400;
-  const files: Record<string, string> = {};
-  for (let i = 0; i < MODULES; i++) {
-    files[`m${i}.js`] =
-      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
-      `export const v${i} = ${i};\n` +
-      `export function f${i}() { return v${i}; }\n`;
-  }
-  files["entry.js"] = Array.from(
-    { length: MODULES },
-    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
-  ).join("\n");
-  files["run.ts"] = `
+test.concurrent(
+  "Bun.build can be called thousands of times in one process without crashing",
+  async () => {
+    // Concurrent + 200 builds: the regression panics at ~build 133 (a third of the
+    // original 400), so 200 still clears the overflow threshold with margin.
+    const MODULES = 500;
+    const BUILDS = 200;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < MODULES; i++) {
+      files[`m${i}.js`] =
+        `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+        `export const v${i} = ${i};\n` +
+        `export function f${i}() { return v${i}; }\n`;
+    }
+    files["entry.js"] = Array.from(
+      { length: MODULES },
+      (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+    ).join("\n");
+    files["run.ts"] = `
     const entry = process.argv[2];
     const BUILDS = ${BUILDS};
     for (let i = 1; i <= BUILDS; i++) {
@@ -1460,18 +1464,20 @@ test("Bun.build can be called thousands of times in one process without crashing
     }
     console.log("OK " + BUILDS);
   `;
-  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+    const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
-  // the run completed cleanly instead.
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK 400");
-  expect(exitCode).toBe(0);
-}, 180_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+    // the run completed cleanly instead.
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(`OK ${BUILDS}`);
+    expect(exitCode).toBe(0);
+  },
+  180_000,
+);

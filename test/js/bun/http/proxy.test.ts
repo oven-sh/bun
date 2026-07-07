@@ -530,7 +530,7 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
 // (inherited from the environment in some setups) and guarantee the explicit
 // `proxy` option is actually used. The proxy server runs in-process and
 // captures the header.
-describe("proxy Basic auth uses standard base64 (#31780)", () => {
+describe.concurrent("proxy Basic auth uses standard base64 (#31780)", () => {
   // Userinfo whose standard base64 contains both + and /, plus = padding:
   //   standard: c3ViLXVzZXI6c2Vzcz4+aWQ/ZmY=
   //   base64url: c3ViLXVzZXI6c2Vzcz4-aWQ_ZmY   (- and _, no padding)
@@ -924,7 +924,7 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
 // return without marking the wrapper closed_notified, so after the client was
 // freed handle_reading still fired on_close into the stale handlers.ctx.
 // Only deterministic under ASAN; release builds read freed-but-intact memory.
-test.skipIf(!isASAN)(
+test.concurrent.skipIf(!isASAN)(
   "response + close_notify in one packet via HTTPS proxy tunnel does not use-after-free the client",
   async () => {
     const fixture = `
@@ -1036,8 +1036,10 @@ test.skipIf(!isASAN)(
   },
 );
 
-test("response + corrupt TLS record in one packet via pooled HTTPS proxy tunnel does not use-after-free the client", async () => {
-  const fixture = `
+test.concurrent(
+  "response + corrupt TLS record in one packet via pooled HTTPS proxy tunnel does not use-after-free the client",
+  async () => {
+    const fixture = `
       const net = require("node:net");
       const tlsCert = ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })};
 
@@ -1124,24 +1126,25 @@ test("response + corrupt TLS record in one packet via pooled HTTPS proxy tunnel 
       });
     `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: {
-      ...bunEnv,
-      NO_PROXY: undefined,
-      no_proxy: undefined,
-      HTTP_PROXY: undefined,
-      http_proxy: undefined,
-      HTTPS_PROXY: undefined,
-      https_proxy: undefined,
-    },
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) console.error("stderr:", stderr);
-  expect(stdout).toBe("4096 200 200\n");
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout).toBe("4096 200 200\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Sentry BUN-2V7Z: debug_assert!(!socket.is_shutdown()/is_closed()) in the
 // ProxyHeaders arm of on_writable (and the matching assert in

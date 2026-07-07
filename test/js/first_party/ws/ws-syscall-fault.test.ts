@@ -19,7 +19,8 @@ async function runWsFixture(body: string) {
   return { ...JSON.parse(stdout.trim() || "{}"), stderr, exitCode, signal: proc.signalCode };
 }
 
-describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
+// Each test spawns an isolated subprocess (fault injection is per-process), so they run concurrently.
+describe.concurrent.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
   test("recv → short reads (1 byte) deliver complete echoed message", async () => {
     const r = await runWsFixture(/* js */ `
       const { WebSocketServer, WebSocket } = require("ws");

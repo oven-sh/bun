@@ -32,7 +32,10 @@ afterAll(() => {
   registry.stop();
 });
 
-describe("basic", () => {
+// Each test creates its own temp dir and spawns independent `bun install`
+// subprocesses; the shared Verdaccio registry is read-only, so these are safe
+// to run concurrently.
+describe.concurrent("basic", () => {
   test("single dependency", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -195,7 +198,7 @@ describe("basic", () => {
   });
 });
 
-test("handles cyclic dependencies", async () => {
+test.concurrent("handles cyclic dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -249,7 +252,7 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
-test("package with dependency on previous self works", async () => {
+test.concurrent("package with dependency on previous self works", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -284,7 +287,7 @@ test("package with dependency on previous self works", async () => {
   ]);
 });
 
-test("can install folder dependencies", async () => {
+test.concurrent("can install folder dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -326,7 +329,7 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
-test("can install folder dependencies on root package", async () => {
+test.concurrent("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await Promise.all([
@@ -366,7 +369,7 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
-describe("isolated workspaces", () => {
+describe.concurrent("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -490,7 +493,7 @@ describe("isolated workspaces", () => {
   });
 });
 
-describe("optional peers", () => {
+describe.concurrent("optional peers", () => {
   const tests = [
     // non-optional versions
     {
@@ -724,7 +727,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
-  test(`isolated install with backend: ${backend}`, async () => {
+  test.concurrent(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await Promise.all([
@@ -835,7 +838,7 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   });
 }
 
-test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
+test.concurrent("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
   // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
   // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
@@ -882,7 +885,7 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   });
 });
 
-test("aliased peer dependency binds to its real package across installs from bun.lock", async () => {
+test.concurrent("aliased peer dependency binds to its real package across installs from bun.lock", async () => {
   // The peer alias `no-deps` points at `npm:a-dep@^1.0.2` while the real
   // no-deps package (in two versions) is also in the graph. Loading bun.lock
   // must look the edge up under the aliased *real* name (a-dep) the way the
@@ -920,7 +923,7 @@ test("aliased peer dependency binds to its real package across installs from bun
   expect(await file(aliasLink).json()).toEqual(fresh);
 });
 
-test("optional ranged peer keeps its hoisted-tree binding across installs from bun.lock", async () => {
+test.concurrent("optional ranged peer keeps its hoisted-tree binding across installs from bun.lock", async () => {
   // Optional peers never reach the fresh resolver's deferred-peer phase: it
   // returns before the version scan and the edge is bound to the
   // hoisted-tree sibling during tree resolution, which the printed tree's
@@ -963,7 +966,7 @@ test("optional ranged peer keeps its hoisted-tree binding across installs from b
   });
 });
 
-test("overridden peer dependency keeps the override across installs from bun.lock", async () => {
+test.concurrent("overridden peer dependency keeps the override across installs from bun.lock", async () => {
   // `overrides` rewrites the peer range before the fresh resolver's version
   // scan, binding the peer to no-deps@1.0.1 even though the graph also
   // contains no-deps@1.1.0 (via an override-exempt npm: alias). Loading
@@ -1011,7 +1014,7 @@ test("overridden peer dependency keeps the override across installs from bun.loc
   });
 });
 
-test("peer satisfied by a workspace package keeps the workspace across installs from bun.lock", async () => {
+test.concurrent("peer satisfied by a workspace package keeps the workspace across installs from bun.lock", async () => {
   // The fresh resolver binds an npm-range peer to a same-named workspace
   // package before any deferral when linkWorkspacePackages is on and the
   // workspace version satisfies the range. The graph also contains npm
@@ -1058,7 +1061,7 @@ test("peer satisfied by a workspace package keeps the workspace across installs 
   });
 });
 
-describe("existing node_modules, missing node_modules/.bun", () => {
+describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
@@ -1192,7 +1195,7 @@ describe("existing node_modules, missing node_modules/.bun", () => {
   });
 });
 
-describe("--linker flag", () => {
+describe.concurrent("--linker flag", () => {
   test("can override linker from bunfig", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -1315,7 +1318,7 @@ describe("--linker flag", () => {
     expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
   });
 });
-test("many transitive dependencies", async () => {
+test.concurrent("many transitive dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -1393,7 +1396,7 @@ test("many transitive dependencies", async () => {
   ).toBe(join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"));
 });
 
-test("dependency names are preserved", async () => {
+test.concurrent("dependency names are preserved", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -1454,7 +1457,7 @@ test("dependency names are preserved", async () => {
   });
 });
 
-test("same resolution, different dependency name", async () => {
+test.concurrent("same resolution, different dependency name", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -1488,7 +1491,7 @@ test("same resolution, different dependency name", async () => {
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual(["no-deps@1.0.0", "node_modules"]);
 });
 
-test("successfully removes and corrects symlinks", async () => {
+test.concurrent("successfully removes and corrects symlinks", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   await Promise.all([
     write(join(packageDir, "old-package", "package.json"), JSON.stringify({ name: "old-package", version: "1.0.0" })),
@@ -1516,7 +1519,7 @@ test("successfully removes and corrects symlinks", async () => {
   );
 });
 
-test("runs lifecycle scripts correctly", async () => {
+test.concurrent("runs lifecycle scripts correctly", async () => {
   // due to binary linking between preinstall and the remaining lifecycle scripts
   // there is special handling for preinstall scripts we should test.
   // 1. only preinstall
@@ -1597,7 +1600,7 @@ test("runs lifecycle scripts correctly", async () => {
 // pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
 // the transitive peer's resolution unset (= invalid_package_id → filtered
 // from the install).
-test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+test.concurrent("transitive peer deps are resolved when resolution is fully synchronous", async () => {
   const packagesDir = join(import.meta.dir, "registry", "packages");
 
   // Self-contained HTTP server that serves package manifests & tarballs
@@ -1699,7 +1702,7 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   );
 });
 
-describe("global virtual store", () => {
+describe.concurrent("global virtual store", () => {
   // The global virtual store is off by default; tests that exercise it opt
   // in via bunfig `install.globalStore = true`.
   const gvsBunfigOpts = { linker: "isolated", globalStore: true } as const;
@@ -2367,7 +2370,7 @@ describe("global virtual store", () => {
   });
 });
 
-test("rejects dependency aliases that traverse outside node_modules", async () => {
+test.concurrent("rejects dependency aliases that traverse outside node_modules", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   // A (transitively) malicious package.json can use an arbitrary string as a
@@ -2400,7 +2403,7 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   expect(exitCode).not.toBe(0);
 });
 
-test("rejects a dependency alias with more than one path component", async () => {
+test.concurrent("rejects a dependency alias with more than one path component", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
@@ -2427,7 +2430,7 @@ test("rejects a dependency alias with more than one path component", async () =>
   expect(exitCode).not.toBe(0);
 });
 
-test("invalid --linker value is echoed back in the error", async () => {
+test.concurrent("invalid --linker value is echoed back in the error", async () => {
   using dir = tempDir("install-linker-err", {
     "package.json": JSON.stringify({ name: "t" }),
   });

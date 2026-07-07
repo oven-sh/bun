@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-test("--bail writes JUnit reporter outfile", async () => {
+// Each test spawns an isolated `bun test` subprocess in its own tempDir, so they can run concurrently.
+test.concurrent("--bail writes JUnit reporter outfile", async () => {
   using dir = tempDir("bail-junit", {
     "fail.test.ts": `
       import { test, expect } from "bun:test";
@@ -36,7 +37,7 @@ test("--bail writes JUnit reporter outfile", async () => {
   expect(xml).toContain("failing test");
 });
 
-test("--bail writes JUnit reporter outfile with multiple files", async () => {
+test.concurrent("--bail writes JUnit reporter outfile with multiple files", async () => {
   using dir = tempDir("bail-junit-multi", {
     "a_pass.test.ts": `
       import { test, expect } from "bun:test";

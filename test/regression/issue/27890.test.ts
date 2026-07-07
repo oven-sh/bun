@@ -17,7 +17,8 @@ const localhostOnlyTls = {
 
 // Uses a local HTTPS server with self-signed certs to avoid CI environments
 // lacking system CA certificates (Windows, Alpine).
-describe("custom lookup with HTTPS", () => {
+// Each test spawns an independent server/subprocess, so run them concurrently.
+describe.concurrent("custom lookup with HTTPS", () => {
   test("https.request with custom lookup should not break TLS", async () => {
     using server = Bun.serve({
       tls: localhostOnlyTls,

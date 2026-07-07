@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/32492
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 test("concurrent bun build does not stall on worker-pool shutdown", async () => {
   const N_MODULES = 40;
@@ -24,7 +24,9 @@ test("concurrent bun build does not stall on worker-pool shutdown", async () => 
   const root = String(dir);
 
   const CONCURRENCY = 24;
-  const ROUNDS = 16;
+  // The stall is a fixed 10s futex timeout per build; 4 rounds × 24 builds on
+  // ASAN/debug still exercises 96 shutdowns while keeping wall time reasonable.
+  const ROUNDS = isASAN || isDebug ? 4 : 16;
   // The regression is a fixed 10s idle-futex timeout, so a stalled build always
   // exceeds 10s regardless of machine speed. A healthy build is well under a
   // second; keep the threshold high so 24-way oversubscription on a slow ASAN

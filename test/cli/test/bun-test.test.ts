@@ -4,8 +4,9 @@ import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-describe("bun test", () => {
-  test("running a non-existent absolute file path is a 1 exit code", () => {
+// Each test spawns its own independent `bun test` subprocess in a fresh temp dir, so they can run concurrently.
+describe.concurrent("bun test", () => {
+  test("running a non-existent absolute file path is a 1 exit code", async () => {
     const spawn = Bun.spawnSync({
       cmd: [bunExe(), "test", join(import.meta.dirname, "non-existent.test.ts")],
       env: bunEnv,
@@ -15,8 +16,8 @@ describe("bun test", () => {
     });
     expect(spawn.exitCode).toBe(1);
   });
-  test("can provide no arguments", () => {
-    const stderr = runTest({
+  test("can provide no arguments", async () => {
+    const stderr = await runTest({
       args: [],
       input: [
         `
@@ -41,73 +42,73 @@ describe("bun test", () => {
     expect(stderr).toContain("test #2");
     expect(stderr).toContain("test #3");
   });
-  test("can provide a relative file", () => {
+  test("can provide a relative file", async () => {
     const path = join("path", "to", "relative.test.ts");
     const cwd = createTest(
       `
       import { test, expect } from "bun:test";
-      test("${path}", () => {
+      test("${path}", async () => {
         expect(true).toBe(true);
       });
     `,
       path,
     );
-    const stderr = runTest({
+    const stderr = await runTest({
       cwd,
       args: [path],
     });
     expect(stderr).toContain(path);
   });
   // This fails on macOS because /private/var symlinks to /var
-  test.todo("can provide an absolute file", () => {
+  test.todo("can provide an absolute file", async () => {
     const path = join("path", "to", "absolute.test.ts");
     const cwd = createTest(
       `
       import { test, expect } from "bun:test";
-      test("${path}", () => {
+      test("${path}", async () => {
         expect(true).toBe(true);
       });
     `,
       path,
     );
     const absolutePath = resolve(cwd, path);
-    const stderr = runTest({
+    const stderr = await runTest({
       cwd,
       args: [absolutePath],
     });
     expect(stderr).toContain(path);
   });
-  test("can provide a relative directory", () => {
+  test("can provide a relative directory", async () => {
     const path = join("path", "to", "relative.test.ts");
     const dir = dirname(path);
     const cwd = createTest(
       `
       import { test, expect } from "bun:test";
-      test("${dir}", () => {
+      test("${dir}", async () => {
         expect(true).toBe(true);
       });
     `,
       path,
     );
-    const stderr = runTest({
+    const stderr = await runTest({
       cwd,
       args: [dir],
     });
     expect(stderr).toContain(dir);
   });
-  test.todo("can provide an absolute directory", () => {
+  test.todo("can provide an absolute directory", async () => {
     const path = join("path", "to", "absolute.test.ts");
     const cwd = createTest(
       `
       import { test, expect } from "bun:test";
-      test("${path}", () => {
+      test("${path}", async () => {
         expect(true).toBe(true);
       });
     `,
       path,
     );
     const absoluteDir = resolve(cwd, dirname(path));
-    const stderr = runTest({
+    const stderr = await runTest({
       cwd,
       args: [absoluteDir],
     });
@@ -119,7 +120,7 @@ describe("bun test", () => {
     beforeAll(() => {
       const makeTest = (name: string, pass = true) => `
       import { test, expect } from "bun:test";
-      test("${name}", () => {
+      test("${name}", async () => {
         expect(1).toBe(${pass ? 1 : 0});
       });
       `;
@@ -132,15 +133,15 @@ describe("bun test", () => {
       });
     });
 
-    it("if that filter is a path to a directory, will run all tests in that directory", () => {
-      const stderr = runTest({ cwd: dir, args: ["./bar"] });
+    it("if that filter is a path to a directory, will run all tests in that directory", async () => {
+      const stderr = await runTest({ cwd: dir, args: ["./bar"] });
       expect(stderr).toContain("2 pass");
       expect(stderr).not.toContain("foo");
     });
   });
 
-  test("works with require", () => {
-    const stderr = runTest({
+  test("works with require", async () => {
+    const stderr = await runTest({
       args: [],
       input: [
         `
@@ -153,8 +154,8 @@ describe("bun test", () => {
     });
     expect(stderr).toContain("test #1");
   });
-  test("works with dynamic import", () => {
-    const stderr = runTest({
+  test("works with dynamic import", async () => {
+    const stderr = await runTest({
       args: [],
       input: `
         const { test, expect } = await import("bun:test");
@@ -165,7 +166,7 @@ describe("bun test", () => {
     });
     expect(stderr).toContain("test #1");
   });
-  test("works with cjs require", () => {
+  test("works with cjs require", async () => {
     const cwd = createTest(
       `
         const { test, expect } = require("bun:test");
@@ -175,12 +176,12 @@ describe("bun test", () => {
       `,
       "test.test.cjs",
     );
-    const stderr = runTest({
+    const stderr = await runTest({
       cwd,
     });
     expect(stderr).toContain("test #1");
   });
-  test("works with cjs dynamic import", () => {
+  test("works with cjs dynamic import", async () => {
     const cwd = createTest(
       `
         const { test, expect } = await import("bun:test");
@@ -190,7 +191,7 @@ describe("bun test", () => {
       `,
       "test.test.cjs",
     );
-    const stderr = runTest({
+    const stderr = await runTest({
       cwd,
     });
     expect(stderr).toContain("test #1");
@@ -201,8 +202,8 @@ describe("bun test", () => {
     test.todo("can rerun with a provided value");
   });
   describe("--todo", () => {
-    test("should not run todo by default", () => {
-      const stderr = runTest({
+    test("should not run todo by default", async () => {
+      const stderr = await runTest({
         input: `
           import { test, expect } from "bun:test";
           test.todo("todo", async () => {
@@ -212,8 +213,8 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("should not run");
     });
-    test("should run todo when enabled", () => {
-      const stderr = runTest({
+    test("should run todo when enabled", async () => {
+      const stderr = await runTest({
         args: ["--todo"],
         input: `
           import { test, expect } from "bun:test";
@@ -226,8 +227,8 @@ describe("bun test", () => {
     });
   });
   describe("only", () => {
-    test("should run nested describe.only", () => {
-      const stderr = runTest({
+    test("should run nested describe.only", async () => {
+      const stderr = await runTest({
         args: [],
         input: `
             import { test, describe } from "bun:test";
@@ -250,8 +251,8 @@ describe("bun test", () => {
       expect(stderr).not.toContain("unreachable");
       expect(stderr.match(/reachable/g)).toHaveLength(1);
     });
-    test("should skip non-only tests", () => {
-      const stderr = runTest({
+    test("should skip non-only tests", async () => {
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, describe } from "bun:test";
@@ -296,29 +297,29 @@ describe("bun test", () => {
     });
   });
   describe("--bail", () => {
-    test("must provide a number bail", () => {
-      const stderr = runTest({
+    test("must provide a number bail", async () => {
+      const stderr = await runTest({
         args: ["--bail=foo"],
       });
       expect(stderr).toContain("expects a number");
     });
 
-    test("must provide non-negative bail", () => {
-      const stderr = runTest({
+    test("must provide non-negative bail", async () => {
+      const stderr = await runTest({
         args: ["--bail=-1"],
       });
       expect(stderr).toContain("expects a number");
     });
 
-    test("should not be 0", () => {
-      const stderr = runTest({
+    test("should not be 0", async () => {
+      const stderr = await runTest({
         args: ["--bail=0"],
       });
       expect(stderr).toContain("expects a number");
     });
 
-    test("bail should be 1 by default", () => {
-      const stderr = runTest({
+    test("bail should be 1 by default", async () => {
+      const stderr = await runTest({
         args: ["--bail"],
         input: `
           import { test, expect } from "bun:test";
@@ -334,8 +335,8 @@ describe("bun test", () => {
       expect(stderr).not.toContain("test #2");
     });
 
-    test("should bail out after 3 failures", () => {
-      const stderr = runTest({
+    test("should bail out after 3 failures", async () => {
+      const stderr = await runTest({
         args: ["--bail=3"],
         input: `
           import { test, expect } from "bun:test";
@@ -358,14 +359,14 @@ describe("bun test", () => {
     });
   });
   describe("--timeout", () => {
-    test("must provide a number timeout", () => {
-      const stderr = runTest({
+    test("must provide a number timeout", async () => {
+      const stderr = await runTest({
         args: ["--timeout", "foo"],
       });
       expect(stderr).toContain("Invalid timeout");
     });
-    test("must provide non-negative timeout", () => {
-      const stderr = runTest({
+    test("must provide non-negative timeout", async () => {
+      const stderr = await runTest({
         args: ["--timeout", "-1"],
       });
       expect(stderr).toContain("Invalid timeout");
@@ -374,8 +375,8 @@ describe("bun test", () => {
     // This test crashes, which will pass because stderr contains "timed out"
     // but the crash can also mean it hangs, which will end up failing.
     // Possibly fixed by https://github.com/oven-sh/bun/pull/8076/files
-    test("timeout can be set to 30ms", () => {
-      const stderr = runTest({
+    test("timeout can be set to 30ms", async () => {
+      const stderr = await runTest({
         args: ["--timeout", "30"],
         input: `
           import { test, expect } from "bun:test";
@@ -390,9 +391,9 @@ describe("bun test", () => {
       });
       expect(stderr).toHaveTestTimedOutAfter(30);
     });
-    test("timeout should default to 5000ms", () => {
+    test("timeout should default to 5000ms", async () => {
       const time = process.platform === "linux" ? 5005 : 5500;
-      const stderr = runTest({
+      const stderr = await runTest({
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
@@ -405,8 +406,8 @@ describe("bun test", () => {
     }, 10000);
   });
   describe("support for Github Actions", () => {
-    test("should not group logs by default", () => {
-      const stderr = runTest({
+    test("should not group logs by default", async () => {
+      const stderr = await runTest({
         env: {
           GITHUB_ACTIONS: undefined,
         },
@@ -414,8 +415,8 @@ describe("bun test", () => {
       expect(stderr).not.toContain("::group::");
       expect(stderr).not.toContain("::endgroup::");
     });
-    test("should not group logs when disabled", () => {
-      const stderr = runTest({
+    test("should not group logs when disabled", async () => {
+      const stderr = await runTest({
         env: {
           GITHUB_ACTIONS: "false",
         },
@@ -423,8 +424,8 @@ describe("bun test", () => {
       expect(stderr).not.toContain("::group::");
       expect(stderr).not.toContain("::endgroup::");
     });
-    test("should group logs when enabled", () => {
-      const stderr = runTest({
+    test("should group logs when enabled", async () => {
+      const stderr = await runTest({
         env: {
           GITHUB_ACTIONS: "true",
         },
@@ -434,8 +435,8 @@ describe("bun test", () => {
       expect(stderr).toContain("::endgroup::");
       expect(stderr.match(/::endgroup::/g)).toHaveLength(1);
     });
-    test("should group logs with multiple files", () => {
-      const stderr = runTest({
+    test("should group logs with multiple files", async () => {
+      const stderr = await runTest({
         input: [
           `
             import { test, expect } from "bun:test";
@@ -463,8 +464,8 @@ describe("bun test", () => {
       expect(stderr).toContain("::endgroup::");
       expect(stderr.match(/::endgroup::/g)).toHaveLength(3);
     });
-    test("should group logs with --rerun-each", () => {
-      const stderr = runTest({
+    test("should group logs with --rerun-each", async () => {
+      const stderr = await runTest({
         args: ["--rerun-each", "3"],
         input: [
           `
@@ -489,8 +490,8 @@ describe("bun test", () => {
       expect(stderr).toContain("::endgroup::");
       expect(stderr.match(/::endgroup::/g)).toHaveLength(6);
     });
-    test("should not annotate errors by default", () => {
-      const stderr = runTest({
+    test("should not annotate errors by default", async () => {
+      const stderr = await runTest({
         input: `
           import { test, expect } from "bun:test";
           test("fail", () => {
@@ -503,8 +504,8 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should not annotate errors with inspect() by default", () => {
-      const stderr = runTest({
+    test("should not annotate errors with inspect() by default", async () => {
+      const stderr = await runTest({
         input: `
           import { test } from "bun:test";
           import { inspect } from "bun";
@@ -519,8 +520,8 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should not annotate errors with inspect() when enabled", () => {
-      const stderr = runTest({
+    test("should not annotate errors with inspect() when enabled", async () => {
+      const stderr = await runTest({
         input: `
           import { test } from "bun:test";
           import { inspect } from "bun";
@@ -535,8 +536,8 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should annotate errors in the global scope", () => {
-      const stderr = runTest({
+    test("should annotate errors in the global scope", async () => {
+      const stderr = await runTest({
         input: `
           throw new Error();
         `,
@@ -546,8 +547,8 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
-    test.each(["test", "describe"])("should annotate errors in a %s scope", type => {
-      const stderr = runTest({
+    test.each(["test", "describe"])("should annotate errors in a %s scope", async type => {
+      const stderr = await runTest({
         input: `
           import { ${type} } from "bun:test";
           ${type}("fail", () => {
@@ -560,23 +561,26 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
-    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("should annotate errors in a %s callback", type => {
-      const stderr = runTest({
-        input: `
+    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])(
+      "should annotate errors in a %s callback",
+      async type => {
+        const stderr = await runTest({
+          input: `
           import { test, ${type} } from "bun:test";
           ${type}(() => {
             throw new Error();
           });
           test("test", () => {});
         `,
-        env: {
-          GITHUB_ACTIONS: "true",
-        },
-      });
-      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
-    });
-    test("should annotate errors with escaped strings", () => {
-      const stderr = runTest({
+          env: {
+            GITHUB_ACTIONS: "true",
+          },
+        });
+        expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+      },
+    );
+    test("should annotate errors with escaped strings", async () => {
+      const stderr = await runTest({
         input: `
           import { test, expect } from "bun:test";
           test("fail", () => {
@@ -592,8 +596,8 @@ describe("bun test", () => {
       expect(stderr).toMatch(/error: expect\(received\)\.toBe\(expected\)/); // stripped ansi
       expect(stderr).toMatch(/Expected: false%0AReceived: true%0A/); // escaped newlines
     });
-    test("should annotate errors without a stack", () => {
-      const stderr = runTest({
+    test("should annotate errors without a stack", async () => {
+      const stderr = await runTest({
         input: `
           import { test, expect } from "bun:test";
           test("fail", () => {
@@ -607,8 +611,8 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
-    test("should annotate an error message containing non-ASCII bytes", () => {
-      const stderr = runTest({
+    test("should annotate an error message containing non-ASCII bytes", async () => {
+      const stderr = await runTest({
         input: `
           import { test } from "bun:test";
           test("fail", () => {
@@ -623,8 +627,8 @@ describe("bun test", () => {
       const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
       expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: hello é world::%0A {6}at /);
     });
-    test("should annotate an error message containing emoji and newlines", () => {
-      const stderr = runTest({
+    test("should annotate an error message containing emoji and newlines", async () => {
+      const stderr = await runTest({
         input: `
           import { test } from "bun:test";
           test("fail", () => {
@@ -641,8 +645,8 @@ describe("bun test", () => {
         /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
       );
     });
-    test("should annotate a test timeout", () => {
-      const stderr = runTest({
+    test("should annotate a test timeout", async () => {
+      const stderr = await runTest({
         input: `
           import { test } from "bun:test";
           test("time out", async () => {
@@ -658,14 +662,14 @@ describe("bun test", () => {
     });
   });
   describe(".each", () => {
-    test("should run tests with test.each", () => {
+    test("should run tests with test.each", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -679,14 +683,14 @@ describe("bun test", () => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
-    test("should allow tests run with test.each to be skipped", () => {
+    test("should allow tests run with test.each to be skipped", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: ["-t", "$a"],
         input: `
           import { test, expect } from "bun:test";
@@ -700,14 +704,14 @@ describe("bun test", () => {
         expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
-    test("should allow tests run with test.each to be matched", () => {
+    test("should allow tests run with test.each to be matched", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: ["-t", "1 \\+"],
         input: `
           import { test, expect } from "bun:test";
@@ -725,14 +729,14 @@ describe("bun test", () => {
         }
       });
     });
-    test("should run tests with describe.each", () => {
+    test("should run tests with describe.each", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect, describe } from "bun:test";
@@ -748,14 +752,14 @@ describe("bun test", () => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
-    test("check formatting for %i", () => {
+    test("check formatting for %i", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -769,14 +773,14 @@ describe("bun test", () => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
-    test("check formatting for %f", () => {
+    test("check formatting for %f", async () => {
       const numbers = [
         [1.4, 2.9, 4.3],
         [1, 1, 2],
         [3.1, 4.5, 7.6],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -790,14 +794,14 @@ describe("bun test", () => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
-    test("check formatting for %d", () => {
+    test("check formatting for %d", async () => {
       const numbers = [
         [1.4, 2.9, 4.3],
         [1, 1, 2],
         [3.1, 4.5, 7.6],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -811,10 +815,10 @@ describe("bun test", () => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
-    test("check formatting for %s", () => {
+    test("check formatting for %s", async () => {
       const strings = ["hello", "world", "foo"];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -828,7 +832,7 @@ describe("bun test", () => {
         expect(stderr).toContain(`with a string: ${s}`);
       });
     });
-    test("check formatting for %j", () => {
+    test("check formatting for %j", async () => {
       const input = [
         {
           foo: "bar",
@@ -840,7 +844,7 @@ describe("bun test", () => {
         },
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -852,7 +856,7 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
     });
-    test("check formatting for %o", () => {
+    test("check formatting for %o", async () => {
       const input = [
         {
           foo: "bar",
@@ -864,7 +868,7 @@ describe("bun test", () => {
         },
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -876,14 +880,14 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
     });
-    test("check formatting for %#", () => {
+    test("check formatting for %#", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -897,14 +901,14 @@ describe("bun test", () => {
         expect(stderr).toContain(`test number ${idx}:`);
       });
     });
-    test("check formatting for %%", () => {
+    test("check formatting for %%", async () => {
       const numbers = [
         [1, 2, 3],
         [1, 1, 2],
         [3, 4, 7],
       ];
 
-      const stderr = runTest({
+      const stderr = await runTest({
         args: [],
         input: `
           import { test, expect } from "bun:test";
@@ -916,17 +920,17 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`%`);
     });
-    test.todo("check formatting for %p", () => {});
+    test.todo("check formatting for %p", async () => {});
 
     describe("$variable syntax", () => {
-      test("should replace $variables with object properties in test names", () => {
+      test("should replace $variables with object properties in test names", async () => {
         const cases = [
           { a: 1, b: 2, expected: 3 },
           { a: 5, b: 5, expected: 10 },
           { a: -1, b: 1, expected: 0 },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -944,10 +948,10 @@ describe("bun test", () => {
         expect(stderr).toContain("3 pass");
       });
 
-      test("should show $variable literal when property doesn't exist", () => {
+      test("should show $variable literal when property doesn't exist", async () => {
         const cases = [{ a: 1 }, { a: 2 }];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -964,13 +968,13 @@ describe("bun test", () => {
         expect(stderr).toContain("2 pass");
       });
 
-      test("should work with describe.each", () => {
+      test("should work with describe.each", async () => {
         const cases = [
           { module: "fs", method: "readFile" },
           { module: "path", method: "join" },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect, describe } from "bun:test";
@@ -990,13 +994,13 @@ describe("bun test", () => {
         expect(stderr).toContain("2 pass");
       });
 
-      test("should work with complex property names", () => {
+      test("should work with complex property names", async () => {
         const cases = [
           { user_name: "john_doe", age: 30, is_active: true },
           { user_name: "jane_smith", age: 25, is_active: false },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1015,13 +1019,13 @@ describe("bun test", () => {
         expect(stderr).toContain("2 pass");
       });
 
-      test("should coexist with % formatting for arrays", () => {
+      test("should coexist with % formatting for arrays", async () => {
         const numbers = [
           [1, 2, 3],
           [5, 5, 10],
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1037,7 +1041,7 @@ describe("bun test", () => {
         expect(stderr).toContain("2 pass");
       });
 
-      test("should support nested property access", () => {
+      test("should support nested property access", async () => {
         const cases = [
           {
             user: { name: "Alice", profile: { city: "NYC" } },
@@ -1049,7 +1053,7 @@ describe("bun test", () => {
           },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1066,7 +1070,7 @@ describe("bun test", () => {
         expect(stderr).toContain("2 pass");
       });
 
-      test("should support array indexing with dot notation", () => {
+      test("should support array indexing with dot notation", async () => {
         const cases = [
           {
             users: [{ name: "Alice" }, { name: "Bob" }],
@@ -1078,7 +1082,7 @@ describe("bun test", () => {
           },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1095,7 +1099,7 @@ describe("bun test", () => {
         expect(stderr).toContain("2 pass");
       });
 
-      test("handles edge cases with underscores and invalid identifiers", () => {
+      test("handles edge cases with underscores and invalid identifiers", async () => {
         const cases = [
           {
             _valid: "underscore",
@@ -1107,7 +1111,7 @@ describe("bun test", () => {
           },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1127,7 +1131,7 @@ describe("bun test", () => {
         expect(stderr).toContain("$hasspace");
       });
 
-      test("handles deeply nested properties with arrays", () => {
+      test("handles deeply nested properties with arrays", async () => {
         const cases = [
           {
             data: {
@@ -1140,7 +1144,7 @@ describe("bun test", () => {
           },
         ];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1155,10 +1159,10 @@ describe("bun test", () => {
         expect(stderr).toContain("First user: Alice with tag: admin");
       });
 
-      test("handles missing properties gracefully", () => {
+      test("handles missing properties gracefully", async () => {
         const cases = [{ a: 1 }];
 
-        const stderr = runTest({
+        const stderr = await runTest({
           args: [],
           input: `
             import { test, expect } from "bun:test";
@@ -1175,8 +1179,8 @@ describe("bun test", () => {
     });
   });
 
-  test("Prints error when no test matches", () => {
-    const stderr = runTest({
+  test("Prints error when no test matches", async () => {
+    const stderr = await runTest({
       args: ["-t", "not-a-test"],
       input: `
         import { test, expect } from "bun:test";
@@ -1196,8 +1200,8 @@ describe("bun test", () => {
     `);
   });
 
-  test("Does not print the regex error when a test fails", () => {
-    const stderr = runTest({
+  test("Does not print the regex error when a test fails", async () => {
+    const stderr = await runTest({
       args: ["-t", "not-a-test"],
       input: `
         import { test, expect } from "bun:test";
@@ -1211,8 +1215,8 @@ describe("bun test", () => {
     expect(stderr).toContain("1 fail");
   });
 
-  test("Does not print the regex error when a test matches and a test passes", () => {
-    const stderr = runTest({
+  test("Does not print the regex error when a test matches and a test passes", async () => {
+    const stderr = await runTest({
       args: ["-t", "not-a-test"],
       input: `
         import { test, expect } from "bun:test";
@@ -1230,8 +1234,8 @@ describe("bun test", () => {
     expect(stderr).toContain("1 pass");
   });
 
-  test("path to a non-test.ts file will work", () => {
-    const stderr = runTest({
+  test("path to a non-test.ts file will work", async () => {
+    const stderr = await runTest({
       args: ["./index.ts"],
       input: [
         {
@@ -1248,8 +1252,8 @@ describe("bun test", () => {
     expect(stderr).toContain("test #1");
   });
 
-  test("path to a non-test.ts without ./ will print a helpful hint", () => {
-    const stderr = runTest({
+  test("path to a non-test.ts without ./ will print a helpful hint", async () => {
+    const stderr = await runTest({
       args: ["index.ts"],
       input: [
         {
@@ -1267,8 +1271,8 @@ describe("bun test", () => {
     expect(stderr).toContain("index.ts");
   });
 
-  test("Skipped and todo tests are filtered out when not matching -t filter", () => {
-    const stderr = runTest({
+  test("Skipped and todo tests are filtered out when not matching -t filter", async () => {
+    const stderr = await runTest({
       args: ["-t", "should match"],
       input: `
         import { test, describe } from "bun:test";
@@ -1324,7 +1328,7 @@ describe("bun test", () => {
     `);
   });
 
-  test("--tsconfig-override works", () => {
+  test("--tsconfig-override works", async () => {
     const dir = tempDirWithFiles("test-tsconfig-override", {
       "math.test.ts": `
         import { describe, test, expect } from "bun:test";
@@ -1390,7 +1394,7 @@ describe("bun test", () => {
     expect(output).toContain("addition");
   });
 
-  test("--tsconfig-override works with monorepo spec tsconfig", () => {
+  test("--tsconfig-override works with monorepo spec tsconfig", async () => {
     const dir = tempDirWithFiles("test-tsconfig-monorepo", {
       "packages/app/src/index.ts": `
         export function getMessage() {
@@ -1476,7 +1480,7 @@ function createTest(input?: string | (string | { filename: string; contents: str
   return cwd;
 }
 
-function runTest({
+async function runTest({
   input = "",
   cwd,
   args = [],
@@ -1488,20 +1492,21 @@ function runTest({
   args?: string[];
   env?: Record<string, string | undefined>;
   expectExitCode?: number;
-} = {}): string {
+} = {}): Promise<string> {
   cwd ??= createTest(input);
   try {
-    const { stderr, exitCode } = spawnSync({
+    await using proc = Bun.spawn({
       cwd,
       cmd: [bunExe(), "test", ...args],
       env: { ...bunEnv, AGENT: "0", ...env },
       stderr: "pipe",
       stdout: "ignore",
     });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     if (expectExitCode !== undefined) {
       expect(exitCode).toBe(expectExitCode);
     }
-    return stderr.toString();
+    return stderr;
   } finally {
     rmSync(cwd, { recursive: true });
   }

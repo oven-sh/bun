@@ -211,7 +211,9 @@ async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
   return { stdout, stderr, exitCode };
 }
 
-describe("streaming tarball extraction", () => {
+// Each test owns its own registry (port:0), tempDir and install process —
+// no shared mutable state — so they can run concurrently.
+describe.concurrent("streaming tarball extraction", () => {
   const entries = makeEntries();
   const { tgz, shasum, integrity } = buildTarball(entries);
 
@@ -342,7 +344,7 @@ describe("streaming tarball extraction", () => {
 // behaviour change here is the libarchive patch leaking into the shared
 // buffered codepath.
 // -------------------------------------------------------------------
-test("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
+test.concurrent("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
   // One pax 'g' extended-header payload. libarchive's header_pax_global
   // just skips it, but parsing it sets `seen_headers |= seen_g_header`;
   // seeing a second one without an intervening state reset is what
@@ -402,7 +404,7 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 // growing the decompression buffer without limit and installing a
 // multi-gigabyte file.
 // -------------------------------------------------------------------
-test("buffered extract rejects a registry tarball whose decompressed size exceeds the limit", async () => {
+test.concurrent("buffered extract rejects a registry tarball whose decompressed size exceeds the limit", async () => {
   // 2.25 GiB of zeros: comfortably above the 2 GiB decompression cap,
   // a multiple of 512 so the tar entry needs no trailing pad block,
   // and its gzip ISIZE footer is far above the 64 MB libdeflate
@@ -414,8 +416,9 @@ test("buffered extract rejects a registry tarball whose decompressed size exceed
 
   // Stream the tar through gzip so the test process never holds the
   // 2.25 GiB uncompressed archive in memory; only the small compressed
-  // tarball is kept around.
-  const gzip = createGzip({ level: 9 });
+  // tarball is kept around. Level 3 yields the same ~2.3 MB output as
+  // level 9 for all-zero input but compresses several times faster.
+  const gzip = createGzip({ level: 3 });
   const compressed: Buffer[] = [];
   gzip.on("data", c => compressed.push(c as Buffer));
   const gzipDone = new Promise<void>((resolve, reject) => {

@@ -2,10 +2,12 @@
 // These tests fail by timing out.
 
 import { expect, test } from "bun:test";
-import { getMaxFD, isCI, isMacOS } from "harness";
+import { getMaxFD, isASAN, isCI, isDebug, isMacOS } from "harness";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
-const PORT_EXHAUSTION_THRESHOLD = isMacOS ? 8 * 1024 : 16 * 1024;
+// Under ASAN/debug, iterations are ~4x slower so TIME_WAIT ports clear before exhaustion anyway;
+// a smaller count still exercises the fd-leak assertion and socket-close paths ASAN cares about.
+const PORT_EXHAUSTION_THRESHOLD = isASAN || isDebug ? 2 * 1024 : isMacOS ? 8 * 1024 : 16 * 1024;
 
 async function runStressTest({
   onServerWritten,

@@ -821,6 +821,11 @@ namespace uWS
                 if (postPaddedBuffer[1] == '\n') {
                     /* Store this header, it is valid */
                     if (hasObsFold) [[unlikely]] {
+                        /* The byte after this CRLF decides whether the fold continues; if
+                         * it has not arrived yet, compacting now would not be idempotent. */
+                        if (postPaddedBuffer + 2 >= end) {
+                            return HttpParserResult::shortRead();
+                        }
                         /* Compact the value in place, dropping the CRLF pairs skipped above,
                          * then SP-fill the vacated tail so a shortRead re-parse over these
                          * bytes is idempotent (trimmed as trailing whitespace). */

@@ -72,12 +72,23 @@ describe("http.createServer insecureHTTPParser", () => {
     // The obs-fold CRLF is compacted in place; splitting the request after the
     // folded header but before the terminating CRLF forces a re-parse over the
     // mutated bytes, which must yield the same value.
-    const { served, clientErrors } = await runServer(true, [
+    const after = await runServer(true, [
       "GET /obsfold HTTP/1.1\r\nHost: x\r\nX-A: one\r\n two\r\nConnection: close\r\n",
       "\r\n",
     ]);
-    expect({ served, clientErrors }).toEqual({
+    expect({ served: after.served, clientErrors: after.clientErrors }).toEqual({
       served: [{ url: "/obsfold", xA: "one two", cl: undefined, te: undefined, body: "" }],
+      clientErrors: [],
+    });
+
+    // Split between two folds of the same header: the parser must wait for the
+    // byte after the intermediate CRLF before compacting.
+    const between = await runServer(true, [
+      "GET /obsfold HTTP/1.1\r\nHost: x\r\nX-A: one\r\n two\r\n",
+      " three\r\nConnection: close\r\n\r\n",
+    ]);
+    expect({ served: between.served, clientErrors: between.clientErrors }).toEqual({
+      served: [{ url: "/obsfold", xA: "one two three", cl: undefined, te: undefined, body: "" }],
       clientErrors: [],
     });
   });

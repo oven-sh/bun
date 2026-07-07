@@ -308,6 +308,7 @@ pub struct SSLConfig {
     pub ca: SSLConfigFile,
     pub cert: SSLConfigFile,
     pub key: SSLConfigFile,
+    pub crl: SSLConfigFile,
     pub key_file: GenOpt<GenString>,
     pub cert_file: GenOpt<GenString>,
     pub ca_file: GenOpt<GenString>,
@@ -405,7 +406,7 @@ impl Drop for SSLConfig {
         release_gen_opt_string(&self.passphrase);
         release_gen_opt_string(&self.dh_params_file);
         release_gen_opt_string(&self.server_name);
-        // `ca` / `cert` / `key`: `SSLConfigFile` — released by its own `Drop`.
+        // `ca` / `cert` / `key` / `crl`: `SSLConfigFile` — released by its own `Drop`.
         release_gen_opt_string(&self.key_file);
         release_gen_opt_string(&self.cert_file);
         release_gen_opt_string(&self.ca_file);
@@ -550,6 +551,7 @@ struct ExternSSLConfig {
     ca: ExternSSLConfigFile,
     cert: ExternSSLConfigFile,
     key: ExternSSLConfigFile,
+    crl: ExternSSLConfigFile,
     secure_options: u32,
     ssl_min_version: i32,
     ssl_max_version: i32,
@@ -584,6 +586,7 @@ impl SSLConfig {
             ca: SSLConfigFile::convert_from_extern(ext.ca),
             cert: SSLConfigFile::convert_from_extern(ext.cert),
             key: SSLConfigFile::convert_from_extern(ext.key),
+            crl: SSLConfigFile::convert_from_extern(ext.crl),
             secure_options: ext.secure_options,
             ssl_min_version: ext.ssl_min_version,
             ssl_max_version: ext.ssl_max_version,

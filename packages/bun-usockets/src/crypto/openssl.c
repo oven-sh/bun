@@ -765,6 +765,32 @@ end:
   return ret;
 }
 
+/* node:tls `crl`: parse each X509 CRL block in `content` into `store` and
+ * enable CRL checking on it (Node's SecureContext::AddCRL). Returns the number
+ * of CRLs added, 0 when no CRL could be parsed. */
+static int add_crl_to_ctx_store(const char *content, X509_STORE *store) {
+  int count = 0;
+  X509_CRL *crl = NULL;
+  ERR_clear_error();
+  if (content == NULL) return 0;
+  BIO *in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    return 0;
+  }
+  while ((crl = PEM_read_bio_X509_CRL(in, NULL, NULL, NULL))) {
+    X509_STORE_add_crl(store, crl);
+    X509_CRL_free(crl);
+    count++;
+  }
+  BIO_free(in);
+  if (count > 0) {
+    X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+    ERR_clear_error();
+  }
+  return count;
+}
+
 static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
   X509 *x = NULL;
   ERR_clear_error();
@@ -1028,6 +1054,32 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,
         us_verify_callback);
+  }
+
+  if (options.crl && options.crl_count > 0) {
+    X509_STORE *store = SSL_CTX_get_cert_store(ssl_context);
+    /* Clone-on-write: a CRL must not be attached to the process-wide default
+     * root store (every other context would see it and start failing with
+     * UNABLE_TO_GET_CRL). Same check Node's SecureContext::AddCRL performs. */
+    X509_STORE *shared = us_get_shared_default_ca_store();
+    int store_is_shared = store && store == shared;
+    X509_STORE_free(shared);
+    if (store_is_shared) {
+      X509_STORE *own = us_get_default_ca_store();
+      if (!own) {
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      SSL_CTX_set_cert_store(ssl_context, own);
+      store = own;
+    }
+    for (unsigned int i = 0; i < options.crl_count; i++) {
+      if (add_crl_to_ctx_store(options.crl[i], store) == 0) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+    }
   }
 
   if (options.dh_params_file_name) {

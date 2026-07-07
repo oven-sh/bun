@@ -108,6 +108,7 @@ pub enum create_bun_socket_error_t {
     invalid_ca_file,
     invalid_ca,
     invalid_ciphers,
+    invalid_crl,
 }
 
 impl create_bun_socket_error_t {
@@ -118,6 +119,7 @@ impl create_bun_socket_error_t {
             Self::invalid_ca_file => Some(b"Invalid CA file"),
             Self::invalid_ca => Some(b"Invalid CA"),
             Self::invalid_ciphers => Some(b"Invalid ciphers"),
+            Self::invalid_crl => Some(b"Failed to parse CRL"),
         }
     }
 }

@@ -73,6 +73,8 @@ namespace uWS {
         unsigned int cert_count = 0;
         const char **ca = nullptr;
         unsigned int ca_count = 0;
+        const char **crl = nullptr;
+        unsigned int crl_count = 0;
         unsigned int secure_options = 0;
         int ssl_min_version = 0;
         int ssl_max_version = 0;

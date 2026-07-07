@@ -111,6 +111,8 @@ pub struct BunSocketContextOptions {
     pub cert_count: u32,
     pub ca: *const *const c_char,
     pub ca_count: u32,
+    pub crl: *const *const c_char,
+    pub crl_count: u32,
     pub secure_options: u32,
     pub ssl_min_version: i32,
     pub ssl_max_version: i32,
@@ -136,6 +138,8 @@ impl Default for BunSocketContextOptions {
             cert_count: 0,
             ca: ptr::null(),
             ca_count: 0,
+            crl: ptr::null(),
+            crl_count: 0,
             secure_options: 0,
             ssl_min_version: 0,
             ssl_max_version: 0,
@@ -236,6 +240,7 @@ impl BunSocketContextOptions {
         feed_arr(&mut h, self.key, self.key_count);
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
+        feed_arr(&mut h, self.crl, self.crl_count);
         h.update(bun_core::bytes_of(&self.secure_options));
         h.update(bun_core::bytes_of(&self.ssl_min_version));
         h.update(bun_core::bytes_of(&self.ssl_max_version));
@@ -268,6 +273,7 @@ impl BunSocketContextOptions {
         sum(self.key, self.key_count, &mut n);
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
+        sum(self.crl, self.crl_count, &mut n);
         n
     }
 }

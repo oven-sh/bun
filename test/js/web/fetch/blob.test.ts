@@ -280,6 +280,17 @@ test("File.prototype.slice() returns a Blob, not a File", async () => {
     name: undefined,
   });
 
+  // FormData must not emit the parent File's name for a slice
+  const fd = new FormData();
+  fd.append("part", file.slice(2, 5));
+  fd.append("whole", file);
+  const multipart = await new Response(fd).text();
+  const filenames = [...multipart.matchAll(/name="([^"]*)"; filename="([^"]*)"/g)].map(m => [m[1], m[2]]);
+  expect(filenames).toEqual([
+    ["part", ""],
+    ["whole", "secret-report.pdf"],
+  ]);
+
   // original File is untouched
   expect({
     isFile: file instanceof File,

@@ -4421,6 +4421,13 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+    // Bytes.stored_name is the DOM File name on the shared store; don't hand
+    // it to FormData for a plain Blob (e.g. the result of `file.slice()`).
+    if !this.is_jsdom_file.get()
+        && matches!(this.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::Bytes(_)))
+    {
+        return BunString::empty();
+    }
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }

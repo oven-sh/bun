@@ -1058,83 +1058,23 @@ impl CompileResult {
     }
 }
 
-/// Read-only byte view of the source executable for `inject`.
-///
-/// The file is memory-mapped read-only (`mmap` `PROT_READ, MAP_PRIVATE` on
-/// POSIX; `CreateFileMappingW` + `MapViewOfFile` `FILE_MAP_READ` on Windows)
-/// so the bytes share page-cache pages with the on-disk image (and, when the
-/// source is the running process, with its own text segment) instead of
-/// occupying anonymous heap. A mapping failure falls back to `read_to_end`.
+/// Read-only byte view of the source executable for `inject`. The file is
+/// memory-mapped read-only so the bytes share page-cache pages with the
+/// on-disk image (and, when the source is the running process, with its own
+/// text segment) instead of occupying anonymous heap. A mapping failure falls
+/// back to `read_to_end`.
 enum SourceBytes {
-    #[cfg(not(windows))]
-    Mapped {
-        ptr: *mut u8,
-        len: usize,
-    },
-    #[cfg(windows)]
-    Mapped {
-        ptr: *mut u8,
-        len: usize,
-        mapping: *mut core::ffi::c_void,
-    },
+    Mapped(bun_sys::MemoryMapping),
     Owned(Vec<u8>),
 }
 
 impl SourceBytes {
     fn open(path: &ZStr) -> bun_sys::Maybe<Self> {
         let file = bun_sys::File::open(path, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0)?;
-        let stat = Syscall::fstat(file.handle())?;
-        // `st_size` is `i64` (libc::stat) on POSIX and `u64` (uv_stat_t) on
-        // Windows; `usize: TryFrom<_>` covers both.
-        #[allow(clippy::unnecessary_fallible_conversions)]
-        let len = usize::try_from(stat.st_size).unwrap_or(0);
-        if len > 0 {
-            #[cfg(not(windows))]
-            if let Ok(ptr) = Syscall::mmap(
-                core::ptr::null_mut(),
-                len,
-                libc::PROT_READ,
-                libc::MAP_PRIVATE,
-                file.handle(),
-                0,
-            ) {
-                return Ok(SourceBytes::Mapped { ptr, len });
-            }
-            #[cfg(windows)]
-            {
-                use bun_sys::windows as w;
-                const PAGE_READONLY: u32 = 0x02;
-                const FILE_MAP_READ: u32 = 0x0004;
-                // SAFETY: `file.handle()` is a valid open file HANDLE; null
-                // attributes/name select the default unnamed mapping; a zero
-                // max-size maps the whole file.
-                let mapping = unsafe {
-                    w::CreateFileMappingW(
-                        file.handle().native(),
-                        core::ptr::null_mut(),
-                        PAGE_READONLY,
-                        0,
-                        0,
-                        core::ptr::null(),
-                    )
-                };
-                if !mapping.is_null() {
-                    // SAFETY: `mapping` is a valid mapping object just created
-                    // above; zero size maps the whole file.
-                    let ptr = unsafe { w::MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0) };
-                    if !ptr.is_null() {
-                        return Ok(SourceBytes::Mapped {
-                            ptr: ptr.cast(),
-                            len,
-                            mapping,
-                        });
-                    }
-                    // SAFETY: `mapping` is a valid HANDLE from CreateFileMappingW.
-                    unsafe { w::CloseHandle(mapping) };
-                }
-            }
+        match file.map_read_only() {
+            Ok(m) => Ok(SourceBytes::Mapped(m)),
+            Err(_) => Ok(SourceBytes::Owned(file.read_to_end()?)),
         }
-        Ok(SourceBytes::Owned(file.read_to_end()?))
     }
 }
 
@@ -1142,30 +1082,8 @@ impl core::ops::Deref for SourceBytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
-            // SAFETY: `ptr` points at a live mapping of `len` bytes until `Drop`.
-            SourceBytes::Mapped { ptr, len, .. } => unsafe {
-                core::slice::from_raw_parts(*ptr, *len)
-            },
+            SourceBytes::Mapped(m) => m,
             SourceBytes::Owned(v) => v,
-        }
-    }
-}
-
-impl Drop for SourceBytes {
-    fn drop(&mut self) {
-        #[cfg(not(windows))]
-        if let SourceBytes::Mapped { ptr, len } = *self {
-            let _ = Syscall::munmap(ptr, len);
-        }
-        #[cfg(windows)]
-        if let SourceBytes::Mapped { ptr, mapping, .. } = *self {
-            use bun_sys::windows as w;
-            // SAFETY: `ptr` is the base of a live view; `mapping` is its
-            // backing HANDLE. Both were validated non-null in `open`.
-            unsafe {
-                w::UnmapViewOfFile(ptr.cast());
-                w::CloseHandle(mapping);
-            }
         }
     }
 }

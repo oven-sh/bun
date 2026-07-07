@@ -1276,7 +1276,7 @@ pub mod O {
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod file;
-pub use file::{File, ReadToEndResult};
+pub use file::{File, MemoryMapping, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
 

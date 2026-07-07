@@ -12,6 +12,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/ProxyObject.h>
 
 namespace Bun {
 
@@ -59,12 +60,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "record requires at least one argument"_s);
-        return {};
-    }
-
-    JSValue arg = callFrame->uncheckedArgument(0);
+    JSValue arg = callFrame->argument(0);
     int64_t value;
     if (arg.isNumber()) {
         value = truncateDoubleToInt64(arg.asNumber());
@@ -72,7 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
         auto* bigInt = uncheckedDowncast<JSBigInt>(arg);
         value = JSBigInt::toBigInt64(bigInt);
     } else {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "value"_s, "number or BigInt"_s, arg);
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "val"_s, "number"_s, arg);
         return {};
     }
 
@@ -111,15 +107,20 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd, (JSGlobalO
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        Bun::ERR::MISSING_ARGS(scope, globalObject, "add requires at least one argument"_s);
-        return {};
-    }
-
-    JSValue otherArg = callFrame->uncheckedArgument(0);
+    JSValue otherArg = callFrame->argument(0);
     JSNodePerformanceHooksHistogram* otherHistogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(otherArg);
     if (!otherHistogram) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Histogram"_s, otherArg);
+        // Node.js reads the native handle via a property lookup, so a Proxy
+        // wrapping a histogram is accepted. Unwrap Proxy chains here.
+        JSValue unwrapped = otherArg;
+        while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(unwrapped)) {
+            if (proxy->isRevoked()) break;
+            unwrapped = proxy->target();
+        }
+        otherHistogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(unwrapped);
+    }
+    if (!otherHistogram) [[unlikely]] {
+        Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "other"_s, "RecordableHistogram"_s, otherArg);
         return {};
     }
 

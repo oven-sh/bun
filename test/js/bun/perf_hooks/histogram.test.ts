@@ -574,6 +574,69 @@ describe("Histogram", () => {
     });
   });
 
+  describe("Node.js argument validation compatibility", () => {
+    test("createHistogram rejects non-object options with ERR_INVALID_ARG_TYPE", () => {
+      for (const options of [null, 1, "str", true, [], () => {}]) {
+        assert.throws(
+          () => createHistogram(options as unknown),
+          err => err.code === "ERR_INVALID_ARG_TYPE" && /"options" argument must be of type object/.test(err.message),
+          `createHistogram(${inspect(options)}) should throw ERR_INVALID_ARG_TYPE`,
+        );
+      }
+      // undefined and a plain object remain accepted
+      assert.strictEqual(createHistogram().count, 0);
+      assert.strictEqual(createHistogram(undefined).count, 0);
+      assert.strictEqual(createHistogram({}).count, 0);
+    });
+
+    test("record() with no argument throws ERR_INVALID_ARG_TYPE for 'val'", () => {
+      const h = createHistogram();
+      assert.throws(
+        () => h.record(),
+        err =>
+          err.code === "ERR_INVALID_ARG_TYPE" &&
+          /"val" argument must be of type number/.test(err.message) &&
+          /undefined/.test(err.message),
+      );
+      assert.throws(
+        () => h.record("str" as unknown),
+        err => err.code === "ERR_INVALID_ARG_TYPE" && /"val" argument must be of type number/.test(err.message),
+      );
+    });
+
+    test("add() accepts a Proxy-wrapped histogram", () => {
+      const h1 = createHistogram();
+      const h2 = createHistogram();
+      h2.record(5);
+      h2.record(10);
+      h1.add(new Proxy(h2, {}));
+      assert.strictEqual(h1.count, 2);
+      assert.strictEqual(h1.min, 5);
+      assert.strictEqual(h1.max, 10);
+
+      // nested proxies
+      const h3 = createHistogram();
+      h3.add(new Proxy(new Proxy(h2, {}), {}));
+      assert.strictEqual(h3.count, 2);
+    });
+
+    test("add() with a non-histogram throws ERR_INVALID_ARG_TYPE for 'other'", () => {
+      const h = createHistogram();
+      for (const other of [{}, new Proxy({}, {}), 1, "str"]) {
+        assert.throws(
+          () => h.add(other as unknown),
+          err =>
+            err.code === "ERR_INVALID_ARG_TYPE" &&
+            /"other" argument must be an instance of RecordableHistogram/.test(err.message),
+          `add(${inspect(other)}) should throw ERR_INVALID_ARG_TYPE`,
+        );
+      }
+      // null/undefined throw in both runtimes (Node: property access on null; Bun: ERR_INVALID_ARG_TYPE)
+      assert.throws(() => h.add(null as unknown), TypeError);
+      assert.throws(() => h.add(undefined as unknown), TypeError);
+    });
+  });
+
   test("inspect output", () => {
     const h = createHistogram();
     h.record(1);

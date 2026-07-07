@@ -23,32 +23,35 @@ test("subprocess.channel / process.channel expose ref/unref/refCounted/unrefCoun
   });
 
   const child = fork(path.join(String(dir), "child.mjs"), { env: bunEnv, execPath: bunExe() });
+  try {
+    const parentChannel = {
+      ref: typeof child.channel.ref,
+      unref: typeof child.channel.unref,
+      refCounted: typeof child.channel.refCounted,
+      unrefCounted: typeof child.channel.unrefCounted,
+    };
+    // these must not throw
+    child.channel.refCounted();
+    child.channel.unrefCounted();
+    child.channel.ref();
+    child.channel.unref();
 
-  const parentChannel = {
-    ref: typeof child.channel.ref,
-    unref: typeof child.channel.unref,
-    refCounted: typeof child.channel.refCounted,
-    unrefCounted: typeof child.channel.unrefCounted,
-  };
-  // these must not throw
-  child.channel.refCounted();
-  child.channel.unrefCounted();
-  child.channel.ref();
-  child.channel.unref();
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let childChannel;
+    child.on("message", msg => {
+      childChannel = msg;
+    });
+    child.on("error", reject);
+    child.on("exit", code => resolve(code));
+    const exitCode = await promise;
 
-  const { promise, resolve, reject } = Promise.withResolvers();
-  let childChannel;
-  child.on("message", msg => {
-    childChannel = msg;
-  });
-  child.on("error", reject);
-  child.on("exit", code => resolve(code));
-  const exitCode = await promise;
-
-  const expected = { ref: "function", unref: "function", refCounted: "function", unrefCounted: "function" };
-  expect(parentChannel).toEqual(expected);
-  expect(childChannel).toEqual(expected);
-  expect(exitCode).toBe(0);
+    const expected = { ref: "function", unref: "function", refCounted: "function", unrefCounted: "function" };
+    expect(parentChannel).toEqual(expected);
+    expect(childChannel).toEqual(expected);
+    expect(exitCode).toBe(0);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+  }
 });
 
 test("child process survives a balanced refCounted()/unrefCounted() while a message listener is attached", async () => {
@@ -71,19 +74,22 @@ test("child process survives a balanced refCounted()/unrefCounted() while a mess
   });
 
   const child = fork(path.join(String(dir), "child.mjs"), { env: bunEnv, execPath: bunExe() });
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const messages = [];
+    child.on("message", msg => {
+      messages.push(msg);
+      if (msg === "ready") child.send("ping");
+    });
+    child.on("error", reject);
+    child.on("exit", code => resolve(code));
+    const exitCode = await promise;
 
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const messages = [];
-  child.on("message", msg => {
-    messages.push(msg);
-    if (msg === "ready") child.send("ping");
-  });
-  child.on("error", reject);
-  child.on("exit", code => resolve(code));
-  const exitCode = await promise;
-
-  expect(messages).toEqual(["ready", "pong"]);
-  expect(exitCode).toBe(0);
+    expect(messages).toEqual(["ready", "pong"]);
+    expect(exitCode).toBe(0);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+  }
 });
 
 test("child_process ipc", async () => {

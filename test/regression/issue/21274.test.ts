@@ -11,9 +11,7 @@ test("#21274", () => {
     "DNS:*.lifecycle-prober-prod-89308e4e-9927-4280-9e14-3330f6900396.asia-northeast1.managedkafka.gmk-lifecycle-prober-prod-1.cloud.goog",
   );
   expect(cert.issuer).toEqual("C=US\nO=Google Trust Services\nCN=WR1");
-  expect(cert.infoAccess).toEqual(
-    "OCSP - URI:http://o.pki.goog/s/wr1/Ui4\nCA Issuers - URI:http://i.pki.goog/wr1.crt",
-  );
+  expect(cert.infoAccess).toEqual("OCSP - URI:http://o.pki.goog/s/wr1/Ui4\nCA Issuers - URI:http://i.pki.goog/wr1.crt");
   expect(cert.validFrom).toEqual("Nov 20 07:24:46 2024 GMT");
   expect(cert.validTo).toEqual("Feb 18 07:24:45 2025 GMT");
   expect(cert.validFromDate).toEqual(new Date("2024-11-20T07:24:46.000Z"));

@@ -41,7 +41,13 @@ describe("EventEmitterAsyncResource", () => {
 
     for (const key of ["asyncId", "triggerAsyncId", "asyncResource"]) {
       const desc = Object.getOwnPropertyDescriptor(EventEmitterAsyncResource.prototype, key)!;
-      expect({ key, get: typeof desc.get, set: desc.set, enumerable: desc.enumerable, configurable: desc.configurable }).toEqual({
+      expect({
+        key,
+        get: typeof desc.get,
+        set: desc.set,
+        enumerable: desc.enumerable,
+        configurable: desc.configurable,
+      }).toEqual({
         key,
         get: "function",
         set: undefined,
@@ -64,9 +70,7 @@ describe("EventEmitterAsyncResource", () => {
         message: expect.stringContaining('"options.name"'),
       }),
     );
-    expect(() => new EventEmitterAsyncResource({})).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => new EventEmitterAsyncResource({})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(() => new EventEmitterAsyncResource({ name: 42 })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );

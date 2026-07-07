@@ -1876,7 +1876,10 @@ impl NodeHTTPResponse {
             return;
         }
 
-        raw.request_timeout(seconds);
+        // node:http runs Bun.serve with `idleTimeout: 0` and has no keep-alive
+        // reaper yet, so keep writing the connection baseline; request_timeout
+        // here would leave the post-response socket with a disabled timer.
+        raw.timeout(seconds);
     }
 
     pub(crate) fn cork(
@@ -2150,7 +2153,7 @@ impl NodeHTTPResponse {
         // ECMAScript ToUint32 — same bit pattern as
         // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
         let secs = (seconds.to_int32() as c_uint).min(255) as u8;
-        raw.request_timeout(secs);
+        raw.timeout(secs);
         true
     }
 }

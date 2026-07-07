@@ -2939,6 +2939,41 @@ it("removing transfer-encoding on a HEAD response keeps the connection alive", a
   }
 });
 
+it("server connection socket emits 'close' when the peer disconnects after a completed keep-alive response", async () => {
+  // https://github.com/oven-sh/bun/issues/33639
+  const server = createServer((req, res) => res.end("ok"));
+  const { promise: socketClosed, resolve: onSocketClosed } = Promise.withResolvers<void>();
+  let closeCount = 0;
+  server.on("connection", s => {
+    s.on("close", () => {
+      closeCount++;
+      onSocketClosed();
+    });
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client = connect(port, "127.0.0.1");
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: h\r\nConnection: keep-alive\r\n\r\n");
+    let body = "";
+    while (!body.includes("\r\n\r\nok")) {
+      const [chunk] = await once(client, "data");
+      body += chunk;
+    }
+    client.end();
+    await once(client, "close");
+
+    await socketClosed;
+    expect(closeCount).toBe(1);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+});
+
 it("clientError after a kept-alive request reuses the connection's socket and untracks it on close", async () => {
   // The native side returns the existing handle for parser errors on a
   // connection that already served a request; wrapping it again stranded the

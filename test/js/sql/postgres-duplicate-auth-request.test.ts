@@ -12,7 +12,6 @@
 // "duplicate SASL authentication request".
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import type net from "node:net";
 import {
   listeningServer,
   pgAuthenticationCleartextPassword,

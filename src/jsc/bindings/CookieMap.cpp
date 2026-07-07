@@ -152,13 +152,9 @@ void CookieMap::set(Ref<Cookie> cookie)
 
     m_modifiedCookies.removeAllMatching([&](auto& c) { return c->name() == name; });
 
-    if (cookie->value().isEmpty()) {
-        m_entries.removeAllMatching([&](auto& entry) { return entry.name() == name; });
-        m_modifiedCookies.append(WTF::move(cookie));
-        return;
-    }
-
     // Map-like insertion order: update the existing entry in place, or append a new one.
+    // An empty value is stored like any other; the empty-value skip in get()/size()/iteration
+    // hides it, and a later mutation of the Cookie object surfaces it on every path.
     auto index = m_entries.findIf([&](auto& entry) { return entry.name() == name; });
     if (index == notFound) {
         m_entries.append(Entry { cookie.copyRef() });

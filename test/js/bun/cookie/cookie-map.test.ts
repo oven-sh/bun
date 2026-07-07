@@ -543,6 +543,32 @@ describe("iteration order is Map-like", () => {
     expect(map.get("b")).toBe("BB");
   });
 
+  test("mutating a Cookie's value after set() is reflected consistently in iteration and Set-Cookie", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    const cookie = new Bun.Cookie("b", "");
+    map.set(cookie);
+    expect({ keys: [...map.keys()], get: map.get("b"), has: map.has("b"), size: map.size }).toEqual({
+      keys: ["a", "c"],
+      get: null,
+      has: false,
+      size: 2,
+    });
+    cookie.value = "B";
+    expect({
+      keys: [...map.keys()],
+      get: map.get("b"),
+      has: map.has("b"),
+      size: map.size,
+      headers: map.toSetCookieHeaders(),
+    }).toEqual({
+      keys: ["a", "b", "c"],
+      get: "B",
+      has: true,
+      size: 3,
+      headers: ["b=B; Path=/; SameSite=Lax"],
+    });
+  });
+
   test("toSetCookieHeaders() still tracks every set()/delete()", () => {
     const map = new Bun.CookieMap("a=1; b=2; c=3");
     map.set("b", "B");

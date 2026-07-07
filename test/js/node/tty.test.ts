@@ -1,7 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -193,71 +191,45 @@ describe("ReadStream.prototype.setRawMode", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // Closing the pty master out from under the child makes tcsetattr on the
-  // orphaned slave fail with EIO; assert setRawMode emits an ErrnoException
-  // (code/errno/syscall) rather than a bare Error.
+  // tcgetattr on a non-terminal fd (/dev/null) fails with ENOTTY on every
+  // POSIX; setRawMode must emit an ErrnoException (code/errno/syscall populated)
+  // rather than a bare Error. ENOTTY is 25 on both Linux and Darwin.
   test.skipIf(isWindows)("emits an ErrnoException (code/errno/syscall) on failure", async () => {
-    using dir = tempDir("tty-setrawmode-errno", {
-      "child.mjs": `
-        import { writeFileSync } from "node:fs";
-        const OUT = process.argv[2];
-        const shape = e => ({
-          code: e?.code ?? null,
-          errno: e?.errno ?? null,
-          syscall: e?.syscall ?? null,
-          isError: e instanceof Error,
-        });
-        let done = false;
-        const finish = o => {
-          if (done) return;
-          done = true;
-          try { writeFileSync(OUT, JSON.stringify(o)); } catch {}
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { ReadStream } = require("node:tty");
+          const { openSync } = require("node:fs");
+          const fd = openSync("/dev/null", "r");
+          const s = new ReadStream(fd);
+          s.on("error", e => {
+            console.log(JSON.stringify({
+              code: e?.code ?? null,
+              errno: e?.errno ?? null,
+              syscall: e?.syscall ?? null,
+              isError: e instanceof Error,
+            }));
+            process.exit(0);
+          });
+          s.setRawMode(true);
+          console.log(JSON.stringify({ via: "no-error" }));
           process.exit(0);
-        };
-        process.on("SIGHUP", () => {});
-        process.on("uncaughtException", e => finish(shape(e)));
-        process.stdin.on("error", e => finish(shape(e)));
-        process.stdin.setRawMode(true);
-        process.stdout.write("READY\\n");
-        // setRawMode emits "error" rather than throwing, so the failure is
-        // observed through the listener above, not a try/catch here.
-        setInterval(() => {
-          process.stdin.setRawMode(false);
-          process.stdin.setRawMode(true);
-        }, 20);
-        setTimeout(() => finish({ via: "timeout" }), 8000);
-      `,
-    });
-    const out = join(String(dir), "out.json");
-
-    let output = "";
-    let closed = false;
-    const decoder = new TextDecoder();
-    const proc = Bun.spawn({
-      cmd: [bunExe(), join(String(dir), "child.mjs"), out],
+        `,
+      ],
       env: bunEnv,
-      terminal: {
-        cols: 120,
-        rows: 24,
-        data(_t, chunk: Uint8Array) {
-          output += decoder.decode(chunk, { stream: true });
-          if (!closed && output.includes("READY")) {
-            closed = true;
-            proc.terminal?.close();
-          }
-        },
-        exit() {},
-      },
+      stdout: "pipe",
+      stderr: "pipe",
     });
-
-    await proc.exited;
-    proc.terminal?.close();
-
-    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({
-      code: "EIO",
-      errno: -5,
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      code: "ENOTTY",
+      errno: -25,
       syscall: "setRawMode",
       isError: true,
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

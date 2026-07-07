@@ -52,6 +52,7 @@
 
 #include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
+#include "wtf/Threading.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringToIntegerConversion.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -3086,6 +3087,18 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     return {};
 }
 
+// glibc/musl set*id() broadcast a realtime signal to every thread and block on a
+// barrier; a thread JSC/libpas has signal-suspended can't ack it and wedges the
+// process. Holding the thread-suspend lock guarantees no thread is suspended here.
+template<typename Function>
+static ALWAYS_INLINE int callWithoutThreadSuspension(Function&& function)
+{
+#if OS(LINUX)
+    WTF::ThreadSuspendLocker suspendLocker;
+#endif
+    return function();
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3098,7 +3111,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject,
     if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
     if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto result = setuid(id);
+    auto result = callWithoutThreadSuspension([&] { return setuid(id); });
     if (result != 0) throwSystemError(scope, globalObject, "setuid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));
@@ -3116,7 +3129,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionseteuid, (JSGlobalObject * globalObject
     if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
     if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto result = seteuid(id);
+    auto result = callWithoutThreadSuspension([&] { return seteuid(id); });
     if (result != 0) throwSystemError(scope, globalObject, "seteuid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));
@@ -3134,7 +3147,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetegid, (JSGlobalObject * globalObject
     if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
     if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto result = setegid(id);
+    auto result = callWithoutThreadSuspension([&] { return setegid(id); });
     if (result != 0) throwSystemError(scope, globalObject, "setegid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));
@@ -3152,7 +3165,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgid, (JSGlobalObject * globalObject,
     if (is_number) Bun::V::validateInteger(scope, globalObject, value, "id"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &id);
     if (!is_number) id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto result = setgid(id);
+    auto result = callWithoutThreadSuspension([&] { return setgid(id); });
     if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));
@@ -3193,7 +3206,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number or string"_s, item);
     }
 
-    auto result = setgroups(count, groupsStack);
+    auto result = callWithoutThreadSuspension([&] { return setgroups(count, groupsStack); });
     if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));

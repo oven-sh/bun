@@ -1811,7 +1811,7 @@ pub mod formatter {
                 // SAFETY: `node` was obtained from `Pool::get_node()` and is
                 // exclusively owned by this formatter; `Map::INIT` is `Some`,
                 // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_mut()) };
+                unsafe { visited::Pool::release(node.as_ptr()) };
             }
         }
     }

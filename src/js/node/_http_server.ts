@@ -60,6 +60,7 @@ const {
   runSymbol,
   drainMicrotasks,
   setServerCustomOptions,
+  setServerAppFlags,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   noBodySymbol,
@@ -86,6 +87,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -304,7 +306,7 @@ function Server(options, callback): void {
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
-  this.httpAllowHalfOpen = false;
+  defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
   this[tlsSymbol] = null;
@@ -1104,17 +1106,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
-    // always set strict method validation to true for node.js compatibility
-    setServerCustomOptions(
-      this[serverSymbol],
-      this.requireHostHeader,
-      true,
-      !!this.insecureHTTPParser,
-      typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
-      onServerClientError.bind(this),
-      onServerConnection.bind(this),
-      !!this.httpAllowHalfOpen,
-    );
+    applyServerCustomOptions(this);
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
@@ -1127,6 +1119,51 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
+
+// Pushes the per-server parser/handler options down to the native listener.
+// Always sets strict method validation, for node.js compatibility.
+function applyServerCustomOptions(server: Server) {
+  const handle = server[serverSymbol];
+  if (!handle) return;
+  setServerCustomOptions(
+    handle,
+    server.requireHostHeader,
+    true,
+    !!server.insecureHTTPParser,
+    typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
+    onServerClientError.bind(server),
+    onServerConnection.bind(server),
+    !!server.httpAllowHalfOpen,
+  );
+}
+
+function httpAllowHalfOpenGet(this: Server) {
+  return this[kHttpAllowHalfOpen];
+}
+
+// Node reads `server.httpAllowHalfOpen` when the peer's FIN arrives (socketOnEnd), so
+// assigning it after listen() has to reach the native listener too. Push the flags
+// alone: setServerCustomOptions() would also re-register the connection filter, which
+// appends rather than replaces and can reallocate the vector uWS is iterating.
+function httpAllowHalfOpenSet(this: Server, value) {
+  const previous = !!this[kHttpAllowHalfOpen];
+  this[kHttpAllowHalfOpen] = value;
+  const next = !!value;
+  if (previous === next) return;
+  const handle = this[serverSymbol];
+  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, !!this.insecureHTTPParser, next);
+}
+
+// Node.js keeps httpAllowHalfOpen as an own enumerable property of the server.
+function defineHttpAllowHalfOpen(server: Server) {
+  server[kHttpAllowHalfOpen] = false;
+  Object.defineProperty(server, "httpAllowHalfOpen", {
+    configurable: true,
+    enumerable: true,
+    get: httpAllowHalfOpenGet,
+    set: httpAllowHalfOpenSet,
+  });
+}
 
 // Native callback fired when the server accepts a connection (for TLS, when
 // its handshake completes), before any request bytes - like Node.js's

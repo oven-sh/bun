@@ -1395,14 +1395,9 @@ impl VirtualMachine {
         if self.is_handling_uncaught_exception {
             self.run_error_handler(err, None);
             if self.worker.is_some() {
-                // Worker: `process_exit` only sets flags and RETURNS, and its
-                // `notify_need_termination` → `JSC__VM__notifyNeedTermination`
-                // drops the JSLock and drains microtasks — one of the paths
-                // that re-enters here. Dispatch the error to the parent and
-                // arm termination via `on_unhandled_rejection` (on the first
-                // call this swaps itself for the quiet handler, so a second
-                // re-entry reaching here only bumps a counter), then let the
-                // stack unwind to `spin()` which reaches `shutdown()`.
+                // Worker `process_exit` returns (only main-thread diverges), so
+                // dispatch to the parent and return. `on_unhandled_rejection`
+                // swaps to the quiet handler on first call, bounding re-entry.
                 self.unhandled_error_counter += 1;
                 self.exit_handler.exit_code = 1;
                 (self.on_unhandled_rejection)(self, global_object, err);

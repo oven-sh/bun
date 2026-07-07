@@ -966,14 +966,16 @@ impl FilePoll {
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
-            target_os = "freebsd"
+            target_os = "freebsd",
+            target_env = "ohos"
         ))]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
-            target_os = "freebsd"
+            target_os = "freebsd",
+            target_env = "ohos"
         )))]
         let result: sys::Result<()> = {
             let _ = (fd, force_unregister);
@@ -987,7 +989,8 @@ impl FilePoll {
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
-        target_os = "freebsd"
+        target_os = "freebsd",
+        target_env = "ohos"
     ))]
     fn unregister_with_fd_impl(
         &mut self,

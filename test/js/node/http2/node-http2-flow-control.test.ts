@@ -72,10 +72,9 @@ async function rawH2Server(onFrame: (f: RawFrame, socket: net.Socket) => void) {
 }
 
 test("client stops sending DATA when a mid-stream SETTINGS_INITIAL_WINDOW_SIZE reduction drives the stream send window negative (RFC 9113 §6.9.2)", async () => {
-  // The client exhausts the default 65535-byte stream window, then the peer lowers
-  // INITIAL_WINDOW_SIZE to 10: §6.9.2 says every stream's send window shifts by the delta, so the
-  // stream window becomes 10 - 65535 = -65525. 40 WINDOW_UPDATEs of 1000 raise it to -25525, still
-  // negative. A compliant sender MUST NOT emit any DATA until the window is positive again.
+  // Exhaust the default 65535-byte stream window, lower INITIAL_WINDOW_SIZE to 10 (§6.9.2 shifts
+  // the window by the delta to -65525), then grant 40*1000 via WINDOW_UPDATE so it is still -25525.
+  // A compliant sender MUST NOT emit any DATA until the window is positive again.
   const BODY_SIZE = 100000;
   let dataBytes = 0;
   let phase = 0;
@@ -135,11 +134,9 @@ test("client stops sending DATA when a mid-stream SETTINGS_INITIAL_WINDOW_SIZE r
 
 // https://github.com/oven-sh/bun/issues/30342
 test("client applies a SETTINGS_INITIAL_WINDOW_SIZE increase as a delta on top of prior WINDOW_UPDATE credit (RFC 9113 §6.9.2)", async () => {
-  // After the default 65535-byte window is exhausted the peer grants 10000 via WINDOW_UPDATE and
-  // then raises INITIAL_WINDOW_SIZE to 200000. §6.9.2 says the stream window shifts by
-  // (200000 - 65535), so total granted credit is 65535 + 10000 + 134465 = 210000. The upload is
-  // exactly 210000 bytes and must drain fully; overwriting the window with the new initial value
-  // instead of adding the delta would lose the 10000 WINDOW_UPDATE credit and stall at 200000.
+  // Exhaust the default 65535 window, grant 10000 via WINDOW_UPDATE, then raise INITIAL_WINDOW_SIZE
+  // to 200000. §6.9.2 shifts the window by (200000 - 65535), so total credit = 210000. Overwriting
+  // with the new IWS instead of adding the delta would lose the 10000 WU credit and stall at 200000.
   const BODY_SIZE = 210000;
   let dataBytes = 0;
   let phase = 0;

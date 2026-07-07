@@ -122,6 +122,9 @@ struct addrinfo_result {
  * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
 extern struct us_socket_t *us_dispatch_data(us_socket_r s, char *data, int length);
 extern struct us_socket_t *us_dispatch_fd(us_socket_r s, int fd);
@@ -136,6 +139,9 @@ extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_veri
 extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
 extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+#ifdef __cplusplus
+}
+#endif
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);

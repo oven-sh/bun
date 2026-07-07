@@ -276,9 +276,14 @@ private:
         proxyParser = &httpResponseData->proxyParser;
 #endif
 
+        /* Bytes in this read past an upgrade request's head. Set by the request
+         * handler below; consumed by the upgradedWebSocket path after parsing. */
+        char *wsHead = nullptr;
+        unsigned int wsHeadLen = 0;
+
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-        auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData, data, length, &wsHead, &wsHeadLen](void *s, HttpRequest *httpRequest) -> void * {
 
 
             /* For every request we reset the timeout and hang until user makes action */
@@ -334,6 +339,17 @@ private:
 
             /* First of all we need to check if this socket was deleted due to upgrade */
             if (httpContextData->upgradedWebSocket) {
+                /* Any bytes past the request head in this read are WebSocket frames that
+                 * must reach the adopted socket. httpRequest->head locates them, but only
+                 * when it points into our live read buffer (the parser's fallback buffer
+                 * was destroyed by upgrade()). */
+                const char *hd = httpRequest->head.data();
+                if (!httpRequest->head.empty() &&
+                    (uintptr_t) hd >= (uintptr_t) data &&
+                    (uintptr_t) hd <= (uintptr_t) (data + length)) {
+                    wsHead = (char *) hd;
+                    wsHeadLen = (unsigned int) ((size_t) length - (size_t) (hd - data));
+                }
                 /* We differ between closed and upgraded below */
                 return nullptr;
             }
@@ -454,7 +470,11 @@ private:
         /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */
         if (httpContextData->upgradedWebSocket) {
             /* This path is only for upgraded websockets */
-            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
+            us_socket_t *webSocket = (us_socket_t *) httpContextData->upgradedWebSocket;
+            AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) webSocket;
+
+            /* Reset upgradedWebSocket before we return */
+            httpContextData->upgradedWebSocket = nullptr;
 
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
             auto [written, failed] = asyncSocket->uncork();
@@ -468,11 +488,14 @@ private:
                 }
             }
 
-            /* Reset upgradedWebSocket before we return */
-            httpContextData->upgradedWebSocket = nullptr;
+            /* Hand any WebSocket bytes that were coalesced with the upgrade request to the
+             * adopted socket's on_data; otherwise they are silently dropped. */
+            if (wsHeadLen && !us_socket_is_closed(webSocket) && !us_socket_is_shut_down(webSocket)) {
+                webSocket = us_dispatch_data(webSocket, wsHead, (int) wsHeadLen);
+            }
 
             /* Return the new upgraded websocket */
-            return (us_socket_t *) asyncSocket;
+            return webSocket;
         }
 
         /* It is okay to uncork a closed socket and we need to */

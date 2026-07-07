@@ -199,8 +199,13 @@ private:
              * onEnd() below decides whether to close right away (idle) or to
              * keep writing the responses that are still in flight / pipelined
              * (Node's socketOnEnd semantics). Without this flag the loop
-             * force-closes the socket right after dispatching onEnd. */
-            s->flags.allow_half_open = 1;
+             * force-closes the socket right after dispatching onEnd. TLS
+             * (openssl.c us_internal_ssl_on_end) does not consult this flag
+             * and force-closes on FIN regardless, so this half of the compat
+             * block is http-only for now. */
+            if constexpr (!SSL) {
+                s->flags.allow_half_open = 1;
+            }
         }
 
         if(!SSL) {
@@ -716,7 +721,8 @@ private:
             }
 
             if (httpContextData->onClientError && !httpResponseData->nodeHttpParsingStopped
-                && httpResponseData->hasBufferedPartialRequestHeaders()) {
+                && (httpResponseData->hasBufferedPartialRequestHeaders()
+                    || httpResponseData->hasIncompleteRequestBody())) {
                 httpResponseData->nodeHttpParsingStopped = true;
                 httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
                 if (us_socket_is_closed(s)) {
@@ -724,14 +730,15 @@ private:
                 }
             }
 
-            /* The peer finished its writable side while pipelined responses are
-             * still queued behind the in-flight one. Like Node's http server
-             * (socketOnEnd), keep the connection open so those responses can
-             * still be written; it is shut down once the pipeline has drained
-             * (the shouldCloseConnection() checks on response completion).
-             * With nothing queued the connection closes right away, like
-             * Node's default socket.end() on FIN. */
-            if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
+            /* Node's socketOnEnd: if !server.httpAllowHalfOpen (the default),
+             * end the socket right away — an in-flight response is dropped
+             * exactly like Node does. If httpAllowHalfOpen is set, keep the
+             * connection open so in-flight and queued responses can still be
+             * written; it is shut down once the pipeline has drained (the
+             * shouldCloseConnection() checks on response completion). */
+            if (httpContextData->flags.httpAllowHalfOpen
+                && (httpResponseData->nodeHttpQueuedPipelinedCount > 0
+                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING))) {
                 httpResponseData->nodeHttpReceivedFIN = true;
                 return s;
             }

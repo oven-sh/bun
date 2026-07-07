@@ -42,6 +42,10 @@ struct HttpFlags {
      * (lastMessageStartMs / headersCompleted on HttpResponseData) is only
      * maintained when this is set, so plain Bun.serve pays nothing for it. */
     bool usingNodeHttpCompat: 1 = false;
+    /* node:http server.httpAllowHalfOpen: when true, a peer FIN with in-flight
+     * or queued responses keeps the connection open until they drain (Node's
+     * socketOnEnd); when false (the default), the connection ends right away. */
+    bool httpAllowHalfOpen: 1 = false;
 };
 
 template <bool SSL>

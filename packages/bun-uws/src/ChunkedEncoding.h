@@ -71,9 +71,9 @@ namespace uWS {
      *   chunk-ext-val  = token / quoted-string  (TODO: quoted-string unsupported)
      */
     /* chunkExtensionsConsumed (optional): incremented for every chunk-extension
-     * byte consumed; accumulates across every chunk-size line of the body so
-     * the caller can enforce llhttp's per-message extension limit (node:http
-     * compat). The caller resets it at the start of each new chunked body. */
+     * byte consumed on the current chunk-size line; reset to 0 when the line
+     * completes (STATE_HAS_SIZE), matching llhttp/Node's on_chunk_header which
+     * resets chunk_extensions_nread_ per chunk (not per message). */
     inline uint64_t consumeHexNumber(std::string_view &data, uint64_t state, uint64_t *chunkExtensionsConsumed = nullptr) {
         /* Resume: '\r' was the last byte of the previous segment. Rare path,
          * use data directly to avoid the p/len load on the hot path. */
@@ -84,6 +84,14 @@ namespace uWS {
             data.remove_prefix(1);
             return ((state & ~(STATE_WAITING_FOR_LF | STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
                    | STATE_HAS_SIZE | STATE_IS_CHUNKED;
+        }
+
+        /* Fresh chunk-size line (not a resume): reset the per-chunk extension
+         * counter, mirroring Node's on_chunk_header. The caller's overflow check
+         * runs after the previous chunk's data is emitted, so it has already seen
+         * that chunk's count by the time this reset fires. */
+        if (chunkExtensionsConsumed && !(state & (STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG))) {
+            *chunkExtensionsConsumed = 0;
         }
 
         /* Load pointer+length into locals so the loops operate in registers.
@@ -152,8 +160,17 @@ namespace uWS {
         return state & ~STATE_SIZE_MASK;
     }
 
+    /* Distinct error sentinel: the captured trailer section exceeded the
+     * max-header-size limit. isParsingInvalidChunkedEncoding() still matches;
+     * the caller can then map this to HPE_HEADER_OVERFLOW / 431 like Node. */
+    constexpr uint64_t STATE_IS_TRAILER_OVERFLOW = ~STATE_IS_CHUNKED_EXTENSION;
+
+    inline bool isTrailerOverflow(uint64_t state) {
+        return state == STATE_IS_TRAILER_OVERFLOW;
+    }
+
     inline bool isParsingInvalidChunkedEncoding(uint64_t state) {
-        return state == STATE_IS_ERROR;
+        return state == STATE_IS_ERROR || state == STATE_IS_TRAILER_OVERFLOW;
     }
 
     /* node:http compat: parser state for "consuming the trailer section after the
@@ -201,16 +218,12 @@ namespace uWS {
              * the whole section (including its final CRLF) has been consumed, so
              * trailers are always available by the time the message completes. */
             if (trailerSection && state == STATE_IS_TRAILERS) [[unlikely]] {
-                /* A zero cap means the caller has no header-size limit configured (node's
-                 * maxHeaderSize: 0 selects the default, never "unlimited"): the captured
-                 * section must always be bounded or a never-terminating trailer stream OOMs. */
-                uint64_t trailerSectionCap = maxTrailerSectionSize ? maxTrailerSectionSize : MAX_TRAILER_SECTION_SIZE;
                 while (data.length()) {
                     char c = data[0];
                     trailerSection->push_back(c);
                     data.remove_prefix(1);
-                    if (trailerSection->size() > trailerSectionCap) [[unlikely]] {
-                        state = STATE_IS_ERROR;
+                    if (trailerSection->size() > maxTrailerSectionSize) [[unlikely]] {
+                        state = STATE_IS_TRAILER_OVERFLOW;
                         return std::nullopt;
                     }
                     if (c == '\n') {

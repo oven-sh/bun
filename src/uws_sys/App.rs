@@ -128,6 +128,7 @@ impl<const SSL: bool> App<SSL> {
         require_host_header: bool,
         use_strict_method_validation: bool,
         use_insecure_http_parser: bool,
+        http_allow_half_open: bool,
     ) {
         c::uws_app_set_flags(
             Self::SSL_FLAG,
@@ -135,6 +136,7 @@ impl<const SSL: bool> App<SSL> {
             require_host_header,
             use_strict_method_validation,
             use_insecure_http_parser,
+            http_allow_half_open,
         )
     }
 
@@ -530,6 +532,7 @@ pub mod c {
             require_host_header: bool,
             use_strict_method_validation: bool,
             use_insecure_http_parser: bool,
+            http_allow_half_open: bool,
         );
         pub(crate) safe fn uws_app_set_max_http_header_size(
             ssl: i32,

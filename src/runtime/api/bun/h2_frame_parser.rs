@@ -5552,6 +5552,12 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            // Outbound-ACK-flood counter: only reset when the transport actually
+            // drained (nghttp2 decrements per-send). Resetting per receive() lets
+            // a peer that never reads keep it under the limit forever.
+            if self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty() {
+                engine.note_outbound_drained();
+            }
             // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
             // held this borrow.
             let pending = self.pending_recv_window_growth.replace(0);

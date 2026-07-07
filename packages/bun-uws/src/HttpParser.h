@@ -81,6 +81,15 @@ namespace uWS
         /* node:http compat only: the chunk extensions of a single chunk exceeded
          * the 16 KiB limit enforced by Node (HPE_CHUNK_EXTENSIONS_OVERFLOW). */
         HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW = 12,
+        /* An HTTP/2 client connection preface was received on an HTTP/1 server
+         * (llhttp's HPE_PAUSED_H2_UPGRADE). */
+        HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE = 13,
+        /* Bytes were received after a request that carried Connection: close
+         * (llhttp's HPE_CLOSED_CONNECTION). node:http compat only. */
+        HTTP_PARSER_ERROR_CLOSED_CONNECTION = 14,
+        /* A captured trailer section exceeded the max-header-size limit
+         * (Node/llhttp reports HPE_HEADER_OVERFLOW → 431). */
+        HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
     };
 
 
@@ -90,6 +99,7 @@ namespace uWS
         HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST = 2,
         HTTP_HEADER_PARSER_ERROR_INVALID_METHOD = 3,
         HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 4,
+        HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE = 5,
     };
 
     struct HttpParserResult {
@@ -449,6 +459,13 @@ namespace uWS
             return false;
         }
 
+        /* node:http server compat: whether a message body (Content-Length or
+         * chunked) is only partially received. Used by onEnd to surface a
+         * mid-body FIN as HPE_INVALID_EOF_STATE like Node's parser.finish(). */
+        bool hasIncompleteRequestBody() const {
+            return remainingStreamingBytes != 0;
+        }
+
         /* node:http server compat: raw bytes of the trailer section received after
          * the final 0-size chunk of the current request's chunked body, including
          * its terminating CRLF. Cleared when a new chunked body starts; consumed by
@@ -522,9 +539,10 @@ namespace uWS
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
-        /* node:http compat: bytes of chunk extensions consumed across the
-         * current chunked body (cumulative, like llhttp's per-message counter).
-         * Reset when a new chunked body starts; only counted under node compat. */
+        /* node:http compat: bytes of chunk extensions consumed on the current
+         * chunk-size line, matching llhttp/Node which resets the counter in
+         * on_chunk_header (per chunk, not per message). Only counted under
+         * node compat; consumeHexNumber resets it at each fresh line. */
         uint64_t chunkedExtensionsByteCount = 0;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
@@ -724,6 +742,24 @@ namespace uWS
 
             /* RFC 9112 3: exactly one SP separates method and request-target */
             bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
+            /* HTTP/2 preface ("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"): detect it here
+             * so it inherits fallback-buffer reassembly and leading-CRLF stripping,
+             * matching Node/llhttp which persist n_req_pri_upgrade across execute(). */
+            if (!isHTTPMethod && (data - start) == 3 && data[0] == 32 && data[1] == '*'
+                && memcmp(start, "PRI", 3) == 0) [[unlikely]] {
+                unsigned int have = (unsigned int)(end - start);
+                /* Preface is exactly 24 bytes; the method loop consumed "PRI". */
+                static constexpr char preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+                if (have < 24) {
+                    return memcmp(start, preface, have) == 0
+                        ? ConsumeRequestLineResult::shortRead()
+                        : ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
+                }
+                if (memcmp(start, preface, 24) == 0) {
+                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE);
+                }
+                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
+            }
             bool isConnect = !isHTTPMethod && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
             /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
             bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
@@ -854,6 +890,8 @@ namespace uWS
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_METHOD);
                     case HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                    case HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE:
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE);
                     default: {
                         /* Short read */
                     }
@@ -1197,6 +1235,9 @@ namespace uWS
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
                         // TODO: what happen if we already responded?
+                        if (isTrailerOverflow(remainingStreamingBytes)) {
+                            return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                        }
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                     }
                     unsigned int consumed = (length - (unsigned int) dataToConsume.length());
@@ -1263,6 +1304,9 @@ public:
                     return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                 }
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
+                    if (isTrailerOverflow(remainingStreamingBytes)) {
+                        return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                    }
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                 }
                 data = (char *) dataToConsume.data();
@@ -1335,6 +1379,9 @@ public:
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
+                            if (isTrailerOverflow(remainingStreamingBytes)) {
+                                return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                            }
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                         }
                         data = (char *) dataToConsume.data();

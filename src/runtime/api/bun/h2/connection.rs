@@ -433,10 +433,6 @@ impl Connection {
             };
         }
 
-        // The embedder flushes queued control frames between receive() batches, so outbound ACKs
-        // queued by previous batches have been handed to the transport by now.
-        self.obq_ack_pending = 0;
-
         // §3.4: server validates the 24-octet client preface before any frame.
         if self.is_server && self.preface_received < wire::CONNECTION_PREFACE.len() {
             let need = wire::CONNECTION_PREFACE.len() - self.preface_received;
@@ -762,10 +758,19 @@ impl Connection {
         false
     }
 
-    /// Bound the PING/SETTINGS ACKs queued in a single receive() batch — a peer that crams more
-    /// than nghttp2's outbound-ACK limit worth of control frames into one read chunk is flooding
-    /// (nghttp2's obq_flood_counter_ / NGHTTP2_ERR_FLOODED, which counts ACKs queued between
-    /// transport drains). Returns true when the session was torn down.
+    /// The embedder confirms its outbound buffer is fully drained to the
+    /// transport: reset the outbound-ACK-queue counter (mirrors nghttp2's
+    /// per-send decrement, coarsened to whole-buffer drains). Never called
+    /// from receive() itself so a peer that never reads cannot reset it.
+    pub fn note_outbound_drained(&mut self) {
+        self.obq_ack_pending = 0;
+    }
+
+    /// Bound queued PING/SETTINGS ACKs behind a non-reading peer — nghttp2's
+    /// obq_flood_counter_ / NGHTTP2_ERR_FLOODED. The counter is only reset by
+    /// note_outbound_drained() when the transport actually drains, so detection
+    /// is independent of recv() chunk size. Returns true when the session was
+    /// torn down.
     fn note_outbound_ack(&mut self, sink: &impl Sink) -> bool {
         self.obq_ack_pending = self.obq_ack_pending.saturating_add(1);
         if self.obq_ack_pending < MAX_OUTBOUND_ACK_QUEUE {

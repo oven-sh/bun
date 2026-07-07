@@ -608,6 +608,7 @@ fn parse_array(
 fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     tag: types::Tag,
     bytes: &[u8],
+    decode_elem: fn(&[u8]) -> Result<SQLDataCell>,
 ) -> Result<SQLDataCell> {
     if bytes.len() < 12 {
         return Err(AnyPostgresError::InvalidBinaryData);
@@ -619,12 +620,11 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         u32::from_ne_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
 
     let dimensions = dimensions_raw.swap_bytes();
-    if dimensions > 1 {
-        return Err(AnyPostgresError::MultidimensionalArrayNotSupportedYet);
-    }
-
-    if contains_nulls != 0 {
-        return Err(AnyPostgresError::NullsInArrayNotSupportedYet);
+    // A TypedArray can hold neither null holes nor nested arrays, so anything
+    // multidimensional or NULL-bearing is decoded into a plain JS array (with
+    // `null` holes / nested arrays) instead of being rejected.
+    if dimensions > 1 || contains_nulls != 0 {
+        return from_bytes_binary_array(bytes, dimensions, decode_elem);
     }
 
     let js_typed_array_type = crate::postgres::types::tag_jsc::to_js_typed_array_type(tag)
@@ -715,6 +715,143 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     })
 }
 
+// Wraps an owned `Vec<SQLDataCell>` in a `Tag::Array` cell, handing the
+// allocation to C++ (freed via `free_value = 1` after the copy into JS). An
+// empty vec becomes a null-pointer `Array` with `free_value = 0`, mirroring the
+// empty-array case in `parse_array`.
+fn make_array_cell(cells: Vec<SQLDataCell>) -> SQLDataCell {
+    if cells.is_empty() {
+        return SQLDataCell {
+            tag: Tag::Array,
+            value: Value {
+                array: Array::default(),
+            },
+            ..Default::default()
+        };
+    }
+    let mut cells = core::mem::ManuallyDrop::new(cells);
+    let len = cells.len() as u32;
+    let cap = cells.capacity() as u32;
+    let ptr = cells.as_mut_ptr();
+    SQLDataCell {
+        tag: Tag::Array,
+        value: Value {
+            array: Array { ptr, len, cap },
+        },
+        free_value: 1,
+        ..Default::default()
+    }
+}
+
+// Builds a nested `Tag::Array` from `flat` (row-major) given the per-dimension
+// lengths. `flat.len()` must equal the product of `dims`. Infallible: every
+// cell in `flat` ends up owned by the returned cell.
+fn nest_binary_array(dims: &[usize], flat: Vec<SQLDataCell>) -> SQLDataCell {
+    if dims.len() <= 1 {
+        return make_array_cell(flat);
+    }
+    let inner_dims = &dims[1..];
+    let chunk: usize = inner_dims.iter().product();
+    let mut iter = flat.into_iter();
+    let mut outer: Vec<SQLDataCell> = Vec::with_capacity(dims[0]);
+    for _ in 0..dims[0] {
+        let mut inner: Vec<SQLDataCell> = Vec::with_capacity(chunk);
+        for _ in 0..chunk {
+            // `flat.len() == product(dims)` guarantees the iterator yields
+            // exactly `dims[0] * chunk` elements.
+            inner.push(iter.next().expect("flat length matches dims product"));
+        }
+        outer.push(nest_binary_array(inner_dims, inner));
+    }
+    make_array_cell(outer)
+}
+
+// Decodes the postgres binary array wire format into a plain JS array. Used for
+// NULL-bearing or multidimensional `int4[]`/`float4[]`, which a TypedArray
+// cannot represent. NULL elements (length prefix -1) become `null` holes; extra
+// dimensions become nested arrays. `decode_elem` turns one element's bytes into
+// a cell. `ndim` is the already-byte-swapped dimension count from the header.
+// https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
+fn from_bytes_binary_array(
+    bytes: &[u8],
+    ndim: types::int4,
+    decode_elem: fn(&[u8]) -> Result<SQLDataCell>,
+) -> Result<SQLDataCell> {
+    // Header: ndim(4) + flags(4) + elemtype(4), then `ndim` pairs of
+    // dim_len(4) + lbound(4). `ndim` is server-controlled, so bound it before
+    // it drives allocations or loop counts.
+    if ndim as usize > MAX_ARRAY_NESTING_DEPTH {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let ndim = ndim as usize;
+    if ndim == 0 {
+        return Ok(make_array_cell(Vec::new()));
+    }
+    let header_len = 12 + ndim * 8;
+    if bytes.len() < header_len {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+
+    let mut dims: Vec<usize> = Vec::with_capacity(ndim);
+    let mut total: usize = 1;
+    for d in 0..ndim {
+        let off = 12 + d * 8;
+        let dim_len = i32::from_ne_bytes(
+            bytes[off..off + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        )
+        .swap_bytes();
+        if dim_len < 0 {
+            return Err(AnyPostgresError::InvalidBinaryData);
+        }
+        dims.push(dim_len as usize);
+        total = total
+            .checked_mul(dim_len as usize)
+            .ok_or(AnyPostgresError::InvalidBinaryData)?;
+    }
+
+    // errdefer: SQLDataCell owns FFI-side resources that Vec::drop won't free.
+    let flat = scopeguard::guard(Vec::<SQLDataCell>::with_capacity(total), |mut a| {
+        for cell in a.iter_mut() {
+            cell.deinit();
+        }
+    });
+    let mut flat = flat;
+
+    let mut off = header_len;
+    for _ in 0..total {
+        if off + 4 > bytes.len() {
+            return Err(AnyPostgresError::InvalidBinaryData);
+        }
+        let elem_len = i32::from_ne_bytes(
+            bytes[off..off + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        )
+        .swap_bytes();
+        off += 4;
+        if elem_len == -1 {
+            flat.push(SQLDataCell::null());
+            continue;
+        }
+        if elem_len < 0 {
+            return Err(AnyPostgresError::InvalidBinaryData);
+        }
+        let elem_len = elem_len as usize;
+        if off + elem_len > bytes.len() {
+            return Err(AnyPostgresError::InvalidBinaryData);
+        }
+        flat.push(decode_elem(&bytes[off..off + elem_len])?);
+        off += elem_len;
+    }
+
+    // Disarm the errdefer; ownership of every cell transfers into the nested
+    // result, which frees them via its own `deinit`.
+    let flat = scopeguard::ScopeGuard::into_inner(flat);
+    Ok(nest_binary_array(&dims, flat))
+}
+
 pub(crate) fn from_bytes(
     binary: bool,
     bigint: bool,
@@ -727,14 +864,18 @@ pub(crate) fn from_bytes(
         // TODO: .int2_array, .float8_array
         T::int4_array => {
             if binary {
-                from_bytes_typed_array::<i32>(T::int4_array, bytes)
+                from_bytes_typed_array::<i32>(T::int4_array, bytes, |b| {
+                    Ok(SQLDataCell::int4(parse_binary_int4(b)?))
+                })
             } else {
                 parse_array(bytes, bigint, T::int4_array, global_object, None, false, 0)
             }
         }
         T::float4_array => {
             if binary {
-                from_bytes_typed_array::<f32>(T::float4_array, bytes)
+                from_bytes_typed_array::<f32>(T::float4_array, bytes, |b| {
+                    Ok(SQLDataCell::float8(parse_binary_float4(b)? as f64))
+                })
             } else {
                 parse_array(bytes, bigint, T::float4_array, global_object, None, false, 0)
             }

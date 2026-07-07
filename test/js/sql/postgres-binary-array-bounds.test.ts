@@ -150,3 +150,90 @@ test("well-formed binary int4[] still parses", async () => {
   const result: any = await runMockQuery(col, INT4_ARRAY);
   expect(result[0].arr).toEqual(new Int32Array([1, 2, 3]));
 });
+
+// A NULL element (length prefix -1) cannot live in an Int32Array, so the binary
+// decoder falls back to a plain JS array with a `null` hole instead of throwing
+// ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET.
+test("binary int4[] with a NULL decodes to a plain array with null", async () => {
+  const col = Buffer.concat([
+    binaryArrayHeader({ ndim: 1, flags: 1, elemtype: INT4, len: 3, lbound: 1 }),
+    i32(4),
+    i32(1),
+    i32(-1), // NULL element: length prefix -1, no value bytes
+    i32(4),
+    i32(3),
+  ]);
+  const result: any = await runMockQuery(col, INT4_ARRAY);
+  expect(result[0].arr).toEqual([1, null, 3]);
+});
+
+test("binary float4[] with a NULL decodes to a plain array with null", async () => {
+  const f32 = (n: number): Buffer => {
+    const b = Buffer.alloc(4);
+    b.writeFloatBE(n, 0);
+    return b;
+  };
+  const col = Buffer.concat([
+    binaryArrayHeader({ ndim: 1, flags: 1, elemtype: FLOAT4, len: 3, lbound: 1 }),
+    i32(4),
+    f32(1.5),
+    i32(-1), // NULL element
+    i32(4),
+    f32(3.5),
+  ]);
+  const result: any = await runMockQuery(col, FLOAT4_ARRAY);
+  expect(result[0].arr).toEqual([1.5, null, 3.5]);
+});
+
+// A multidimensional array cannot be an Int32Array either, so it decodes to
+// nested JS arrays instead of throwing ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET.
+test("binary 2-D int4[] decodes to nested arrays", async () => {
+  // ndim=2: header is ndim, flags, elemtype, then two (len, lbound) pairs.
+  const col = Buffer.concat([
+    i32(2),
+    i32(0),
+    i32(INT4),
+    i32(2), // dim 0 length
+    i32(1), // dim 0 lbound
+    i32(2), // dim 1 length
+    i32(1), // dim 1 lbound
+    i32(4),
+    i32(1),
+    i32(4),
+    i32(2),
+    i32(4),
+    i32(3),
+    i32(4),
+    i32(4),
+  ]);
+  const result: any = await runMockQuery(col, INT4_ARRAY);
+  expect(result[0].arr).toEqual([
+    [1, 2],
+    [3, 4],
+  ]);
+});
+
+// Multidimensional AND NULL-bearing: nested arrays with a null hole.
+test("binary 2-D int4[] with a NULL decodes to nested arrays with null", async () => {
+  const col = Buffer.concat([
+    i32(2),
+    i32(1), // flags: has nulls
+    i32(INT4),
+    i32(2),
+    i32(1),
+    i32(2),
+    i32(1),
+    i32(4),
+    i32(1),
+    i32(-1), // NULL
+    i32(4),
+    i32(3),
+    i32(4),
+    i32(4),
+  ]);
+  const result: any = await runMockQuery(col, INT4_ARRAY);
+  expect(result[0].arr).toEqual([
+    [1, null],
+    [3, 4],
+  ]);
+});

@@ -702,7 +702,6 @@ function asyncWrap(fn: any, name: string) {
       if (this[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
       if (this[kClosePromise]) throw $ERR_INVALID_STATE("The FileHandle is closing");
       if (this[kLocked]) throw $ERR_INVALID_STATE("The FileHandle is locked");
-      this[kLocked] = true;
 
       validateObject(options, "options");
       const { type = "bytes", autoClose = false } = options;
@@ -715,6 +714,8 @@ function asyncWrap(fn: any, name: string) {
           "ExperimentalWarning",
         );
       }
+
+      this[kLocked] = true;
 
       const handle = this;
       let done = false;
@@ -738,18 +739,23 @@ function asyncWrap(fn: any, name: string) {
 
         async pull(controller) {
           if (done) return;
-          const view = controller.byobRequest.view;
-          const { bytesRead } = await handle.read(view, view.byteOffset, view.byteLength);
+          try {
+            const view = controller.byobRequest.view;
+            const { bytesRead } = await handle.read(view, 0, view.byteLength);
 
-          // fh.close() may have cancelled us while the read was in flight.
-          if (done) return;
+            // fh.close() may have cancelled us while the read was in flight.
+            if (done) return;
 
-          if (bytesRead === 0) {
-            controller.close();
+            if (bytesRead === 0) {
+              controller.close();
+              await ondone();
+            }
+
+            controller.byobRequest.respond(bytesRead);
+          } catch (err) {
             await ondone();
+            throw err;
           }
-
-          controller.byobRequest.respond(bytesRead);
         },
 
         async cancel() {

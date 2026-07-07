@@ -426,18 +426,17 @@ describe("FileHandle", () => {
 
   it("FileHandle#readableWebStream validates options", async () => {
     using dir = tempDir("fh-rws-validate", { "a.txt": "x" });
-    {
-      await using fh = await fs.promises.open(path.join(String(dir), "a.txt"), "r");
-      expect(() => fh.readableWebStream("string" as any)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
-    }
-    {
-      await using fh = await fs.promises.open(path.join(String(dir), "a.txt"), "r");
-      expect(() => fh.readableWebStream({ autoClose: 1 as any })).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
-    }
+    await using fh = await fs.promises.open(path.join(String(dir), "a.txt"), "r");
+    expect(() => fh.readableWebStream("string" as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => fh.readableWebStream({ autoClose: 1 as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A validation throw must not leave the handle locked.
+    const s = fh.readableWebStream();
+    expect(s).toBeInstanceOf(ReadableStream);
+    await s.cancel();
   });
 
   it("FileHandle#readableWebStream supports BYOB reader", async () => {
@@ -447,6 +446,18 @@ describe("FileHandle", () => {
     const { value, done } = await reader.read(new Uint8Array(3));
     expect(done).toBe(false);
     expect(Buffer.from(value!).toString()).toBe("hel");
+    reader.releaseLock();
+  });
+
+  it("FileHandle#readableWebStream BYOB reads into a subarray with non-zero byteOffset", async () => {
+    using dir = tempDir("fh-rws-byob-off", { "a.txt": "hello world!" });
+    await using fh = await fs.promises.open(path.join(String(dir), "a.txt"), "r");
+    const reader = fh.readableWebStream().getReader({ mode: "byob" });
+    const backing = new ArrayBuffer(32);
+    const { value, done } = await reader.read(new Uint8Array(backing, 8, 5));
+    expect(done).toBe(false);
+    expect(value!.byteOffset).toBe(8);
+    expect(Buffer.from(value!).toString()).toBe("hello");
     reader.releaseLock();
   });
 

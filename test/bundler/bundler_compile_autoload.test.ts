@@ -1,7 +1,11 @@
 import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
-describe.concurrent("bundler", () => {
+// Not describe.concurrent: the backend:"cli" cases each spawn a full
+// `bun build --compile` link (hundreds of MB on disk) and running eight of
+// those at once SIGTERMs on the linux lanes. expectBundled already forces
+// backend:"api" cases to it.serial, so only the CLI cases would overlap.
+describe("bundler", () => {
   // Test that .env files are loaded by default in standalone executables
   itBundled("compile/AutoloadDotenvDefault", {
     compile: true,

@@ -435,7 +435,7 @@ By default, Bun limits the number of simultaneous `fetch` requests to 256 per or
 - It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
 - It encourages HTTP Keep-Alive connection reuse. For short-lived HTTP requests, the slowest step is often the initial connection setup. Reusing connections can save a lot of time.
 
-When an origin is at its limit, further requests to that origin are queued and sent as soon as one of its in-flight requests ends. Requests to other origins are unaffected, so a single slow or unresponsive host never blocks requests to healthy ones.
+When an origin is at its limit, further requests to that origin are queued and sent as soon as one of its in-flight requests ends. If the process-wide ceiling is reached, additional requests are also queued until any in-flight request completes. Otherwise requests to other origins are unaffected, so a single slow or unresponsive host never blocks requests to healthy ones.
 
 To change the per-origin limit, set the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable; the process-wide ceiling is always four times it:
 

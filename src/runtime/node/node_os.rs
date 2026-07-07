@@ -1610,7 +1610,9 @@ mod _impl {
                 let name = scopeguard::guard(BunString::clone_utf16(name), |s| s.deref());
                 name.to_js(global_this)?
             } else {
-                ZigString::init(b"unknown").with_encoding().to_js(global_this)
+                ZigString::init(b"unknown")
+                    .with_encoding()
+                    .to_js(global_this)
             };
             result.put(global_this, b"username", username);
             result.put(global_this, b"uid", JSValue::js_number(-1.0));

@@ -118,6 +118,16 @@ describe("row-returning detection (column count, not tokenizer)", () => {
     ]);
   });
 
+  test("whitespace- and comment-only queries still report 'no valid SQL statement'", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+
+    // These never succeeded pre-PR either; db.run() rejects them with a clear
+    // message. The probe prepare must not leak a confusing "finalized" error.
+    for (const q of ["   ", "-- noop", "/* placeholder */", "-- a\n-- b\n"]) {
+      await expect(Promise.resolve(sql.unsafe(q))).rejects.toThrow("Query contained no valid SQL statement");
+    }
+  });
+
   test("multi-statement writes still execute every statement", async () => {
     await using sql = new SQL("sqlite://:memory:");
     await sql.unsafe(`

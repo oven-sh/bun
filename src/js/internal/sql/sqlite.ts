@@ -203,9 +203,15 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       const command = parsedInfo.command;
       // Let SQLite decide: a prepared statement with result columns is row-
       // returning. Preparing compiles without executing, so nothing runs twice.
-      const stmt = db.prepare(sql);
+      let stmt: BunSQLiteModule.Statement | undefined;
+      try {
+        stmt = db.prepare(sql);
+      } catch {
+        // Whitespace- or comment-only input makes sqlite3_prepare_v3 return a
+        // NULL statement; db.run() handles that and re-raises real errors.
+      }
 
-      if (stmt.columnNames.length > 0) {
+      if (stmt && stmt.columnNames.length > 0) {
         let result: unknown[] | undefined;
 
         if (mode === SQLQueryResultMode.values) {
@@ -226,7 +232,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       } else {
         // No result columns: writes/DDL. db.run() also executes every
         // statement when multiple are provided in a single string.
-        stmt.finalize();
+        stmt?.finalize();
         const changes = db.run.$apply(db, [sql].concat(values));
         const sqlResult = new SQLResultArray();
 

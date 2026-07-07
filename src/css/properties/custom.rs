@@ -1503,8 +1503,6 @@ impl UnparsedProperty {
     }
 
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // `PropertyId` is `Copy` (tag + optional `VendorPrefix`/`CustomPropertyName`)
-        // and derives `PartialEq` in `properties_generated.rs` — use `==` directly.
         self.property_id == rhs.property_id && self.value.eql(&rhs.value)
     }
 }
@@ -1554,7 +1552,7 @@ pub enum CustomPropertyName {
 
 // `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
 // intentionally don't derive `PartialEq` (pointer-eq would be wrong).
-// `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
+// Compare the underlying bytes.
 impl PartialEq for CustomPropertyName {
     fn eq(&self, other: &Self) -> bool {
         // SAFETY: arena-owned slices live for the parse session.

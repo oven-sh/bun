@@ -33,7 +33,11 @@ const pgAuthenticationSASLFinal = (msg: string) => pgRaw("R", Buffer.concat([pgI
  * @param extension appended verbatim to the server-first-message after "i=N"
  */
 async function runScramHandshake(extension: string): Promise<void> {
-  const { promise: gotProofs, resolve: resolveProofs, reject } = Promise.withResolvers<{
+  const {
+    promise: gotProofs,
+    resolve: resolveProofs,
+    reject,
+  } = Promise.withResolvers<{
     clientProof: string;
     rfcProof: string;
   }>();
@@ -122,10 +126,7 @@ async function runScramHandshake(extension: string): Promise<void> {
     // (server saw client-final) or connect() rejecting earlier in the exchange.
     const connected = db.connect();
     connected.catch(() => {});
-    const { clientProof, rfcProof } = await Promise.race([
-      gotProofs,
-      connected.then(() => gotProofs),
-    ]);
+    const { clientProof, rfcProof } = await Promise.race([gotProofs, connected.then(() => gotProofs)]);
     expect(clientProof).toBe(rfcProof);
     // connect() resolving proves the client also accepted the server's RFC v= signature.
     await connected;

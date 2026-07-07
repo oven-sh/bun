@@ -101,7 +101,8 @@ impl us_socket_t {
     /// Write that also reports a fatal (non-would-block) send error so the
     /// node:net path can fail the pending write instead of waiting forever.
     /// The second element is 0 on success, otherwise the positive errno of
-    /// the failed `send()` (1 when the platform does not report one).
+    /// the failed `send()` on POSIX, or 1 on Windows (WSA→errno mapping is
+    /// not wired up here yet).
     pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         let mut fatal: i32 = 0;
         // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length

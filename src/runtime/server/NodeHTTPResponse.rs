@@ -1061,6 +1061,11 @@ impl NodeHTTPResponse {
 
     pub(crate) fn do_resume(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         scoped_log!(NodeHTTPResponse, "doResume");
+        // Re-arm the poll first, unconditionally: a paused socket that received
+        // the peer's FIN has that EOF deferred (loop.c) until it is resumed, so
+        // req._dump() after res.end() (which sets ENDED before calling us) must
+        // still let the deferred onEnd fire and release the fd.
+        self.resume_socket();
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
             return JSValue::FALSE;
@@ -1080,8 +1085,6 @@ impl NodeHTTPResponse {
         if let Some(buffered_data) = self.drain_buffered_request_body_from_pause(global_object) {
             result = buffered_data;
         }
-
-        self.resume_socket();
         result
     }
 
@@ -1198,6 +1201,9 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // Re-arm the poll before marking SOCKET_CLOSED (resume_socket is a no-op
+        // once that flag is set) so a paused socket's deferred EOF can fire.
+        self.resume_socket();
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
         if let Some(raw_response) = self.raw_response.get() {
             let state = raw_response.state();
@@ -1205,7 +1211,6 @@ impl NodeHTTPResponse {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        self.resume_socket();
         scoped_log!(NodeHTTPResponse, "clearOnData");
         if let Some(raw_response) = self.raw_response.get() {
             raw_response.clear_on_data();

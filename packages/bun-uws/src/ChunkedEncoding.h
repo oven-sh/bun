@@ -170,7 +170,8 @@ namespace uWS {
     /* Default cap on the raw size of a captured trailer section. Node counts
      * trailer bytes against the same max-header-size budget as request headers
      * in llhttp, so node:http callers thread the per-server maxHeaderSize
-     * through; this constant is the fallback for callers that do not. */
+     * through (already normalized to a nonzero default); this constant is the
+     * fallback for callers that do not. */
     constexpr uint64_t MAX_TRAILER_SECTION_SIZE = 16 * 1024;
 
     /* The trailer section is complete once the empty line terminating it has been
@@ -204,15 +205,26 @@ namespace uWS {
                     char c = data[0];
                     trailerSection->push_back(c);
                     data.remove_prefix(1);
-                    if (maxTrailerSectionSize && trailerSection->size() > maxTrailerSectionSize) [[unlikely]] {
+                    if (trailerSection->size() > maxTrailerSectionSize) [[unlikely]] {
                         state = STATE_IS_ERROR;
                         return std::nullopt;
                     }
-                    if (c == '\n' && isCompleteTrailerSection(*trailerSection)) {
-                        /* Message complete: emit the fin chunk. The next call sees
-                         * STATE_IS_TRAILERS_DONE and resets to 0. */
-                        state = STATE_IS_TRAILERS_DONE;
-                        return std::string_view(nullptr, 0);
+                    if (c == '\n') {
+                        /* Bare LF (no preceding CR captured) is a fatal parse error like
+                         * llhttp's HPE_CR_EXPECTED / HPE_INVALID_HEADER_TOKEN — otherwise
+                         * "0\r\n\n" waits for bytes forever. Strict CRLF matches
+                         * consumeHexNumber's own bare-LF rejection above. */
+                        size_t n = trailerSection->size();
+                        if (n < 2 || (*trailerSection)[n - 2] != '\r') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
+                        if (isCompleteTrailerSection(*trailerSection)) {
+                            /* Message complete: emit the fin chunk. The next call sees
+                             * STATE_IS_TRAILERS_DONE and resets to 0. */
+                            state = STATE_IS_TRAILERS_DONE;
+                            return std::string_view(nullptr, 0);
+                        }
                     }
                 }
                 return std::nullopt;

@@ -1058,6 +1058,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
+        // The buffered write drained: if end() already unref'd (peer FIN) and _write
+        // re-ref'd for this pending flush, drop the ref again now nothing is in flight.
+        if (self[kended] && !self[kUserUnrefed] && socket === self._handle) socket.unref?.();
         callback(null);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
@@ -1078,6 +1081,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // the (half-open) writable side stays open and the readable side was never consumed. Mirror
     // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
     // forget any pause()-time unref so a later read()/resume() does not pin the loop again.
+    // A subsequent buffered write re-refs (see _write) so its callback can still fire.
     if (socket === self._handle && !self[kwriteCallback]) {
       socket.unref?.();
       self[kPausedUnref] = false;
@@ -2485,6 +2489,10 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
+    // libuv holds the loop for a pending uv_write_t regardless of the handle's ref
+    // state; end() dropped ours on the peer's FIN. Re-ref while this buffered write
+    // waits for drain so the process does not exit with data unflushed.
+    if (this[kended] && !this[kUserUnrefed]) socket.ref?.();
   }
 };
 

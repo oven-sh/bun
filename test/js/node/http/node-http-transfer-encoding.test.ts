@@ -133,3 +133,113 @@ test("chunked request trailers parse at every field-value scan boundary", async 
 
   expect(seen).toEqual(values.map(value => ({ trailers: { "x-boundary": value }, raw: ["X-Boundary", value] })));
 });
+
+test("bare-LF in trailer section fires clientError instead of hanging", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => res.end("ok"));
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    // "0\r\n\n" — bare LF where the trailer-terminating CRLF belongs
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\n");
+  });
+  socket.on("error", () => {});
+  const timer = setTimeout(() => reject(new Error("hang: no clientError within 2s")), 2000);
+  const err = await promise;
+  clearTimeout(timer);
+  socket.destroy();
+  expect(err.code).toMatch(/^HPE_/);
+});
+
+test("bare-LF between trailer fields is rejected, not silently accepted", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<{ trailers: any } | { err: any }>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      resolve({ trailers: { ...req.trailers } });
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve({ err });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    // Foo: bar\nBaz: qux — bare LF mid-section, but tail matches \r\n\r\n
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nFoo: bar\nBaz: qux\r\n\r\n");
+  });
+  socket.on("error", () => {});
+  const timer = setTimeout(() => reject(new Error("hang")), 2000);
+  const result = await promise;
+  clearTimeout(timer);
+  socket.destroy();
+  expect("err" in result).toBe(true);
+});
+
+test("createServer({maxHeaderSize:0}) still bounds trailer section", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  await using server = createServer({ maxHeaderSize: 0 }, (req, res) => {
+    req.resume();
+    req.on("end", () => res.end("ok"));
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const big = Buffer.alloc(20 * 1024, "a").toString();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n" + `0\r\nX-Big: ${big}\r\n\r\n`);
+  });
+  socket.on("error", () => {});
+  const timer = setTimeout(() => reject(new Error("no clientError for 20KB trailer under maxHeaderSize:0")), 2000);
+  const err = await promise;
+  clearTimeout(timer);
+  socket.destroy();
+  // Tightened to HPE_HEADER_OVERFLOW once the trailer-overflow error code is
+  // wired distinctly (currently reported as HPE_INTERNAL).
+  expect(err.code).toMatch(/^HPE_/);
+});
+
+test("pipelined non-chunked request does not read prior request's trailers", async () => {
+  const seen: any[] = [];
+  const done = Promise.withResolvers<void>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      seen.push({ url: req.url, trailers: { ...req.trailers }, raw: [...req.rawTrailers] });
+      res.end("ok");
+      if (seen.length === 2) done.resolve();
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nX-T: leak\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  socket.on("error", done.reject);
+  socket.resume();
+  await done.promise;
+  socket.destroy();
+  expect(seen).toEqual([
+    { url: "/a", trailers: { "x-t": "leak" }, raw: ["X-T", "leak"] },
+    { url: "/b", trailers: {}, raw: [] },
+  ]);
+});

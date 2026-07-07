@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
-import { createHistogram } from "perf_hooks";
+import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
 describe("Histogram", () => {
   test("basic histogram creation and initial state", () => {
@@ -519,23 +519,71 @@ describe("Histogram", () => {
       h.record(20);
       h.record(30);
 
-      if (typeof h.toJSON === "function") {
-        const json = h.toJSON();
+      assert.strictEqual(typeof h.toJSON, "function");
+      const json = h.toJSON();
 
-        assert.strictEqual(typeof json, "object");
-        assert.strictEqual(json.count, 3);
-        assert.strictEqual(json.min, 10);
-        assert.strictEqual(json.max, 30);
-        assert.strictEqual(json.mean, 20);
-        assert.strictEqual(json.exceeds, 0);
-        assert.strictEqual(typeof json.stddev, "number");
-        assert.strictEqual(typeof json.percentiles, "object");
+      assert.strictEqual(typeof json, "object");
+      assert.strictEqual(json.count, 3);
+      assert.strictEqual(json.min, 10);
+      assert.strictEqual(json.max, 30);
+      assert.strictEqual(json.mean, 20);
+      assert.strictEqual(json.exceeds, 0);
+      assert.strictEqual(typeof json.stddev, "number");
+      assert.strictEqual(typeof json.percentiles, "object");
 
-        assert.ok(!json.percentiles.has);
-        assert.ok(typeof json.percentiles === "object");
-      } else {
-        console.log("toJSON method not implemented yet - skipping test");
+      assert.ok(!(json.percentiles instanceof Map));
+      assert.deepStrictEqual(Object.keys(json), ["count", "min", "max", "mean", "exceeds", "stddev", "percentiles"]);
+    });
+
+    test("toJSON percentiles shape matches Node.js", () => {
+      const h = createHistogram();
+      h.record(5);
+      h.record(9);
+
+      const json = h.toJSON();
+      assert.deepStrictEqual(json.percentiles, { "0": 5, "50": 5, "75": 9, "100": 9 });
+      for (const value of Object.values(json.percentiles)) {
+        assert.strictEqual(typeof value, "number");
       }
+    });
+
+    test("toJSON on empty histogram", () => {
+      const h = createHistogram();
+      const json = h.toJSON();
+
+      assert.strictEqual(json.count, 0);
+      assert.strictEqual(json.min, 9223372036854776000);
+      assert.strictEqual(json.max, 0);
+      assert.ok(Number.isNaN(json.mean));
+      assert.strictEqual(json.exceeds, 0);
+      assert.ok(Number.isNaN(json.stddev));
+      assert.deepStrictEqual(json.percentiles, { "100": 0 });
+    });
+
+    test("JSON.stringify(histogram) is not '{}'", () => {
+      const h = createHistogram();
+      h.record(5);
+      h.record(9);
+
+      const serialized = JSON.stringify(h);
+      assert.notStrictEqual(serialized, "{}");
+
+      const parsed = JSON.parse(serialized);
+      assert.strictEqual(parsed.count, 2);
+      assert.strictEqual(parsed.min, 5);
+      assert.strictEqual(parsed.max, 9);
+      assert.strictEqual(parsed.mean, 7);
+      assert.strictEqual(parsed.exceeds, 0);
+      assert.deepStrictEqual(parsed.percentiles, { "0": 5, "50": 5, "75": 9, "100": 9 });
+    });
+
+    test("monitorEventLoopDelay histogram has toJSON", () => {
+      const eld = monitorEventLoopDelay();
+      assert.strictEqual(typeof eld.toJSON, "function");
+
+      const json = eld.toJSON();
+      assert.deepStrictEqual(Object.keys(json), ["count", "min", "max", "mean", "exceeds", "stddev", "percentiles"]);
+      assert.notStrictEqual(JSON.stringify(eld), "{}");
     });
 
     test("extreme value handling", () => {

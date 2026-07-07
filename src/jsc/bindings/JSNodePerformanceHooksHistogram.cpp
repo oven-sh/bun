@@ -261,6 +261,29 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
     }
 }
 
+JSC::JSObject* JSNodePerformanceHooksHistogram::getPercentilesObject(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (!m_histogramData.histogram) return result;
+
+    struct hdr_iter iter;
+    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
+
+    while (hdr_iter_next(&iter)) {
+        double percentile = iter.specifics.percentiles.percentile;
+        int64_t value = iter.highest_equivalent_value;
+        result->putDirectMayBeIndex(globalObject, Identifier::from(vm, percentile), jsNumber(static_cast<double>(value)));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    return result;
+}
+
 void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globalObject, JSC::JSMap* map)
 {
     VM& vm = globalObject->vm();

@@ -46,6 +46,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentilesBigIn
 
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt);
+JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncToJSON);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay);
@@ -161,6 +162,7 @@ public:
     int64_t getPercentile(double percentile) const;
     void getPercentiles(JSGlobalObject* globalObject, JSC::JSMap* map);
     void getPercentilesBigInt(JSGlobalObject* globalObject, JSC::JSMap* map);
+    JSC::JSObject* getPercentilesObject(JSGlobalObject* globalObject);
     size_t getExceeds() const;
     uint64_t getCount() const;
     double add(JSNodePerformanceHooksHistogram* other);

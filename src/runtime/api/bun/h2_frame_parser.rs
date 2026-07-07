@@ -2151,6 +2151,10 @@ impl Stream {
         );
 
         let mut queue = core::mem::take(&mut self.data_frame_queue);
+        // Frames still queued here are being dropped without ever reaching the wire: the Writable
+        // callback must see an error so it does not emit 'drain' and wake a backpressured producer
+        // into writing into a dead stream (node settles these writes with ECANCELED).
+        let mut cancel_err = JSValue::UNDEFINED;
         while let Some(item) = queue.dequeue() {
             let frame = item;
             let len = frame.slice().len();
@@ -2160,7 +2164,16 @@ impl Stream {
                 .set(client.queued_data_size.get() - len as u64);
             if !FINALIZING {
                 if let Some(callback_value) = frame.callback.get() {
-                    client.dispatch_write_callback(callback_value);
+                    if cancel_err.is_undefined() {
+                        cancel_err = client
+                            .global()
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_STREAM,
+                                format_args!("The stream has been destroyed"),
+                            )
+                            .to_js();
+                    }
+                    client.dispatch_write_callback_with_error(callback_value, cancel_err);
                 }
             }
             drop(frame);
@@ -2734,6 +2747,11 @@ impl H2FrameParser {
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
         let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_write_callback(callback, &[]);
+    }
+
+    pub(crate) fn dispatch_write_callback_with_error(&self, callback: JSValue, err: JSValue) {
+        let _dispatch = self.enter_dispatch();
+        let _ = self.handlers.get().call_write_callback(callback, &[err]);
     }
 
     pub(crate) fn dispatch_with_extra(

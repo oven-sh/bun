@@ -2530,8 +2530,10 @@ class Http2Stream extends Duplex {
         return;
       }
     }
+    // No session/native: the session was destroyed. Reporting success would emit 'drain' and make
+    // write() return true forever, so a backpressured producer never stops.
     if (typeof callback == "function") {
-      callback();
+      callback($ERR_HTTP2_INVALID_STREAM());
     }
   }
   _write(chunk, encoding, callback) {
@@ -2559,8 +2561,10 @@ class Http2Stream extends Duplex {
         return;
       }
     }
+    // No session/native: the session was destroyed. Reporting success would emit 'drain' and make
+    // write() return true forever, so a backpressured producer never stops.
     if (typeof callback == "function") {
-      callback();
+      callback($ERR_HTTP2_INVALID_STREAM());
     }
   }
 

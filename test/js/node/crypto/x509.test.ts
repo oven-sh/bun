@@ -86,3 +86,17 @@ describe("X509Certificate.infoAccess", () => {
     expect(cert.infoAccess).toBeUndefined();
   });
 });
+
+describe("X509Certificate.subjectAltName", () => {
+  const escaping = path.join(import.meta.dir, "..", "test", "fixtures", "x509-escaping");
+  const altCert = (i: number) => new X509Certificate(readFileSync(path.join(escaping, `alt-${i}-cert.pem`)));
+
+  // Node on OpenSSL 3 includes the bad length; BoringSSL leaves OPENSSL_VERSION_MAJOR undefined so
+  // the <invalid length=N> branch in PrintGeneralName must be selected explicitly.
+  test.each([
+    [10, "IP Address:<invalid length=5>"],
+    [11, "IP Address:<invalid length=6>"],
+  ])("alt-%i-cert.pem renders a malformed IP SAN with its length", (i, expected) => {
+    expect(altCert(i).subjectAltName).toBe(expected);
+  });
+});

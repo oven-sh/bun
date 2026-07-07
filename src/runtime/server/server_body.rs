@@ -3162,8 +3162,8 @@ where
 
         Some(PreparedRequestFor {
             js_request: match create_js_request {
-                CreateJsRequest::Yes => request_object.to_js(&self.global()),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(&self.global()) {
+                CreateJsRequest::Yes => unsafe { request_object.to_js(&self.global()) },
+                CreateJsRequest::Bake => match unsafe { request_object.to_js_for_bake(&self.global()) } {
                     Ok(v) => v,
                     Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(_) => return None,

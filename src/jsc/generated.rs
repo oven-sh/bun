@@ -551,7 +551,6 @@ struct ExternSSLConfig {
     ca: ExternSSLConfigFile,
     cert: ExternSSLConfigFile,
     key: ExternSSLConfigFile,
-    crl: ExternSSLConfigFile,
     secure_options: u32,
     ssl_min_version: i32,
     ssl_max_version: i32,
@@ -562,6 +561,7 @@ struct ExternSSLConfig {
     ciphers: RawWTFStringImpl,
     client_renegotiation_limit: u32,
     client_renegotiation_window: u32,
+    crl: ExternSSLConfigFile,
 }
 
 // safe: same handle/out-param contract as
@@ -601,7 +601,10 @@ impl SSLConfig {
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        let mut ext = MaybeUninit::<ExternSSLConfig>::uninit();
+        // Zeroed so an under-writing C++ side (e.g. a stale codegen header
+        // missing a trailing field) yields the field's `None` variant rather
+        // than garbage; every field's all-zeros representation is valid.
+        let mut ext = MaybeUninit::<ExternSSLConfig>::zeroed();
         crate::call_false_is_throw(global, || {
             bindgenConvertJSToSSLConfig(global, value, &mut ext)
         })?;

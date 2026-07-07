@@ -54,7 +54,6 @@ export const SSLConfig = b.dictionary(
     ca: SSLConfigFile,
     cert: SSLConfigFile,
     key: SSLConfigFile,
-    crl: SSLConfigFile,
     secureOptions: {
       type: b.u32,
       default: 0,
@@ -97,5 +96,6 @@ export const SSLConfig = b.dictionary(
       default: 0,
       internalName: "client_renegotiation_window",
     },
+    crl: SSLConfigFile,
   },
 );

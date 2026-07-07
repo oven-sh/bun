@@ -622,7 +622,16 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     using dir = tempDir("blob-fd-part", { "f.bin": "0123456789" });
     const fd = fs.openSync(path.join(String(dir), "f.bin"), "r");
     try {
-      await check(new Blob(["<", Bun.file(fd), ">"]), "<0123456789>");
+      const f = Bun.file(fd);
+      await check(new Blob(["<", f, ">"]), "<0123456789>");
+      // same fd used twice: each read must start at the Blob's offset, not
+      // wherever the previous part left the cursor
+      await check(new Blob([f, "-", f]), "0123456789-0123456789");
+      await check(new Blob([f.slice(2, 6), "|", f.slice(7, 9)]), "2345|78");
+      // the caller's fd position must not be mutated by the constructor
+      const buf = Buffer.alloc(20);
+      const n = fs.readSync(fd, buf, 0, 20, null);
+      expect(buf.subarray(0, n).toString()).toBe("0123456789");
     } finally {
       fs.closeSync(fd);
     }
@@ -630,7 +639,12 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
 
   test("throws when the file cannot be read", () => {
     using dir = tempDir("blob-file-part-missing", {});
-    const missing = Bun.file(path.join(String(dir), "does-not-exist"));
-    expect(() => new Blob(["x", missing])).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    const p = path.join(String(dir), "does-not-exist");
+    expect(() => new Blob(["x", Bun.file(p)])).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    // still throws after `.size` was accessed (which resolves to 0 for a
+    // nonexistent path)
+    const observed = Bun.file(p);
+    void observed.size;
+    expect(() => new Blob(["x", observed])).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 });

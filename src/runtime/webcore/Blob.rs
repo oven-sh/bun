@@ -3880,28 +3880,71 @@ fn push_blob_part_bytes(
         }
         store::Data::File(file) => {
             let size = blob.size.get();
-            if size == 0 {
-                return Ok(());
-            }
-            let mut node_fs = crate::node::fs::NodeFS::default();
-            let mut rf_args = crate::node::fs::args::ReadFile::default();
-            rf_args.encoding = crate::node::types::Encoding::Buffer;
-            rf_args.path = file.pathlike.clone();
-            rf_args.offset = blob.offset.get();
-            rf_args.max_size = if size == MAX_SIZE { None } else { Some(size) };
-            match node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync) {
-                Err(err) => return Err(global.throw_value(err.to_js(global))),
-                Ok(mut result) => {
-                    joiner.push_cloned(result.slice());
-                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
-                        buf.destroy();
+            let offset = blob.offset.get();
+            match &file.pathlike {
+                PathOrFileDescriptor::Path(_) => {
+                    // Fresh fd per read: `read_file` opens, reads from `offset`,
+                    // and closes, so repeated use of the same path part is stable.
+                    let mut node_fs = crate::node::fs::NodeFS::default();
+                    let mut rf_args = crate::node::fs::args::ReadFile::default();
+                    rf_args.encoding = crate::node::types::Encoding::Buffer;
+                    rf_args.path = file.pathlike.clone();
+                    rf_args.offset = offset;
+                    rf_args.max_size = if size == MAX_SIZE { None } else { Some(size) };
+                    match node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync) {
+                        Err(err) => return Err(global.throw_value(err.to_js(global))),
+                        Ok(mut result) => {
+                            joiner.push_cloned(result.slice());
+                            if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
+                                buf.destroy();
+                            }
+                        }
                     }
+                }
+                PathOrFileDescriptor::Fd(fd) => {
+                    // `read_file` on a caller-owned fd uses cursor-advancing
+                    // `read` and only seeks when `offset > 0`, so a second use
+                    // of the same fd part would read from EOF. Read via `pread`
+                    // at the Blob's absolute offset instead so the caller's fd
+                    // position is never observed or mutated.
+                    let stat = match bun_sys::fstat(*fd) {
+                        bun_sys::Result::Ok(s) => s,
+                        bun_sys::Result::Err(err) => {
+                            return Err(global.throw_value(err.with_fd(*fd).to_js(global)));
+                        }
+                    };
+                    let file_len = stat.st_size.max(0) as SizeType;
+                    let avail = file_len.saturating_sub(offset);
+                    let want = if size == MAX_SIZE { avail } else { size.min(avail) } as usize;
+                    if want == 0 {
+                        return Ok(());
+                    }
+                    let mut buf = vec![0u8; want];
+                    let mut total = 0usize;
+                    while total < want {
+                        let n = match bun_sys::pread(
+                            *fd,
+                            &mut buf[total..],
+                            (offset as i64).saturating_add(total as i64),
+                        ) {
+                            bun_sys::Result::Ok(n) => n,
+                            bun_sys::Result::Err(err) => {
+                                return Err(global.throw_value(err.with_fd(*fd).to_js(global)));
+                            }
+                        };
+                        if n == 0 {
+                            buf.truncate(total);
+                            break;
+                        }
+                        total += n;
+                    }
+                    joiner.push_owned(buf.into_boxed_slice());
                 }
             }
         }
         store::Data::S3(_) => {
             return Err(global.throw_invalid_arguments(format_args!(
-                "new Blob() cannot read an S3 file synchronously; await .bytes() or .arrayBuffer() first"
+                "Blob parts backed by S3 cannot be read synchronously; await .bytes() or .arrayBuffer() first"
             )));
         }
     }

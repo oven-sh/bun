@@ -518,26 +518,19 @@ impl ClientSession {
     /// sibling re-arming, or strip the safety net from one that wants it),
     /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
-        let want = 'blk: {
-            for &s in self.streams.values() {
-                if let Some(c) = stream_ref(s).client_ref() {
-                    if !c.flags.disable_timeout {
-                        break 'blk true;
-                    }
-                }
+        // The socket is shared by every stream on the session, so arm the
+        // longest effective idle timeout among them (0 = every client
+        // disabled the timer, or none are attached).
+        let mut want: core::ffi::c_uint = 0;
+        for &s in self.streams.values() {
+            if let Some(c) = stream_ref(s).client_ref() {
+                want = want.max(c.effective_idle_timeout_seconds());
             }
-            for &c in &self.pending_attach {
-                if !pending_client_mut(c).flags.disable_timeout {
-                    break 'blk true;
-                }
-            }
-            false
-        };
-        self.socket.set_timeout(if want {
-            crate::idle_timeout_seconds()
-        } else {
-            0
-        });
+        }
+        for &c in &self.pending_attach {
+            want = want.max(pending_client_mut(c).effective_idle_timeout_seconds());
+        }
+        self.socket.set_timeout(want);
     }
 
     /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled

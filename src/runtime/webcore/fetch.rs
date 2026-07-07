@@ -421,6 +421,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let first_arg = args.next_eat().unwrap();
 
     let mut disable_timeout = false;
+    let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
     let mut compress: Option<compress_body::CompressOption> = None;
@@ -860,6 +861,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if timeout_value.is_boolean() {
                         break 'extract_disable_timeout !timeout_value.as_boolean();
                     } else if timeout_value.is_number() {
+                        // A finite positive `timeout` (in ms) also governs the
+                        // socket idle deadline, overriding the global
+                        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
+                        let ms = timeout_value.as_number();
+                        if ms.is_finite() && ms > 0.0 {
+                            idle_timeout_seconds = Some(
+                                (ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                                    as core::ffi::c_uint,
+                            );
+                        }
                         break 'extract_disable_timeout timeout_value.to_int32() == 0;
                     }
                 }
@@ -2021,6 +2032,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         body,
         disable_keepalive,
         disable_timeout,
+        idle_timeout_seconds,
         disable_decompression,
         max_redirects,
         reject_unauthorized,

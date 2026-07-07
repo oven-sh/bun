@@ -2697,16 +2697,17 @@ impl PostgresSQLConnection {
                         )?;
                         drop(server_salt_decoded_base64);
 
+                        // RFC 5802 §3 AuthMessage: sign the server-first-message as received
+                        // (cont.data), not a rebuilt "r=,s=,i=", so any RFC-legal extension
+                        // attributes the server sent are covered by the proof.
                         let mut auth_string: Vec<u8> = Vec::new();
                         {
                             use std::io::Write as _;
                             let _ = write!(
                                 &mut auth_string,
-                                "n=*,r={},r={},s={},i={},c=biws,r={}",
+                                "n=*,r={},{},c=biws,r={}",
                                 bstr::BStr::new(sasl.nonce()),
-                                bstr::BStr::new(cont.r.slice()),
-                                bstr::BStr::new(cont.s.slice()),
-                                bstr::BStr::new(cont.i.slice()),
+                                bstr::BStr::new(cont.data.slice()),
                                 bstr::BStr::new(cont.r.slice()),
                             );
                         }

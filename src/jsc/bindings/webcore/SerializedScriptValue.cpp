@@ -3058,7 +3058,7 @@ public:
                 ,
             wasmModules, wasmMemoryHandles
 #endif
-                ,
+            ,
             serializedHistograms
 #if ENABLE(WEB_CODECS)
             ,
@@ -6959,7 +6959,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                       ,
         &m_serializedHistograms
 #if ENABLE(WEB_CODECS)
-                                      ,
+        ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
     );

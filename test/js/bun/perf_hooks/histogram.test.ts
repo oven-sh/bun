@@ -1,9 +1,9 @@
+import { bunEnv, bunExe, tempDir } from "harness";
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
-import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 import { MessageChannel } from "node:worker_threads";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
 describe("Histogram", () => {
   test("basic histogram creation and initial state", () => {
@@ -683,11 +683,7 @@ describe("Histogram", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       assert.strictEqual(stderr, "");
       assert.deepStrictEqual(JSON.parse(stdout), { count: 3, min: 5, max: 100, added: 3 });
       assert.strictEqual(exitCode, 0);

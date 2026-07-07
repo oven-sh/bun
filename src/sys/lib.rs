@@ -4618,6 +4618,18 @@ pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
     }
 }
 
+#[inline]
+pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
+    #[cfg(unix)]
+    {
+        iov.iov_len
+    }
+    #[cfg(windows)]
+    {
+        iov.len as usize
+    }
+}
+
 /// Windows `PlatformIOVecConst` — same `uv_buf_t` layout (libuv has no
 /// const-buf type), with `base` typed `*const u8` so callers can build it
 /// from `&[u8]` without casts.

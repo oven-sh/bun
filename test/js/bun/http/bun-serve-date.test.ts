@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import path from "node:path";
 
 test("Date header is not updated every request", async () => {
   const twoSecondsAgo = new Date(Date.now() - 2 * 1000);
@@ -120,5 +122,67 @@ describe.concurrent("Date header on bodiless responses", () => {
     const tooLarge = await drain(server.url.href, { method: "POST", body: "12" });
     expect(tooLarge.status).toBe(413);
     expectFreshDate(tooLarge, "413");
+  });
+});
+
+// RFC 9110 5.6.6: a server must not generate more than one Date field. Static and
+// file routes write their baked headers raw, so a user-supplied Date has to
+// suppress the server's auto-stamp rather than sit next to it.
+describe.concurrent("a route's own Date is not duplicated", () => {
+  const USER_DATE = "Mon, 01 Jan 2024 00:00:00 GMT";
+
+  // fetch() collapses duplicate headers, so read the raw bytes to count them.
+  async function rawDateHeaders(port: number, method: string, pathname: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    await using socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data: (_s, d) => chunks.push(d),
+        end: () => resolve(Buffer.concat(chunks).toString()),
+        close: () => resolve(Buffer.concat(chunks).toString()),
+        error: (_s, e) => reject(e),
+      },
+    });
+    socket.write(`${method} ${pathname} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    socket.flush();
+    const head = (await promise).split("\r\n\r\n")[0];
+    return head
+      .split("\r\n")
+      .slice(1)
+      .filter(line => /^date:/i.test(line))
+      .map(line => line.slice(line.indexOf(":") + 1).trim());
+  }
+
+  test.each(["GET", "HEAD"])("static route, %s", async method => {
+    using server = Bun.serve({
+      port: 0,
+      static: { "/s": new Response("S", { headers: { date: USER_DATE } }) },
+      fetch: () => new Response("fallback"),
+    });
+    expect(await rawDateHeaders(server.port, method, "/s")).toEqual([USER_DATE]);
+  });
+
+  test.each(["GET", "HEAD"])("file route, %s", async method => {
+    using dir = tempDir("serve-date-file", { "f.txt": "FILE" });
+    const file = path.join(String(dir), "f.txt");
+    using server = Bun.serve({
+      port: 0,
+      static: { "/f": new Response(Bun.file(file), { headers: { date: USER_DATE } }) },
+      fetch: () => new Response("fallback"),
+    });
+    expect(await rawDateHeaders(server.port, method, "/f")).toEqual([USER_DATE]);
+  });
+
+  test.each(["GET", "HEAD"])("without a user Date, the server stamps exactly one, %s", async method => {
+    using server = Bun.serve({
+      port: 0,
+      static: { "/s": new Response("S") },
+      fetch: () => new Response("fallback"),
+    });
+    const dates = await rawDateHeaders(server.port, method, "/s");
+    expect(dates).toHaveLength(1);
+    expect(Number.isFinite(new Date(dates[0]).getTime())).toBe(true);
   });
 });

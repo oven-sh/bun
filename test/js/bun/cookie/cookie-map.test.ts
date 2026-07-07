@@ -367,23 +367,32 @@ describe("iterator", () => {
   // Deleting during iteration skips every other entry (FormData-style), regardless of whether
   // the entries came from the constructor or from set().
   test.each([
-    ["set()", () => {
-      const map = new Bun.CookieMap();
-      for (let i = 0; i < 1000; i++) map.set(`name${i}`, `value${i}`);
-      return map;
-    }],
-    ["constructor", () => {
-      const entries: [string, string][] = [];
-      for (let i = 0; i < 1000; i++) entries.push([`name${i}`, `value${i}`]);
-      return new Bun.CookieMap(entries);
-    }],
-    ["both", () => {
-      const entries: [string, string][] = [];
-      for (let i = 0; i < 500; i++) entries.push([`pre${i}`, `pre${i}`]);
-      const map = new Bun.CookieMap(entries);
-      for (let i = 0; i < 500; i++) map.set(`post${i}`, `post${i}`);
-      return map;
-    }],
+    [
+      "set()",
+      () => {
+        const map = new Bun.CookieMap();
+        for (let i = 0; i < 1000; i++) map.set(`name${i}`, `value${i}`);
+        return map;
+      },
+    ],
+    [
+      "constructor",
+      () => {
+        const entries: [string, string][] = [];
+        for (let i = 0; i < 1000; i++) entries.push([`name${i}`, `value${i}`]);
+        return new Bun.CookieMap(entries);
+      },
+    ],
+    [
+      "both",
+      () => {
+        const entries: [string, string][] = [];
+        for (let i = 0; i < 500; i++) entries.push([`pre${i}`, `pre${i}`]);
+        const map = new Bun.CookieMap(entries);
+        for (let i = 0; i < 500; i++) map.set(`post${i}`, `post${i}`);
+        return map;
+      },
+    ],
   ] as const)("delete in a loop (entries via %s)", (_, build) => {
     const map = build();
     for (const key of map.keys()) map.delete(key);
@@ -453,7 +462,11 @@ describe("iteration order is Map-like", () => {
       ["set", "z", "Z"],
     ];
     const map = new Bun.CookieMap("a=1; b=2; c=3");
-    const ref = new Map<string, string>([["a", "1"], ["b", "2"], ["c", "3"]]);
+    const ref = new Map<string, string>([
+      ["a", "1"],
+      ["b", "2"],
+      ["c", "3"],
+    ]);
     for (const op of ops) {
       if (op[0] === "set") {
         map.set(op[1], op[2]);
@@ -464,25 +477,45 @@ describe("iteration order is Map-like", () => {
       }
       expect([...map]).toEqual([...ref]);
     }
-    expect([...map]).toEqual([["b", "B"], ["c", "C"], ["z", "Z"], ["a", "A"]]);
+    expect([...map]).toEqual([
+      ["b", "B"],
+      ["c", "C"],
+      ["z", "Z"],
+      ["a", "A"],
+    ]);
   });
 
   test.each([
     ["string", () => new Bun.CookieMap("a=1; b=2; c=3")],
-    ["array", () => new Bun.CookieMap([["a", "1"], ["b", "2"], ["c", "3"]])],
+    [
+      "array",
+      () =>
+        new Bun.CookieMap([
+          ["a", "1"],
+          ["b", "2"],
+          ["c", "3"],
+        ]),
+    ],
     ["object", () => new Bun.CookieMap({ a: "1", b: "2", c: "3" })],
-    ["set() on empty", () => {
-      const m = new Bun.CookieMap();
-      m.set("a", "1");
-      m.set("b", "2");
-      m.set("c", "3");
-      return m;
-    }],
+    [
+      "set() on empty",
+      () => {
+        const m = new Bun.CookieMap();
+        m.set("a", "1");
+        m.set("b", "2");
+        m.set("c", "3");
+        return m;
+      },
+    ],
   ] as const)("set() on an existing name keeps its position (built via %s)", (_, build) => {
     const map = build();
     map.set("b", "B");
     map.set("a", "A");
-    expect([...map]).toEqual([["a", "A"], ["b", "B"], ["c", "3"]]);
+    expect([...map]).toEqual([
+      ["a", "A"],
+      ["b", "B"],
+      ["c", "3"],
+    ]);
   });
 
   test("delete() then set() appends at the end", () => {
@@ -496,9 +529,17 @@ describe("iteration order is Map-like", () => {
     const map = new Bun.CookieMap("a=1; b=2; c=3");
     const cookie = new Bun.Cookie("b", "B");
     map.set(cookie);
-    expect([...map]).toEqual([["a", "1"], ["b", "B"], ["c", "3"]]);
+    expect([...map]).toEqual([
+      ["a", "1"],
+      ["b", "B"],
+      ["c", "3"],
+    ]);
     cookie.value = "BB";
-    expect([...map]).toEqual([["a", "1"], ["b", "BB"], ["c", "3"]]);
+    expect([...map]).toEqual([
+      ["a", "1"],
+      ["b", "BB"],
+      ["c", "3"],
+    ]);
     expect(map.get("b")).toBe("BB");
   });
 

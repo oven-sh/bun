@@ -4618,7 +4618,11 @@ pub(crate) fn resolve_embedded_file_to_buf(
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {
-            return write_absolute(out_buf, Fs::RealFS::tmpdir_path(), canonical_name.as_bytes());
+            return write_absolute(
+                out_buf,
+                Fs::RealFS::tmpdir_path(),
+                canonical_name.as_bytes(),
+            );
         }
     }
 

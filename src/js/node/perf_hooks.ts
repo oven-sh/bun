@@ -276,60 +276,49 @@ function processTimerifyComplete(name, start, args, histogram) {
   }
 }
 
+// Node-only members the web `performance` (a WebCore object) lacks. Put them on
+// the Performance prototype (non-enumerable, like node) so node:perf_hooks can
+// export the global object itself instead of a wrapper that re-forwards methods.
+// Target Performance.prototype (not getPrototypeOf(performance)) so a replaced
+// global can't redirect the define onto Object.prototype, and guard with hasOwn
+// so a future native move that adds these as own prototype props suppresses the
+// stub rather than inheriting through the chain.
+const PerformancePrototype = Performance.prototype;
+if (!Object.hasOwn(PerformancePrototype, "nodeTiming")) {
+  Object.defineProperty(PerformancePrototype, "nodeTiming", {
+    __proto__: null,
+    value: createPerformanceNodeTiming(),
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+}
+if (!Object.hasOwn(PerformancePrototype, "eventLoopUtilization")) {
+  Object.defineProperty(PerformancePrototype, "eventLoopUtilization", {
+    __proto__: null,
+    value: eventLoopUtilization,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+}
+if (!Object.hasOwn(PerformancePrototype, "timerify")) {
+  Object.defineProperty(PerformancePrototype, "timerify", {
+    __proto__: null,
+    value: timerify,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
 export default {
-  timerify,
-  performance: {
-    mark(_) {
-      return performance.mark(...arguments);
-    },
-    measure(_) {
-      return performance.measure(...arguments);
-    },
-    clearMarks(_) {
-      return performance.clearMarks(...arguments);
-    },
-    clearMeasures(_) {
-      return performance.clearMeasures(...arguments);
-    },
-    getEntries(_) {
-      return performance.getEntries(...arguments);
-    },
-    getEntriesByName(_) {
-      return performance.getEntriesByName(...arguments);
-    },
-    getEntriesByType(_) {
-      return performance.getEntriesByType(...arguments);
-    },
-    setResourceTimingBufferSize(_) {
-      return performance.setResourceTimingBufferSize(...arguments);
-    },
-    timeOrigin: performance.timeOrigin,
-    toJSON(_) {
-      return performance.toJSON(...arguments);
-    },
-    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
-    nodeTiming: createPerformanceNodeTiming(),
-    now: () => performance.now(),
-    timerify,
-    eventLoopUtilization: eventLoopUtilization,
-    clearResourceTimings: function () {},
-  },
-  // performance: {
-  //   clearMarks: [Function: clearMarks],
-  //   clearMeasures: [Function: clearMeasures],
-  //   clearResourceTimings: [Function: clearResourceTimings],
-  //   getEntries: [Function: getEntries],
-  //   getEntriesByName: [Function: getEntriesByName],
-  //   getEntriesByType: [Function: getEntriesByType],
-  //   mark: [Function: mark],
-  //   measure: [Function: measure],
-  //   now: performance.now,
-  //   setResourceTimingBufferSize: [Function: setResourceTimingBufferSize],
-  //   timeOrigin: performance.timeOrigin,
-  //   toJSON: [Function: toJSON],
-  //   onresourcetimingbufferfull: [Getter/Setter]
-  // },
+  performance,
   constants,
+  // Read off performance so these exports stay identical to
+  // performance.<name> regardless of which layer installed them.
+  eventLoopUtilization: performance.eventLoopUtilization,
+  timerify: performance.timerify,
   Performance,
   PerformanceEntry,
   PerformanceMark,
@@ -337,7 +326,6 @@ export default {
   PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  eventLoopUtilization,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");
     return impl(options);

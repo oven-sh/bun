@@ -3,12 +3,10 @@ import { bunEnv, bunExe } from "harness";
 import net from "net";
 import perf, { PerformanceObserver } from "perf_hooks";
 
-test("stubs", () => {
-  expect(perf.performance.nodeTiming).toBeObject();
-
-  expect(perf.performance.now()).toBeNumber();
-  expect(perf.performance.timeOrigin).toBeNumber();
-  expect(perf.performance.eventLoopUtilization()).toBeObject();
+// Like node, require("node:perf_hooks").performance is the global performance
+// object itself, not a separate wrapper.
+test("perf_hooks.performance is the global performance object", () => {
+  expect(perf.performance).toBe(globalThis.performance);
 });
 
 test("doesn't throw", () => {
@@ -58,6 +56,8 @@ test("timerify entry shape", async () => {
 test("timerify is exposed on both performance and as a top-level export (Node v25.2+)", () => {
   expect(perf.performance.timerify).toBeFunction();
   expect(perf.timerify).toBeFunction();
+  // Same function object, matching node's lib/perf_hooks.js module.exports.
+  expect(perf.timerify).toBe(perf.performance.timerify);
 });
 
 // Captured from the real node v26.3.0 binary:
@@ -158,4 +158,65 @@ test("net entries are instanceof PerformanceEntry", async () => {
   expect(entry).toBeInstanceOf(PerformanceEntry);
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
   expect(entry.entryType).toBe("net");
+});
+
+test("node-only members are present on performance", () => {
+  expect(perf.performance.nodeTiming).toBeObject();
+  expect(perf.performance.now()).toBeNumber();
+  expect(perf.performance.timeOrigin).toBeNumber();
+  expect(perf.performance.eventLoopUtilization).toBeFunction();
+  expect(perf.performance.eventLoopUtilization()).toEqual({
+    idle: expect.any(Number),
+    active: expect.any(Number),
+    utilization: expect.any(Number),
+  });
+});
+
+// markResourceTiming / clearResourceTimings were missing / a JS no-op before the
+// module exported the global; now they are the global's own methods.
+test("resource-timing methods are present and callable", () => {
+  expect(perf.performance.markResourceTiming).toBeFunction();
+  expect(() => perf.performance.markResourceTiming()).not.toThrow();
+  expect(perf.performance.clearResourceTimings).toBeFunction();
+  expect(() => perf.performance.clearResourceTimings()).not.toThrow();
+});
+
+// node puts the node-only members on Performance.prototype, non-enumerable, so
+// Object.keys(performance) is unchanged.
+test("node-only members live on the prototype, non-enumerable", () => {
+  const proto = Object.getPrototypeOf(globalThis.performance);
+  for (const key of ["nodeTiming", "eventLoopUtilization", "timerify"]) {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, key);
+    expect(descriptor).toBeDefined();
+    expect(descriptor!.enumerable).toBe(false);
+  }
+  expect(Object.keys(globalThis.performance)).not.toContain("nodeTiming");
+  expect(Object.keys(globalThis.performance)).not.toContain("eventLoopUtilization");
+  expect(Object.keys(globalThis.performance)).not.toContain("timerify");
+});
+
+// onresourcetimingbufferfull is the global's own accessor; since the module
+// object is the global, assigning through either reaches the same object.
+test("onresourcetimingbufferfull is the global's accessor", () => {
+  const previous = globalThis.performance.onresourcetimingbufferfull;
+  try {
+    const listener = () => {};
+    perf.performance.onresourcetimingbufferfull = listener;
+    expect(globalThis.performance.onresourcetimingbufferfull).toBe(listener);
+  } finally {
+    globalThis.performance.onresourcetimingbufferfull = previous;
+  }
+});
+
+// node's lib/perf_hooks.js lists eventLoopUtilization in module.exports as well
+// as on `performance`, and the two are the same function object. (It is absent
+// from the module exports on v22 and earlier; this matches current node.)
+test("perf_hooks exports eventLoopUtilization at the module level", () => {
+  expect(perf.eventLoopUtilization).toBeFunction();
+  expect(perf.eventLoopUtilization).toBe(perf.performance.eventLoopUtilization);
+  expect(perf.eventLoopUtilization()).toEqual({
+    idle: expect.any(Number),
+    active: expect.any(Number),
+    utilization: expect.any(Number),
+  });
 });

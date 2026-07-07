@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import * as cp from "node:child_process";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -88,6 +89,82 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode advanced", () => {
+  it("Buffer round-trips as Buffer (not Uint8Array) at every depth", async () => {
+    // Node's advanced IPC serializer registers Buffer as a host object so the subclass
+    // survives; structuredClone and Worker postMessage deliberately do not, and those
+    // paths are asserted here to keep that distinction covered.
+    const childSource = `
+      process.on("message", m => {
+        process.send({
+          top:    { isBuf: Buffer.isBuffer(m.top),      ctor: m.top.constructor.name,      hex: m.top.toString("hex") },
+          nested: { isBuf: Buffer.isBuffer(m.o.inner),  ctor: m.o.inner.constructor.name,  hex: m.o.inner.toString("hex") },
+          inArr:  { isBuf: Buffer.isBuffer(m.arr[0]),   ctor: m.arr[0].constructor.name,   hex: m.arr[0].toString("hex") },
+          u8:     { isBuf: Buffer.isBuffer(m.u8),       ctor: m.u8.constructor.name },
+          empty:  { isBuf: Buffer.isBuffer(m.empty),    ctor: m.empty.constructor.name,    len: m.empty.length },
+          sc:     structuredClone(Buffer.from([1])).constructor.name,
+        });
+        process.disconnect();
+      });
+    `;
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      ipc: message => resolve(message),
+      onExit: (_p, exitCode, signalCode) => reject(new Error(`child exited (${exitCode}, ${signalCode}) before reply`)),
+    });
+    child.send({
+      top: Buffer.from([0x01, 0x02, 0x03]),
+      o: { inner: Buffer.from([0x09]) },
+      arr: [Buffer.from([0xab, 0xcd])],
+      u8: new Uint8Array([7, 8]),
+      empty: Buffer.alloc(0),
+    });
+    const m = await promise;
+    expect(m).toEqual({
+      top: { isBuf: true, ctor: "Buffer", hex: "010203" },
+      nested: { isBuf: true, ctor: "Buffer", hex: "09" },
+      inArr: { isBuf: true, ctor: "Buffer", hex: "abcd" },
+      u8: { isBuf: false, ctor: "Uint8Array" },
+      empty: { isBuf: true, ctor: "Buffer", len: 0 },
+      sc: "Uint8Array",
+    });
+  });
+
+  it("Buffer round-trips as Buffer via child_process.fork with serialization: advanced", async () => {
+    using dir = tempDir("ipc-advanced-buffer", {
+      "child.js": `
+        process.on("message", m => {
+          process.send({
+            isBuf: Buffer.isBuffer(m.b),
+            ctor: m.b.constructor.name,
+            nestedIsBuf: Buffer.isBuffer(m.o.inner),
+            bytes: Array.from(m.b),
+          });
+          process.disconnect();
+        });
+      `,
+    });
+    const child = cp.fork(path.join(String(dir), "child.js"), [], {
+      execPath: bunExe(),
+      env: bunEnv,
+      serialization: "advanced",
+      stdio: ["ignore", "ignore", "inherit", "ipc"],
+    });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      child.once("message", resolve);
+      child.once("error", reject);
+      child.once("exit", (code, sig) => reject(new Error(`child exited (${code}, ${sig}) before reply`)));
+      child.send({ b: Buffer.from([1, 2, 3]), o: { inner: Buffer.from([9]) } });
+      const m = await promise;
+      expect(m).toEqual({ isBuf: true, ctor: "Buffer", nestedIsBuf: true, bytes: [1, 2, 3] });
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
   it("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
     // The advanced IPC framing is [u8 type][u32-le length][payload]. Decoding previously
     // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child

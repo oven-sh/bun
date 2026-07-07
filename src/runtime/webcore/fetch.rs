@@ -614,6 +614,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url_type = URLType::Blob;
     }
 
+    // https://fetch.spec.whatwg.org/#dom-request step 6
+    if !ALLOW_GET_BODY && (!url.username.is_empty() || !url.password.is_empty()) {
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!(
+                "Request cannot be constructed from a URL that includes credentials: {}",
+                bstr::BStr::new(url.href)
+            ),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
     // **Start with the harmless ones.**
 
     // "method"

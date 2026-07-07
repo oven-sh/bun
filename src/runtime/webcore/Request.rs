@@ -1512,6 +1512,20 @@ impl Request {
             bail!(Err(JsError::Thrown));
         }
 
+        // https://fetch.spec.whatwg.org/#dom-request step 6
+        {
+            let href_utf8 = href.to_utf8_without_ref();
+            let parsed = bun_url::URL::parse(href_utf8.slice());
+            if !parsed.username.is_empty() || !parsed.password.is_empty() {
+                let err = global_this.throw_type_error(format_args!(
+                    "Request cannot be constructed from a URL that includes credentials: {}",
+                    href
+                ));
+                href.deref();
+                bail!(Err(err));
+            }
+        }
+
         // hrefFromString increments the reference count if they end up being
         // the same
         //

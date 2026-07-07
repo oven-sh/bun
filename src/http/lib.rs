@@ -5167,6 +5167,13 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
 
+                        // https://fetch.spec.whatwg.org/#http-redirect-fetch step 10-11
+                        if !self.flags.is_node_http_client
+                            && (!self.url.username.is_empty() || !self.url.password.is_empty())
+                        {
+                            return Err(err!(RedirectURLCredentials));
+                        }
+
                         // If one of the following is true
                         // - internalResponse's status is 301 or 302 and request's method is `POST`
                         // - internalResponse's status is 303 and request's method is not `GET` or `HEAD`

@@ -741,6 +741,127 @@ describe("text lockfile", () => {
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
   });
 
+  test("--frozen-lockfile fails when package.json gains a direct dependency that is already resolved transitively", async () => {
+    // one-dep@1.0.0 depends on no-deps@1.0.1, so no-deps is in the lock as a
+    // transitive. Adding no-deps as a direct dependency must fail under
+    // --frozen-lockfile even though the hoisted tree is unchanged.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(firstLockfile).toContain('"no-deps":');
+    expect(firstLockfile.replace(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+
+    // Add no-deps as a direct dependency: the name is already in bun.lock's
+    // packages map but NOT in workspaces."".dependencies.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.1" },
+      }),
+    );
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(await exited).toBe(1);
+    // bun.lock must not be rewritten on a failed frozen install
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+
+    // A plain install would rewrite the lock (proves the lock really was stale).
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).not.toBe(firstLockfile);
+
+    // And once bun.lock is in sync, --frozen-lockfile succeeds again.
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
+
+  test("--frozen-lockfile fails when a direct dependency present transitively is removed", async () => {
+    // The inverse: removing a direct dep whose package stays in the tree via a
+    // transitive edge must also fail frozen.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.1" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0" },
+      }),
+    );
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(await exited).toBe(1);
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+  });
+
   for (const omit of ["dev", "peer", "optional"]) {
     test(`resolvable lockfile with ${omit} dependencies disabled`, async () => {
       await Promise.all([

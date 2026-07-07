@@ -1445,7 +1445,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control();
+        this.channel = new Control(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1816,8 +1816,43 @@ function abortChildProcess(child, killSignal, reason) {
 }
 
 class Control extends EventEmitter {
-  constructor() {
+  #channel;
+  #refs = 0;
+  #refExplicitlySet = false;
+
+  constructor(channel) {
     super();
+    this.#channel = channel;
+  }
+
+  #refControl(shouldRef) {
+    const channel = this.#channel;
+    if (!channel) return;
+    if (shouldRef) channel.ref();
+    else channel.unref();
+  }
+
+  refCounted() {
+    if (++this.#refs === 1 && !this.#refExplicitlySet) {
+      this.#refControl(true);
+    }
+  }
+
+  unrefCounted() {
+    if (--this.#refs === 0 && !this.#refExplicitlySet) {
+      this.#refControl(false);
+      this.emit("unref");
+    }
+  }
+
+  ref() {
+    this.#refExplicitlySet = true;
+    this.#refControl(true);
+  }
+
+  unref() {
+    this.#refExplicitlySet = true;
+    this.#refControl(false);
   }
 }
 

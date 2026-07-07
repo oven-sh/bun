@@ -539,15 +539,33 @@ export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
   return new (class Control extends EventEmitter {
+    #refs = 0;
+    #refExplicitlySet = false;
+
     constructor() {
       super();
     }
 
+    refCounted() {
+      if (++this.#refs === 1 && !this.#refExplicitlySet) {
+        setRef(true);
+      }
+    }
+
+    unrefCounted() {
+      if (--this.#refs === 0 && !this.#refExplicitlySet) {
+        setRef(false);
+        this.emit("unref");
+      }
+    }
+
     ref() {
+      this.#refExplicitlySet = true;
       setRef(true);
     }
 
     unref() {
+      this.#refExplicitlySet = true;
       setRef(false);
     }
   })();

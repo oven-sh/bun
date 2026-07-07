@@ -103,6 +103,60 @@ test("new Blob", () => {
   expect(blob.type).toBe("");
 });
 
+describe("Blob type", () => {
+  // https://w3c.github.io/FileAPI/#dom-blob-type
+  // An explicit user-supplied `type` must be returned verbatim (lowercased),
+  // without Bun appending `;charset=utf-8` for recognised MIME types.
+  test.each([
+    ["text/plain", "text/plain"],
+    ["application/json", "application/json"],
+    ["text/html", "text/html"],
+    ["text/css", "text/css"],
+    ["text/javascript", "text/javascript"],
+    ["Text/PLAIN", "text/plain"],
+    ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+    ["application/octet-stream", "application/octet-stream"],
+    ["a/b", "a/b"],
+    ["", ""],
+  ])("new Blob/File/slice type %j -> %j", (input, expected) => {
+    expect(new Blob([], { type: input }).type).toBe(expected);
+    expect(new Blob(["x"], { type: input }).type).toBe(expected);
+    expect(new File([], "f", { type: input }).type).toBe(expected);
+    expect(new File(["x"], "f", { type: input }).type).toBe(expected);
+    expect(new Blob(["x"]).slice(0, 1, input).type).toBe(expected);
+  });
+
+  // https://w3c.github.io/FileAPI/#slice-method-algo
+  // A slice() with no contentType, "", or an invalid contentType has type "";
+  // it must not inherit the parent's type (regardless of whether the parent's
+  // type happens to be in Bun's MIME table).
+  test.each(["text/plain", "application/json", "a/b", "x-weird/y-type"])(
+    "slice() does not inherit parent type %j",
+    parentType => {
+      const parent = new Blob(["x"], { type: parentType });
+      expect(parent.slice(0, 1).type).toBe("");
+      expect(parent.slice(0, 1, "").type).toBe("");
+      expect(parent.slice(0, 1, "x/\u00e9").type).toBe("");
+      expect(parent.slice(0, 1, "\u1234").type).toBe("");
+      // parent is not mutated
+      expect(parent.type).toBe(parentType);
+    },
+  );
+
+  test("Bun.file() explicit type is not canonicalized", async () => {
+    expect(Bun.file("x", { type: "text/plain" }).type).toBe("text/plain");
+    expect(Bun.file("x", { type: "application/json" }).type).toBe("application/json");
+    // extension-sniffed default is still Bun's canonical form
+    expect(Bun.file("x.txt").type).toBe("text/plain;charset=utf-8");
+
+    // .write({type}) must not canonicalize either
+    using dir = tempDir("blob-type-write", { "f": "" });
+    const f = Bun.file(path.join(String(dir), "f"));
+    await f.write("hello", { type: "text/plain" });
+    expect(f.type).toBe("text/plain");
+  });
+});
+
 test("new Blob stringifies non-Blob object parts in order", async () => {
   const url = new URL("https://example.com/path");
   expect(await new Blob([url]).text()).toBe("https://example.com/path");

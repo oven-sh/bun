@@ -284,7 +284,11 @@ const exports = {
   },
   statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
-    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags, path);
+    // Snapshot the path as a string before the fd is opened so a throwing
+    // Buffer/URL toString cannot leak the fd, and the registry never retains
+    // the caller's object.
+    const pathForDiag = typeof path === "string" ? path : path == null ? undefined : String(path);
+    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags, pathForDiag);
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
@@ -403,22 +407,14 @@ function asyncWrap(fn: any, name: string) {
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
   class FileHandle extends EventEmitter {
-    constructor(fd, flag, path?) {
+    constructor(fd, flag, path?: string) {
       super();
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
       this[kClosePromise] = null;
       this[kFlag] = flag;
       if (this[kFd] !== -1) {
-        // Snapshot the path as a string so the registry does not retain the
-        // caller's Buffer/URL or dispatch through user-overridable toString
-        // at finalizer time.
-        const pathForDiag = typeof path === "string" ? path : path == null ? undefined : String(path);
-        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
-          this,
-          { fd, path: pathForDiag },
-          this,
-        );
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
       }
     }
 

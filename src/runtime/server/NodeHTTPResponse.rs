@@ -52,6 +52,11 @@ pub struct NodeHTTPResponse {
     /// So we need to buffer that data.
     /// This should be pretty uncommon though.
     pub buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
+    /// node:http: the raw trailer section that followed THIS request's chunked
+    /// body. Moved off the connection's single per-parse buffer the moment the
+    /// body finishes (still inside the parser), because a pipelined request's
+    /// parse would otherwise overwrite it before this request's JS reads it.
+    pub request_trailers: JsCell<Vec<u8>>,
     pub bytes_written: Cell<usize>,
 
     pub upgrade_context: JsCell<UpgradeCTX>,
@@ -171,6 +176,23 @@ unsafe extern "C" {
     // live handle, so no caller-side precondition remains.
     safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
+
+    // Moves the connection's captured node:http request-trailer section out.
+    // `*out` points into a C++ thread-local that stays valid until the next
+    // call on this thread; the caller copies it immediately. Returns 0 when
+    // there is nothing captured or the socket is closed.
+    safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
+        is_ssl: bool,
+        socket: *mut c_void,
+        out: *mut *const u8,
+    ) -> usize;
+    // Parses a raw trailer section into a flat [name, value, ...] JSArray, or
+    // jsUndefined() when it contains no fields.
+    safe fn Bun__NodeHTTP__parseRequestTrailers(
+        global_object: &JSGlobalObject,
+        data: *const u8,
+        length: usize,
+    ) -> JSValue;
 
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
@@ -335,6 +357,30 @@ impl NodeHTTPResponse {
             return JSValue::ZERO;
         }
         Bun__getNodeHTTPServerSocketThisValue(any_response_is_ssl(&raw), raw.socket().cast())
+    }
+
+    /// Called at this request's body fin, still inside the parser: move the
+    /// connection's captured trailer section onto this request before the next
+    /// pipelined message's parse can overwrite it. A no-op unless a chunked
+    /// body's trailer section was captured for this exact message.
+    fn capture_request_trailers(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return;
+        }
+        let Some(raw) = self.raw_response.get() else {
+            return;
+        };
+        let mut ptr: *const u8 = std::ptr::null();
+        let length =
+            Bun__NodeHTTP__takeRequestTrailerBytes(any_response_is_ssl(&raw), raw.socket().cast(), &mut ptr);
+        if length == 0 {
+            return;
+        }
+        // SAFETY: C++ handed back a (ptr, length) into a thread-local it keeps
+        // alive until the next call on this thread; copy it out immediately.
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, length) };
+        self.request_trailers.with_mut(|v| v.append_slice(bytes));
     }
 
     #[allow(dead_code)]
@@ -1233,6 +1279,7 @@ impl NodeHTTPResponse {
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.append_slice(chunk));
         if last {
+            self.capture_request_trailers();
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
@@ -1337,6 +1384,9 @@ impl NodeHTTPResponse {
             last as u8
         );
 
+        if last {
+            self.capture_request_trailers();
+        }
         self.on_data_or_aborted(chunk, last, AbortEvent::None, self.get_this_value());
     }
 
@@ -1843,6 +1893,20 @@ impl NodeHTTPResponse {
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
+    /// `handle.takeRequestTrailers()` — this request's captured trailer section
+    /// parsed into a flat [name, value, ...] array, or undefined. Consumes it.
+    pub(crate) fn take_request_trailers(
+        &self,
+        global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JSValue {
+        let section = self.request_trailers.replace(Vec::new());
+        if section.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+        Bun__NodeHTTP__parseRequestTrailers(global_object, section.as_ptr(), section.len())
+    }
+
     pub(crate) fn get_bytes_written(
         &self,
         _global: &JSGlobalObject,
@@ -2112,6 +2176,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
         body_read_ref: JsCell::new(jsc::Ref::default()),
         promise: JsCell::new(StrongOptional::empty()),
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
+        request_trailers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));

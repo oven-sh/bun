@@ -127,28 +127,43 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
-JSC::JSValue JSNodeHTTPServerSocket::takeRequestTrailers(JSC::JSGlobalObject* globalObject)
+/* Move the connection's captured trailer section out, returning its (ptr, length)
+ * through a thread-local buffer that stays valid until the next call on this
+ * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
+ * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
+extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
 {
+    *out = nullptr;
     if (!socket || us_socket_is_closed(socket)) {
-        return JSC::jsUndefined();
+        return 0;
     }
     std::string* trailers = is_ssl ? requestTrailersFor<true>(socket) : requestTrailersFor<false>(socket);
     if (trailers->empty()) {
-        return JSC::jsUndefined();
+        return 0;
     }
+    static thread_local std::string taken;
+    taken = std::move(*trailers);
+    trailers->clear();
+    *out = taken.data();
+    return taken.size();
+}
 
+/* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
+ * jsUndefined() when it contains no fields. */
+extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length)
+{
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    std::string section = std::move(*trailers);
-    trailers->clear();
+    /* parseTrailerFields post-pads the section in place, so it needs an owned copy. */
+    std::string section(data, length);
 
     /* Parse with the same field-line primitives the request-header parser uses
      * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
     std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
     unsigned count = uWS::HttpParser::parseTrailerFields(section, fields);
     if (count == 0) {
-        return JSC::jsUndefined();
+        return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, count * 2);
@@ -172,7 +187,7 @@ JSC::JSValue JSNodeHTTPServerSocket::takeRequestTrailers(JSC::JSGlobalObject* gl
         array->putDirectIndex(globalObject, index++, JSC::jsString(vm, valueString));
         RETURN_IF_EXCEPTION(scope, {});
     }
-    return array;
+    return JSC::JSValue::encode(array);
 }
 
 template<bool SSL>

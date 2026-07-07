@@ -151,6 +151,10 @@ export default [
         fn: "drainRequestBody",
         length: 0,
       },
+      takeRequestTrailers: {
+        fn: "takeRequestTrailers",
+        length: 0,
+      },
       dumpRequestBody: {
         fn: "dumpRequestBody",
         length: 0,

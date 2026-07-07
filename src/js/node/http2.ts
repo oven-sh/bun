@@ -2807,6 +2807,10 @@ class ServerHttp2Stream extends Http2Stream {
       process.nextTick(callback, err);
       return;
     }
+    // The callback is how user code receives the pushed stream; from here on it can have an
+    // 'error' listener (streamStart marked it never-announced, and streamHeaders never fires for
+    // server-initiated streams).
+    if (pushedStream) pushedStream[kNeverAnnounced] = false;
     process.nextTick(callback, null, pushedStream, headers);
   }
 

@@ -586,8 +586,11 @@ async function runTests() {
   // the serial contract for every other test file. `--parallel` already widens
   // `limit` above, so that flag supersedes this (everything goes through the
   // single global limiter). Width is capped so CI shards, which already fan
-  // out across machines, do not oversubscribe a runner.
-  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(4, availableParallelism());
+  // out across machines, do not oversubscribe a runner. Windows caps lower:
+  // process creation is heavier there and 4-wide surfaced new retry-flakes in
+  // stdin-EPIPE / tight-timeout tests (test-repl-close, test-https-timeout).
+  const parallelSafeCap = isWindows ? 2 : 4;
+  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");

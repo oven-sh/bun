@@ -3915,7 +3915,11 @@ fn push_blob_part_bytes(
                     };
                     let file_len = stat.st_size.max(0) as SizeType;
                     let avail = file_len.saturating_sub(offset);
-                    let want = if size == MAX_SIZE { avail } else { size.min(avail) } as usize;
+                    let want = if size == MAX_SIZE {
+                        avail
+                    } else {
+                        size.min(avail)
+                    } as usize;
                     if want == 0 {
                         return Ok(());
                     }

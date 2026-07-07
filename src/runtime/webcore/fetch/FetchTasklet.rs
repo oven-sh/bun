@@ -1883,22 +1883,16 @@ impl FetchTasklet {
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
         // ...` on the JS thread cannot invalidate them mid-request.
-        let no_proxy = env.get_no_proxy_text();
         let proxy_settings: Option<Box<http::ProxySettings>> =
             if let Some(proxy_opt) = &fetch_options.proxy {
                 if !proxy_opt.is_empty() {
-                    // explicit proxy applies to both schemes; NO_PROXY still filters per hop
-                    http::ProxySettings::new(Some(proxy_opt.href), Some(proxy_opt.href), no_proxy)
+                    http::ProxySettings::from_explicit(proxy_opt.href, env)
                 } else {
                     // proxy: "" means explicitly no proxy (direct connection)
                     None
                 }
             } else {
-                http::ProxySettings::new(
-                    env.get_proxy_text(true),
-                    env.get_proxy_text(false),
-                    no_proxy,
-                )
+                http::ProxySettings::from_env(env)
             };
         // Hop-0 proxy borrows the boxed `ProxySettings` heap storage, which is
         // moved into `AsyncHTTP::init` below and lives on `client` for the

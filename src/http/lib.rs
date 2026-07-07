@@ -616,6 +616,38 @@ impl ProxySettings {
         }))
     }
 
+    /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
+    pub fn from_env(env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+        #[inline]
+        fn is_emptyish(v: &[u8]) -> bool {
+            v.is_empty() || v == b"\"\"" || v == b"''"
+        }
+        // lowercase first; an empty lowercase value falls through to uppercase.
+        let read = |lower: &[u8], upper: &[u8]| -> Option<&[u8]> {
+            let v = env
+                .get(lower)
+                .filter(|v| !v.is_empty())
+                .or_else(|| env.get(upper))?;
+            if is_emptyish(v) { None } else { Some(v) }
+        };
+        Self::new(
+            read(b"http_proxy", b"HTTP_PROXY"),
+            read(b"https_proxy", b"HTTPS_PROXY"),
+            read(b"no_proxy", b"NO_PROXY"),
+        )
+    }
+
+    /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
+    /// used for both schemes; NO_PROXY is still consulted per hop.
+    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+        let no_proxy = env
+            .get(b"no_proxy")
+            .filter(|v| !v.is_empty())
+            .or_else(|| env.get(b"NO_PROXY"))
+            .filter(|v| !(v.is_empty() || *v == b"\"\"" || *v == b"''"));
+        Self::new(Some(proxy_href), Some(proxy_href), no_proxy)
+    }
+
     /// Proxy href to use for `url`, or `None` for a direct connection.
     pub fn resolve(&self, url: &URL<'_>) -> Option<&[u8]> {
         let href: &[u8] = if url.is_http() {
@@ -626,11 +658,68 @@ impl ProxySettings {
         if href.is_empty() {
             return None;
         }
-        if bun_dotenv::no_proxy_matches(&self.no_proxy, Some(url.hostname), Some(url.host)) {
+        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
             return None;
         }
         Some(href)
     }
+}
+
+/// Returns true if the given hostname/host should bypass the proxy according
+/// to the supplied `no_proxy` list. Runs on the HTTP thread from a captured
+/// copy of the env value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
+fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
+    if hostname.is_empty() {
+        return false;
+    }
+    for item in no_proxy_text.split(|&b| b == b',') {
+        let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
+        if entry.is_empty() {
+            continue;
+        }
+        if entry == b"*" {
+            return true;
+        }
+        if strings::starts_with_char(entry, b'.') {
+            entry = &entry[1..];
+            if entry.is_empty() {
+                continue;
+            }
+        }
+
+        // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
+        // with port is "[::1]:8080"; host:port has a single colon.
+        let colon_count = entry.iter().filter(|&&b| b == b':').count();
+        let has_port = if strings::starts_with_char(entry, b'[') {
+            strings::index_of(entry, b"]:").is_some()
+        } else {
+            colon_count == 1
+        };
+
+        if has_port {
+            if strings::eql_case_insensitive_ascii(host, entry, true) {
+                return true;
+            }
+        } else {
+            let entry_len = entry.len();
+            if hostname.len() == entry_len {
+                if strings::eql_case_insensitive_ascii(hostname, entry, true) {
+                    return true;
+                }
+            } else if hostname.len() > entry_len
+                && hostname[hostname.len() - entry_len - 1] == b'.'
+                && strings::eql_case_insensitive_ascii(
+                    &hostname[hostname.len() - entry_len..],
+                    entry,
+                    true,
+                )
+            {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 // TODO: reduce the size of this struct

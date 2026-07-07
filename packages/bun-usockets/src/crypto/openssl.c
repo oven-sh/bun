@@ -863,10 +863,25 @@ end:
 }
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
-  /* Always continue; the user inspects via us_socket_verify_error after
-   * on_handshake. See SSL_verify_cb docs — returning 1 lets us defer the
-   * decision to JS without aborting mid-handshake. */
-  return 1;
+  /* Clients, and servers without rejectUnauthorized, defer the verification
+   * decision to JS: returning 1 lets the handshake finish so the user can
+   * inspect the result via us_socket_verify_error (rejectUnauthorized /
+   * checkServerIdentity on the JS side). */
+  if (preverify_ok) return 1;
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  if (!ssl || !SSL_is_server(ssl) ||
+      !(SSL_get_verify_mode(ssl) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
+    return 1;
+  }
+  /* Servers with requestCert + rejectUnauthorized (the only configuration that
+   * sets SSL_VERIFY_FAIL_IF_NO_PEER_CERT) must refuse an unverifiable client
+   * certificate inside the handshake: if the handshake were allowed to
+   * complete, the post-handshake JS destroy() looks like a clean close to the
+   * peer instead of an authentication failure. Returning 0 makes BoringSSL
+   * send the matching fatal alert (bad_certificate / unknown_ca /
+   * certificate_expired) so every client stack observes the rejection.
+   * SSL_get_verify_result then holds the X509 reason for tlsClientError. */
+  return 0;
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -1492,14 +1507,44 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
   return 1;
 }
 
+static void ssl_discard_parked_reason(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *) s->group->loop->data.ssl_data;
+  if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+    loop_ssl_data->ssl_last_fatal_error[0] = 0;
+    loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+  }
+}
+
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
-  /* A fatal SSL protocol error (wrong version number, bad record, ...) was
-   * recorded just before this failure: report it instead of the X509 verify
-   * result so Node's tlsClientError / client error carries the OpenSSL
-   * reason string. */
-  if (!success && ssl_dispatch_parked_reason(s)) {
-    return;
+  if (!success) {
+    /* A server that aborted the handshake because us_verify_callback rejected
+     * the client certificate reports the X509 reason (DEPTH_ZERO_SELF_SIGNED,
+     * UNABLE_TO_GET_ISSUER_CERT_LOCALLY, ...) so tlsClientError is
+     * actionable. us_internal_ssl_verify_error() short-circuits on
+     * ssl_fatal_error (just set by ssl_park_fatal_reason), so read the verify
+     * result directly. Clients still prefer the parked reason below, which
+     * carries the alert the peer sent. */
+    if (s_ssl(s) && SSL_is_server(s_ssl(s))) {
+      long x509_err = SSL_get_verify_result(s_ssl(s));
+      if (x509_err != X509_V_OK) {
+        ssl_discard_parked_reason(s);
+        struct us_bun_verify_error_t verify_error = {
+            .error = x509_err,
+            .code = us_X509_error_code(x509_err),
+            .reason = X509_verify_cert_error_string(x509_err)};
+        us_dispatch_handshake(s, 0, verify_error);
+        return;
+      }
+    }
+    /* A fatal SSL protocol error (wrong version number, bad record, ...) was
+     * recorded just before this failure: report it instead of the X509 verify
+     * result so Node's tlsClientError / client error carries the OpenSSL
+     * reason string. */
+    if (ssl_dispatch_parked_reason(s)) {
+      return;
+    }
   }
   struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
   us_dispatch_handshake(s, success, verify_error);

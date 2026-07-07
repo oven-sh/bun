@@ -247,7 +247,11 @@ it("Fail to complete client's chain.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    // The handshake is aborted by the server at the first X509 failure so the
+    // client receives a fatal alert; the server reports the reason it aborted
+    // on. For an incomplete chain that is UNABLE_TO_GET_ISSUER_CERT_LOCALLY
+    // (the intermediate could not be found).
+    expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
   }
 });
 
@@ -296,7 +300,7 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
     ]);
     expect(outcome).toBe("closed");
 
-    expect(clientError?.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(clientError?.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
     expect(secureConnections).toHaveLength(0);
     expect(handled).toHaveLength(0);
 
@@ -319,6 +323,73 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
 
     expect(handled).toHaveLength(1);
     expect(secureConnections).toHaveLength(1);
+  } finally {
+    server.close();
+  }
+});
+
+it("client sees a fatal TLS alert when the server rejects its certificate under rejectUnauthorized", async () => {
+  // The server must refuse an unverifiable client certificate inside the
+  // handshake so the rejection reaches the wire as a fatal TLS alert. If the
+  // handshake were allowed to complete and the connection torn down afterwards
+  // with a clean close_notify, a client cannot tell "my certificate was
+  // rejected" from "the server had nothing to say". Over TLS 1.3 the alert
+  // arrives after the client's secureConnect (one-RTT handshake); surfacing
+  // that as a client-side error is tracked separately. Over TLS 1.2 the
+  // server aborts before the client's Finished is accepted, so the client
+  // never completes the handshake and the alert is unambiguous.
+  const untrustedClient = {
+    key: readFileSync(join(import.meta.dir, "fixtures", "agent2-key.pem"), "utf8"),
+    cert: readFileSync(join(import.meta.dir, "fixtures", "agent2-cert.pem"), "utf8"),
+  };
+  let serverClientError: any;
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+      rejectUnauthorized: true,
+      maxVersion: "TLSv1.2",
+    },
+    socket => socket.end("SECRET"),
+  );
+  server.on("tlsClientError", err => {
+    serverClientError ??= err;
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  try {
+    const outcome = await new Promise<{ error: any; secureConnect: boolean; hadError: boolean; data: string }>(
+      resolve => {
+        let error: any = null;
+        let secureConnect = false;
+        let data = "";
+        const c = tls.connect({
+          host: "127.0.0.1",
+          port,
+          ca: serverTls.ca,
+          key: untrustedClient.key,
+          cert: untrustedClient.cert,
+          checkServerIdentity,
+          maxVersion: "TLSv1.2",
+        });
+        c.on("secureConnect", () => (secureConnect = true));
+        c.on("data", d => (data += d));
+        c.on("error", e => (error = e));
+        c.on("close", hadError => resolve({ error, secureConnect, hadError, data }));
+      },
+    );
+
+    // The server must not have handed the connection to the application.
+    expect(outcome.data).toBe("");
+    // The client's handshake never completes: it receives a fatal alert.
+    expect(outcome.secureConnect).toBe(false);
+    expect(outcome.error).not.toBeNull();
+    expect(outcome.hadError).toBe(true);
+    // The server reports the specific X509 verification failure.
+    expect(serverClientError?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
   } finally {
     server.close();
   }

@@ -101,9 +101,17 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
     return c->kind;
 }
 
+/* The sweep advances timestamp on an absolute 4 s grid, so the first tick
+ * after arming lands in (0, 4] s. +1 makes the timeout a floor (never fires
+ * before `units`); clamp so values near the wheel max don't wrap to tick 1. */
+static inline unsigned int us_internal_timeout_ticks(unsigned int units, unsigned int shift) {
+    unsigned int ticks = ((units + ((1u << shift) - 1)) >> shift) + 1;
+    return ticks > 240 ? 240 : ticks;
+}
+
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
-        s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        s->timeout = ((unsigned int)s->group->timestamp + us_internal_timeout_ticks(seconds, 2)) % 240;
     } else {
         s->timeout = 255;
     }
@@ -111,7 +119,7 @@ __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, uns
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
     if (seconds) {
-        c->timeout = ((unsigned int)c->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        c->timeout = ((unsigned int)c->group->timestamp + us_internal_timeout_ticks(seconds, 2)) % 240;
     } else {
         c->timeout = 255;
     }
@@ -119,7 +127,7 @@ void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int
 
 __attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
     if (minutes) {
-        s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
+        s->long_timeout = ((unsigned int)s->group->long_timestamp + us_internal_timeout_ticks(minutes, 0)) % 240;
     } else {
         s->long_timeout = 255;
     }
@@ -127,7 +135,7 @@ __attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s
 
 void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) {
     if (minutes) {
-        c->long_timeout = ((unsigned int)c->group->long_timestamp + minutes) % 240;
+        c->long_timeout = ((unsigned int)c->group->long_timestamp + us_internal_timeout_ticks(minutes, 0)) % 240;
     } else {
         c->long_timeout = 255;
     }

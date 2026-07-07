@@ -2383,7 +2383,7 @@ it.concurrent(
   async () => {
     using server = Bun.serve({
       port: 0,
-      idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+      idleTimeout: 8, // uws precision is 4 seconds, so this fires in (8, 12] s
       async fetch(req) {
         const url = new URL(req.url);
         return new Response(
@@ -2391,7 +2391,7 @@ it.concurrent(
             async pull(controller) {
               controller.enqueue("Hello,");
               if (url.pathname === "/timeout") {
-                await Bun.sleep(10000);
+                await Bun.sleep(14000);
               } else {
                 await Bun.sleep(10);
               }
@@ -2408,14 +2408,14 @@ it.concurrent(
       const res = await fetch(new URL(pathname, server.url.origin));
       expect(res.status).toBe(200);
       if (success) {
-        expect(res.text()).resolves.toBe("Hello, World!");
+        await expect(res.text()).resolves.toBe("Hello, World!");
       } else {
-        expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+        await expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
       }
     }
     await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
   },
-  15_000,
+  20_000,
 );
 
 it.concurrent(
@@ -2507,6 +2507,65 @@ it.concurrent(
     const res = await fetch(new URL("/long-timeout", server.url.origin));
     expect(res.status).toBe(200);
     expect(res.text()).resolves.toBe("Hello, World!");
+  },
+  20_000,
+);
+
+it.concurrent(
+  "idleTimeout never fires before the configured number of seconds",
+  async () => {
+    // uSockets sweeps timeouts on an absolute 4 s grid; a socket armed t ms
+    // before a grid boundary used to get its first tick after only t ms, so
+    // idleTimeout: 4 could close a socket ~0 ms after the request arrived.
+    // Space requests across one full 4 s period so at least one lands in the
+    // window just before a tick regardless of the sweep timer's phase. The
+    // sleeps below construct that input pattern, they are not a wait.
+    const HANDLER_MS = 150;
+    let earliestAbort = Infinity;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      idleTimeout: 4,
+      async fetch(req) {
+        const start = performance.now();
+        let responded = false;
+        req.signal.addEventListener("abort", () => {
+          if (!responded) earliestAbort = Math.min(earliestAbort, performance.now() - start);
+        });
+        await Bun.sleep(HANDLER_MS);
+        responded = true;
+        return new Response("done");
+      },
+    });
+
+    const one = () =>
+      new Promise<number>(resolve => {
+        const s = net.connect(server.port!, "127.0.0.1");
+        let got = 0;
+        s.on("connect", () => s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+        s.on("data", c => {
+          got += c.length;
+          s.destroy();
+        });
+        s.on("error", () => {});
+        s.on("close", () => resolve(got));
+      });
+
+    const pending: Promise<number>[] = [];
+    for (let i = 0; i < 32; i++) {
+      pending.push(one());
+      await Bun.sleep(130);
+    }
+    const bytes = await Promise.all(pending);
+    const killed = bytes.filter(b => b === 0).length;
+
+    // A 150 ms handler is never idle for 4 s, so no request may be reaped and
+    // req.signal must not abort before the configured timeout elapsed.
+    expect({ killed, earliestAbort: earliestAbort < 3900 ? earliestAbort : "never" }).toEqual({
+      killed: 0,
+      earliestAbort: "never",
+    });
   },
   20_000,
 );

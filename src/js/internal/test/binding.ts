@@ -21,6 +21,8 @@ function internalBinding(name: string) {
           TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
         },
       };
+    case "quic":
+      return require("internal/quic/binding");
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

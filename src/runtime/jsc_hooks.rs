@@ -331,9 +331,21 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
-            crate::webcore::body::HiveAllocator::init(),
-        )),
+        // Placement-new: `Box::new(init())` materializes the whole ~100 KB pool
+        // in a stack temporary and memcpys it to the heap. `ManuallyDrop<T>` is
+        // `repr(transparent)`, so init the pool straight into the allocation.
+        body_value_pool: {
+            let mut pool =
+                Box::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>::new_uninit();
+            // SAFETY: fresh heap allocation — non-null, aligned for the pool and
+            // valid for `size_of::<HiveAllocator>()` writes. `init_in_place`
+            // writes only the occupancy bitset; the slot buffer is `MaybeUninit`,
+            // for which uninitialized bytes are a valid representation.
+            unsafe {
+                crate::webcore::body::HiveAllocator::init_in_place(pool.as_mut_ptr().cast());
+                pool.assume_init()
+            }
+        },
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -3569,6 +3581,21 @@ unsafe fn fetch_builtin_module(
         };
     }
 
+    // ── `--expose-internals`: bundled `internal/*` modules ─────────────
+    if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
+        let resolved = ResolvedSource {
+            source_code: bun_core::String::empty(),
+            specifier: *specifier,
+            source_url: bun_core::String::clone_utf8(&name),
+            tag,
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+        // SAFETY: per fn contract — `out` is a valid out-param.
+        unsafe { *out = ErrorableResolvedSource::ok(resolved) };
+        return FetchBuiltinResult::Found;
+    }
+
     // ── `macro:` namespace ──────────────────────────────────────────────
     // `vm.macro_entry_points` values are
     // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
@@ -4778,6 +4805,13 @@ unsafe fn _resolve<'a>(
         return Ok(());
     }
 
+    // `--expose-internals`: bundled `internal/*` modules resolve to
+    // themselves; `fetch_builtin_module` serves them by registry tag.
+    if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
+        *ret_path = specifier;
+        return Ok(());
+    }
+
     // `[eval]` / `[stdin]` virtual sources.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { &*vm }.module_loader.eval_source.is_some()
@@ -5024,6 +5058,14 @@ unsafe fn resolve_hook(
         };
         // SAFETY: per fn contract.
         unsafe { *res = ErrorableString::ok(path) };
+        return true;
+    }
+
+    // `--expose-internals`: bundled `internal/*` modules resolve to
+    // themselves; `fetch_builtin_module` serves them by registry tag.
+    if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };
         return true;
     }
 

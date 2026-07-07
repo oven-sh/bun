@@ -4097,6 +4097,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "tls"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "cached_builtins"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "quic"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 

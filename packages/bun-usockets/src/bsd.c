@@ -87,7 +87,20 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             int err = WSAGetLastError();
             if (ret < 0) {
                 if (err == WSAEINTR) continue;
-                if (err == WSAEWOULDBLOCK) return i;
+                /* Winsock reports through WSAGetLastError(), but callers read
+                 * errno -- lsquic closes the connection on any errno that is
+                 * neither EAGAIN/EWOULDBLOCK nor EMSGSIZE. Mirror it. */
+                switch (err) {
+                    case WSAEWOULDBLOCK:  errno = EAGAIN; break;
+                    case WSAEMSGSIZE:     errno = EMSGSIZE; break;
+                    case WSAECONNREFUSED: errno = ECONNREFUSED; break;
+                    case WSAENETUNREACH:  errno = ENETUNREACH; break;
+                    case WSAEHOSTUNREACH: errno = EHOSTUNREACH; break;
+                    default:              errno = EIO; break;
+                }
+                /* Match Linux sendmmsg: report the count sent so far; an
+                 * error is returned only when no datagram was sent. */
+                if (err == WSAEWOULDBLOCK || i > 0) return i;
                 return ret;
             }
             break;
@@ -111,7 +124,9 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
             if (ret < 0) {
                 if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                /* Match Linux sendmmsg: report the count sent so far; an
+                 * error is returned only when no datagram was sent. */
+                if (errno == EAGAIN || errno == EWOULDBLOCK || i > 0) return i;
                 return ret;
             }
             break;
@@ -129,24 +144,33 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
 #if defined(_WIN32)
-    socklen_t addr_len = sizeof(struct sockaddr_storage);
-    while (1) {
-        ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
-        if (ret < 0) {
-            int err = WSAGetLastError();
-            if (err == WSAEINTR) continue;
-            /* Winsock surfaces ICMP "port/host unreachable" from a previous
-             * sendto as WSAECONNRESET (or WSAENETRESET for TTL-expired) on the
-             * next recv. That's per-destination, not per-socket, so treat it as
-             * "no packet" and retry — bubbling it up makes loop.c close the
-             * socket and tear down every conn that shares it (e.g. the QUIC
-             * client endpoint). Mirrors libuv's uv__udp_recv handling. */
-            if (err == WSAECONNRESET || err == WSAENETRESET) continue;
-            return ret;
+    /* No recvmmsg on Winsock: drain the socket with repeated recvfrom so the
+     * caller still sees a whole read burst as one batch, exactly as recvmmsg
+     * delivers it on unix. */
+    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+        while (1) {
+            socklen_t addr_len = sizeof(struct sockaddr_storage);
+            ssize_t ret = recvfrom(fd, recvbuf->buf + (size_t) i * LIBUS_UDP_MAX_SIZE,
+                LIBUS_UDP_MAX_SIZE, flags, (struct sockaddr *)&recvbuf->addr[i], &addr_len);
+            if (ret < 0) {
+                int err = WSAGetLastError();
+                if (err == WSAEINTR) continue;
+                /* Winsock surfaces ICMP "port/host unreachable" from a previous
+                 * sendto as WSAECONNRESET (or WSAENETRESET for TTL-expired) on the
+                 * next recv. That's per-destination, not per-socket, so treat it as
+                 * "no packet" and retry — bubbling it up makes loop.c close the
+                 * socket and tear down every conn that shares it (e.g. the QUIC
+                 * client endpoint). Mirrors libuv's uv__udp_recv handling. */
+                if (err == WSAECONNRESET || err == WSAENETRESET) continue;
+                /* Drained (WSAEWOULDBLOCK) or a real error: report the datagrams
+                 * already read; only surface the error when none were. */
+                return i > 0 ? i : (int) ret;
+            }
+            recvbuf->recvlen[i] = (size_t) ret;
+            break;
         }
-        recvbuf->recvlen = ret;
-        return 1;
     }
+    return LIBUS_UDP_RECV_COUNT;
 #elif defined(__APPLE__)
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
@@ -293,7 +317,7 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
 
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
-    return (char *)&msgvec->addr;
+    return (char *)&msgvec->addr[index];
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_name;
 #endif
@@ -301,7 +325,7 @@ char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index) {
 
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
-    return msgvec->buf;
+    return msgvec->buf + (size_t) index * LIBUS_UDP_MAX_SIZE;
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_iov[0].iov_base;
 #endif
@@ -309,7 +333,7 @@ char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index) {
 
 int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
-    return msgvec->recvlen;
+    return (int) msgvec->recvlen[index];
 #else
     /* Clamp to the per-datagram buffer capacity so a truncated datagram can
      * never report more bytes than we actually copied, even if the underlying

@@ -1,0 +1,2035 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -236,6 +236,51 @@
+     void (*on_conncloseframe_received)(lsquic_conn_t *c,
+                                        int app_error, uint64_t error_code,
+                                        const char *reason, int reason_len);
++    /**
++     * Optional callback fired on the client when the handshake is CONFIRMED
++     * (HANDSHAKE_DONE received; RFC 9001 sec 4.1.2).  bun addition.
++     */
++    void (*on_hsk_confirmed)(lsquic_conn_t *c);
++    /**
++     * Optional callback fired when a server mini connection is destroyed
++     * without promoting (handshake failure or client abandonment).  The
++     * peer address identifies which connection attempt died.  bun addition.
++     */
++    void (*on_mini_conn_failed)(void *stream_if_ctx,
++                                const struct sockaddr *peer_sa,
++                                uint64_t error_code);
++    /**
++     * Optional callback fired when a packet carrying DATAGRAM frames is
++     * acknowledged by the peer (`acked` is 1) or declared lost (`acked` is
++     * 0).  `count` is the number of DATAGRAM frames the packet carried.
++     * bun addition.
++     */
++    void (*on_datagram_status)(lsquic_conn_t *c, unsigned count, int acked);
++    /**
++     * Optional callback fired on the client the moment the server rejects
++     * its early data (before any of the 0-RTT streams are torn down).
++     * bun addition.
++     */
++    void (*on_early_data_failed)(lsquic_conn_t *c);
++    /**
++     * Optional callback fired when the connection switches to a validated
++     * (or, with `validated` 0, an as-yet-unvalidated) network path.
++     * `is_preferred` is set on the client when the new path targets the
++     * server's advertised preferred_address.  bun addition.
++     */
++    void (*on_path_switch)(lsquic_conn_t *c, int validated, int is_preferred,
++                           const struct sockaddr *new_local,
++                           const struct sockaddr *new_peer,
++                           const struct sockaddr *old_local,
++                           const struct sockaddr *old_peer);
++    /**
++     * An HTTP/3 ORIGIN frame (RFC 9412) arrived on the control stream.
++     * The payload (a sequence of 16-bit-length-prefixed ASCII origins)
++     * is delivered in chunks; `fin` is set with the last chunk.
++     * bun addition.
++     */
++    void (*on_origin)(lsquic_conn_t *c, const unsigned char *chunk,
++                                                        size_t len, int fin);
+ };
+ 
+ struct ssl_ctx_st;
+@@ -869,6 +914,12 @@
+     unsigned        es_ping_period;
+ 
+     /**
++     * Exact keep-alive PING cadence in microseconds; overrides the
++     * idle-derived cadence when non-zero.  bun addition.
++     */
++    uint64_t        es_ping_period_us;
++
++    /**
+      * Source Connection ID length.  Only applicable to the IETF QUIC
+      * versions.  Valid values are 0 through 20, inclusive.
+      *
+@@ -1173,7 +1224,58 @@
+      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
+      */
+     unsigned        es_max_webtransport_server_streams;
+-#endif    
++#endif
++
++    /**
++     * Value to advertise as the max_datagram_frame_size transport parameter
++     * when es_datagrams is on.  Zero means "use the default"
++     * (max_udp_payload_size).
++     */
++    unsigned short  es_max_datagram_frame_size;
++
++    /**
++     * HTTP/3 header-set limits enforced on RECEIVED header blocks by the
++     * application's hset interface context.  Zero means unlimited.
++     * bun additions: packed into ea_hsi_ctx by the shim.
++     */
++    unsigned short  es_max_h3_header_pairs;
++    unsigned        es_max_h3_header_bytes;
++
++    /**
++     * bun: whether to advertise SETTINGS_H3_DATAGRAM (RFC 9297).  Defaults
++     * to the value of es_datagrams; set to 0 to keep transport datagrams
++     * negotiated while rejecting HTTP/3 datagrams.
++     */
++    int             es_h3_datagram;
++
++    /**
++     * bun: global stateless-reset token bucket.  Burst 0 (default)
++     * disables limiting; otherwise up to es_sreset_burst resets can be
++     * sent at once, refilling at es_sreset_rate per second.
++     */
++    unsigned        es_sreset_burst;
++    double          es_sreset_rate;
++
++    /**
++     * bun: HTTP/3 SETTINGS_ENABLE_CONNECT_PROTOCOL — currently only
++     * participates in the 0-RTT early-data context.
++     */
++    int             es_h3_connect_protocol;
++
++    /**
++     * bun: pre-encoded HTTP/3 ORIGIN frame payload (RFC 9412) servers send
++     * on the control stream right after SETTINGS.  Not copied — the memory
++     * must outlive the engine.  NULL/0 disables the frame.
++     */
++    const unsigned char *es_origin_blob;
++    size_t          es_origin_blob_len;
++
++    /**
++     * bun: millisecond-granular idle timeout.  When nonzero, takes
++     * precedence over the seconds-granular @ref es_idle_timeout (node's
++     * maxIdleTimeout transport parameter is specified in milliseconds).
++     */
++    unsigned        es_idle_timeout_ms;
+ };
+ 
+ /* Initialize `settings' to default values */
+@@ -1596,6 +1698,13 @@
+ lsquic_conn_going_away (lsquic_conn_t *);
+ 
+ /**
++ * Whether the peer advertised SETTINGS_H3_DATAGRAM=1 (RFC 9297).
++ * Returns 0 for non-HTTP/3 connections.  bun addition.
++ */
++int
++lsquic_conn_peer_h3_datagram (const lsquic_conn_t *);
++
++/**
+  * This forces connection close.  on_conn_closed and on_close callbacks
+  * will be called.
+  */
+@@ -1833,6 +1942,20 @@
+ lsquic_stream_is_rejected (const lsquic_stream_t *s);
+ 
+ /**
++ * Returns true if any data on this stream arrived in 0-RTT (early data)
++ * packets.
++ */
++int
++lsquic_stream_received_early_data (const lsquic_stream_t *s);
++
++/**
++ * Returns true if a RESET_STREAM frame was received for this stream
++ * (regardless of its error code).
++ */
++int
++lsquic_stream_reset_received (const lsquic_stream_t *s);
++
++/**
+  * Refuse pushed stream.  Call it from @ref on_new_stream.
+  *
+  * No need to call lsquic_stream_close() after this.  on_close will be called.
+@@ -2031,6 +2154,112 @@
+ unsigned lsquic_engine_quic_versions (const lsquic_engine_t *);
+ 
+ /**
++ * Total live conns in the engine (mini + full). Used to defer a graceful
++ * close while mini-conn handshakes are in flight.
++ */
++unsigned
++lsquic_engine_conn_count (const lsquic_engine_t *);
++
++/**
++ * Whether the engine tracks this connection ID (live conn or purgatory).
++ */
++int
++lsquic_engine_cid_in_use (lsquic_engine_t *, const unsigned char *cid,
++                          size_t cid_len);
++
++/**
++ * Stateless resets this (server) engine sent and rate-limited away.
++ */
++void
++lsquic_engine_sreset_stats (const lsquic_engine_t *, uint64_t *sent,
++                            uint64_t *limited);
++
++/**
++ * PING frames received on this connection.
++ */
++uint64_t
++lsquic_conn_pings_received (const lsquic_conn_t *);
++
++/**
++ * Set this connection's keep-alive PING cadence in microseconds,
++ * overriding the engine-wide settings.  0 disables keep-alive PINGs.
++ */
++void
++lsquic_conn_set_ping_period_us (lsquic_conn_t *, uint64_t usec);
++
++/**
++ * Opt this client connection in (or out) of migrating to the server's
++ * preferred address after the handshake.  Off by default; call before
++ * the handshake completes.
++ */
++void
++lsquic_conn_use_preferred_address (lsquic_conn_t *, int on);
++
++/**
++ * Force the pending delayed ACK to be scheduled on the next engine tick.
++ */
++void
++lsquic_conn_ack_now (lsquic_conn_t *);
++
++/**
++ * Update the millisecond idle timeout applied to connections created
++ * after this call (see @ref es_idle_timeout_ms).
++ */
++void
++lsquic_engine_set_idle_timeout_ms (lsquic_engine_t *, unsigned ms);
++
++/**
++ * Whether the DATAGRAM frame currently being delivered via the on_datagram
++ * callback arrived in a 0-RTT (early data) packet.  Valid only during that
++ * callback.
++ */
++int
++lsquic_conn_datagram_early (const lsquic_conn_t *);
++
++/**
++ * Abort the connection without sending CONNECTION_CLOSE.  The peer
++ * discovers the death via stateless reset or idle timeout.
++ */
++void
++lsquic_conn_abort_silent (lsquic_conn_t *);
++
++/**
++ * Per-connection SSL object (IETF QUIC only). Returns NULL for gQUIC or
++ * before the encryption session is set up.
++ */
++struct ssl_st *
++lsquic_conn_get_ssl (const lsquic_conn_t *);
++
++/**
++ * Close with an application (is_app != 0) or transport CONNECTION_CLOSE
++ * carrying the given code and reason. lsquic_conn_close() always sends
++ * transport NO_ERROR.
++ */
++void
++lsquic_conn_abort_error (lsquic_conn_t *, int is_app, unsigned error_code,
++                         const char *reason);
++
++/**
++ * Application error code from the most recently received RESET_STREAM /
++ * STOP_SENDING frame for this stream (0 when none).
++ */
++uint64_t
++lsquic_stream_get_error_code (const lsquic_stream_t *);
++
++/**
++ * Send RESET_STREAM(error_code) regardless of FIN state, then shut the read
++ * side. lsquic_stream_maybe_reset skips RST when FIN was already sent.
++ */
++void
++lsquic_stream_force_reset_ext (lsquic_stream_t *, uint64_t error_code);
++
++/**
++ * Queue STOP_SENDING(error_code) for this stream and shut its read side.
++ */
++void
++lsquic_stream_send_stop_sending (lsquic_stream_t *, uint64_t error_code);
++
++/**
+  * This is one of the flags that can be passed to @ref lsquic_global_init.
+  * Use it to initialize LSQUIC for use in client mode.
+  */
+--- a/src/liblsquic/lsquic_conn.c
++++ b/src/liblsquic/lsquic_conn.c
+@@ -15,6 +15,8 @@
+ #include "lsquic_packet_in.h"
+ #include "lsquic_str.h"
+ #include "lsquic_enc_sess.h"
++#include "lsquic_sizes.h"
++#include "lsquic_trans_params.h"
+ #include "lsquic_mm.h"
+ #include "lsquic_engine_public.h"
+ #include "lsquic_ev_log.h"
+@@ -138,6 +140,91 @@
+ }
+ 
+ 
++/* bun: flat copy of the local or peer transport params (the struct and enum
++ * indices are internal). Mirrors `struct us_nq_tp` in node_quic_shim.c. */
++struct us_nq_tp {
++    uint64_t f[12];
++    int      disable_active_migration;
++    char     initial_scid[2 * MAX_CID_LEN + 1];
++    char     retry_scid[2 * MAX_CID_LEN + 1];
++    char     original_dcid[2 * MAX_CID_LEN + 1];
++};
++
++static void
++us_nq_tp_hex_cid (char *out, const lsquic_cid_t *cid)
++{
++    static const char hex[] = "0123456789abcdef";
++    for (unsigned i = 0; i < cid->len && i < MAX_CID_LEN; ++i)
++    {
++        out[2*i]     = hex[(cid->idbuf[i] >> 4) & 0xF];
++        out[2*i + 1] = hex[ cid->idbuf[i]       & 0xF];
++    }
++    out[2 * cid->len] = '\0';
++}
++
++int
++lsquic_conn_transport_params (const struct lsquic_conn *lconn, int peer,
++                              struct us_nq_tp *out)
++{
++    const struct transport_params *tp;
++    if (!(lconn->cn_flags & LSCONN_IETF) || !lconn->cn_enc_session)
++        return 0;
++    if (peer)
++        tp = lconn->cn_esf.i->esfi_get_peer_transport_params(
++                lconn->cn_enc_session);
++    else
++        tp = NULL;
++    if (!tp)
++        return 0;
++    out->f[0]  = tp->tp_init_max_stream_data_bidi_local;
++    out->f[1]  = tp->tp_init_max_stream_data_bidi_remote;
++    out->f[2]  = tp->tp_init_max_stream_data_uni;
++    out->f[3]  = tp->tp_init_max_data;
++    out->f[4]  = tp->tp_init_max_streams_bidi;
++    out->f[5]  = tp->tp_init_max_streams_uni;
++    out->f[6]  = tp->tp_max_idle_timeout;
++    out->f[7]  = tp->tp_max_udp_payload_size;
++    out->f[8]  = tp->tp_ack_delay_exponent;
++    out->f[9]  = tp->tp_max_ack_delay;
++    out->f[10] = tp->tp_active_connection_id_limit;
++    out->f[11] = tp->tp_set & (1u << TPI_MAX_DATAGRAM_FRAME_SIZE)
++        ? tp->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE] : 0;
++    out->disable_active_migration =
++        !!(tp->tp_set & (1u << TPI_DISABLE_ACTIVE_MIGRATION));
++    out->initial_scid[0] = out->retry_scid[0] = out->original_dcid[0] = '\0';
++    if (tp->tp_set & (1u << TPI_INITIAL_SOURCE_CID))
++        us_nq_tp_hex_cid(out->initial_scid, &tp->tp_initial_source_cid);
++    if (tp->tp_set & (1u << TPI_RETRY_SOURCE_CID))
++        us_nq_tp_hex_cid(out->retry_scid, &tp->tp_retry_source_cid);
++    if (tp->tp_set & (1u << TPI_ORIGINAL_DEST_CID))
++        us_nq_tp_hex_cid(out->original_dcid, &tp->tp_original_dest_cid);
++    return 1;
++}
++
++
++/* bun: send an application (or transport) CONNECTION_CLOSE with the given
++ * code and reason. lsquic_conn_close() always sends transport NO_ERROR. */
++void
++lsquic_conn_abort_error (struct lsquic_conn *lconn, int is_app,
++                         unsigned error_code, const char *reason)
++{
++    lconn->cn_if->ci_abort_error(lconn, is_app, error_code, "%s",
++                                 reason ? reason : "");
++}
++
++
++/* bun: see lsquic_enc_sess_ietf_get_ssl. */
++extern struct ssl_st *lsquic_enc_sess_ietf_get_ssl(enc_session_t *);
++
++struct ssl_st *
++lsquic_conn_get_ssl (const struct lsquic_conn *lconn)
++{
++    if (lconn->cn_enc_session && (lconn->cn_flags & LSCONN_IETF))
++        return lsquic_enc_sess_ietf_get_ssl(lconn->cn_enc_session);
++    return NULL;
++}
++
++
+ void
+ lsquic_conn_make_stream (struct lsquic_conn *lconn)
+ {
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -217,6 +217,12 @@
+ struct lsquic_engine
+ {
+     struct lsquic_engine_public        pub;
++    /* bun: stateless-reset accounting and global token bucket
++     * (es_sreset_burst/es_sreset_rate; burst 0 = unlimited). */
++    uint64_t                           sreset_sent;
++    uint64_t                           sreset_limited;
++    double                             sreset_tokens;
++    lsquic_time_t                      sreset_refill;
+     enum {
+         ENG_SERVER      = LSENG_SERVER,
+         ENG_HTTP        = LSENG_HTTP,
+@@ -385,6 +391,10 @@
+     settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
+     settings->es_spin            = LSQUIC_DF_SPIN;
+     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
++    settings->es_h3_datagram     = 1; /* bun: follows es_datagrams unless cleared */
++    settings->es_sreset_burst    = 0; /* bun: 0 = unlimited */
++    settings->es_sreset_rate     = 0;
++    settings->es_h3_connect_protocol = 0; /* bun */
+     settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
+     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
+     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
+@@ -726,7 +736,11 @@
+         * (engine->pub.enp_settings.es_mtu_probe_timer
+          ? engine->pub.enp_settings.es_mtu_probe_timer
+          : LSQUIC_DF_MTU_PROBE_TIMER);
+-    if (flags & ENG_SERVER)
++    if ((flags & ENG_SERVER)
++        /* bun: client engines also need the packet-response queue and the
++         * CID purgatory when they may answer packets for silently-dropped
++         * connections with stateless resets (RFC 9000 Section 10.3). */
++            || engine->pub.enp_settings.es_send_prst)
+     {
+         engine->pr_queue = lsquic_prq_create(
+             10000 /* TODO: make configurable */, MAX_OUT_BATCH_SIZE,
+@@ -951,6 +965,29 @@
+     struct purga_el *puel;
+ 
+     engine->mini_conns_count -= !!(conn->cn_flags & LSCONN_MINI);
++    /* bun: a server mini-conn dying WITHOUT promotion means the handshake
++     * failed or the client abandoned it; tell the application (which may
++     * have announced a session at Initial receipt) so it isn't orphaned.
++     * The error code mirrors imico_generate_conn_close's choice. */
++    if ((conn->cn_flags & (LSCONN_MINI|LSCONN_PROMOTED)) == LSCONN_MINI
++            && (conn->cn_flags & LSCONN_IETF)
++            && engine->pub.enp_stream_if->on_mini_conn_failed)
++    {
++        const struct sockaddr *local_sa, *peer_sa;
++        const struct ietf_mini_conn *imc = (struct ietf_mini_conn *) conn;
++        uint64_t error_code;
++        if (imc->imc_flags & IMC_ABORT_ERROR)
++            error_code = imc->imc_error_code;
++        else if (imc->imc_flags & IMC_TLS_ALERT)
++            error_code = 0x100 + imc->imc_tls_alert;
++        else if (imc->imc_flags & IMC_BAD_TRANS_PARAMS)
++            error_code = TEC_TRANSPORT_PARAMETER_ERROR;
++        else
++            error_code = TEC_NO_ERROR;
++        if (0 == lsquic_conn_get_sockaddr(conn, &local_sa, &peer_sa))
++            engine->pub.enp_stream_if->on_mini_conn_failed(
++                        engine->pub.enp_stream_if_ctx, peer_sa, error_code);
++    }
+     if (engine->purga && !(conn->cn_flags & LSCONN_NO_BL)
+         /* Blacklist all CIDs except for promoted mini connections */
+             && (conn->cn_flags & (LSCONN_MINI|LSCONN_PROMOTED))
+@@ -1439,6 +1476,42 @@
+ };
+ 
+ 
++/* bun: global stateless-reset token bucket.  Burst 0 disables limiting. */
++static int
++engine_sreset_allowed (struct lsquic_engine *engine, lsquic_time_t now)
++{
++    const struct lsquic_engine_settings *const s = &engine->pub.enp_settings;
++
++    if (!s->es_sreset_burst)
++        return 1;
++    if (engine->sreset_refill)
++    {
++        engine->sreset_tokens += (double) (now - engine->sreset_refill)
++                                        * s->es_sreset_rate / 1000000.0;
++        if (engine->sreset_tokens > (double) s->es_sreset_burst)
++            engine->sreset_tokens = (double) s->es_sreset_burst;
++    }
++    else
++        engine->sreset_tokens = (double) s->es_sreset_burst;
++    engine->sreset_refill = now;
++    if (engine->sreset_tokens >= 1.0)
++    {
++        engine->sreset_tokens -= 1.0;
++        return 1;
++    }
++    return 0;
++}
++
++
++void
++lsquic_engine_sreset_stats (const lsquic_engine_t *engine,
++                            uint64_t *sent, uint64_t *limited)
++{
++    *sent = engine->sreset_sent;
++    *limited = engine->sreset_limited;
++}
++
++
+ static lsquic_conn_t *
+ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+          struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
+@@ -1543,8 +1616,16 @@
+   maybe_send_prst:
+         if ((engine->flags & ENG_SERVER) &&
+                                         engine->pub.enp_settings.es_send_prst)
+-            schedule_req_packet(engine, PACKET_REQ_PUBRES, packet_in,
++        {
++            if (engine_sreset_allowed(engine, packet_in->pi_received))
++            {
++                ++engine->sreset_sent;
++                schedule_req_packet(engine, PACKET_REQ_PUBRES, packet_in,
+                                                 sa_local, sa_peer, peer_ctx);
++            }
++            else
++                ++engine->sreset_limited;
++        }
+         return NULL;
+     case VER_SUPPORTED:
+         pf = select_pf_by_ver(version);
+@@ -1716,6 +1797,44 @@
+ /* Return 0 if packet is being processed by a real connection (mini or full),
+  * otherwise return 1.
+  */
++/* bun: client engines never create connections for unknown DCIDs, but they
++ * must still answer packets for connections they dropped silently with
++ * stateless resets (RFC 9000 Section 10.3).  Unlike the server path, only
++ * purgatory-confirmed deleted conns qualify: a client engine can share a
++ * socket with a server engine, so an unknown DCID here is not necessarily
++ * ours to reset. */
++static void
++client_maybe_send_prst (lsquic_engine_t *engine,
++        lsquic_packet_in_t *packet_in, const struct sockaddr *sa_local,
++        const struct sockaddr *sa_peer, void *peer_ctx)
++{
++    struct purga_el *puel;
++
++    if (!engine->pr_queue || !engine->purga
++            || !engine->pub.enp_settings.es_send_prst
++            || (packet_in->pi_flags & PI_GQUIC)
++            || HETY_NOT_SET != packet_in->pi_header_type)
++        return;
++    puel = lsquic_purga_contains(engine->purga, &packet_in->pi_conn_id);
++    if (!puel || puel->puel_type != PUTY_CONN_DELETED)
++        return;
++    if (puel->puel_time >= packet_in->pi_received || puel->puel_count >= 4)
++        return;
++    /* Exponential back-off, mirroring the server path above. */
++    puel->puel_time = packet_in->pi_received
++                        + 1000000ull * (1 << MIN(puel->puel_count, 4));
++    ++puel->puel_count;
++    if (engine_sreset_allowed(engine, packet_in->pi_received))
++    {
++        ++engine->sreset_sent;
++        schedule_req_packet(engine, PACKET_REQ_PUBRES, packet_in,
++                                                sa_local, sa_peer, peer_ctx);
++    }
++    else
++        ++engine->sreset_limited;
++}
++
++
+ static int
+ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+        struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
+@@ -1740,7 +1859,12 @@
+             engine->curr_conn = conn;
+     }
+     else
++    {
+         conn = find_conn(engine, packet_in, ppstate, sa_local);
++        if (!conn)
++            client_maybe_send_prst(engine, packet_in, sa_local, sa_peer,
++                                                                    peer_ctx);
++    }
+ 
+     if (!conn)
+     {
+@@ -3342,6 +3466,41 @@
+ }
+ 
+ 
++/* bun: total live conns (mini + full). Used to defer a graceful endpoint
++ * close while mini-conn handshakes are still in flight, since lsquic only
++ * surfaces mini-conns to the application after promotion. */
++unsigned
++lsquic_engine_conn_count (const lsquic_engine_t *engine)
++{
++    return engine->n_conns;
++}
++
++
++/* bun: whether the engine already tracks a connection ID — live conn
++ * (including mini-conns, hashed by every CCE including the client's
++ * original DCID) or a purgatory entry of a recently closed conn.  Used to
++ * announce server sessions only for genuinely new Initials. */
++int
++lsquic_engine_cid_in_use (lsquic_engine_t *engine,
++                          const unsigned char *cid_buf, size_t cid_len)
++{
++    lsquic_cid_t cid;
++
++    if (cid_len > MAX_CID_LEN)
++        return 0;
++    if (lsquic_hash_find(engine->conns_hash, cid_buf, cid_len))
++        return 1;
++    if (engine->purga)
++    {
++        memcpy(cid.idbuf, cid_buf, cid_len);
++        cid.len = cid_len;
++        if (lsquic_purga_contains(engine->purga, &cid))
++            return 1;
++    }
++    return 0;
++}
++
++
+ void
+ lsquic_engine_cooldown (lsquic_engine_t *engine)
+ {
+@@ -3564,6 +3723,18 @@
+ }
+ 
+ 
++/* bun: update the millisecond idle timeout used by conns created after
++ * this call.  node:quic reuses one endpoint (and thus one engine) across
++ * connects whose maxIdleTimeout options differ; the engine's private
++ * settings copy must track the current connect (the analog of the fresh
++ * per-connect SSL_CTX). */
++void
++lsquic_engine_set_idle_timeout_ms (lsquic_engine_t *engine, unsigned ms)
++{
++    engine->pub.enp_settings.es_idle_timeout_ms = ms;
++}
++
++
+ int
+ lsquic_engine_add_cid (struct lsquic_engine_public *enpub,
+                               struct lsquic_conn *conn, unsigned cce_idx)
+--- a/src/liblsquic/lsquic_enc_sess_ietf.c
++++ b/src/liblsquic/lsquic_enc_sess_ietf.c
+@@ -625,7 +625,9 @@
+                             = settings->es_init_max_streams_bidi;
+     params.tp_ack_delay_exponent
+                             = TP_DEF_ACK_DELAY_EXP;
+-    params.tp_max_idle_timeout = settings->es_idle_timeout * 1000;
++    params.tp_max_idle_timeout = settings->es_idle_timeout_ms
++        ? settings->es_idle_timeout_ms   /* bun: ms-granular override */
++        : settings->es_idle_timeout * 1000;
+     params.tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY;
+     params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS;
+     params.tp_set |= (1 << TPI_INIT_MAX_DATA)
+@@ -665,7 +667,11 @@
+     }
+     if (settings->es_datagrams)
+     {
+-        if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
++        /* bun: es_max_datagram_frame_size overrides the advertised value. */
++        if (settings->es_max_datagram_frame_size)
++            params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
++                                    = settings->es_max_datagram_frame_size;
++        else if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+             params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
+                                             = params.tp_max_udp_payload_size;
+         else
+@@ -709,6 +715,10 @@
+ 
+ #define SESS_RESUME_VERSION 1
+ 
++/* How long to keep the SSL object alive after a session ticket arrives,
++ * waiting for the server to send additional tickets. */
++#define SESS_TICKET_LINGER_USEC 1000000
++
+ #if __BYTE_ORDER == __LITTLE_ENDIAN
+ #define READ_NUM(var_, ptr_) do {                               \
+     memcpy(&var_, ptr_, sizeof(var_));                          \
+@@ -911,7 +921,16 @@
+         ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(peer_ctx,
+                                                             NP_LOCAL_SA(path));
+         if (ssl_ctx)
++        {
+             set_app_ctx = 1;
++            /* bun: also wire session-ticket capture on the app-provided
++             * SSL_CTX so on_sess_resume_info fires. */
++            if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
++            {
++                SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
++                SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
++            }
++        }
+         else
+             goto create_new_ssl_ctx;
+     }
+@@ -1585,8 +1604,14 @@
+         enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info(
+                                             enc_sess->esi_conn, buf, buf_sz);
+     free(buf);
+-    enc_sess->esi_flags &= ~ESI_WANT_TICKET;
+-    lsquic_alarmset_unset(enc_sess->esi_alset, AL_SESS_TICKET);
++    /* Servers may send more than one ticket (BoringSSL sends two by
++     * default).  Instead of dropping the SSL object after the first one,
++     * keep ESI_WANT_TICKET set and re-arm the alarm so tickets arriving
++     * in subsequent packets are still delivered; the alarm drops the SSL
++     * once no more tickets show up.
++     */
++    lsquic_alarmset_set(enc_sess->esi_alset, AL_SESS_TICKET,
++                            lsquic_time_now() + SESS_TICKET_LINGER_USEC);
+     return 0;
+ }
+ 
+@@ -1965,6 +1990,13 @@
+         case SSL_ERROR_EARLY_DATA_REJECTED:
+             LSQ_DEBUG("early data rejected: reset");
+             SSL_reset_early_data_reject(enc_sess->esi_ssl);
++            /* [RFC 9000] Section 7.4.1: the no-reduction rule for remembered
++             * transport parameters applies only when the server ACCEPTS
++             * 0-RTT.  On rejection the remembered parameters must be
++             * discarded so the server's new (possibly smaller) values are
++             * not treated as a violation.
++             */
++            enc_sess->esi_flags &= ~ESI_HAVE_0RTT_TP;
+             if (enc_sess->esi_conn->cn_if->ci_early_data_failed)
+                 enc_sess->esi_conn->cn_if->ci_early_data_failed(
+                                                         enc_sess->esi_conn);
+@@ -2557,6 +2589,9 @@
+     struct enc_sess_iquic *const enc_sess = enc_session_p;
+     const char *server_name;
+ 
++    /* bun: the SSL object is dropped once the handshake is confirmed. */
++    if (!enc_sess->esi_ssl)
++        return NULL;
+     server_name = SSL_get_servername(enc_sess->esi_ssl, TLSEXT_NAMETYPE_host_name);
+ #ifndef NDEBUG
+     if (!server_name)
+@@ -2589,6 +2624,17 @@
+ }
+ 
+ 
++/* bun: expose the per-connection SSL so the application can read negotiated
++ * ALPN, the ephemeral key, and the X509 verify result. lsquic only surfaces
++ * the cipher and SNI itself. */
++struct ssl_st *
++lsquic_enc_sess_ietf_get_ssl (enc_session_t *enc_session_p)
++{
++    struct enc_sess_iquic *const enc_sess = enc_session_p;
++    return enc_sess ? enc_sess->esi_ssl : NULL;
++}
++
++
+ static struct stack_st_X509 *
+ iquic_esf_get_server_cert_chain (enc_session_t *enc_session_p)
+ {
+@@ -3502,7 +3548,9 @@
+                             = settings->es_init_max_streams_bidi;
+     params.tp_ack_delay_exponent
+                             = TP_DEF_ACK_DELAY_EXP;
+-    params.tp_max_idle_timeout = settings->es_idle_timeout * 1000;
++    params.tp_max_idle_timeout = settings->es_idle_timeout_ms
++        ? settings->es_idle_timeout_ms   /* bun: ms-granular override */
++        : settings->es_idle_timeout * 1000;
+     params.tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY;
+     params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS;
+     params.tp_set |= (1 << TPI_INIT_MAX_DATA)
+@@ -3542,7 +3590,11 @@
+     }
+     if (settings->es_datagrams)
+     {
+-        if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
++        /* bun: es_max_datagram_frame_size overrides the advertised value. */
++        if (settings->es_max_datagram_frame_size)
++            params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
++                                    = settings->es_max_datagram_frame_size;
++        else if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+             params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
+                                             = params.tp_max_udp_payload_size;
+         else
+@@ -3555,6 +3607,15 @@
+ 
+     len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
+                         &params, 1, buf, bufsz);
++    /* bun: HTTP/3 application settings participate in 0-RTT acceptance
++     * (RFC 9114 sec 7.2.4.2): a server whose SETTINGS changed between the
++     * ticket and the resumption must reject early data.  The context is an
++     * opaque blob to BoringSSL, so append the discriminating values. */
++    if (len >= 0 && (size_t) len + 2 <= bufsz)
++    {
++        buf[len++] = !!(settings->es_datagrams && settings->es_h3_datagram);
++        buf[len++] = !!settings->es_h3_connect_protocol;
++    }
+     if (len >= 0)
+     {
+         char str[MAX_TP_STR_SZ];
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -91,6 +91,12 @@
+ #define INITIAL_CHAL_TIMEOUT            250000
+ #define HSK_PING_TIMEOUT                200000
+ 
++/* bun: whether this conn has an explicit keep-alive cadence (per-conn
++ * override, or the engine-wide es_ping_period_us). */
++#define IFC_EXPLICIT_PING(conn) ((conn)->ifc_ping_us_override_set        \
++    ? (conn)->ifc_ping_us_override != 0                                  \
++    : (conn)->ifc_enpub->enp_settings.es_ping_period_us != 0)
++
+ /* Retire original CID after this much time has elapsed: */
+ #define RET_CID_TIMEOUT                 2000000
+ 
+@@ -153,7 +159,9 @@
+ enum more_flags
+ {
+     MF_VALIDATE_PATH    = 1 << 0,
+-    /* HOLE */                      /* <- Hole!  Reuse me! */
++    /* bun: this conn opted in to migrating to the server's preferred
++     * address (lsquic_conn_use_preferred_address). */
++    MF_USE_PREF_ADDR    = 1 << 1,
+     MF_CHECK_MTU_PROBE  = 1 << 2,
+     MF_IGNORE_MISSING   = 1 << 3,
+     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
+@@ -432,6 +440,8 @@
+     }                           ifc_send;
+     struct conn_err             ifc_error;
+     unsigned                    ifc_n_delayed_streams;
++    /* bun: locally-initiated uni streams awaiting MAX_STREAMS credit. */
++    unsigned                    ifc_n_delayed_uni_streams;
+     unsigned                    ifc_n_cons_unretx;
+     const struct prio_iter_if  *ifc_pii;
+     char                       *ifc_errmsg;
+@@ -467,6 +477,8 @@
+     struct {
+         uint64_t    header_table_size,
+                     qpack_blocked_streams;
++        /* bun: peer's SETTINGS_H3_DATAGRAM (0x33); 0 unless received. */
++        uint64_t    h3_datagram;
+     }                           ifc_peer_hq_settings;
+     struct dcid_elem           *ifc_dces[MAX_IETF_CONN_DCIDS];
+     TAILQ_HEAD(, dcid_elem)     ifc_to_retire;
+@@ -524,6 +536,19 @@
+     }                           ifc_u;
+     lsquic_time_t               ifc_idle_to;
+     lsquic_time_t               ifc_ping_period;
++    /* bun: per-conn keep-alive cadence (lsquic_conn_set_ping_period_us).
++     * `_set` distinguishes "explicitly 0 (disabled)" from "not set"
++     * (calloc'd conns default to not set, falling back to engine settings).
++     */
++    lsquic_time_t               ifc_ping_us_override;
++    int                         ifc_ping_us_override_set;
++    /* bun: the DATAGRAM frame currently being delivered arrived in a 0-RTT
++     * packet (valid only during the on_datagram callback). */
++    int                         ifc_datagram_early;
++    /* bun: lsquic_conn_abort_silent — die without a CONNECTION_CLOSE. */
++    int                         ifc_abort_silent;
++    /* bun: PING frames received, for session stats. */
++    uint64_t                    ifc_pings_in;
+     lsquic_time_t               ifc_last_tick;
+     struct lsquic_hash         *ifc_bpus;
+     uint64_t                    ifc_last_max_data_off_sent;
+@@ -573,6 +598,11 @@
+ static int
+ handshake_ok (struct lsquic_conn *);
+ 
++/* bun: RFC 9000 Section 10.1 idle-timeout floor (defined near the packet-in
++ * handler). */
++static lsquic_time_t
++effective_idle_to (const struct ietf_full_conn *conn);
++
+ static void
+ ignore_init (struct ietf_full_conn *);
+ 
+@@ -1321,6 +1351,7 @@
+ 
+     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
+     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
++    conn->ifc_peer_hq_settings.h3_datagram           = 0;
+ 
+     conn->ifc_flags = flags | IFC_FIRST_TICK;
+     conn->ifc_max_ack_packno[PNS_INIT] = IQUIC_INVALID_PACKNO;
+@@ -1427,9 +1458,12 @@
+     if (conn->ifc_settings->es_handshake_to)
+         lsquic_alarmset_set(&conn->ifc_alset, AL_HANDSHAKE,
+                     lsquic_time_now() + conn->ifc_settings->es_handshake_to);
+-    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
++    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout_ms
++        ? (lsquic_time_t) conn->ifc_settings->es_idle_timeout_ms * 1000
++        : (lsquic_time_t) conn->ifc_settings->es_idle_timeout * 1000000;
+     if (conn->ifc_idle_to)
+-        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
++        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
++                                        now + effective_idle_to(conn));
+     if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
+     {
+         conn->ifc_u.cli.ifcli_flags |= IFCLI_PUSH_ENABLED;
+@@ -1704,12 +1738,14 @@
+     LSQ_DEBUG("Calling on_new_conn callback");
+     conn->ifc_conn.cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
+                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
+-    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
++    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout_ms
++        ? (lsquic_time_t) conn->ifc_settings->es_idle_timeout_ms * 1000
++        : (lsquic_time_t) conn->ifc_settings->es_idle_timeout * 1000000;
+ 
+     conn->ifc_created = now;
+     if (conn->ifc_idle_to)
+         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+-                                        now + conn->ifc_idle_to);
++                                        now + effective_idle_to(conn));
+     while ((packet_in = TAILQ_FIRST(&imc->imc_app_packets)))
+     {
+         TAILQ_REMOVE(&imc->imc_app_packets, packet_in, pi_next);
+@@ -2558,7 +2594,9 @@
+ generate_stop_sending_frame (struct ietf_full_conn *conn,
+                                                 struct lsquic_stream *stream)
+ {
+-    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, HEC_NO_ERROR))
++    /* bun: use the stream's queued ss_error_code instead of HEC_NO_ERROR. */
++    if (0 == generate_stop_sending_frame_by_id(conn, stream->id,
++                stream->ss_error_code ? stream->ss_error_code : HEC_NO_ERROR))
+     {
+         lsquic_stream_ss_frame_sent(stream);
+         return 1;
+@@ -2789,6 +2827,29 @@
+ }
+ 
+ 
++/* bun: drain locally-initiated uni streams once MAX_STREAMS(uni) credit
++ * arrives (counterpart of maybe_create_delayed_streams for SD_UNI). */
++static int
++handshake_done_or_doing_sess_resume (const struct ietf_full_conn *);
++
++static void
++maybe_create_delayed_uni_streams (struct ietf_full_conn *conn)
++{
++    while (conn->ifc_n_delayed_uni_streams
++        && avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI))
++    {
++        if (0 != create_uni_stream_out(conn, LSQUIC_STREAM_DEFAULT_PRIO,
++                    conn->ifc_enpub->enp_stream_if,
++                    conn->ifc_enpub->enp_stream_if_ctx))
++        {
++            LSQ_INFO("cannot create UNI stream");
++            break;
++        }
++        --conn->ifc_n_delayed_uni_streams;
++    }
++}
++
++
+ static int
+ have_bidi_streams (const struct ietf_full_conn *conn)
+ {
+@@ -2889,6 +2950,7 @@
+     }
+     else
+         maybe_create_delayed_streams(conn);
++    maybe_create_delayed_uni_streams(conn); /* bun */
+ }
+ 
+ 
+@@ -3033,6 +3095,46 @@
+ }
+ 
+ 
++/* bun: force the delayed ACK for received application packets onto the
++ * wire on the next engine tick.  Node's server acks the packet that
++ * carried data even when the application destroys the session while
++ * processing it; without this, a silent destroy discards the delayed ACK
++ * and the peer keeps retransmitting into the dead conn until it eats a
++ * stateless reset instead of quietly idling out.
++ */
++void
++lsquic_conn_ack_now (struct lsquic_conn *lconn)
++{
++    struct ietf_full_conn *conn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF)
++        return;
++    conn = (struct ietf_full_conn *) lconn;
++    conn->ifc_flags |= IFC_ACK_QUED_APP;
++    lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
++}
++
++
++/* bun: abort without a CONNECTION_CLOSE.  The peer discovers the death via
++ * stateless reset (the CIDs purge as PUTY_CONN_DELETED thanks to
++ * LSCONN_IMMED_CLOSE) or its idle timeout.  No-op difference from
++ * lsquic_conn_abort for mini/non-IETF conns.
++ */
++void
++lsquic_conn_abort_silent (struct lsquic_conn *lconn)
++{
++    struct ietf_full_conn *conn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) == LSCONN_IETF)
++    {
++        conn = (struct ietf_full_conn *) lconn;
++        conn->ifc_abort_silent = 1;
++        lconn->cn_flags |= LSCONN_IMMED_CLOSE;
++    }
++    lconn->cn_if->ci_abort(lconn);
++}
++
++
+ static void
+ retire_dcid (struct ietf_full_conn *conn, struct dcid_elem **dce)
+ {
+@@ -3438,6 +3540,14 @@
+         return BM_NOT_MIGRATING;
+     }
+ 
++    /* bun: node:quic's preferredAddressPolicy is per-session and defaults
++     * to "ignore"; migration requires an explicit per-conn opt-in. */
++    if (!(conn->ifc_mflags & MF_USE_PREF_ADDR))
++    {
++        LSQ_DEBUG("Migration not requested: retire PreferredAddress CID");
++        return BM_NOT_MIGRATING;
++    }
++
+     if (conn->ifc_conn.cn_version <= LSQVER_ID27 /* Starting with ID-29,
+         disable_active_migration TP applies only to the time period during
+         the handshake.  Our client does not migrate during the handshake:
+@@ -3629,7 +3739,12 @@
+                                 = params->tp_init_max_stream_data_bidi_remote;
+     conn->ifc_cfg.ack_exp = params->tp_ack_delay_exponent;
+ 
+-    switch ((!!conn->ifc_settings->es_idle_timeout << 1)
++    /* bun: es_idle_timeout_ms (ms-granular) takes precedence over the
++     * seconds-granular es_idle_timeout. */
++    const uint64_t our_idle_ms = conn->ifc_settings->es_idle_timeout_ms
++        ? conn->ifc_settings->es_idle_timeout_ms
++        : (uint64_t) conn->ifc_settings->es_idle_timeout * 1000;
++    switch ((!!our_idle_ms << 1)
+                 | !!params->tp_max_idle_timeout)
+     {
+     case       (0 << 1) | 0:
+@@ -3642,26 +3757,36 @@
+         break;
+     case       (1 << 1) | 0:
+         LSQ_DEBUG("peer did not specify max idle timeout, while ours is "
+-            "%u ms: use it", conn->ifc_settings->es_idle_timeout * 1000);
+-        conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
++            "%"PRIu64" ms: use it", our_idle_ms);
++        conn->ifc_idle_to = our_idle_ms * 1000;
+         break;
+     default:/* (1 << 1) | 1 */
+-        LSQ_DEBUG("our max idle timeout is %u ms, peer's is %"PRIu64" ms; "
+-            "use minimum value of %"PRIu64" ms",
+-            conn->ifc_settings->es_idle_timeout * 1000,
++        LSQ_DEBUG("our max idle timeout is %"PRIu64" ms, peer's is %"PRIu64
++            " ms; use minimum value of %"PRIu64" ms",
++            our_idle_ms,
+             params->tp_max_idle_timeout,
+-            MIN(conn->ifc_settings->es_idle_timeout * 1000,
+-                                            params->tp_max_idle_timeout));
+-        conn->ifc_idle_to = 1000 * MIN(conn->ifc_settings->es_idle_timeout
+-                                        * 1000, params->tp_max_idle_timeout);
++            MIN(our_idle_ms, params->tp_max_idle_timeout));
++        conn->ifc_idle_to = 1000 * MIN(our_idle_ms,
++                                            params->tp_max_idle_timeout);
+         break;
+     }
+ 
+-    if (conn->ifc_idle_to >= 2000000
++    /* bun: an explicit cadence (per-conn override, or es_ping_period_us)
++     * replaces the idle-derived keep-alive cadence (node:quic's keepAlive
++     * option is millisecond-granular and per-session). */
++    if (conn->ifc_ping_us_override_set)
++        conn->ifc_ping_period = conn->ifc_ping_us_override;
++    else if (conn->ifc_enpub->enp_settings.es_ping_period_us)
++        conn->ifc_ping_period = conn->ifc_enpub->enp_settings.es_ping_period_us;
++    else if (conn->ifc_idle_to >= 2000000
+                             && conn->ifc_enpub->enp_settings.es_ping_period)
+         conn->ifc_ping_period = conn->ifc_idle_to / 2;
+     else
+         conn->ifc_ping_period = 0;
++    /* bun: the handshake-phase PING alarm (HSK_PING_TIMEOUT) may still be
++     * armed; with no keep-alive cadence it must not ring. */
++    if (!conn->ifc_ping_period)
++        lsquic_alarmset_unset(&conn->ifc_alset, AL_PING);
+     LSQ_DEBUG("PING period is set to %"PRIu64" usec", conn->ifc_ping_period);
+ 
+     if (conn->ifc_settings->es_delayed_acks
+@@ -3790,7 +3915,9 @@
+                                                     &max_risked_streams);
+     if (0 != lsquic_hcso_write_settings(&conn->ifc_hcso,
+                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
+-                max_risked_streams, conn->ifc_flags & IFC_SERVER
++                max_risked_streams, conn->ifc_flags & IFC_SERVER,
++                conn->ifc_settings->es_datagrams
++                    && conn->ifc_settings->es_h3_datagram /* bun */
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                 ,
+                 conn->ifc_settings->es_webtransport_server,
+@@ -3801,6 +3928,17 @@
+         ABORT_WARN("cannot write SETTINGS");
+         return -1;
+     }
++    /* bun: advertise the server's authoritative origins (RFC 9412) right
++     * after SETTINGS when the application configured them. */
++    if ((conn->ifc_flags & IFC_SERVER)
++        && conn->ifc_settings->es_origin_blob_len
++        && 0 != lsquic_hcso_write_origin(&conn->ifc_hcso,
++                    conn->ifc_settings->es_origin_blob,
++                    conn->ifc_settings->es_origin_blob_len))
++    {
++        ABORT_WARN("cannot write ORIGIN");
++        return -1;
++    }
+     if (!(conn->ifc_flags & IFC_SERVER)
+         && (conn->ifc_u.cli.ifcli_flags & IFCLI_PUSH_ENABLED)
+         && 0 != lsquic_hcso_write_max_push_id(&conn->ifc_hcso,
+@@ -3947,6 +4085,7 @@
+         conn->ifc_send_flags |= SF_SEND_NEW_CID;
+     maybe_install_noprogress_timer(conn);
+     maybe_create_delayed_streams(conn);
++    maybe_create_delayed_uni_streams(conn); /* bun */
+ 
+     if (!(conn->ifc_flags & IFC_SERVER))
+         lsquic_send_ctl_0rtt_to_1rtt(&conn->ifc_send_ctl);
+@@ -4325,8 +4464,9 @@
+      */
+     lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
+ 
+-    if ((conn->ifc_flags & (IFC_TIMED_OUT|IFC_HSK_FAILED))
++    if (((conn->ifc_flags & (IFC_TIMED_OUT|IFC_HSK_FAILED))
+                                     && conn->ifc_settings->es_silent_close)
++            || conn->ifc_abort_silent /* bun */)
+         return TICK_CLOSE;
+ 
+     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0,
+@@ -4337,7 +4477,7 @@
+         return TICK_CLOSE;
+     }
+ 
+-    assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
++    assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED|IFC_TIMED_OUT));
+     if (conn->ifc_error.u.err != 0)
+     {
+         conn_err = conn->ifc_error;
+@@ -4368,7 +4508,11 @@
+     sz = conn->ifc_conn.cn_pf->pf_gen_connect_close_frame(
+                      packet_out->po_data + packet_out->po_data_sz,
+                      lsquic_packet_out_avail(packet_out), conn_err.app_error,
+-                     conn_err.u.err, error_reason,
++                     conn_err.u.err,
++                     /* bun: pf_gen_connect_close_frame asserts
++                      * !!reason == !!reason_len; an empty errmsg from
++                      * ci_abort_error("%s", "") trips it. */
++                     error_reason && error_reason[0] ? error_reason : NULL,
+                      error_reason ? strlen(error_reason) : 0);
+     if (sz < 0) {
+         LSQ_WARN("%s failed", __func__);
+@@ -5008,6 +5152,9 @@
+      */
+     conn->ifc_conn.cn_esf.i->esfi_handshake_confirmed(
+                                         conn->ifc_conn.cn_enc_session);
++    /* bun: notify the application (client side only reaches here). */
++    if (conn->ifc_enpub->enp_stream_if->on_hsk_confirmed)
++        conn->ifc_enpub->enp_stream_if->on_hsk_confirmed(&conn->ifc_conn);
+     if (!(conn->ifc_flags & (IFC_SERVER|IFC_MIGRA)))
+     {
+         conn->ifc_flags |= IFC_MIGRA;   /* Perform migration just once */
+@@ -5300,6 +5447,18 @@
+                                     &conn->ifc_paths[path_id].cop_path);
+ 
+     assert(conn->ifc_cur_path_id != path_id);
++
++    /* bun: surface the path switch (node:quic's onpathvalidation). */
++    if (conn->ifc_enpub->enp_stream_if->on_path_switch)
++        conn->ifc_enpub->enp_stream_if->on_path_switch(&conn->ifc_conn,
++            !!(conn->ifc_paths[path_id].cop_flags & COP_VALIDATED),
++            !(conn->ifc_flags & IFC_SERVER)
++                                        && (conn->ifc_flags & IFC_MIGRA),
++            NP_LOCAL_SA(&conn->ifc_paths[path_id].cop_path),
++            NP_PEER_SA(&conn->ifc_paths[path_id].cop_path),
++            NP_LOCAL_SA(CUR_NPATH(conn)),
++            NP_PEER_SA(CUR_NPATH(conn)));
++
+     CUR_CPATH(conn)->cop_flags |= COP_RETIRED;
+ 
+     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "switched paths");
+@@ -5984,6 +6143,9 @@
+             conn->ifc_max_req_id = stream_frame->stream_id;
+     }
+ 
++    if (HETY_0RTT == packet_in->pi_header_type)
++        stream->stream_flags |= STREAM_EARLY_DATA_IN;
++
+     stream_frame->packet_in = lsquic_packet_in_get(packet_in);
+     if (0 != lsquic_stream_frame_in(stream, stream_frame))
+     {
+@@ -6103,6 +6265,8 @@
+      * return the length of this frame.
+      */
+     EV_LOG_PING_FRAME_IN(LSQUIC_LOG_CONN_ID);
++    /* bun: surfaced via lsquic_conn_pings_received (session.stats.pingRecv). */
++    ++conn->ifc_pings_in;
+     if (conn->ifc_flags & IFC_SERVER)
+         log_conn_flow_control(conn);
+ 
+@@ -6110,6 +6274,67 @@
+ }
+ 
+ 
++/* bun: PING frames received on this conn (0 for non-IETF/mini conns). */
++uint64_t
++lsquic_conn_pings_received (const struct lsquic_conn *lconn)
++{
++    const struct ietf_full_conn *conn;
++
++    if (!(lconn->cn_flags & LSCONN_IETF) || (lconn->cn_flags & LSCONN_MINI))
++        return 0;
++    conn = (const struct ietf_full_conn *) lconn;
++    return conn->ifc_pings_in;
++}
++
++
++/* bun: per-conn keep-alive cadence.  node:quic's keepAlive is a per-session
++ * option, but engine settings are shared by every conn on the endpoint —
++ * a reused endpoint must not inherit the first session's cadence.  Pass 0
++ * to disable keep-alive PINGs for this conn.  No-op for mini conns.
++ */
++void
++lsquic_conn_set_ping_period_us (struct lsquic_conn *lconn, uint64_t usec)
++{
++    struct ietf_full_conn *conn;
++
++    if (!(lconn->cn_flags & LSCONN_IETF) || (lconn->cn_flags & LSCONN_MINI))
++        return;
++    conn = (struct ietf_full_conn *) lconn;
++    conn->ifc_ping_us_override = usec;
++    conn->ifc_ping_us_override_set = 1;
++    /* Before handshake completion, ifc_ping_period carries the handshake
++     * ping cadence and is re-derived (honoring the override) when the
++     * peer's transport parameters are processed; only apply directly once
++     * the handshake is done.
++     */
++    if (lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
++    {
++        conn->ifc_ping_period = usec;
++        if (!usec)
++            lsquic_alarmset_unset(&conn->ifc_alset, AL_PING);
++    }
++}
++
++
++/* bun: opt this client conn in to migrating to the server's preferred
++ * address (node:quic's preferredAddressPolicy: "use").  Must be called
++ * before the handshake completes; no-op for mini conns.
++ */
++void
++lsquic_conn_use_preferred_address (struct lsquic_conn *lconn, int on)
++{
++    struct ietf_full_conn *conn;
++
++    if (!(lconn->cn_flags & LSCONN_IETF) || (lconn->cn_flags & LSCONN_MINI))
++        return;
++    conn = (struct ietf_full_conn *) lconn;
++    if (on)
++        conn->ifc_mflags |= MF_USE_PREF_ADDR;
++    else
++        conn->ifc_mflags &= ~MF_USE_PREF_ADDR;
++}
++
++
+ static int
+ is_benign_transport_error_code (uint64_t error_code)
+ {
+@@ -6331,6 +6556,11 @@
+             sd == SD_BIDI ? "bidi" : "uni",
+             conn->ifc_max_allowed_stream_id[sit], max_stream_id);
+         conn->ifc_max_allowed_stream_id[sit] = max_stream_id;
++        /* bun: new credit — drain any locally-delayed streams. */
++        if (sd == SD_UNI)
++            maybe_create_delayed_uni_streams(conn);
++        else
++            maybe_create_delayed_streams(conn);
+     }
+     else
+         LSQ_DEBUG("ignore old max %s streams value of %"PRIu64,
+@@ -6435,6 +6665,16 @@
+         (*dce)->de_cid = *cid;
+         memcpy((*dce)->de_srst, token, sizeof((*dce)->de_srst));
+         (*dce)->de_flags |= DE_SRST;
++        /* bun: register the token so a stateless reset sent for this CID is
++         * recognized (upstream only hashes the token delivered in the
++         * transport parameters, not NEW_CONNECTION_ID tokens).  The
++         * QHE_HASHED-guarded erases in retire_dcid and conn teardown clean
++         * this up. */
++        if (conn->ifc_enpub->enp_srst_hash
++            && !lsquic_hash_insert(conn->ifc_enpub->enp_srst_hash,
++                    (*dce)->de_srst, sizeof((*dce)->de_srst),
++                    &conn->ifc_conn, &(*dce)->de_hash_el))
++            LSQ_WARN("cannot insert DCE into reset-token hash");
+         if (update_cur_dcid)
+         {
+             *CUR_DCID(conn) = *cid;
+@@ -6665,9 +6905,12 @@
+             free(token_str);
+         }
+     }
++    /* bun: pass the conn (matching lsquic.h's declared signature) so the
++     * application can route the token to the right session. Upstream passes
++     * enp_stream_if_ctx, which is engine-wide. */
+     if (conn->ifc_enpub->enp_stream_if->on_new_token)
+         conn->ifc_enpub->enp_stream_if->on_new_token(
+-                        conn->ifc_enpub->enp_stream_if_ctx, token, token_sz);
++                        &conn->ifc_conn, token, token_sz);
+     return parsed_len;
+ }
+ 
+@@ -6910,12 +7153,30 @@
+     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "%zd-byte DATAGRAM", data_sz);
+     LSQ_DEBUG("%zd-byte DATAGRAM", data_sz);
+ 
++    /* bun: valid only for the duration of the on_datagram callback (read
++     * via lsquic_conn_datagram_early). */
++    conn->ifc_datagram_early = HETY_0RTT == packet_in->pi_header_type;
+     conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
++    conn->ifc_datagram_early = 0;
+ 
+     return parsed_len;
+ }
+ 
+ 
++/* bun: whether the DATAGRAM frame currently being delivered via the
++ * on_datagram callback arrived in a 0-RTT (early data) packet. */
++int
++lsquic_conn_datagram_early (const struct lsquic_conn *lconn)
++{
++    const struct ietf_full_conn *conn;
++
++    if (!(lconn->cn_flags & LSCONN_IETF) || (lconn->cn_flags & LSCONN_MINI))
++        return 0;
++    conn = (const struct ietf_full_conn *) lconn;
++    return conn->ifc_datagram_early;
++}
++
++
+ typedef unsigned (*process_frame_f)(
+     struct ietf_full_conn *, struct lsquic_packet_in *,
+     const unsigned char *p, size_t);
+@@ -7953,6 +8214,45 @@
+ }
+ 
+ 
++/* bun: RFC 9000 Section 10.1 — to avoid closing a connection that is still
++ * exchanging (retransmitting) packets, the effective idle timeout is no
++ * less than three times the current probe timeout.  Node's millisecond
++ * idle timeouts (down to 1 ms) rely on this floor. */
++static lsquic_time_t
++effective_idle_to (const struct ietf_full_conn *conn)
++{
++    /* RFC 9002 Section 6.2.2: initial RTT before any sample (us). */
++    static const lsquic_time_t INITIAL_RTT_US = 333000;
++    /* RFC 9002 Section 6.1.2: timer granularity (us). */
++    static const lsquic_time_t GRANULARITY_US = 1000;
++    /* RFC 9000 Section 18.2: default max_ack_delay (us). */
++    static const lsquic_time_t DEF_MAX_ACK_DELAY_US = 25000;
++    lsquic_time_t srtt, var, pto;
++
++    srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
++    var = 4 * lsquic_rtt_stats_get_rttvar(&conn->ifc_pub.rtt_stats);
++    if (!srtt)
++    {
++        srtt = INITIAL_RTT_US;
++        var = 2 * INITIAL_RTT_US;   /* initial rttvar = rtt/2, times four */
++    }
++    if (var < GRANULARITY_US)
++        var = GRANULARITY_US;
++    pto = srtt + var + DEF_MAX_ACK_DELAY_US;
++    /* lsquic's rttvar converges after a single sample (RFC 6298 seeding)
++     * while ngtcp2's decays slowly from the large RFC 9002 initial value,
++     * keeping Node's PTO elevated for a connection's first several round
++     * trips.  Floor the estimate so millisecond-granular idle timeouts
++     * survive the same windows they do on Node. */
++    static const lsquic_time_t PTO_FLOOR_US = 150000;
++    if (pto < PTO_FLOOR_US)
++        pto = PTO_FLOOR_US;
++    if (conn->ifc_idle_to > 3 * pto)
++        return conn->ifc_idle_to;
++    return 3 * pto;
++}
++
++
+ static void
+ ietf_full_conn_ci_packet_in (struct lsquic_conn *lconn,
+                              struct lsquic_packet_in *packet_in)
+@@ -7962,7 +8262,7 @@
+     CONN_STATS(in.bytes, packet_in->pi_data_sz);
+     if (conn->ifc_idle_to)
+         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+-                                packet_in->pi_received + conn->ifc_idle_to);
++                                packet_in->pi_received + effective_idle_to(conn));
+     if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
+         if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
+             conn->ifc_flags |= IFC_ERROR;
+@@ -8342,6 +8642,9 @@
+     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+ 
+     LSQ_DEBUG("early data failed");
++    /* bun: notify the application before any 0-RTT stream is torn down. */
++    if (conn->ifc_enpub->enp_stream_if->on_early_data_failed)
++        conn->ifc_enpub->enp_stream_if->on_early_data_failed(lconn);
+     lsquic_send_ctl_stash_0rtt_packets(&conn->ifc_send_ctl);
+ }
+ 
+@@ -8401,6 +8704,11 @@
+     packet_out = get_writeable_packet(conn, need);
+     if (!packet_out)
+         return 0;
++    /* bun: pre-handshake datagrams ride in 0-RTT packets (RFC 9221 sec 5:
++     * DATAGRAM frames live in the application packet-number space; the
++     * stream write path stamps the same type in lsquic_stream.c). */
++    if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
++        packet_out->po_header_type = HETY_0RTT;
+ 
+     w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+             packet_out->po_data + packet_out->po_data_sz,
+@@ -8629,7 +8937,12 @@
+     if (!write_is_possible(conn))
+         goto end_write;
+ 
+-    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
++    /* bun: DATAGRAM frames belong to the application packet-number space
++     * (RFC 9221 sec 5) — hold them until 0-RTT or 1-RTT keys exist, or
++     * they end up coalesced into Handshake packets and dropped. */
++    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE)
++            && handshake_done_or_doing_sess_resume(conn)
++            && write_datagram(conn))
+         if (!write_is_possible(conn))
+             goto end_write;
+ 
+@@ -8664,6 +8977,10 @@
+              *     ... this is a client and handshake was successful;
+              */
+             && (!(conn->ifc_flags & (IFC_SERVER|IFC_HSK_FAILED))
++                /* or: silent close is explicitly disabled (Bun: node:quic
++                 * needs the peer's `closed` to resolve on receipt);
++                 */
++                    || !conn->ifc_settings->es_silent_close
+                 /* or: sent a GOAWAY frame;
+                  */
+                     || (conn->ifc_flags & IFC_GOAWAY_CLOSE)
+@@ -8708,6 +9025,7 @@
+         }
+     }
+     else if (conn->ifc_ping_period
++            && !IFC_EXPLICIT_PING(conn)
+             && (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
+     {
+         lsquic_alarmset_unset(&conn->ifc_alset, AL_PING);
+@@ -8726,9 +9044,12 @@
+      *     frames without coordination can produce an excessive number of
+      *     packets and poor performance.
+      */
++    /* bun: an explicit keep-alive cadence (es_ping_period_us) pings even
++     * with no application streams open — that's its whole purpose. */
+     if (conn->ifc_ping_period
+-                        && lsquic_hash_count(conn->ifc_pub.all_streams) >
+-                           conn->ifc_pub.n_special_streams)
++            && (IFC_EXPLICIT_PING(conn)
++                || lsquic_hash_count(conn->ifc_pub.all_streams) >
++                           conn->ifc_pub.n_special_streams))
+         lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
+                                                 now + conn->ifc_ping_period);
+ 
+@@ -8870,6 +9191,39 @@
+ }
+ 
+ 
++/* Bun patch: locally initiate a unidirectional stream using the engine's
++ * stream_if (raw QUIC, no HTTP).  Upstream lsquic_conn_make_stream is
++ * bidi-only; node:quic's createUnidirectionalStream needs this.  Unlike the
++ * bidi path there is no delayed-stream queue for uni: the caller is
++ * expected to wait for the handshake. */
++void
++lsquic_conn_make_uni_stream (struct lsquic_conn *lconn)
++{
++    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
++    if (!handshake_done_or_doing_sess_resume(conn)
++        || either_side_going_away(conn))
++    {
++        (void) conn->ifc_enpub->enp_stream_if->on_new_stream(
++                                    conn->ifc_enpub->enp_stream_if_ctx, NULL);
++        return;
++    }
++    /* Honor the peer's MAX_STREAMS(uni) credit: delay creation (the
++     * caller's stream stays pending) until credit arrives, mirroring the
++     * bidi delayed-stream queue. */
++    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI))
++    {
++        ++conn->ifc_n_delayed_uni_streams;
++        LSQ_DEBUG("delayed uni stream creation.  Backlog size: %u",
++                                        conn->ifc_n_delayed_uni_streams);
++        return;
++    }
++    if (0 != create_uni_stream_out(conn, LSQUIC_STREAM_DEFAULT_PRIO,
++                conn->ifc_enpub->enp_stream_if,
++                conn->ifc_enpub->enp_stream_if_ctx))
++        ABORT_ERROR("could not create new uni stream: %s", strerror(errno));
++}
++
++
+ static void
+ ietf_full_conn_ci_internal_error (struct lsquic_conn *lconn,
+                                                     const char *format, ...)
+@@ -9413,6 +9767,7 @@
+         LSQ_DEBUG("cannot create QPACK encoder stream due to unidir limit");
+     }
+     maybe_create_delayed_streams(conn);
++    maybe_create_delayed_uni_streams(conn); /* bun */
+ }
+ 
+ 
+@@ -9435,6 +9790,10 @@
+         LSQ_DEBUG("Peer's SETTINGS_MAX_HEADER_LIST_SIZE=%"PRIu64"; "
+                                                         "we ignore it", value);
+         break;
++    case 0x33: /* bun: SETTINGS_H3_DATAGRAM (RFC 9297) */
++        LSQ_DEBUG("Peer's SETTINGS_H3_DATAGRAM=%"PRIu64, value);
++        conn->ifc_peer_hq_settings.h3_datagram = value;
++        break;
+     default:
+         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64
+                                         "; ignore it", setting_id, value);
+@@ -9755,6 +10114,18 @@
+ }
+ 
+ 
++/* bun: forward ORIGIN frame payload chunks (RFC 9412) to the application. */
++static void
++on_origin_client (void *ctx, const unsigned char *chunk, size_t len, int fin)
++{
++    struct ietf_full_conn *const conn = ctx;
++
++    if (conn->ifc_enpub->enp_stream_if->on_origin)
++        conn->ifc_enpub->enp_stream_if->on_origin(&conn->ifc_conn, chunk,
++                                                                    len, fin);
++}
++
++
+ static const struct hcsi_callbacks hcsi_callbacks_server_27 =
+ {
+     .on_cancel_push         = on_cancel_push_server,
+@@ -9772,6 +10143,7 @@
+     .on_max_push_id         = on_max_push_id_client,
+     .on_settings_frame      = on_settings_frame,
+     .on_setting             = on_setting,
++    .on_origin              = on_origin_client, /* bun */
+     .on_goaway              = on_goaway_client_27,
+     .on_frame_error         = on_frame_error,
+     .on_priority_update     = on_priority_update_client,
+@@ -9795,6 +10167,7 @@
+     .on_max_push_id         = on_max_push_id_client,
+     .on_settings_frame      = on_settings_frame,
+     .on_setting             = on_setting,
++    .on_origin              = on_origin_client, /* bun */
+     .on_goaway              = on_goaway_client,
+     .on_frame_error         = on_frame_error,
+     .on_priority_update     = on_priority_update_client,
+@@ -10099,3 +10472,23 @@
+ 
+ typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
+ 
++
++/* bun: whether the peer advertised SETTINGS_H3_DATAGRAM=1 (RFC 9297).
++ * Returns 0 for non-HTTP, mini, or gQUIC connections. */
++int
++lsquic_conn_peer_h3_datagram (const struct lsquic_conn *lconn)
++{
++    const struct ietf_full_conn *conn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF)
++        return 0;
++    conn = (const struct ietf_full_conn *) lconn;
++    if (!(conn->ifc_flags & IFC_HTTP))
++        return 0;
++    /* bun: tri-state — the peer's SETTINGS frame may not have arrived yet
++     * (it races the first application data). */
++    if (!(conn->ifc_flags & IFC_HAVE_PEER_SET))
++        return -1;
++    return conn->ifc_peer_hq_settings.h3_datagram != 0;
++}
++
+--- a/src/liblsquic/lsquic_mini_conn_ietf.c
++++ b/src/liblsquic/lsquic_mini_conn_ietf.c
+@@ -1516,8 +1516,11 @@
+     LSQ_DEBUG("henceforth, no Initial packets shall be sent or received; "
+         "destroyed %u packet%.*s", count, count != 1, "s");
+ 
+-    int ext_to = conn->imc_enpub->enp_settings.es_idle_timeout * 1000000
+-            - conn->imc_enpub->enp_settings.es_handshake_to;
++    /* bun: honor the ms-granular idle override. */
++    int ext_to = (conn->imc_enpub->enp_settings.es_idle_timeout_ms
++            ? (int) conn->imc_enpub->enp_settings.es_idle_timeout_ms * 1000
++            : (int) conn->imc_enpub->enp_settings.es_idle_timeout * 1000000)
++            - (int) conn->imc_enpub->enp_settings.es_handshake_to;
+     if (ext_to > 0)
+     {
+         conn->imc_expire += ext_to;
+@@ -2179,7 +2182,9 @@
+         is_app = 0;
+         error_code = 0x100 + conn->imc_tls_alert;
+         if (ALERT_NO_APPLICATION_PROTOCOL == conn->imc_tls_alert)
+-            reason = "no suitable application protocol";
++            /* bun: match Node's wording (tests match /no application
++             * protocol/). */
++            reason = "no application protocol";
+         else
+         {
+             snprintf(reason_buf, sizeof(reason_buf), "TLS alert %"PRIu8,
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -696,6 +696,8 @@
+ }
+ 
+ 
++static int stream_is_incoming_unidir (const struct lsquic_stream *);
++
+ static int
+ stream_is_finished (struct lsquic_stream *stream)
+ {
+@@ -715,7 +717,11 @@
+            /* Can't finish stream until all "self" flags are unset: */
+                     | SMQF_SELF_FLAGS))
+         && ((stream->stream_flags & STREAM_FORCE_FINISH)
+-          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT)));
++          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
++          /* bun: an incoming unidirectional stream has no send side, so
++           * FIN_SENT can never be set — without this it is never freed and
++           * the peer never receives MAX_STREAMS credit. */
++          || stream_is_incoming_unidir(stream));
+ }
+ 
+ 
+@@ -1243,6 +1249,9 @@
+         return -1;
+     }
+ 
++    /* bun: record so lsquic_stream_get_error_code can surface it. */
++    stream->error_code = error_code;
++
+     if (stream->stream_if->on_reset
+                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
+     {
+@@ -1310,6 +1319,8 @@
+ 
+     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
+     stream->stream_flags |= STREAM_SS_RECVD;
++    /* bun: record so lsquic_stream_get_error_code can surface it. */
++    stream->error_code = error_code;
+ 
+     if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
+                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
+@@ -1325,9 +1336,12 @@
+     drop_buffered_data(stream);
+     maybe_elide_stream_frames(stream);
+ 
++    /* bun: echo the received STOP_SENDING code in our RESET_STREAM
++     * (RFC 9000 sec 3.5: "the error code from the STOP_SENDING frame
++     * SHOULD be used"). */
+     if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
+                                     && !(stream->sm_qflags & SMQF_SEND_RST))
+-        stream_reset(stream, 0, 0);
++        stream_reset(stream, error_code, 0);
+ 
+     if (stream->sm_qflags & (SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
+                              | SMQF_SEND_STOP_SENDING))
+@@ -1809,6 +1823,8 @@
+ }
+ 
+ 
++static int stream_is_incoming_unidir (const struct lsquic_stream *);
++
+ static void
+ stream_shutdown_read (lsquic_stream_t *stream)
+ {
+@@ -1819,7 +1835,13 @@
+             LSQ_DEBUG("read shut down before reading FIN.  (FIN received: %d)",
+                 !!(stream->stream_flags & STREAM_FIN_RECVD));
+             SM_HISTORY_APPEND(stream, SHE_EARLY_READ_STOP);
+-            if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD)))
++            /* bun: an outgoing-uni stream has no peer send side to stop;
++             * queueing STOP_SENDING for it makes the peer abort with
++             * "STOP_SENDING on receive-only stream". */
++            if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))
++                    && !((stream->sm_bflags & SMBF_IETF)
++                            && (stream->id & (1ull << SD_SHIFT))
++                            && !stream_is_incoming_unidir(stream)))
+                 handle_early_read_shutdown(stream);
+         }
+         SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
+@@ -4425,6 +4447,62 @@
+ }
+ 
+ 
++/* bun: the on_reset callback only passes `how`; expose the received error
++ * code so the application can surface it. */
++uint64_t
++lsquic_stream_get_error_code (const lsquic_stream_t *stream)
++{
++    return stream->error_code;
++}
++
++
++/* bun: send RESET_STREAM(code) regardless of FIN state.
++ * lsquic_stream_maybe_reset skips RST when FIN_SENT and falls back to
++ * shutdown_read (which sends STOP_SENDING(HEC_NO_ERROR)), losing the
++ * application's code. RFC 9000 sec 3.1 permits RESET_STREAM in the Data Sent
++ * state. */
++void
++lsquic_stream_send_stop_sending (struct lsquic_stream *stream,
++                                 uint64_t error_code)
++{
++    stream->ss_error_code = error_code;
++    /* stream_shutdown_read queues SMQF_SEND_STOP_SENDING (via
++     * handle_early_read_shutdown) and marks U_READ_DONE. */
++    stream_shutdown_read(stream);
++    maybe_schedule_call_on_close(stream);
++}
++
++
++/* bun: send RESET_STREAM(code) regardless of FIN state.
++ * lsquic_stream_maybe_reset skips RST when FIN_SENT and falls back to
++ * shutdown_read (which sends STOP_SENDING(HEC_NO_ERROR)), losing the
++ * application's code. RFC 9000 sec 3.1 permits RESET_STREAM in the Data Sent
++ * state. */
++void
++lsquic_stream_force_reset_ext (struct lsquic_stream *stream,
++                               uint64_t error_code)
++{
++    /* bun: stream_reset clears every queued sending flag; a STOP_SENDING
++     * the application queued just before the reset (Node's shutdown_stream
++     * emits both frames) must still reach the wire. */
++    const enum stream_q_flags had_ss =
++                            stream->sm_qflags & SMQF_SEND_STOP_SENDING;
++    if (!(stream->stream_flags & STREAM_RST_SENT)
++                                && !(stream->sm_qflags & SMQF_SEND_RST))
++        stream_reset(stream, error_code, 0);
++    if (had_ss)
++        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
++    else if (stream->error_code == 0)
++        stream->error_code = error_code;
++    /* Only end the read side when the peer has already FIN'd or RST'd it —
++     * Node's resetStream resets the write side only; the read side stays
++     * open so the peer can still send. */
++    if (stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))
++        stream_shutdown_read(stream);
++    maybe_schedule_call_on_close(stream);
++}
++
++
+ #ifndef NDEBUG
+ #if __GNUC__
+ __attribute__((weak))
+@@ -5316,6 +5394,20 @@
+ }
+ 
+ 
++int
++lsquic_stream_received_early_data (const struct lsquic_stream *stream)
++{
++    return !!(stream->stream_flags & STREAM_EARLY_DATA_IN);
++}
++
++
++int
++lsquic_stream_reset_received (const struct lsquic_stream *stream)
++{
++    return !!(stream->stream_flags & STREAM_RST_RECVD);
++}
++
++
+ int
+ lsquic_stream_can_push (const struct lsquic_stream *stream)
+ {
+--- a/src/liblsquic/lsquic_stream.h
++++ b/src/liblsquic/lsquic_stream.h
+@@ -241,7 +241,7 @@
+     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
+     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
+     STREAM_DATA_RECVD   = 1 << 25,  /* Cache stream state calculation */
+-    STREAM_UNUSED26     = 1 << 26,  /* Unused */
++    STREAM_EARLY_DATA_IN= 1 << 26,  /* Received data in a 0-RTT packet */
+     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
+     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
+     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
+@@ -275,6 +275,8 @@
+     uint64_t                        max_send_off;
+     uint64_t                        sm_last_recv_off;
+     uint64_t                        error_code;
++    /* bun: code for an outgoing STOP_SENDING frame (default HEC_NO_ERROR). */
++    uint64_t                        ss_error_code;
+ 
+     /* From the network, we get frames, which we keep on a list ordered
+      * by offset.
+--- a/src/liblsquic/lsquic_hcso_writer.c
++++ b/src/liblsquic/lsquic_hcso_writer.c
+@@ -121,7 +121,8 @@
+ lsquic_hcso_write_settings (struct hcso_writer *writer,
+                         unsigned max_header_list_size,
+                         unsigned dyn_table_size, unsigned max_risked_streams,
+-                        int is_server
++                        int is_server,
++                        int h3_datagram /* bun */
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                         , int webtransport_server,
+                         unsigned max_webtransport_server_streams
+@@ -140,10 +141,10 @@
+ #   define frame_size_len 2
+ #endif
+     unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
+-        /* There are maximum seven settings that need to be written out and
++        /* There are maximum eight settings that need to be written out and
+          * each value can be encoded in maximum 8 bytes:
+          */
+-        + 7 * (
++        + 8 * (
+ #ifdef NDEBUG
+             1   /* Each setting needs 1-byte varint number, */
+ #else
+@@ -188,6 +189,18 @@
+         p += 1 << bits;
+     }
+ 
++    if (h3_datagram)
++    {
++        /* bun: write out SETTINGS_H3_DATAGRAM=1 (RFC 9297) */
++#define BUN_H3_DATAGRAM (0x33)
++        bits = hcso_setting_type2bits(writer, BUN_H3_DATAGRAM);
++        vint_write(p, BUN_H3_DATAGRAM, bits, 1 << bits);
++        p += 1 << bits;
++        bits = vint_val2bits(1);
++        vint_write(p, 1, bits, 1 << bits);
++        p += 1 << bits;
++    }
++
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+     if (is_server && webtransport_server && max_webtransport_server_streams)
+     {
+@@ -313,6 +326,41 @@
+ }
+ 
+ 
++/* bun: ORIGIN frame (RFC 9412): frame type + length prefix, then the
++ * pre-encoded Origin-Entry sequence supplied by the application. */
++int
++lsquic_hcso_write_origin (struct hcso_writer *writer,
++                            const unsigned char *blob, size_t blob_len)
++{
++    unsigned char *p;
++    unsigned bits;
++    int was_empty;
++    unsigned char buf[1 /* Frame type */ + 8 /* Frame size */];
++
++    p = buf;
++    *p++ = HQFT_ORIGIN;
++    bits = vint_val2bits(blob_len);
++    vint_write(p, blob_len, bits, 1 << bits);
++    p += 1 << bits;
++
++    was_empty = lsquic_frab_list_empty(&writer->how_fral);
++
++    if (0 != lsquic_frab_list_write(&writer->how_fral, buf, p - buf)
++        || 0 != lsquic_frab_list_write(&writer->how_fral, blob, blob_len))
++    {
++        LSQ_INFO("cannot write ORIGIN frame to frab list");
++        return -1;
++    }
++
++    if (was_empty)
++        lsquic_stream_wantwrite(writer->how_stream, 1);
++
++    LSQ_DEBUG("generated %u-byte ORIGIN frame",
++                                (unsigned) ((p - buf) + blob_len));
++    return 0;
++}
++
++
+ int
+ lsquic_hcso_write_max_push_id (struct hcso_writer *writer, uint64_t max_push_id)
+ {
+--- a/src/liblsquic/lsquic_hcso_writer.h
++++ b/src/liblsquic/lsquic_hcso_writer.h
+@@ -23,7 +23,8 @@
+ 
+ int
+ lsquic_hcso_write_settings (struct hcso_writer *,
+-                            unsigned, unsigned, unsigned, int
++                            unsigned, unsigned, unsigned, int,
++                            int /* bun: advertise SETTINGS_H3_DATAGRAM=1 */
+ #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                             ,int, unsigned
+ #endif
+@@ -32,6 +33,11 @@
+ int
+ lsquic_hcso_write_goaway (struct hcso_writer *, lsquic_stream_id_t);
+ 
++/* bun: write a pre-encoded ORIGIN frame payload (RFC 9412). */
++int
++lsquic_hcso_write_origin (struct hcso_writer *, const unsigned char *blob,
++                                                            size_t blob_len);
++
+ int
+ lsquic_hcso_write_max_push_id (struct hcso_writer *, uint64_t max_push_id);
+ 
+--- a/src/liblsquic/lsquic_hcsi_reader.c
++++ b/src/liblsquic/lsquic_hcsi_reader.c
+@@ -98,6 +98,23 @@
+             case HQFT_PRIORITY_UPDATE_STREAM:
+                 reader->hr_state = HR_READ_VARINT;
+                 break;
++            case HQFT_ORIGIN:
++                /* bun: RFC 9412.  Only meaningful when the application
++                 * installed the callback (clients); otherwise skip like an
++                 * unknown frame type. */
++                if (reader->hr_cb->on_origin)
++                {
++                    if (reader->hr_frame_length)
++                        reader->hr_state = HR_READ_ORIGIN;
++                    else
++                    {
++                        reader->hr_cb->on_origin(reader->hr_ctx, NULL, 0, 1);
++                        reader->hr_state = HR_READ_FRAME_BEGIN;
++                    }
++                }
++                else
++                    reader->hr_state = HR_SKIPPING;
++                break;
+             case HQFT_DATA:
+             case HQFT_HEADERS:
+             case HQFT_PUSH_PROMISE:
+@@ -213,6 +230,15 @@
+             if (0 == reader->hr_frame_length)
+                 reader->hr_state = HR_READ_FRAME_BEGIN;
+             break;
++        case HR_READ_ORIGIN: /* bun */
++            len = MIN((uintptr_t) (end - p), reader->hr_frame_length);
++            reader->hr_frame_length -= len;
++            reader->hr_cb->on_origin(reader->hr_ctx, p, len,
++                                            0 == reader->hr_frame_length);
++            p += len;
++            if (0 == reader->hr_frame_length)
++                reader->hr_state = HR_READ_FRAME_BEGIN;
++            break;
+         case HR_READ_SETTING_BEGIN:
+             reader->hr_u.vint2_state.vr2s_state = 0;
+             reader->hr_state = HR_READ_SETTING_CONTINUE;
+--- a/src/liblsquic/lsquic_hcsi_reader.h
++++ b/src/liblsquic/lsquic_hcsi_reader.h
+@@ -20,6 +20,11 @@
+     void    (*on_frame_error)(void *ctx, unsigned code, uint64_t frame_type);
+     void    (*on_priority_update)(void *ctx, enum hq_frame_type, uint64_t id,
+                                                         const char *, size_t);
++    /* bun: ORIGIN frame (RFC 9412) payload, delivered in chunks as it is
++     * read off the control stream; `fin` is set with the last chunk.
++     * Optional: when NULL, ORIGIN frames are skipped like unknown types. */
++    void    (*on_origin)(void *ctx, const unsigned char *chunk, size_t len,
++                                                                    int fin);
+ };
+ 
+ 
+@@ -32,6 +37,7 @@
+         HR_READ_SETTING_BEGIN,
+         HR_READ_SETTING_CONTINUE,
+         HR_READ_PRIORITY_UPDATE,
++        HR_READ_ORIGIN, /* bun */
+         HR_READ_VARINT,
+         HR_READ_VARINT_CONTINUE,
+         HR_ERROR,
+--- a/src/liblsquic/lsquic_hq.h
++++ b/src/liblsquic/lsquic_hq.h
+@@ -17,6 +17,8 @@
+     HQFT_SETTINGS       = 4,
+     HQFT_PUSH_PROMISE   = 5,
+     HQFT_GOAWAY         = 7,
++    /* bun: ORIGIN frame [RFC 9412] Section 2 */
++    HQFT_ORIGIN         = 0xC,
+     HQFT_MAX_PUSH_ID    = 0xD,
+     /* These made me expand shf_frame_type to 4 bytes from 1.  If at some
+      * point we have to support a frame that is wider than 4 byte, it will
+--- a/src/liblsquic/lsquic_packet_out.c
++++ b/src/liblsquic/lsquic_packet_out.c
+@@ -401,6 +401,20 @@
+ }
+ 
+ 
++unsigned
++lsquic_packet_out_count_datagram_frames (lsquic_packet_out_t *packet_out)
++{
++    struct packet_out_frec_iter pofi;
++    struct frame_rec *frec;
++    unsigned count = 0;
++    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
++                                                frec = lsquic_pofi_next(&pofi))
++        if (QUIC_FRAME_DATAGRAM == frec->fe_frame_type)
++            ++count;
++    return count;
++}
++
++
+ void
+ lsquic_packet_out_zero_pad (lsquic_packet_out_t *packet_out)
+ {
+--- a/src/liblsquic/lsquic_packet_out.h
++++ b/src/liblsquic/lsquic_packet_out.h
+@@ -375,6 +375,9 @@
+ struct frame_rec *
+ lsquic_pofi_next (struct packet_out_frec_iter *pofi);
+ 
++unsigned
++lsquic_packet_out_count_datagram_frames (lsquic_packet_out_t *);
++
+ lsquic_packet_out_t *
+ lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
+                        const struct lsquic_conn *, enum packno_bits,
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -1173,6 +1173,16 @@
+     assert(ctl->sc_n_in_flight_all);
+     packet_sz = packet_out_sent_sz(packet_out);
+ 
++    /* DATAGRAM frames are never retransmitted (RFC 9221 Section 5): even if
++     * the packet's other frames are rescheduled, the datagrams it carried
++     * are gone.  Report them as lost.
++     */
++    if ((packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++            && ctl->sc_enpub->enp_stream_if->on_datagram_status)
++        ctl->sc_enpub->enp_stream_if->on_datagram_status(
++            ctl->sc_conn_pub->lconn,
++            lsquic_packet_out_count_datagram_frames(packet_out), 0);
++
+     ++ctl->sc_loss_count;
+ #if LSQUIC_CONN_STATS
+     ++ctl->sc_conn_pub->conn_stats->out.lost_packets;
+@@ -1506,6 +1516,12 @@
+                 packet_sz = packet_out_sent_sz(packet_out);
+                 send_ctl_unacked_remove(ctl, packet_out, packet_sz);
+                 lsquic_packet_out_ack_streams(packet_out);
++                if ((packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++                        && ctl->sc_enpub->enp_stream_if->on_datagram_status)
++                    ctl->sc_enpub->enp_stream_if->on_datagram_status(
++                        ctl->sc_conn_pub->lconn,
++                        lsquic_packet_out_count_datagram_frames(packet_out),
++                        1);
+                 LSQ_DEBUG("acking via regular record #%"PRIu64,
+                                                         packet_out->po_packno);
+             }

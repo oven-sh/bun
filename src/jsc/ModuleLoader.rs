@@ -470,6 +470,22 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     None
 }
 
+/// Node's `--expose-internals`: any bundled `internal/*` module is
+/// importable (same gate as `bun:internal-for-testing`; always-on in debug
+/// builds). Returns the registry tag name (`internal:<rest>`) when the
+/// specifier names a bundled internal module and the gate allows.
+pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSourceTag)> {
+    let rest = spec.strip_prefix(b"internal/")?;
+    if !bun_resolve_builtins::expose_internals_enabled() {
+        return None;
+    }
+    let mut name = Vec::with_capacity(b"internal:".len() + rest.len());
+    name.extend_from_slice(b"internal:");
+    name.extend_from_slice(rest);
+    let tag = crate::ResolvedSourceTag::try_from_name(&name)?;
+    Some((name, tag))
+}
+
 /// C++ entry point: if `specifier` names a builtin module, writes its resolved source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
@@ -481,6 +497,21 @@ pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let specifier = unsafe { &*specifier };
     let spec_utf8 = specifier.to_utf8();
+    // Specifiers without a bundled match (e.g. `internal/test/binding`)
+    // fall through to the alias table.
+    if let Some((name, tag)) = exposed_internal_tag(spec_utf8.slice()) {
+        let resolved = ResolvedSource {
+            source_code: bun_core::String::empty(),
+            specifier: *specifier,
+            source_url: bun_core::String::clone_utf8(&name),
+            tag,
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+        // SAFETY: C++ passed a valid out-param.
+        unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+        return true;
+    }
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
@@ -530,7 +561,7 @@ pub(crate) unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
 pub(crate) unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some()
+    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
 }
 
 // The pure byte-string

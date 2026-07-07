@@ -717,9 +717,23 @@ impl ErrorCode {
     pub const TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode = ErrorCode(329);
     /// `ERR_TRACE_EVENTS_UNAVAILABLE` (instanceof Error)
     pub const TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode(330);
+    /// `ERR_HTTP2_INVALID_CONNECTION_HEADERS` (instanceof TypeError)
+    pub const HTTP2_INVALID_CONNECTION_HEADERS: ErrorCode = ErrorCode(331);
+    /// `ERR_QUIC_CONNECTION_FAILED` (instanceof Error)
+    pub const QUIC_CONNECTION_FAILED: ErrorCode = ErrorCode(332);
+    /// `ERR_QUIC_ENDPOINT_CLOSED` (instanceof Error)
+    pub const QUIC_ENDPOINT_CLOSED: ErrorCode = ErrorCode(333);
+    /// `ERR_QUIC_OPEN_STREAM_FAILED` (instanceof Error)
+    pub const QUIC_OPEN_STREAM_FAILED: ErrorCode = ErrorCode(334);
+    /// `ERR_QUIC_STREAM_ABORTED` (instanceof Error)
+    pub const QUIC_STREAM_ABORTED: ErrorCode = ErrorCode(335);
+    /// `ERR_QUIC_STREAM_RESET` (instanceof Error)
+    pub const QUIC_STREAM_RESET: ErrorCode = ErrorCode(336);
+    /// `ERR_QUIC_VERSION_NEGOTIATION_ERROR` (instanceof Error)
+    pub const QUIC_VERSION_NEGOTIATION_ERROR: ErrorCode = ErrorCode(337);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 331;
+    pub const COUNT: u16 = 338;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1094,6 +1108,15 @@ impl ErrorCode {
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
     pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
     pub const ERR_PROXY_TUNNEL: ErrorCode = ErrorCode::PROXY_TUNNEL;
+    pub const ERR_HTTP2_INVALID_CONNECTION_HEADERS: ErrorCode =
+        ErrorCode::HTTP2_INVALID_CONNECTION_HEADERS;
+    pub const ERR_QUIC_CONNECTION_FAILED: ErrorCode = ErrorCode::QUIC_CONNECTION_FAILED;
+    pub const ERR_QUIC_ENDPOINT_CLOSED: ErrorCode = ErrorCode::QUIC_ENDPOINT_CLOSED;
+    pub const ERR_QUIC_OPEN_STREAM_FAILED: ErrorCode = ErrorCode::QUIC_OPEN_STREAM_FAILED;
+    pub const ERR_QUIC_STREAM_ABORTED: ErrorCode = ErrorCode::QUIC_STREAM_ABORTED;
+    pub const ERR_QUIC_STREAM_RESET: ErrorCode = ErrorCode::QUIC_STREAM_RESET;
+    pub const ERR_QUIC_VERSION_NEGOTIATION_ERROR: ErrorCode =
+        ErrorCode::QUIC_VERSION_NEGOTIATION_ERROR;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1442,6 +1465,13 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_INVALID_BUFFER_SIZE",
     "ERR_TRACE_EVENTS_CATEGORY_REQUIRED",
     "ERR_TRACE_EVENTS_UNAVAILABLE",
+    "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
+    "ERR_QUIC_CONNECTION_FAILED",
+    "ERR_QUIC_ENDPOINT_CLOSED",
+    "ERR_QUIC_OPEN_STREAM_FAILED",
+    "ERR_QUIC_STREAM_ABORTED",
+    "ERR_QUIC_STREAM_RESET",
+    "ERR_QUIC_VERSION_NEGOTIATION_ERROR",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

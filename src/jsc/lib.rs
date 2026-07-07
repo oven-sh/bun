@@ -1069,6 +1069,12 @@ pub mod resolved_source_tag {
         /// callers feed only `HardcodedModule` strum values, so a miss means a
         /// `HardcodedModule` variant has no matching entry in the generated
         /// module table (`INTERNAL_MODULE_TAG`).
+        /// Non-panicking lookup for dynamically-built specifiers (e.g. Node's
+        /// `--expose-internals` serving arbitrary `internal/*` modules).
+        pub fn try_from_name(name: &[u8]) -> Option<Self> {
+            INTERNAL_MODULE_TAG.get(name).copied()
+        }
+
         pub fn from_name(name: &[u8]) -> Self {
             if let Some(&tag) = INTERNAL_MODULE_TAG.get(name) {
                 return tag;

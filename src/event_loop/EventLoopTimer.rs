@@ -205,6 +205,8 @@ pub enum Tag {
     CronJob,
     GcOneShot,
     GcRepeating,
+    QuicEndpoint,
+    QuicSession,
 }
 
 impl Tag {
@@ -215,6 +217,10 @@ impl Tag {
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
             | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
+            // lsquic ticks are armed with ForceRealTime deadlines; a mocked
+            // clock would stop driving the engine and idle out the connection.
+            | Tag::QuicEndpoint
+            | Tag::QuicSession
             => false,
             _ => true,
         }

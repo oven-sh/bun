@@ -1113,6 +1113,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             // builds. Debug builds always allow them.
             bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                 .store(true, core::sync::atomic::Ordering::Relaxed);
+            // Both bits: the env-var path sets this one too. Without it a
+            // release build resolves `internal/test/binding` but not the bare
+            // `internal/*` specifiers the vendored tests import.
+            bun_resolve_builtins::set_expose_internals_enabled(true);
         }
 
         if let Some(depth_str) = args.option(b"--console-depth") {

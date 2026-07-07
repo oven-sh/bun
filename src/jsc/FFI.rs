@@ -10,7 +10,7 @@
 
 use core::ffi::{c_int, c_longlong, c_ulonglong, c_void};
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::JSValue;
 
 pub type JSCell = *mut c_void;
 
@@ -54,11 +54,6 @@ pub(crate) static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
 unsafe extern "C" {
     pub safe fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) -> u64;
     pub safe fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) -> i64;
-}
-
-#[inline]
-pub fn uint64_to_jsvalue_slow(global_object: &JSGlobalObject, val: u64) -> JSValue {
-    JSValue::from_uint64_no_truncate(global_object, val)
 }
 
 unsafe extern "C" {

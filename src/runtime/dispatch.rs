@@ -1103,6 +1103,16 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
             CronJob::on_timer_fire(c, VirtualMachine::get());
         }
+        EventLoopTimerTag::QuicEndpoint => {
+            let c: *mut crate::node::quic::QuicEndpoint =
+                owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
+            crate::node::quic::QuicEndpoint::on_timer_fire(c);
+        }
+        EventLoopTimerTag::QuicSession => {
+            let c: *mut crate::node::quic::QuicSession =
+                owner!(crate::node::quic::QuicSession, event_loop_timer);
+            crate::node::quic::QuicSession::on_timer_fire(c);
+        }
     }
 }
 

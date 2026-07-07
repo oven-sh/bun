@@ -51,22 +51,26 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.send_buf;
 
     int total_sent = 0;
-    while (total_sent < num) {
+    while (num > 0) {
         int count = bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num);
+        // TODO nohang flag?
+        int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
+        if (sent < 0) {
+            return total_sent > 0 ? total_sent : sent;
+        }
+        total_sent += sent;
+        if (sent < count) {
+            /* Short send: the socket buffer is full. Register a writable event
+             * so the drain callback fires. Compare against `count` (this
+             * batch), not the remaining `num` — with a single-packet send the
+             * old `sent < num` test was `0 < 0` and never re-armed. */
+            us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            break;
+        }
         payloads += count;
         lengths += count;
         addresses += count;
         num -= count;
-        // TODO nohang flag?
-        int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
-        if (sent < 0) {
-            return sent;
-        }
-        total_sent += sent;
-        if (0 <= sent && sent < num) {
-            // if we couldn't send all packets, register a writable event so we can call the drain callback
-            us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        }
     }
     return total_sent;
 }

@@ -423,8 +423,7 @@ mod _impl {
         /// The four real `BrotliEncoderOperation`s are the only valid brotli
         /// flush values. A zlib-only mode (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) has
         /// no brotli op, so it fails the conversion and the shared write path
-        /// rejects it with ERR_INVALID_ARG_TYPE before it can reach the
-        /// encoder.
+        /// rejects it before it can reach the encoder.
         pub fn flush_op_from_u32(flush: u32) -> Option<Op> {
             match flush {
                 0 => Some(Op::process),

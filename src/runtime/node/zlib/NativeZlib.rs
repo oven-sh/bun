@@ -477,7 +477,7 @@ impl Context {
     /// zlib accepts the full `FlushValue` range (Z_NO_FLUSH..=Z_TREES).
     /// Checked conversion — transmuting an arbitrary int into a Rust enum is
     /// UB, and anything outside the range fails here so the shared write path
-    /// rejects it with ERR_INVALID_ARG_TYPE.
+    /// rejects it.
     pub fn flush_op_from_u32(flush: u32) -> Option<c::FlushValue> {
         match flush {
             0 => Some(c::FlushValue::NoFlush),

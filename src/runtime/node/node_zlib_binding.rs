@@ -343,10 +343,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
         // Convert to the codec's typed flush op up front — failure means the
-        // value isn't a flush mode this codec defines. Node throws
-        // ERR_INVALID_ARG_TYPE (a TypeError) for an out-of-range flush, so
-        // match the code — but with a message that actually names the flush
-        // argument.
+        // value isn't a flush mode this codec defines. zlib.ts's `.flush()`
+        // already rejects out-of-range kinds (ERR_OUT_OF_RANGE) before queuing
+        // the flush chunk; this is defense-in-depth for direct handle.write()
+        // and `_processChunk()` callers that bypass `.flush()`.
         let Some(flush_op) = <T::Stream as CompressionContext>::flush_op_from_u32(flush) else {
             return Err(global_this
                 .err(
@@ -616,10 +616,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
         // Convert to the codec's typed flush op up front — failure means the
-        // value isn't a flush mode this codec defines. Node throws
-        // ERR_INVALID_ARG_TYPE (a TypeError) for an out-of-range flush, so
-        // match the code — but with a message that actually names the flush
-        // argument.
+        // value isn't a flush mode this codec defines. zlib.ts's `.flush()`
+        // already rejects out-of-range kinds (ERR_OUT_OF_RANGE) before queuing
+        // the flush chunk; this is defense-in-depth for direct handle.write()
+        // and `_processChunk()` callers that bypass `.flush()`.
         let Some(flush_op) = <T::Stream as CompressionContext>::flush_op_from_u32(flush) else {
             return Err(global_this
                 .err(

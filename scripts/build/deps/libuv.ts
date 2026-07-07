@@ -13,7 +13,7 @@ import type { Dependency } from "../source.ts";
 // Tip of oven-sh/libuv's `dylan/win-appcontainer` branch (oven-sh/libuv#5):
 // the `bun` branch plus AppContainer (lowbox) support for pipes, console
 // reads, spawn stdio, and error fidelity. To bump, rebase `bun` + update.
-const LIBUV_COMMIT = "d20cff532bb8cc764e81d279d139624675269aae";
+const LIBUV_COMMIT = "038a3c0d8ef037cbfb2950b8235e6ca04343f9f8";
 
 // prettier-ignore
 const SHARED = [

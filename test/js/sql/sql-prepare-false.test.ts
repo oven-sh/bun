@@ -132,4 +132,35 @@ describe("PostgreSQL prepare: false", async () => {
       expect(actual).toBe(expected);
     }
   });
+
+  // https://github.com/oven-sh/bun/issues/30221
+  // On the unnamed one-shot path Bind is written before ParameterDescription
+  // arrives, so the parameter OID is unknown and object values used to be
+  // serialized as the literal string "[object Object]".
+  const obj = { a: 1, b: [null, true], c: "hi" };
+
+  test("object param is JSON for a jsonb column", async () => {
+    await using db = new SQL(options);
+    const [{ v }] = await db`SELECT ${obj}::jsonb AS v`;
+    expect(v).toEqual(obj);
+  });
+
+  test("object param is JSON for a json column", async () => {
+    await using db = new SQL(options);
+    const [{ v }] = await db`SELECT ${obj}::json AS v`;
+    expect(v).toEqual(obj);
+  });
+
+  test("object param is JSON text for a text column, not [object Object]", async () => {
+    await using db = new SQL(options);
+    const [{ v }] = await db`SELECT ${obj}::text AS v`;
+    expect(v).toBe(JSON.stringify(obj));
+  });
+
+  test("array param is JSON for a jsonb column", async () => {
+    await using db = new SQL(options);
+    const arr = [1, "two", { three: 3 }];
+    const [{ v }] = await db`SELECT ${arr}::jsonb AS v`;
+    expect(v).toEqual(arr);
+  });
 });

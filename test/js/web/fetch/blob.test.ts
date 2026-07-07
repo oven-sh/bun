@@ -143,6 +143,28 @@ describe("Bun.file().slice with relative start/end", () => {
     const text = await b.text();
     expect({ size, textLength: text.length }).toEqual({ size: 8, textLength: 8 });
   });
+
+  test("slice of a nonexistent file still rejects with ENOENT on read", async () => {
+    using dir = tempDir("bun-file-slice-rel", {});
+    const bad = path.join(String(dir), "does-not-exist");
+    // Resolving the size for the clamp must not drop the File store; the
+    // read still has to surface the open() error, same as the unsliced case.
+    expect(async () => await Bun.file(bad).slice(0, 5).text()).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
+    expect(async () => await Bun.file(bad).slice(1, -1).text()).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
+  });
+
+  test("slice preserves the contentType arg when the source is empty", async () => {
+    using dir = tempDir("bun-file-slice-rel", { "empty.bin": "" });
+    const p = path.join(String(dir), "empty.bin");
+    // Same registry-normalised type a non-empty source produces.
+    const want = new Blob(["x"]).slice(0, 1, "text/html").type;
+    expect(Bun.file(p).slice(0, 5, "text/html").type).toBe(want);
+    expect(new Blob([]).slice(0, 0, "text/html").type).toBe(want);
+  });
 });
 
 test("new Blob", () => {

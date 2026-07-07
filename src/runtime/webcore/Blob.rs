@@ -2072,12 +2072,9 @@ impl BlobExt for Blob {
             self.resolve_size();
         }
 
-        if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
-        }
+        // No `size == 0` early return: the clamp below already yields
+        // `(0, 0)` and `get_slice_from` keeps the store (so a missing file
+        // still surfaces ENOENT on read) and honours the `contentType` arg.
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;

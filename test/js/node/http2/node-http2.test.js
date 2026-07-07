@@ -2788,6 +2788,104 @@ it("http2 client stops sending DATA when a mid-stream SETTINGS_INITIAL_WINDOW_SI
   }
 });
 
+// https://github.com/oven-sh/bun/issues/30342
+it("http2 client applies a SETTINGS_INITIAL_WINDOW_SIZE increase as a delta on top of prior WINDOW_UPDATE credit (RFC 9113 §6.9.2)", async () => {
+  // After the default 65535-byte window is exhausted the peer grants 10000 via WINDOW_UPDATE and
+  // then raises INITIAL_WINDOW_SIZE to 200000. §6.9.2 says the stream window shifts by
+  // (200000 - 65535), so total granted credit is 65535 + 10000 + 134465 = 210000. The upload is
+  // exactly 210000 bytes and must drain fully; overwriting the window with the new initial value
+  // instead of adding the delta would lose the 10000 WINDOW_UPDATE credit and stall at 200000.
+  function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, payload]);
+  }
+  const u32 = n => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n >>> 0);
+    return b;
+  };
+  const settingsPayload = pairs =>
+    Buffer.concat(
+      pairs.map(([id, v]) => {
+        const b = Buffer.alloc(6);
+        b.writeUInt16BE(id);
+        b.writeUInt32BE(v >>> 0, 2);
+        return b;
+      }),
+    );
+
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const BODY_SIZE = 210000;
+
+  let buf = Buffer.alloc(0);
+  let sawPreface = false;
+  let dataBytes = 0;
+  let phase = 0;
+  const { promise: outcome, resolve: resolveOutcome, reject: rejectOutcome } = Promise.withResolvers();
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!sawPreface) {
+        if (buf.length < PREFACE.length) return;
+        sawPreface = true;
+        buf = buf.subarray(PREFACE.length);
+        socket.write(Buffer.concat([frame(0x4, 0, 0), frame(0x4, 0x1, 0), frame(0x8, 0, 0, u32(1 << 24))]));
+      }
+      while (buf.length >= 9) {
+        const length = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + length) break;
+        const type = buf[3];
+        const flags = buf[4];
+        const payload = Buffer.from(buf.subarray(9, 9 + length));
+        buf = buf.subarray(9 + length);
+        if (type === 0x0 /* DATA */) {
+          dataBytes += length;
+          if (phase === 0 && dataBytes >= 65535) {
+            phase = 1;
+            // Grant 10000 via WINDOW_UPDATE, then raise INITIAL_WINDOW_SIZE to 200000, then PING.
+            socket.write(
+              Buffer.concat([
+                frame(0x8, 0, 1, u32(10000)),
+                frame(0x4, 0, 0, settingsPayload([[0x4, 200000]])),
+                frame(0x6, 0, 0, Buffer.from("growping")),
+              ]),
+            );
+          }
+        } else if (type === 0x6 /* PING */ && flags & 0x1 && payload.equals(Buffer.from("growping"))) {
+          resolveOutcome(dataBytes);
+        }
+      }
+    });
+  });
+  const { promise: listening, resolve: resolveListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", resolveListening);
+  await listening;
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", rejectOutcome);
+  client.once("remoteSettings", () => {
+    const req = client.request({ ":method": "POST", ":path": "/" });
+    req.on("error", () => {});
+    req.write(Buffer.alloc(BODY_SIZE, 0x42));
+    req.end();
+  });
+
+  try {
+    // After the WU + SETTINGS the stream has exactly BODY_SIZE bytes of credit; the upload drains
+    // before the PING ACK is written.
+    expect(await outcome).toBe(BODY_SIZE);
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred by a frame event handler", async () => {
   // With a user-supplied connection (options.createConnection), the exact
   // Buffer handed to the socket "data" listener is fed to the native HTTP/2

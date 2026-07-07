@@ -66,7 +66,7 @@ import { hello } from "./hello";
 import { hello } from "./hello.ts"; // this works
 ```
 
-There's one additional rule for TypeScript compatibility: if you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts` or `*.tsx` file, and `from "*.mjs"` also matches `*.mts`. This mirrors the behavior of the TypeScript compiler's [module resolution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths.
+There's one additional rule for TypeScript compatibility: if you import `from "*.js"` or `from "*.jsx"`, Bun also checks for a matching `*.ts` or `*.tsx` file, and outside `node_modules` `from "*.mjs"` also matches `*.mts`. This follows the TypeScript compiler's [file extension substitution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution), which lets source files reference each other by their compiled output paths. Note that unlike TypeScript, Bun doesn't rewrite `.cjs` to `.cts`.
 
 ```ts index.ts icon="/icons/typescript.svg"
 import { hello } from "./hello";
@@ -209,8 +209,8 @@ Once it finds the `foo` package, Bun reads its `package.json` to determine the p
   "name": "foo",
   "exports": {
     "bun": "./index.js",
-    "node": "./index.js",
     "node-addons": "./index.js", // unless --no-addons was passed
+    "node": "./index.js",
     "require": "./index.js", // if the importer uses require()
     "import": "./index.mjs", // if the importer uses import
     "default": "./index.js"
@@ -258,7 +258,7 @@ import stuff from "foo/index.mjs"; // this doesn't
   in the `"bun"` condition, Bun imports and executes your TypeScript source files directly.
 </Note>
 
-If `exports` is not defined, Bun falls back to the legacy top-level entrypoint fields. At runtime Bun prefers [`"main"`](https://nodejs.org/api/packages.html#main) when it's present, and uses `"module"` otherwise.
+If `exports` is not defined, Bun falls back to the legacy top-level entrypoint fields. At runtime Bun prefers [`"main"`](https://nodejs.org/api/packages.html#main) (or an implicit `index.*` file) when present, and uses `"module"` otherwise.
 
 ```json package.json icon="file-json"
 {

@@ -604,19 +604,27 @@ impl FileReader {
         }
         let mut has_more = state != ReadState::Eof;
 
-        if !buf.is_empty() {
-            if let Some(max_size) = self.max_size {
-                let total_readed = self.total_readed.get();
-                if total_readed >= max_size {
-                    return false;
-                }
+        if let Some(max_size) = self.max_size {
+            let total_readed = self.total_readed.get();
+            if total_readed >= max_size {
+                // Cap already reached (includes `max_size == 0`). Windows
+                // delivers chunks async with `_buffer` still populated, and a
+                // later empty-buf/`on_reader_done` call would hand that
+                // over-read out. Clear it and close so nothing past the cap
+                // is ever delivered.
+                self.done.set(true);
+                self.reader().buffer().clear();
+                self.reader().close();
+                return false;
+            }
+            if !buf.is_empty() {
                 let len = (max_size - total_readed).min(buf.len());
                 if buf.len() > len {
                     buf = &buf[0..len];
                 }
                 self.total_readed.set(total_readed + len);
 
-                if buf.is_empty() {
+                if total_readed + len >= max_size {
                     close = true;
                     has_more = false;
                 }

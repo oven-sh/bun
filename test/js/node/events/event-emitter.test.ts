@@ -437,6 +437,82 @@ describe("EventEmitter", () => {
     expect(instance._events).toEqual({});
     expect(instance instanceof EventEmitter).toBe(true);
   });
+
+  // Node's removeListener has two code paths with different 'removeListener' payloads:
+  // a single stored listener emits `list.listener || listener` (unwraps once-wrappers),
+  // while the array path emits the `listener` argument exactly as passed.
+  test("'removeListener' event payload matches Node for once-wrappers", () => {
+    function probe(setup: (e: EventEmitter, f: () => void) => void) {
+      const e = new EventEmitter();
+      const orig = function f() {};
+      let got: any = null;
+      e.on("removeListener", (type, l) => {
+        if (type === "x") got = l;
+      });
+      setup(e, orig);
+      return {
+        gotOriginal: got === orig,
+        name: got && got.name,
+        listenerIsOriginal: got ? got.listener === orig : null,
+      };
+    }
+
+    expect({
+      // once() auto-removal with a single listener: Node's single-listener path unwraps.
+      singleOnceAutoRemove: probe((e, f) => {
+        e.once("x", f);
+        e.emit("x");
+      }),
+      // once() auto-removal with >=2 listeners: Node's array path emits the onceWrapper itself.
+      multiOnceAutoRemove: probe((e, f) => {
+        e.once("x", f);
+        e.on("x", () => {});
+        e.emit("x");
+      }),
+      // removeListener(type, wrapper) from rawListeners() with >=2 listeners: array path, wrapper as-is.
+      multiRemoveWrapper: probe((e, f) => {
+        e.once("x", f);
+        e.on("x", () => {});
+        e.removeListener("x", e.rawListeners("x")[0]);
+      }),
+      // removeListener(type, original) with >=2 listeners: array path emits the original passed in.
+      multiRemoveOriginal: probe((e, f) => {
+        e.once("x", f);
+        e.on("x", () => {});
+        e.removeListener("x", f);
+      }),
+      // prependOnceListener auto-removal with >=2 listeners: same array-path behavior.
+      multiPrependOnceAutoRemove: probe((e, f) => {
+        e.on("x", () => {});
+        e.prependOnceListener("x", f);
+        e.emit("x");
+      }),
+    }).toEqual({
+      singleOnceAutoRemove: { gotOriginal: true, name: "f", listenerIsOriginal: false },
+      multiOnceAutoRemove: { gotOriginal: false, name: "bound onceWrapper", listenerIsOriginal: true },
+      multiRemoveWrapper: { gotOriginal: false, name: "bound onceWrapper", listenerIsOriginal: true },
+      multiRemoveOriginal: { gotOriginal: true, name: "f", listenerIsOriginal: false },
+      multiPrependOnceAutoRemove: { gotOriginal: false, name: "bound onceWrapper", listenerIsOriginal: true },
+    });
+  });
+
+  test("removeAllListeners emits 'removeListener' with the original for a once() listener", () => {
+    const e = new EventEmitter();
+    const orig = function f() {};
+    const other = function g() {};
+    const got: Array<{ gotOriginal: boolean; gotOther: boolean; name: string }> = [];
+    e.on("removeListener", (type, l) => {
+      if (type === "x") got.push({ gotOriginal: l === orig, gotOther: l === other, name: l.name });
+    });
+    e.once("x", orig);
+    e.on("x", other);
+    e.removeAllListeners("x");
+    // LIFO: other removed via array path, then orig via single-listener path (unwrapped).
+    expect(got).toEqual([
+      { gotOriginal: false, gotOther: true, name: "g" },
+      { gotOriginal: true, gotOther: false, name: "f" },
+    ]);
+  });
 });
 
 describe("EventEmitter.on", () => {

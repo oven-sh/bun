@@ -109,7 +109,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     return JSValue::encode(JSC::jsUndefined());
 }
 
-
 // node:http: set the trailer fields (pre-rendered "name: value\r\n" lines) to send
 // at the end of the current response's chunked body (response.addTrailers()).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

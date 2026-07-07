@@ -372,8 +372,11 @@ impl NodeHTTPResponse {
             return;
         };
         let mut ptr: *const u8 = std::ptr::null();
-        let length =
-            Bun__NodeHTTP__takeRequestTrailerBytes(any_response_is_ssl(&raw), raw.socket().cast(), &mut ptr);
+        let length = Bun__NodeHTTP__takeRequestTrailerBytes(
+            any_response_is_ssl(&raw),
+            raw.socket().cast(),
+            &mut ptr,
+        );
         if length == 0 {
             return;
         }

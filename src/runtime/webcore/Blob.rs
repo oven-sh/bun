@@ -2064,6 +2064,14 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_.ptr[..];
 
+        // The W3C relative-start/end clamp below needs the real size. For a
+        // lazy `Bun.file()` the size is still the `MAX_SIZE` sentinel, so
+        // negative `end` (and `start`) would be computed against that and
+        // over/under-read. Resolve now, same as `.size` does.
+        if self.size.get() == MAX_SIZE && self.needs_to_read_file() {
+            self.resolve_size();
+        }
+
         if self.size.get() == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force

@@ -779,9 +779,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     }
                 }
             }
-#endif
 
-            if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
+            /* An EPOLLERR with no EPOLLIN and an empty error queue still has to
+             * run the receive path: that is how a pending sk_err — an ICMP for
+             * a socket that never enabled IP_RECVERR, e.g. one adopted from an
+             * external descriptor by bsd_udp_open() and then connected — is
+             * reaped by recvmmsg and reported instead of the socket being
+             * closed below. libuv folds a bare EPOLLERR into EPOLLIN for the
+             * same reason (uv__io_poll, deps/uv/src/unix/linux.c). */
+            const int run_recv =
+                (events & LIBUS_SOCKET_READABLE) || (error && !recv_error_surfaced);
+#else
+            const int run_recv = events & LIBUS_SOCKET_READABLE;
+#endif
+            if (run_recv && !u->closed) {
 
                 do {
                     struct udp_recvbuf recvbuf;

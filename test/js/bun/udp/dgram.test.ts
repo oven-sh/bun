@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope, isWindows } from "harness";
+import { disableAggressiveGCScope, isLinux, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -585,4 +585,93 @@ test("unconnected socket does not emit ICMP unreachable errors like Node", async
   } finally {
     source.close();
   }
+});
+
+// Node/libuv report a send request that was still queued when the socket
+// closed as ECANCELED, not EBADF (uv__udp_finish_close sets req->status =
+// UV_ECANCELED). Kernel backpressure can't be forced deterministically on a
+// loopback UDP socket, so this drives the same queued path handleSend takes
+// under backpressure: any send() behind a non-undefined sendQueue is queued.
+// The socket is connected so send() reaches doSend synchronously (an
+// unconnected send resolves the address first).
+test("close() completes a send still queued behind backpressure with ECANCELED", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const socket = createSocket("udp4");
+  await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => socket.connect(socket.address().port, "127.0.0.1", resolve));
+
+  const handle = socket[kStateSymbol].handle;
+  handle.sendQueue = [];
+
+  const { promise, resolve } = Promise.withResolvers<any>();
+  socket.send("never handed to the kernel", resolve);
+  expect(handle.sendQueue).toHaveLength(1);
+  expect(socket.getSendQueueCount()).toBe(1);
+
+  socket.close();
+  const err = await promise;
+  expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "ECANCELED", syscall: "send" });
+  // The libuv errno for ECANCELED, which is not the same number on every
+  // platform (Linux 125, Darwin 89, FreeBSD 85, Windows -4081).
+  expect(err.errno).toBeLessThan(0);
+  expect(err.message).toStartWith("send ECANCELED");
+});
+
+// A descriptor adopted through bind({ fd }) deliberately does NOT get
+// IP_RECVERR (that matches libuv's uv_udp_open). An ICMP error for it then
+// sets sk_err with an EMPTY error queue, and the kernel reports a bare
+// POLLERR with no POLLIN. loop.c must still run the receive path (libuv folds
+// EPOLLERR into POLLIN for exactly this, deps/uv/src/unix/linux.c) so the
+// error is reaped by recvmmsg and emitted — Node reports it as
+// `recvmsg ECONNREFUSED` — instead of the socket being silently closed.
+test.skipIf(!isLinux)("adopted + connected socket emits the ICMP error instead of silently dying", async () => {
+  const { _createSocketHandle, kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+
+  // Reserve a port, then free it so datagrams sent there trigger ICMP
+  // port-unreachable replies on loopback.
+  const target = createSocket("udp4");
+  await new Promise<void>(resolve => target.bind(0, "127.0.0.1", resolve));
+  const deadPort = target.address().port;
+  await new Promise<void>(resolve => target.close(resolve));
+
+  const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+  expect(typeof wrap).not.toBe("number");
+
+  const socket = createSocket("udp4");
+  const { promise: errored, resolve: onError } = Promise.withResolvers<any>();
+  socket.on("error", onError);
+  const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+  socket.on("listening", onListening);
+  socket.bind({ fd: wrap.fd });
+  await listening;
+  await new Promise<void>(resolve => socket.connect(deadPort, "127.0.0.1", () => resolve()));
+
+  // Keep sending until the queued ICMP error surfaces. If the native socket
+  // is silently closed instead, fail with that rather than a timeout.
+  const native = socket[kStateSymbol].handle.socket;
+  let stop = false;
+  const pump = (async () => {
+    while (!stop) {
+      if (native.closed) {
+        onError(new Error("native socket was silently closed instead of emitting 'error'"));
+        return;
+      }
+      try {
+        socket.send("x");
+      } catch {}
+      await Bun.sleep(10);
+    }
+  })();
+
+  const err = await errored;
+  stop = true;
+  await pump;
+  expect({ code: err.code, syscall: err.syscall, message: err.message }).toEqual({
+    code: "ECONNREFUSED",
+    syscall: "recvmsg",
+    message: "recvmsg ECONNREFUSED",
+  });
+  // The socket stays usable after the error, like Node's.
+  expect(native.closed).toBe(false);
+  socket.close();
 });

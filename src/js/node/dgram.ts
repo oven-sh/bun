@@ -135,11 +135,11 @@ function isInt32(value) {
   return value === (value | 0);
 }
 
-// libuv-style negative errnos used where Node reports uv error codes (the POSIX
-// values match every supported platform; Windows uses libuv's own values).
-const UV_EBADF = process.platform === "win32" ? -4083 : -9;
-const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
-const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+// libuv error codes used where Node reports uv errnos, from the same native
+// surface node:net uses: the negated libc errno on POSIX and libuv's own
+// synthetic values on Windows. Not literals: ECANCELED in particular has a
+// different number on every POSIX platform (Linux 125, Darwin 89, FreeBSD 85).
+const { UV_EBADF, UV_EEXIST, UV_EINVAL, UV_ECANCELED } = process.binding("uv");
 
 const getFdFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsGetFd", 0);
 // Read-only query of the process-wide DGRAM_FDS registry the native layer
@@ -1108,12 +1108,13 @@ Socket.prototype.close = function (callback) {
   const handle = state.handle;
   state.handle.socket?.close();
   state.handle = null;
-  // Any queued sends never complete once the descriptor is gone; callbacks
-  // fire on the next tick (via completeQueuedSend), after the socket is closed.
+  // Requests still queued behind backpressure never reach the kernel once the
+  // descriptor is gone. libuv reports each as ECANCELED, not EBADF
+  // (uv__udp_finish_close); callbacks fire on the next tick, after close.
   if (handle.sendQueue !== undefined) {
     const queue = handle.sendQueue;
     handle.sendQueue = undefined;
-    for (let i = 0; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_EBADF);
+    for (let i = 0; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_ECANCELED);
   }
   if (state.sharedHandle) {
     // Tells the cluster primary this worker no longer uses the shared

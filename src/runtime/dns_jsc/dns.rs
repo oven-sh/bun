@@ -573,10 +573,9 @@ fn parse_ipv4_field(field: &[u8]) -> Option<u64> {
     Some(value)
 }
 
-// A field a backend reads as a number: all decimal digits, or a `0x`/`0X` hex
-// prefix followed only by hex digits. Hex letters without a `0x` prefix (a
-// `.de`/`.ca` TLD) or junk after `0x` (`0x-server`) is not numeric to any
-// backend, so such a field marks the whole name as a hostname.
+// A field a backend reads as a number: all decimal digits, or a `0x`/`0X`
+// prefix followed only by hex digits. Hex letters with no `0x` (a `.de`/`.ca`
+// TLD) or junk after `0x` (`0x-server`) are not numeric to any backend.
 fn looks_like_numeric_field(field: &[u8]) -> bool {
     if field.is_empty() {
         return false;

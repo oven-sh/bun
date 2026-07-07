@@ -4248,7 +4248,8 @@ declare module "bun" {
     /**
      * HTTP proxy to use for the WebSocket connection.
      *
-     * Can be a string URL or an object with `url` and optional `headers`.
+     * Can be a string URL, a URL instance, or an object with `url` and
+     * optional `headers`.
      *
      * @example
      * ```ts

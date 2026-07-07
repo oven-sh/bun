@@ -27,7 +27,22 @@ let authProxyPort: number;
 let wsPort: number;
 let wssPort: number;
 
+// In-process tests here expect the explicit `proxy` option to be honored
+// against 127.0.0.1 targets. An ambient NO_PROXY / HTTP_PROXY / HTTPS_PROXY in
+// the environment (as some CI/dev containers set) would make those connections
+// bypass the proxy and the assertions fail. Clear them for the duration of this
+// file; subprocess-based tests pass their own explicit `env` and are unaffected.
+// Assign "" rather than `delete`: the client reads these via getenv, and only
+// an assignment propagates; an empty value disables the proxy/bypass.
+const savedProxyEnv: Record<string, string | undefined> = {};
+const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+
 beforeAll(async () => {
+  for (const key of PROXY_ENV_KEYS) {
+    savedProxyEnv[key] = process.env[key];
+    process.env[key] = "";
+  }
+
   // Create HTTP CONNECT proxy
   proxy = createConnectProxy();
   proxyPort = await startProxy(proxy);
@@ -88,6 +103,10 @@ afterAll(() => {
   authProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
+
+  for (const key of PROXY_ENV_KEYS) {
+    process.env[key] = savedProxyEnv[key] ?? "";
+  }
 });
 
 describe("WebSocket proxy API", () => {

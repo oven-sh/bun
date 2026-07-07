@@ -2790,6 +2790,277 @@ server.listen(0, "127.0.0.1", () => {
   expect(exitCode).toBe(0);
 });
 
+// RFC 9112 §9.3.2: a server MUST send its responses to pipelined requests in the
+// order the requests were received. Prior to this fix, a second request already in
+// the receive buffer while the first response was a ReadableStream caused the
+// connection to be torn down with zero bytes written and the first stream cancelled.
+describe("HTTP/1.1 pipelining behind an asynchronous response", () => {
+  function makeServer(events: string[]) {
+    return Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      development: false,
+      idleTimeout: 10,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/plain") {
+          events.push("plain");
+          return new Response("ok");
+        }
+        const tag = url.searchParams.get("tag") ?? "s";
+        const chunks = [`data: ${tag}-a\n\n`, `data: ${tag}-b\n\n`];
+        let i = 0;
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              events.push(`start:${tag}`);
+              // setImmediate so the enqueue runs on a fresh event-loop turn, after
+              // the uWS request handler has returned with the response still pending.
+              setImmediate(function push() {
+                try {
+                  if (i >= chunks.length) {
+                    c.close();
+                    return;
+                  }
+                  c.enqueue(new TextEncoder().encode(chunks[i++]));
+                  setImmediate(push);
+                } catch (e: any) {
+                  events.push(`throw:${tag}:${e?.message}`);
+                }
+              });
+            },
+            cancel(r) {
+              events.push(`cancel:${tag}:${r}`);
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+  }
+
+  async function pipelinedRequest(port: number, payload: string, done: (body: string) => boolean) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ body: string; closed: boolean }>();
+    const bufs: Buffer[] = [];
+    let closed = false;
+    const sock = net.connect(port, "127.0.0.1");
+    sock.on("connect", () => sock.write(payload));
+    sock.on("data", d => {
+      bufs.push(d);
+      const body = Buffer.concat(bufs).toString("latin1");
+      if (done(body)) resolve({ body, closed });
+    });
+    sock.on("error", reject);
+    sock.on("close", () => {
+      closed = true;
+      resolve({ body: Buffer.concat(bufs).toString("latin1"), closed });
+    });
+    try {
+      return await promise;
+    } finally {
+      sock.destroy();
+    }
+  }
+
+  function responseCount(body: string) {
+    return (body.match(/HTTP\/1\.1 /g) || []).length;
+  }
+
+  const STREAM = (tag: string) => `GET /stream?tag=${tag} HTTP/1.1\r\nHost: a\r\n\r\n`;
+  const PLAIN = `GET /plain HTTP/1.1\r\nHost: a\r\n\r\n`;
+
+  it("serves a pipelined plain request after a streaming response", async () => {
+    const events: string[] = [];
+    await using server = makeServer(events);
+    const { body, closed } = await pipelinedRequest(
+      server.port,
+      STREAM("s") + PLAIN,
+      b => responseCount(b) >= 2 && b.includes("\r\nok"),
+    );
+
+    const responses = body.split("HTTP/1.1 ").filter(Boolean);
+    expect({
+      count: responses.length,
+      firstHasStreamBody: !!(responses[0]?.includes("data: s-a") && responses[0]?.includes("data: s-b")),
+      secondHasOk: !!responses[1]?.includes("\r\nok"),
+      closed,
+      events,
+    }).toEqual({
+      count: 2,
+      firstHasStreamBody: true,
+      secondHasOk: true,
+      closed: false,
+      events: ["start:s", "plain"],
+    });
+  });
+
+  it("serves two pipelined streaming responses in order", async () => {
+    const events: string[] = [];
+    await using server = makeServer(events);
+    const { body, closed } = await pipelinedRequest(
+      server.port,
+      STREAM("a") + STREAM("b"),
+      b => responseCount(b) >= 2 && b.includes("data: b-b"),
+    );
+
+    const responses = body.split("HTTP/1.1 ").filter(Boolean);
+    expect({
+      count: responses.length,
+      order: [!!responses[0]?.includes("data: a-a"), !!responses[1]?.includes("data: b-a")],
+      closed,
+      events,
+    }).toEqual({
+      count: 2,
+      order: [true, true],
+      closed: false,
+      events: ["start:a", "start:b"],
+    });
+  });
+
+  it("serves three pipelined requests mixing stream and plain", async () => {
+    const events: string[] = [];
+    await using server = makeServer(events);
+    const { body, closed } = await pipelinedRequest(
+      server.port,
+      STREAM("x") + PLAIN + STREAM("y"),
+      b => responseCount(b) >= 3 && b.includes("data: y-b"),
+    );
+
+    const responses = body.split("HTTP/1.1 ").filter(Boolean);
+    expect({
+      count: responses.length,
+      first: !!responses[0]?.includes("data: x-b"),
+      second: !!responses[1]?.includes("\r\nok"),
+      third: !!responses[2]?.includes("data: y-b"),
+      closed,
+      events,
+    }).toEqual({
+      count: 3,
+      first: true,
+      second: true,
+      third: true,
+      closed: false,
+      events: ["start:x", "plain", "start:y"],
+    });
+  });
+
+  it("still serves sync pipelined requests in one write", async () => {
+    const events: string[] = [];
+    await using server = makeServer(events);
+    const { body, closed } = await pipelinedRequest(
+      server.port,
+      PLAIN + PLAIN,
+      b => (b.match(/\r\nok/g) || []).length >= 2,
+    );
+
+    expect({
+      count: (body.match(/HTTP\/1\.1 200 OK/g) || []).length,
+      closed,
+      events,
+    }).toEqual({ count: 2, closed: false, events: ["plain", "plain"] });
+  });
+
+  it("serves a pipelined request after an async fetch handler that awaits before responding", async () => {
+    const seen: string[] = [];
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      development: false,
+      async fetch(req) {
+        const p = new URL(req.url).pathname;
+        seen.push(p);
+        await new Promise<void>(r => setImmediate(r));
+        return new Response(`done:${p}`);
+      },
+    });
+
+    const R = (p: string) => `GET ${p} HTTP/1.1\r\nHost: a\r\n\r\n`;
+    const { body, closed } = await pipelinedRequest(
+      server.port,
+      R("/a") + R("/b"),
+      b => b.includes("done:/a") && b.includes("done:/b"),
+    );
+
+    const responses = body.split("HTTP/1.1 ").filter(Boolean);
+    expect({
+      count: responses.length,
+      first: !!responses[0]?.includes("done:/a"),
+      second: !!responses[1]?.includes("done:/b"),
+      closed,
+      seen,
+    }).toEqual({ count: 2, first: true, second: true, closed: false, seen: ["/a", "/b"] });
+  });
+
+  it("serves a second request that arrives before the first streaming response completes", async () => {
+    // Same bug as the single-write case: the second request reaches the parser
+    // while HTTP_RESPONSE_PENDING is still set, just via a separate TCP read.
+    const events: string[] = [];
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      development: false,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/plain") {
+          events.push("plain");
+          return new Response("ok");
+        }
+        const { promise, resolve } = Promise.withResolvers<void>();
+        (server as any).__release = resolve;
+        return new Response(
+          new ReadableStream({
+            async start(c) {
+              events.push("start");
+              c.enqueue(new TextEncoder().encode("chunk1"));
+              await promise;
+              c.enqueue(new TextEncoder().encode("chunk2"));
+              c.close();
+            },
+            cancel(r) {
+              events.push(`cancel:${r}`);
+            },
+          }),
+        );
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const bufs: Buffer[] = [];
+    const sock = net.connect(server.port, "127.0.0.1");
+    sock.on("connect", () => sock.write(`GET /stream HTTP/1.1\r\nHost: a\r\n\r\n`));
+    let sentSecond = false;
+    sock.on("data", d => {
+      bufs.push(d);
+      const body = Buffer.concat(bufs).toString("latin1");
+      if (!sentSecond && body.includes("chunk1")) {
+        sentSecond = true;
+        sock.write(PLAIN);
+        // Let the second request reach the server before the stream finishes.
+        setImmediate(() => setImmediate(() => (server as any).__release()));
+      }
+      if ((body.match(/HTTP\/1\.1 /g) || []).length >= 2 && body.includes("\r\nok")) {
+        resolve(body);
+      }
+    });
+    sock.on("error", reject);
+    sock.on("close", () => resolve(Buffer.concat(bufs).toString("latin1")));
+    const body = await promise;
+    sock.destroy();
+
+    const responses = body.split("HTTP/1.1 ").filter(Boolean);
+    expect({
+      count: responses.length,
+      first: !!(responses[0]?.includes("chunk1") && responses[0]?.includes("chunk2")),
+      second: !!responses[1]?.includes("\r\nok"),
+      events,
+    }).toEqual({
+      count: 2,
+      first: true,
+      second: true,
+      events: ["start", "plain"],
+    });
+  });
+});
+
 it("only serves /bun:info to loopback clients in development mode", async () => {
   using server = Bun.serve({
     port: 0,

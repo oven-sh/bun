@@ -65,11 +65,6 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
-    } else {
-      // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
-      // destroy -> the _destroy override below -> _undestroy(), which resets
-      // writable state so later writes succeed. autoClose:false disabled that.
-      stream._writableState.autoDestroy = true;
     }
   }
 

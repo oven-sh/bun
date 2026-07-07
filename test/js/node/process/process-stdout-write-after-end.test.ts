@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import path from "path";
 
-test.each(["stdout", "stderr"] as const)(
+test.concurrent.each(["stdout", "stderr"] as const)(
   "process.%s - write after end() errors and is not delivered (piped)",
   async which => {
     await using proc = Bun.spawn({
@@ -44,7 +44,7 @@ test.each(["stdout", "stderr"] as const)(
   },
 );
 
-test.each(["stdout", "stderr"] as const)(
+test.concurrent.each(["stdout", "stderr"] as const)(
   "process.%s - write after end() succeeds and is delivered (file)",
   async which => {
     using dir = tempDir("stdio-write-after-end-file", {});

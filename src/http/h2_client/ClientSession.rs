@@ -519,29 +519,30 @@ impl ClientSession {
     /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
         // The socket is shared by every stream on the session, so arm the
-        // longest effective idle timeout among them (0 = every client
-        // disabled the timer, or none are attached).
+        // longest effective idle timeout among them (0 = every client's
+        // effective deadline is "none", or no clients are attached).
         let mut want: core::ffi::c_uint = 0;
-        let mut any_disabled = false;
+        let mut any_unbounded = false;
+        let mut fold = |eff: core::ffi::c_uint| {
+            any_unbounded |= eff == 0;
+            want = want.max(eff);
+        };
         for &s in self.streams.values() {
             if let Some(c) = stream_ref(s).client_ref() {
-                any_disabled |= c.flags.disable_timeout;
-                want = want.max(c.effective_idle_timeout_seconds());
+                fold(c.effective_idle_timeout_seconds());
             }
         }
         for &c in &self.pending_attach {
-            let c = pending_client_mut(c);
-            any_disabled |= c.flags.disable_timeout;
-            want = want.max(c.effective_idle_timeout_seconds());
+            fold(pending_client_mut(c).effective_idle_timeout_seconds());
         }
-        // A `{timeout:false}` client contributes 0 to the max, which would let
-        // a sibling's short explicit override arm the shared socket and kill
-        // both. Restore the pre-per-request-override lower bound for that
-        // stream: floor at the global default when one coexists with siblings
-        // that want a timer, or disarm entirely when the global is 0 (so
-        // `want.max(0)` cannot express "disarmed"). When every client opted
-        // out `want` is already 0 and the timer stays disarmed.
-        if any_disabled && want != 0 {
+        // A client whose effective deadline is 0 ("no timeout": explicit
+        // `{timeout:false}`, or no override under global=0) contributes 0 to
+        // the max, so a sibling's short explicit override would arm the
+        // shared socket and kill both. Restore the pre-per-request-override
+        // lower bound: floor at the global default, or disarm entirely when
+        // the global is 0. When every client is unbounded `want` is already 0
+        // and the timer stays disarmed.
+        if any_unbounded && want != 0 {
             let global = crate::idle_timeout_seconds();
             want = if global == 0 { 0 } else { want.max(global) };
         }

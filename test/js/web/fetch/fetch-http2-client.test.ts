@@ -2030,18 +2030,18 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
           console.log(JSON.stringify({ noTimeout, shortTimeout }));
         `,
       ),
-      // Global idle default = 0 (disabled). The pre-per-request-override
-      // lower bound here was "disarmed"; `want.max(0)` cannot express that,
-      // so the session must disarm explicitly when a `{timeout:false}`
-      // client coexists with a short-explicit sibling under global=0.
+      // Global idle default = 0 (disabled). A plain fetch with no `timeout`
+      // option inherits effective deadline 0 without setting the
+      // `disable_timeout` flag; the session must still disarm rather than
+      // letting the `{timeout:1000}` sibling arm the shared socket.
       run(
         "0",
         /* js */ `
-          const [noTimeout, shortTimeout] = await Promise.all([
-            get({ timeout: false }),
+          const [plain, shortTimeout] = await Promise.all([
+            get(undefined),
             get({ timeout: 1000 }),
           ]);
-          console.log(JSON.stringify({ noTimeout, shortTimeout }));
+          console.log(JSON.stringify({ plain, shortTimeout }));
         `,
       ),
     ]);
@@ -2056,7 +2056,7 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
       exitCode: 0,
     });
     expect(disarmsOnGlobalZero).toEqual({
-      stdout: JSON.stringify({ noTimeout: "hello", shortTimeout: "hello" }),
+      stdout: JSON.stringify({ plain: "hello", shortTimeout: "hello" }),
       stderr: "",
       exitCode: 0,
     });

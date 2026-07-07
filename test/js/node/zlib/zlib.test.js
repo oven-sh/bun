@@ -391,8 +391,9 @@ describe("zlib.brotli", () => {
     expect(zlib.brotliDecompressSync(Buffer.concat(chunks)).equals(input)).toBe(true);
   });
 
-  // zlib streams still accept the full zlib flush range (Z_FINISH=4 included) —
-  // the narrowed validation is brotli-only.
+  // zlib streams still accept Z_FINISH (4 is within zlib's FLUSH_BOUND upper
+  // bound Z_BLOCK=5) — proves the per-codec FLUSH_BOUND validation didn't
+  // over-narrow the zlib range.
   it("deflate flush(Z_FINISH) still works and round-trips", async () => {
     const input = Buffer.alloc(128, 0x63);
     const s = zlib.createDeflate();

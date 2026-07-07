@@ -318,7 +318,9 @@ fn write_array_literal(
             // JSON.stringify of a Date is its ISO string already wrapped in
             // double quotes, which is a valid quoted array element as-is.
             let mut str = BunString::empty();
-            element.json_stringify_fast(global, &mut str).map_err(js_error_to_postgres)?;
+            element
+                .json_stringify_fast(global, &mut str)
+                .map_err(js_error_to_postgres)?;
             let slice = str.to_utf8_without_ref();
             out.extend_from_slice(slice.slice());
         } else if is_bytea && element.is_buffer(global) {
@@ -336,7 +338,9 @@ fn write_array_literal(
         } else if element.is_object() && !element.is_buffer(global) {
             // Plain objects (and jsonb[]/json[] elements) serialize as JSON.
             let mut str = BunString::empty();
-            element.json_stringify_fast(global, &mut str).map_err(js_error_to_postgres)?;
+            element
+                .json_stringify_fast(global, &mut str)
+                .map_err(js_error_to_postgres)?;
             write_quoted_element(out, str.to_utf8_without_ref().slice());
         } else {
             let str = bun_core::OwnedString::new(

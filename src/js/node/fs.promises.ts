@@ -206,6 +206,26 @@ async function opendir(dir: string, options) {
   return promise;
 }
 
+// Node.js closes a FileHandle's fd in its native finalizer and raises
+// ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
+// Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
+let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: unknown }> | undefined;
+function onFileHandleCollected(held: { fd: number; path: unknown }) {
+  try {
+    fs.closeSync(held.fd);
+  } catch {}
+  const suffix = held.path !== undefined ? ` (${held.path})` : "";
+  const err: NodeJS.ErrnoException = new Error(
+    "A FileHandle object was closed during garbage collection. This used to be allowed " +
+      "with a deprecation warning but is now considered an error. Please close FileHandle " +
+      `objects explicitly. File descriptor: ${held.fd}${suffix}`,
+  );
+  err.code = "ERR_INVALID_STATE";
+  process.nextTick(() => {
+    throw err;
+  });
+}
+
 const private_symbols = {
   kRef,
   kUnref,
@@ -264,7 +284,7 @@ const exports = {
   },
   statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
-    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags);
+    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags, path);
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
@@ -383,12 +403,15 @@ function asyncWrap(fn: any, name: string) {
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
   class FileHandle extends EventEmitter {
-    constructor(fd, flag) {
+    constructor(fd, flag, path?) {
       super();
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
       this[kClosePromise] = null;
       this[kFlag] = flag;
+      if (this[kFd] !== -1) {
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
+      }
     }
 
     getAsyncId() {
@@ -670,6 +693,8 @@ function asyncWrap(fn: any, name: string) {
       if (this[kClosePromise]) {
         return this[kClosePromise];
       }
+
+      fileHandleRegistry?.unregister(this);
 
       if (--this[kRefs] === 0) {
         this[kFd] = -1;
@@ -1357,6 +1382,7 @@ function asyncWrap(fn: any, name: string) {
       }
       const fd = this[kFd];
       this[kFd] = -1;
+      fileHandleRegistry?.unregister(this);
       (nodeFsForIter ??= require("node:fs")).closeSync(fd);
       this.emit("close");
     }
@@ -1369,6 +1395,7 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       const flag = this[kFlag];
       this[kFd] = -1;
+      fileHandleRegistry?.unregister(this);
       return {
         data: { fd, flag },
         deserializeInfo: "internal/fs/promises:FileHandle",
@@ -1382,6 +1409,13 @@ function asyncWrap(fn: any, name: string) {
     [kDeserialize]({ fd, flag }) {
       this[kFd] = fd;
       this[kFlag] = flag;
+      if (fd !== -1) {
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
+          this,
+          { fd, path: undefined },
+          this,
+        );
+      }
     }
 
     [kRef]() {

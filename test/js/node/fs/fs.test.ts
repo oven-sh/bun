@@ -428,6 +428,78 @@ describe("FileHandle", () => {
 
     expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
   });
+
+  // Node.js closes a FileHandle's fd in its native finalizer and raises
+  // ERR_INVALID_STATE (DEP0137 end-of-life) when the handle is collected
+  // without close(). Bun must reclaim the fd and surface the same diagnostic.
+  it.concurrent.skipIf(isWindows)(
+    "FileHandle collected without close() closes the fd and raises ERR_INVALID_STATE",
+    async () => {
+      const fixture = /* js */ `
+        const fsp = require("node:fs/promises");
+        const fs = require("node:fs");
+        const os = require("node:os");
+        const path = require("node:path");
+        const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+        const nfds = () => fs.readdirSync(fdDir).length;
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-"));
+        const N = 50;
+        const diags = [];
+        process.on("uncaughtException", e => diags.push({ code: e.code, message: e.message }));
+
+        (async () => {
+          const before = nfds();
+          await (async () => {
+            for (let i = 0; i < N; i++) await fsp.open(path.join(dir, "f" + i), "w");
+          })();
+          // force GC until every leaked fd is reclaimed and every diagnostic lands
+          for (let i = 0; i < 40 && (nfds() - before > 0 || diags.length < N); i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+          const afterGC = nfds();
+          const sample = diags[0] ?? {};
+
+          // properly closed handles must not trip the finalizer
+          const marker = diags.length;
+          await (async () => {
+            for (let i = 0; i < N; i++) await (await fsp.open(path.join(dir, "g" + i), "w")).close();
+          })();
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+
+          console.log(JSON.stringify({
+            leakedAfterGC: afterGC - before,
+            diagCount: diags.length,
+            sampleCode: sample.code,
+            sampleHasFd: typeof sample.message === "string" && sample.message.includes("File descriptor: "),
+            falsePositives: diags.length - marker,
+          }));
+          fs.rmSync(dir, { recursive: true, force: true });
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+        result: {
+          leakedAfterGC: 0,
+          diagCount: 50,
+          sampleCode: "ERR_INVALID_STATE",
+          sampleHasFd: true,
+          falsePositives: 0,
+        },
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("fdatasyncSync", () => {

@@ -1112,9 +1112,9 @@ test("--frozen-lockfile fails when package.json gains a direct dependency alread
   });
   let err = await stderr.text();
   expect(err).not.toContain("error:");
-  expect(await exited).toBe(0);
   expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
   expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+  expect(await exited).toBe(0);
 
   await write(
     packageJson,

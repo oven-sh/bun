@@ -6716,6 +6716,11 @@ impl Any {
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
                 }
+                // Fetch "parse JSON from bytes" runs "UTF-8 decode", which
+                // strips a leading BOM. `substring` borrows `str`'s storage.
+                if str.char_at(0) == 0xFEFF {
+                    return str.substring(1).to_js_by_parse_json(global);
+                }
                 str.to_js_by_parse_json(global)
             }
         }
@@ -6781,6 +6786,11 @@ impl Any {
                     core::ptr::null_mut(),
                 )));
                 *self = Any::Blob(Blob::default());
+                // Fetch body mixin `text()` is "UTF-8 decode", which strips a
+                // leading BOM. `substring` borrows `str`'s storage.
+                if str.length() > 0 && str.char_at(0) == 0xFEFF {
+                    return str.substring(1).to_js(global);
+                }
                 str.to_js(global)
             }
         }

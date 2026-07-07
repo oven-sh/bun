@@ -51,6 +51,67 @@ describe("UTF-8 BOM should be ignored", () => {
     });
   });
 
+  describe("Response (string body)", () => {
+    it("in text()", async () => {
+      const response = new Response("\uFEFFHello, World!", { headers: { "content-type": "text/plain" } });
+      expect(await response.text()).toBe("Hello, World!");
+    });
+
+    it("in text() with emoji", async () => {
+      const response = new Response("\uFEFFHello, World! 🌎", { headers: { "content-type": "text/plain" } });
+      expect(await response.text()).toBe("Hello, World! 🌎");
+    });
+
+    it("in text() with only a BOM", async () => {
+      const response = new Response("\uFEFF");
+      expect(await response.text()).toBe("");
+    });
+
+    it("in text() only strips one leading BOM", async () => {
+      const response = new Response("\uFEFF\uFEFFHello");
+      expect(await response.text()).toBe("\uFEFFHello");
+    });
+
+    it("in text() leaves an interior BOM", async () => {
+      const response = new Response("Hello\uFEFFWorld");
+      expect(await response.text()).toBe("Hello\uFEFFWorld");
+    });
+
+    it("in json()", async () => {
+      const response = new Response('\uFEFF{"hello":"World"}', {
+        headers: { "content-type": "application/json" },
+      });
+      expect(await response.json()).toEqual({ "hello": "World" } as any);
+    });
+
+    it("in json() with emoji", async () => {
+      const response = new Response('\uFEFF{"hello":"World 🌎"}', {
+        headers: { "content-type": "application/json" },
+      });
+      expect(await response.json()).toEqual({ "hello": "World 🌎" } as any);
+    });
+  });
+
+  describe("Request (string body)", () => {
+    it("in text()", async () => {
+      const request = new Request("https://example.com", {
+        method: "POST",
+        body: "\uFEFFHello, World!",
+        headers: { "content-type": "text/plain" },
+      });
+      expect(await request.text()).toBe("Hello, World!");
+    });
+
+    it("in json()", async () => {
+      const request = new Request("https://example.com", {
+        method: "POST",
+        body: '\uFEFF{"hello":"World"}',
+        headers: { "content-type": "application/json" },
+      });
+      expect(await request.json()).toEqual({ "hello": "World" } as any);
+    });
+  });
+
   describe("Response", () => {
     it("in text()", async () => {
       const response = new Response(Buffer.from("\uFEFFHello, World!"), { headers: { "content-type": "text/plain" } });

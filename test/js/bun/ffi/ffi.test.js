@@ -678,7 +678,7 @@ it.skipIf(!isWindows)("dlopen accepts non-ASCII library paths on Windows", async
     const src = join(process.env.SystemRoot || "C:\\\\Windows", "System32", "version.dll");
     const results = {};
     for (const name of ["caf\\u00e9", "\\u65e5\\u672c\\u8a9e"]) {
-      const dir = join(process.argv[2], "bun-ffi-" + name);
+      const dir = join(process.env.FIXTURE_DIR, "bun-ffi-" + name);
       mkdirSync(dir, { recursive: true });
       const dll = join(dir, "version.dll");
       copyFileSync(src, dll);
@@ -692,8 +692,8 @@ it.skipIf(!isWindows)("dlopen accepts non-ASCII library paths on Windows", async
   `;
   using dir = tempDir("ffi-dlopen-unicode", {});
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture, String(dir)],
-    env: bunEnv,
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, FIXTURE_DIR: String(dir) },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

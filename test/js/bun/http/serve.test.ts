@@ -171,12 +171,13 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
     async server => {
       const controller = new AbortController();
       const signal = controller.signal;
-      const request = fetch(server.url, { signal });
+      // Headers are flushed before the first body chunk, so fetch() resolves
+      // here; the abort surfaces on the body reader.
+      const res = await fetch(server.url, { signal });
       await onIncomingRequest.promise;
       controller.abort();
-      expect(async () => await request).toThrow();
-      // Delay for one run of the event loop.
-      await Bun.sleep(1);
+      expect(async () => await res.blob()).toThrow();
+      await waitForCancel.promise;
 
       expect(abortedFn).toHaveBeenCalled();
       expect(cancelledFn).toHaveBeenCalled();

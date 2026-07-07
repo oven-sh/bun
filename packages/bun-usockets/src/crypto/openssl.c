@@ -1512,10 +1512,11 @@ static void ssl_discard_parked_reason(struct us_socket_t *s) {
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
   if (!success) {
-    /* Server-side cert-reject failures report SSL_get_verify_result directly
-     * (us_internal_ssl_verify_error short-circuits on ssl_fatal_error);
-     * clients keep the parked peer alert below. */
-    if (s_ssl(s) && SSL_is_server(s_ssl(s))) {
+    /* Server cert-reject failures report SSL_get_verify_result directly; gate
+     * on the same mode us_verify_callback aborts under so a later protocol
+     * failure on a rejectUnauthorized:false server keeps its parked reason. */
+    if (s_ssl(s) && SSL_is_server(s_ssl(s)) &&
+        (SSL_get_verify_mode(s_ssl(s)) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
       long x509_err = SSL_get_verify_result(s_ssl(s));
       if (x509_err != X509_V_OK) {
         ssl_discard_parked_reason(s);

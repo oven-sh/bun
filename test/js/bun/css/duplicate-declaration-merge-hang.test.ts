@@ -192,9 +192,9 @@ test("duplicate-rule detection respects the normal/!important split", () => {
     ".z {\n  color: red;\n}\n\n.q {\n  z-index: 9;\n}\n\n.z {\n  color: #00f !important;\n}\n",
   );
   // Mixed: (normal,important) vs (important,normal) for different properties.
-  expect(cssInternals.minifyTest(".z{color:red;top:0 !important}.q{z-index:9}.z{top:1px;color:blue !important}", "")).toBe(
-    ".z{color:red;top:0!important}.q{z-index:9}.z{top:1px;color:#00f!important}",
-  );
+  expect(
+    cssInternals.minifyTest(".z{color:red;top:0 !important}.q{z-index:9}.z{top:1px;color:blue !important}", ""),
+  ).toBe(".z{color:red;top:0!important}.q{z-index:9}.z{top:1px;color:#00f!important}");
   // Same split, same properties: the earlier rule *is* dead.
   expect(cssInternals.minifyTest(".z{color:red !important}.q{z-index:9}.z{color:blue !important}", "")).toBe(
     ".q{z-index:9}.z{color:#00f!important}",

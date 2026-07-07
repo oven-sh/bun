@@ -58,7 +58,9 @@ it.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ argv: JSON.parse(stdout), exitCode }).toEqual({ argv: ["a", "", "b"], exitCode: 0 });
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(stdout.trim()).toBe('["a","","b"]');
+  expect(exitCode).toBe(0);
 });
 
 it("preserves empty passthrough arguments (bun --filter)", async () => {
@@ -70,6 +72,7 @@ it("preserves empty passthrough arguments (bun --filter)", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
   // `--filter` prefixes each output line with "<package> <script>: ".
   expect(stdout).toContain('["a","","b"]');
   expect(exitCode).toBe(0);

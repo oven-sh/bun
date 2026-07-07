@@ -164,14 +164,15 @@ describe("bunshell", () => {
     escapeTest("café && ok", '"café && ok"');
     escapeTest("\u0080;\u00ff", '"\u0080;\u00ff"');
 
-    test("latin-1 values survive $.escape + {raw:} round trip", async () => {
-      for (const value of ["é;", "ü;id", "café && ok", "\u0080;\u00ff"]) {
+    test.each(["é;", "ü;id", "café && ok", "\u0080;\u00ff"])(
+      "latin-1 value %p survives $.escape + {raw:} round trip",
+      async value => {
         const escaped = $.escape(value);
         expect(escaped).not.toInclude("\uFFFD");
         const { stdout } = await $`echo ${{ raw: escaped }}`;
         expect(stdout.toString()).toEqual(`${value}\n`);
-      }
-    });
+      },
+    );
 
     test("$.escape of an empty string is an empty shell word", async () => {
       expect($.escape("")).toBe('""');

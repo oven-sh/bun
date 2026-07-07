@@ -105,39 +105,46 @@ async function tryBuildFast(dir: string): Promise<boolean> {
       // Compile to a temporary name and rename so a partial artifact is never loadable.
       const output = join(outDir, `${target.target_name}.node`);
       const tmpOutput = join(outDir, `.${target.target_name}.${process.pid}.tmp.node`);
-      const child = spawn({
-        cmd: [
-          compilerFor(cxx),
-          ...(cxx ? ["-std=gnu++20"] : []),
-          "-shared",
-          "-fPIC",
-          "-g",
-          "-O0",
-          ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
-          `-I${nodeInclude}`,
-          `-DNODE_GYP_MODULE_NAME=${target.target_name}`,
-          "-DBUILDING_NODE_EXTENSION",
-          "-DDEBUG",
-          "-D_DEBUG",
-          ...(target.defines ?? []).map(define => `-D${define}`),
-          ...target.sources,
-          "-o",
-          tmpOutput,
-        ],
-        cwd: dir,
-        stderr: "pipe",
-        stdout: "ignore",
-        stdin: "ignore",
-        env: bunEnv,
-      });
-      await child.exited;
-      if (child.exitCode !== 0) {
-        const stderr = await new Response(child.stderr).text();
-        console.warn(`direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp:\n${stderr}`);
+      try {
+        const child = spawn({
+          cmd: [
+            compilerFor(cxx),
+            ...(cxx ? ["-std=gnu++20"] : []),
+            "-shared",
+            "-fPIC",
+            "-g",
+            "-O0",
+            ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
+            `-I${nodeInclude}`,
+            `-DNODE_GYP_MODULE_NAME=${target.target_name}`,
+            "-DBUILDING_NODE_EXTENSION",
+            "-DDEBUG",
+            "-D_DEBUG",
+            ...(target.defines ?? []).map(define => `-D${define}`),
+            ...target.sources,
+            "-o",
+            tmpOutput,
+          ],
+          cwd: dir,
+          stderr: "pipe",
+          stdout: "ignore",
+          stdin: "ignore",
+          env: bunEnv,
+        });
+        await child.exited;
+        if (child.exitCode !== 0) {
+          const stderr = await new Response(child.stderr).text();
+          console.warn(
+            `direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp:\n${stderr}`,
+          );
+          return false;
+        }
+        renameSync(tmpOutput, output);
+        return true;
+      } catch (error) {
+        console.warn(`direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp: ${error}`);
         return false;
       }
-      renameSync(tmpOutput, output);
-      return true;
     }),
   );
   return results.every(Boolean);

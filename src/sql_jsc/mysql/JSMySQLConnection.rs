@@ -986,8 +986,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
-                return;
+            // `do_handshake` returns false with an all-zero `ssl_error` only when
+            // the chain verified but the VerifyFull identity check failed.
+            let v = if success == 1 && ssl_error.error_no == 0 {
+                let hostname = this.connection_mut().server_name();
+                this.global_object
+                    .err(
+                        crate::jsc::ErrorCode::TLS_CERT_ALTNAME_INVALID,
+                        format_args!(
+                            "Hostname/IP does not match certificate's altnames: Host: {}",
+                            bstr::BStr::new(hostname),
+                        ),
+                    )
+                    .to_js()
+            } else {
+                let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
+                    return;
+                };
+                v
             };
             this.fail_with_js_value(v);
         }

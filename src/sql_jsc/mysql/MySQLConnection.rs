@@ -402,6 +402,16 @@ impl MySQLConnection {
         self.status == ConnectionState::Connected
     }
 
+    pub fn server_name(&self) -> &[u8] {
+        let p = self.tls_config.server_name();
+        if p.is_null() {
+            b""
+        } else {
+            // SAFETY: NUL-terminated C string owned by `tls_config`.
+            unsafe { bun_core::ffi::cstr(p) }.to_bytes()
+        }
+    }
+
     pub fn do_handshake(
         &mut self,
         success: i32,

@@ -887,30 +887,39 @@ impl PostgresSQLConnection {
 
                         if self.ssl_mode == SSLMode::VerifyFull {
                             let servername = self.tls_config.server_name();
-                            let ok = if servername.is_null() {
-                                false
+                            // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
+                            let hostname: &[u8] = if servername.is_null() {
+                                b""
                             } else {
-                                // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                                let ssl_ptr: *mut BoringSSL::c::SSL = self
-                                    .socket
-                                    .get()
-                                    .get_native_handle()
-                                    .map_or(core::ptr::null_mut(), |p| p.cast());
-                                // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname =
-                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                                // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
-                                !ssl_ptr.is_null()
-                                    && BoringSSL::check_server_identity(
-                                        unsafe { &mut *ssl_ptr },
-                                        hostname,
-                                    )
+                                unsafe { bun_core::ffi::cstr(servername) }.to_bytes()
                             };
+                            // SAFETY: native handle of a connected TLS socket is `SSL*`.
+                            let ssl_ptr: *mut BoringSSL::c::SSL = self
+                                .socket
+                                .get()
+                                .get_native_handle()
+                                .map_or(core::ptr::null_mut(), |p| p.cast());
+                            // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
+                            let ok = !hostname.is_empty()
+                                && !ssl_ptr.is_null()
+                                && BoringSSL::check_server_identity(
+                                    unsafe { &mut *ssl_ptr },
+                                    hostname,
+                                );
                             if !ok {
-                                let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                    return;
-                                };
-                                self.fail_with_js_value(v);
+                                // The chain verified (error_no == 0 above); only the
+                                // identity check failed, so `ssl_error` carries nothing.
+                                let err = self
+                                    .global()
+                                    .err(
+                                        jsc::ErrorCode::TLS_CERT_ALTNAME_INVALID,
+                                        format_args!(
+                                            "Hostname/IP does not match certificate's altnames: Host: {}",
+                                            bstr::BStr::new(hostname),
+                                        ),
+                                    )
+                                    .to_js();
+                                self.fail_with_js_value(err);
                             }
                         }
                     }

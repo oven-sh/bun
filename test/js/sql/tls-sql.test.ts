@@ -1,8 +1,17 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import tls from "node:tls";
 import { describeWithContainer, isDockerEnabled } from "harness";
 import path from "node:path";
-import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
+import {
+  listeningServer,
+  pgAuthenticationCleartextPassword,
+  pgAuthenticationOk,
+  pgReadyForQuery,
+  pgSSLRequest,
+  pgSSLResponse,
+} from "./wire-frames";
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
@@ -416,5 +425,79 @@ test("postgres client aborts the connection when the server declines TLS that wa
       for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
+  }
+});
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+test("postgres sslmode=verify-full reports a hostname mismatch as ERR_TLS_CERT_ALTNAME_INVALID", async () => {
+  // Self-signed certificate with only DNS:localhost in its SANs (no IP SANs).
+  // The client trusts it as its own CA, so the chain verifies; connecting by
+  // 127.0.0.1 under verify-full fails only the identity check.
+  const cert = readFileSync(path.join(import.meta.dir, "..", "..", "regression", "issue", "27890-localhost-only.crt"));
+  const key = readFileSync(path.join(import.meta.dir, "..", "..", "regression", "issue", "27890-localhost-only.key"));
+  const secureContext = tls.createSecureContext({ cert, key });
+
+  const sockets = new Set<import("node:net").Socket>();
+  const { server, port } = await listeningServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let preTls = Buffer.alloc(0);
+    const onData = (d: Buffer) => {
+      preTls = Buffer.concat([preTls, d]);
+      if (preTls.length < pgSSLRequest().length) return;
+      socket.removeListener("data", onData);
+      socket.write(pgSSLResponse("S"));
+      const tlsSock = new tls.TLSSocket(socket, { isServer: true, secureContext });
+      sockets.add(tlsSock);
+      tlsSock.on("error", () => {});
+      tlsSock.on("data", () => {
+        tlsSock.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      });
+    };
+    socket.on("data", onData);
+  });
+
+  try {
+    // verify-ca: the cert is trusted as its own CA, so the chain verifies and
+    // the connection succeeds. This proves the cert and server are sound and
+    // that the verify-full rejection below is the identity check alone.
+    {
+      await using sql = new SQL(`postgres://u:pw@127.0.0.1:${port}/db?sslmode=verify-ca`, {
+        max: 1,
+        connectionTimeout: 5,
+        tls: { ca: cert },
+      });
+      await sql.connect();
+      expect(sql.options.hostname).toBe("127.0.0.1");
+    }
+
+    // verify-full: the chain verifies but 127.0.0.1 is not in the cert's SANs,
+    // so check_server_identity fails. The rejection must carry a code and a
+    // message that names the host; previously the client built the error from
+    // an all-zero verify-error struct, which on assert-enabled builds aborts
+    // the process in JSC::createError(!message.isEmpty()) and on release
+    // surfaces as `Error { message: "", code: undefined }`.
+    {
+      await using sql = new SQL(`postgres://u:pw@127.0.0.1:${port}/db?sslmode=verify-full`, {
+        max: 1,
+        connectionTimeout: 5,
+        tls: { ca: cert },
+      });
+      const outcome = await sql.connect().then(
+        () => ({ connected: true }),
+        e => ({ code: e?.code, message: e?.message }),
+      );
+      expect(outcome).toEqual({
+        code: "ERR_TLS_CERT_ALTNAME_INVALID",
+        message: expect.stringContaining("127.0.0.1"),
+      });
+    }
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });

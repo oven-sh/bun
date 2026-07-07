@@ -522,6 +522,36 @@ describe("corrupt compressed responses", () => {
       srv.close();
     }
   });
+
+  it("redirect loop with a non-empty body rejects with TooManyRedirects", async () => {
+    // Real-world 302s carry an HTML body, which routes the intermediate
+    // head through clone_metadata(); hitting the redirect limit must still
+    // reject fetch() rather than resolve with that 302.
+    const body = "<html><body>Moved.</body></html>";
+    const srv = createNetServer(sock => {
+      sock.on("error", () => {});
+      let acc = "";
+      sock.on("data", d => {
+        acc += d;
+        if (!acc.includes("\r\n\r\n")) return;
+        acc = "";
+        sock.end(
+          `HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:${port}/loop\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
+        );
+      });
+    });
+    const port = await listen(srv);
+    try {
+      const err = await fetch(`http://127.0.0.1:${port}/`).then(
+        r => ({ status: r.status }),
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { code?: string }).code).toBe("TooManyRedirects");
+    } finally {
+      srv.close();
+    }
+  });
 });
 
 describe("empty compressed responses", () => {

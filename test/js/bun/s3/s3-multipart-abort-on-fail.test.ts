@@ -102,37 +102,33 @@ const env = {
   https_proxy: undefined,
 };
 
+async function run(failMode: "commit" | "part") {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture(failMode)],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+  return JSON.parse(stdout.trim()) as { outcome: string; aborts: number; requests: string[] };
+}
+
 describe("S3 multipart upload aborts the server-side upload on failure", () => {
   test.concurrent("UploadPart failure triggers AbortMultipartUpload", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture("part")],
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const result = JSON.parse(stdout.trim());
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const result = await run("part");
     expect(result.outcome).toBe("rejected:InternalError");
     expect(result.requests).toContain("DELETE ?uploadId -> 204");
     expect(result.aborts).toBeGreaterThanOrEqual(1);
   });
 
   test.concurrent("CompleteMultipartUpload failure triggers AbortMultipartUpload", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture("commit")],
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const result = JSON.parse(stdout.trim());
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const result = await run("commit");
     // The writer should reject, parts should have succeeded, commit retried,
     // and then an AbortMultipartUpload must be issued so the server-side
     // upload (and its parts) are not left orphaned.
     expect(result.outcome).toBe("rejected:InternalError");
-    expect(result.requests.filter((r: string) => r.startsWith("PUT ?partNumber"))).toEqual([
+    expect(result.requests.filter(r => r.startsWith("PUT ?partNumber"))).toEqual([
       "PUT ?partNumber=1 -> 200",
       "PUT ?partNumber=2 -> 200",
     ]);

@@ -767,14 +767,22 @@ impl MultiPartUpload {
                     return Ok(());
                 }
                 this_ref.state = State::Finished;
-                (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context)?;
+                let r =
+                    (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
                 // Launder `self` after the callback (see `fail()`); it may have
                 // re-entered via the JS wrapper. Then issue a best-effort
                 // AbortMultipartUpload so the uploaded parts are not orphaned.
-                // The rollback chain consumes the final-step ref.
+                // The rollback chain consumes the final-step ref; on a
+                // terminated VM release it directly so refcounts stay balanced.
                 let this: *mut Self = core::hint::black_box(this);
-                // SAFETY: `this` is live (final-step ref still held).
-                unsafe { (*this).rollback_multi_part_request() }
+                if r.is_ok() {
+                    // SAFETY: `this` is live (final-step ref still held).
+                    unsafe { (*this).rollback_multi_part_request() }
+                } else {
+                    // SAFETY: `this` is live (final-step ref held until this deref).
+                    MultiPartUpload::deref_(this);
+                    r
+                }
             }
             S3CommitResult::Success => {
                 this_ref.state = State::Finished;

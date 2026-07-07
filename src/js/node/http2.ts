@@ -642,15 +642,15 @@ function assertValidHeader(name, value) {
     connectionHeaderMessageWarn();
   }
 }
-function assertIsObject(value: any, name: string, types?: string): asserts value is object {
+function assertIsObject(value: any, name: string, types?: string | string[]): asserts value is object {
   if (value !== undefined && (!$isObject(value) || $isArray(value))) {
-    throw $ERR_INVALID_ARG_TYPE(name, types || "object", value);
+    throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Object"], value);
   }
 }
 
-function assertIsArray(value: any, name: string, types?: string): asserts value is any[] {
+function assertIsArray(value: any, name: string, types?: string | string[]): asserts value is any[] {
   if (value !== undefined && !$isArray(value)) {
-    throw $ERR_INVALID_ARG_TYPE(name, types || "Array", value);
+    throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Array"], value);
   }
 }
 hideFromStack(assertIsObject);
@@ -2012,61 +2012,6 @@ function assertValidPseudoHeader(key) {
   }
 }
 hideFromStack(assertValidPseudoHeader);
-
-// node's ERR_INVALID_ARG_TYPE formats the expected-type list with primitive type names rendered
-// as "of type x" and class names as "an instance of X" (lib/internal/errors.js). The in-tree
-// call sites above don't need that split, but the internal/http2/util helpers exported to the
-// ported node test suite are asserted against node's exact wording.
-const kPrimitiveTypeNames = new SafeSet([
-  "string",
-  "function",
-  "number",
-  "object",
-  "Function",
-  "Object",
-  "boolean",
-  "bigint",
-  "symbol",
-]);
-function formatExpectedTypeList(list: string[]) {
-  if (list.length === 1) return list[0];
-  if (list.length === 2) return `${list[0]} or ${list[1]}`;
-  return `${list.slice(0, -1).join(", ")}, or ${list[list.length - 1]}`;
-}
-function createNodeInvalidArgTypeError(name: string, expected: string | string[], actual: any) {
-  if (!$isArray(expected)) expected = [expected];
-  const types: string[] = [];
-  const instances: string[] = [];
-  for (let i = 0; i < expected.length; i++) {
-    const entry = expected[i];
-    if (kPrimitiveTypeNames.has(entry)) types.push(StringPrototypeToLowerCase.$call(entry));
-    else instances.push(entry);
-  }
-  let message = `The "${name}" argument must be `;
-  if (types.length > 0) {
-    message += `of type ${formatExpectedTypeList(types)}`;
-    if (instances.length > 0) message += " or ";
-  }
-  if (instances.length > 0) {
-    message += `an instance of ${formatExpectedTypeList(instances)}`;
-  }
-  message += `. Received ${receivedValueLabel(actual)}`;
-  const err = new TypeError(message);
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-// node's internal/http2/util assertIsObject/assertIsArray, exported for the ported node test
-// suite (the suite asserts node's exact instance-of wording for class-name expectations).
-function nodeUtilAssertIsObject(value: any, name: string, types?: string | string[]) {
-  if (value !== undefined && (!$isObject(value) || $isArray(value))) {
-    throw createNodeInvalidArgTypeError(name, types || "Object", value);
-  }
-}
-function nodeUtilAssertIsArray(value: any, name: string, types?: string | string[]) {
-  if (value !== undefined && !$isArray(value)) {
-    throw createNodeInvalidArgTypeError(name, types || "Array", value);
-  }
-}
 
 // node's internal/http2/util sessionName() — used for debug output and exposed to the ported
 // node test suite through the internals object below.
@@ -6642,8 +6587,8 @@ export default {
       ClientHttp2Stream,
     },
     util: {
-      assertIsObject: nodeUtilAssertIsObject,
-      assertIsArray: nodeUtilAssertIsArray,
+      assertIsObject,
+      assertIsArray,
       assertWithinRange,
       assertValidPseudoHeader,
       sessionName,

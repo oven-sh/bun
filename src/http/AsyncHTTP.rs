@@ -124,7 +124,7 @@ fn http_thread_timer_read() -> u64 {
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
-fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
+pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
     if proxy.username.is_empty() {
         return None;
     }
@@ -203,6 +203,7 @@ fn make_client<'a>(
         if_modified_since: b"",
         request_content_len_buf: [0u8; b"-4294967295".len()],
         http_proxy,
+        proxy_settings: None,
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
@@ -262,6 +263,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
 #[derive(Default)]
 pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
+    pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
@@ -535,6 +537,7 @@ impl<'a> AsyncHTTP<'a> {
             this.client.tls_props = Some(val);
         }
         this.client.compress = options.compress;
+        this.client.proxy_settings = options.proxy_settings;
 
         if let Some(proxy) = &this.http_proxy {
             if let Some(auth) = build_proxy_authorization(proxy) {

@@ -371,84 +371,113 @@ impl<'a> Loader<'a> {
     /// Returns true if the given hostname/host should bypass the proxy
     /// according to the NO_PROXY / no_proxy environment variable.
     pub fn is_no_proxy(&self, hostname: Option<&[u8]>, host: Option<&[u8]>) -> bool {
-        // NO_PROXY filter
-        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        let Some(hn) = hostname else { return false };
-
-        let Some(no_proxy_text) = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY") else {
+        let Some(no_proxy_text) = self.get_no_proxy_text() else {
             return false;
         };
-        if Self::is_emptyish(no_proxy_text) {
-            return false;
-        }
+        no_proxy_matches(no_proxy_text, hostname, host)
+    }
 
-        for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
-            let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
+    /// Raw `no_proxy` / `NO_PROXY` value (None if unset or empty-ish).
+    pub fn get_no_proxy_text(&self) -> Option<&[u8]> {
+        let v = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY")?;
+        if Self::is_emptyish(v) {
+            return None;
+        }
+        Some(v)
+    }
+
+    /// Raw `http_proxy` / `https_proxy` value (None if unset or empty-ish).
+    pub fn get_proxy_text(&self, is_http: bool) -> Option<&[u8]> {
+        let v = if is_http {
+            self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
+        } else {
+            self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
+        }?;
+        if Self::is_emptyish(v) {
+            return None;
+        }
+        Some(v)
+    }
+}
+
+/// Returns true if the given hostname/host should bypass the proxy according
+/// to the supplied `no_proxy` list. Pure over its arguments so the HTTP
+/// thread can re-evaluate per redirect hop from a captured copy of the env
+/// value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
+pub fn no_proxy_matches(
+    no_proxy_text: &[u8],
+    hostname: Option<&[u8]>,
+    host: Option<&[u8]>,
+) -> bool {
+    let Some(hn) = hostname else { return false };
+    for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
+        let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
+        if no_proxy_entry.is_empty() {
+            continue;
+        }
+        if no_proxy_entry == b"*" {
+            return true;
+        }
+        // strips .
+        if strings::starts_with_char(no_proxy_entry, b'.') {
+            no_proxy_entry = &no_proxy_entry[1..];
             if no_proxy_entry.is_empty() {
                 continue;
             }
-            if no_proxy_entry == b"*" {
-                return true;
-            }
-            // strips .
-            if strings::starts_with_char(no_proxy_entry, b'.') {
-                no_proxy_entry = &no_proxy_entry[1..];
-                if no_proxy_entry.is_empty() {
-                    continue;
-                }
-            }
+        }
 
-            // Determine if entry contains a port or is an IPv6 address
-            // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
-            // Bracketed IPv6 with port: "[::1]:8080"
-            // Host with port: "localhost:8080" (single colon)
-            let colon_count = no_proxy_entry.iter().filter(|&&b| b == b':').count();
-            let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
-            let has_port = 'blk: {
-                if is_bracketed_ipv6 {
-                    // Bracketed IPv6: check for "]:port" pattern
-                    if strings::index_of(no_proxy_entry, b"]:").is_some() {
-                        break 'blk true;
-                    }
-                    break 'blk false;
-                } else if colon_count == 1 {
-                    // Single colon means host:port (not IPv6)
+        // Determine if entry contains a port or is an IPv6 address
+        // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
+        // Bracketed IPv6 with port: "[::1]:8080"
+        // Host with port: "localhost:8080" (single colon)
+        let colon_count = no_proxy_entry.iter().filter(|&&b| b == b':').count();
+        let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
+        let has_port = 'blk: {
+            if is_bracketed_ipv6 {
+                // Bracketed IPv6: check for "]:port" pattern
+                if strings::index_of(no_proxy_entry, b"]:").is_some() {
                     break 'blk true;
                 }
-                // Multiple colons without brackets = bare IPv6 literal (no port)
                 break 'blk false;
-            };
+            } else if colon_count == 1 {
+                // Single colon means host:port (not IPv6)
+                break 'blk true;
+            }
+            // Multiple colons without brackets = bare IPv6 literal (no port)
+            break 'blk false;
+        };
 
-            if has_port {
-                // Entry has a port, do exact match against host:port
-                if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
-                        return true;
-                    }
-                }
-            } else {
-                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
-                let entry_len = no_proxy_entry.len();
-                if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
-                        return true;
-                    }
-                } else if hn.len() > entry_len
-                    && hn[hn.len() - entry_len - 1] == b'.'
-                    && strings::eql_case_insensitive_ascii(
-                        &hn[hn.len() - entry_len..],
-                        no_proxy_entry,
-                        true,
-                    )
-                {
+        if has_port {
+            // Entry has a port, do exact match against host:port
+            if let Some(h) = host {
+                if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
                     return true;
                 }
             }
+        } else {
+            // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
+            let entry_len = no_proxy_entry.len();
+            if hn.len() == entry_len {
+                if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
+                    return true;
+                }
+            } else if hn.len() > entry_len
+                && hn[hn.len() - entry_len - 1] == b'.'
+                && strings::eql_case_insensitive_ascii(
+                    &hn[hn.len() - entry_len..],
+                    no_proxy_entry,
+                    true,
+                )
+            {
+                return true;
+            }
         }
-
-        false
     }
 
+    false
+}
+
+impl<'a> Loader<'a> {
     pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
         if DID_LOAD_CCACHE_PATH.load(Ordering::Relaxed) {
             return;

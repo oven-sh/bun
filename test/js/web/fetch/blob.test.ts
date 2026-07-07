@@ -761,7 +761,9 @@ describe("new Blob([part]) / new File([part], name) do not inherit part metadata
     const before = Date.now();
     const wrapped = new File([Bun.file(p)], "n");
     const after = Date.now();
-    expect(wrapped.lastModified).toBeGreaterThanOrEqual(before);
-    expect(wrapped.lastModified).toBeLessThanOrEqual(after);
+    // Date.now() and the native milli_timestamp() are separate clock reads
+    // and truncate independently, so allow 1s of slack on each side.
+    expect(wrapped.lastModified).toBeGreaterThanOrEqual(before - 1000);
+    expect(wrapped.lastModified).toBeLessThanOrEqual(after + 1000);
   });
 });

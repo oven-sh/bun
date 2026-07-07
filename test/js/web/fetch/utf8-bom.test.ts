@@ -51,64 +51,42 @@ describe("UTF-8 BOM should be ignored", () => {
     });
   });
 
-  describe("Response (string body)", () => {
+  describe.each([
+    ["Response", (body: string, type: string) => new Response(body, { headers: { "content-type": type } })],
+    [
+      "Request",
+      (body: string, type: string) =>
+        new Request("https://example.com", { method: "POST", body, headers: { "content-type": type } }),
+    ],
+  ] as const)("%s (string body)", (_, make) => {
     it("in text()", async () => {
-      const response = new Response("\uFEFFHello, World!", { headers: { "content-type": "text/plain" } });
-      expect(await response.text()).toBe("Hello, World!");
+      expect(await make("\uFEFFHello, World!", "text/plain").text()).toBe("Hello, World!");
     });
 
     it("in text() with emoji", async () => {
-      const response = new Response("\uFEFFHello, World! 🌎", { headers: { "content-type": "text/plain" } });
-      expect(await response.text()).toBe("Hello, World! 🌎");
+      expect(await make("\uFEFFHello, World! 🌎", "text/plain").text()).toBe("Hello, World! 🌎");
     });
 
     it("in text() with only a BOM", async () => {
-      const response = new Response("\uFEFF");
-      expect(await response.text()).toBe("");
+      expect(await make("\uFEFF", "text/plain").text()).toBe("");
     });
 
     it("in text() only strips one leading BOM", async () => {
-      const response = new Response("\uFEFF\uFEFFHello");
-      expect(await response.text()).toBe("\uFEFFHello");
+      expect(await make("\uFEFF\uFEFFHello", "text/plain").text()).toBe("\uFEFFHello");
     });
 
     it("in text() leaves an interior BOM", async () => {
-      const response = new Response("Hello\uFEFFWorld");
-      expect(await response.text()).toBe("Hello\uFEFFWorld");
+      expect(await make("Hello\uFEFFWorld", "text/plain").text()).toBe("Hello\uFEFFWorld");
     });
 
     it("in json()", async () => {
-      const response = new Response('\uFEFF{"hello":"World"}', {
-        headers: { "content-type": "application/json" },
-      });
-      expect(await response.json()).toEqual({ "hello": "World" } as any);
+      expect(await make('\uFEFF{"hello":"World"}', "application/json").json()).toEqual({ "hello": "World" } as any);
     });
 
     it("in json() with emoji", async () => {
-      const response = new Response('\uFEFF{"hello":"World 🌎"}', {
-        headers: { "content-type": "application/json" },
-      });
-      expect(await response.json()).toEqual({ "hello": "World 🌎" } as any);
-    });
-  });
-
-  describe("Request (string body)", () => {
-    it("in text()", async () => {
-      const request = new Request("https://example.com", {
-        method: "POST",
-        body: "\uFEFFHello, World!",
-        headers: { "content-type": "text/plain" },
-      });
-      expect(await request.text()).toBe("Hello, World!");
-    });
-
-    it("in json()", async () => {
-      const request = new Request("https://example.com", {
-        method: "POST",
-        body: '\uFEFF{"hello":"World"}',
-        headers: { "content-type": "application/json" },
-      });
-      expect(await request.json()).toEqual({ "hello": "World" } as any);
+      expect(await make('\uFEFF{"hello":"World 🌎"}', "application/json").json()).toEqual({
+        "hello": "World 🌎",
+      } as any);
     });
   });
 

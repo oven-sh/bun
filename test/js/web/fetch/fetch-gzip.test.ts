@@ -580,7 +580,11 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   type Case = [label: string, pieces: Buffer[], chunked: boolean];
   const cases: Case[] = [
     ["content-length, one write", [BODY], false],
-    ["content-length, split mid member #1 trailer", [BODY.subarray(0, M1.length - 5), BODY.subarray(M1.length - 5)], false],
+    [
+      "content-length, split mid member #1 trailer",
+      [BODY.subarray(0, M1.length - 5), BODY.subarray(M1.length - 5)],
+      false,
+    ],
     ["content-length, split at member boundary", [M1, M2], false],
     ["chunked, one chunk", [BODY], true],
     ["chunked, one chunk per member", [M1, M2], true],

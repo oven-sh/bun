@@ -73,7 +73,7 @@ describe("X509Certificate.checkHost()", () => {
   });
 });
 
-describe("X509Certificate GeneralName otherName rendering", () => {
+describe("X509Certificate subjectAltName/infoAccess GeneralName rendering", () => {
   const escaping = path.join(import.meta.dir, "..", "test", "fixtures", "x509-escaping");
   const altCert = (i: number) => new X509Certificate(readFileSync(path.join(escaping, `alt-${i}-cert.pem`)));
   const infoCert = (i: number) => new X509Certificate(readFileSync(path.join(escaping, `info-${i}-cert.pem`)));
@@ -134,6 +134,8 @@ IQCsfIM9dwu37dJvDDswGG+tckzIv5nLd7qdrspvBrl0nQ==
   });
 
   test.each([
+    [10, "IP Address:<invalid length=5>"],
+    [11, "IP Address:<invalid length=6>"],
     [24, "othername:XmppAddr:abc123"],
     [25, 'othername:"XmppAddr:abc123\\u002c DNS:good.example.com"'],
     [26, 'othername:"XmppAddr:good.example.com\\u0000abc123"'],
@@ -141,7 +143,7 @@ IQCsfIM9dwu37dJvDDswGG+tckzIv5nLd7qdrspvBrl0nQ==
     [28, "othername:SRVName:abc123"],
     [29, "othername:<unsupported>"],
     [30, 'othername:"SRVName:abc\\u0000def"'],
-  ])("subjectAltName renders otherName in alt-%i-cert.pem", (i, expected) => {
+  ])("subjectAltName matches Node for alt-%i-cert.pem", (i, expected) => {
     expect(altCert(i).subjectAltName).toBe(expected);
   });
 

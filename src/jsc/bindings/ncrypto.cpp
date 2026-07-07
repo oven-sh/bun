@@ -901,11 +901,7 @@ bool PrintGeneralName(const BIOPointer& out, const GENERAL_NAME* gen)
                 BIO_printf(out.get(), (j == 0) ? "%X" : ":%X", pair);
             }
         } else {
-#if OPENSSL_VERSION_MAJOR >= 3
             BIO_printf(out.get(), "<invalid length=%d>", ip->length);
-#else
-            BIO_printf(out.get(), "<invalid>");
-#endif
         }
     } else if (gen->type == GEN_RID) {
         // Unlike OpenSSL's default implementation, never print the OID as text and

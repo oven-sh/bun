@@ -329,6 +329,19 @@ impl Connection {
         );
     }
 
+    /// RFC 9113 §5.1: a non-zero stream id this engine has no entry for is either closed
+    /// (evicted after full close; tolerate late frames) or idle (never opened; connection
+    /// PROTOCOL_ERROR for any frame other than HEADERS/PRIORITY). Distinguish by the
+    /// high-water mark: anything above `last_stream_id` has never been opened. The
+    /// `is_local_stream` shim covers streams the legacy outbound opened before the engine
+    /// saw their HEADERS.
+    fn is_idle_peer_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        stream_id != 0
+            && stream_id > self.last_stream_id
+            && !self.streams.contains_key(&stream_id)
+            && !sink.is_local_stream(stream_id)
+    }
+
     // ---- Inbound --------------------------------------------------------
 
     /// Feed received bytes. Processes every complete frame and returns `consumed` = the offset of
@@ -658,6 +671,14 @@ impl Connection {
         hdr: &FrameHeader,
         payload: &[u8],
     ) -> bool {
+        if self.is_idle_peer_stream(sink, hdr.stream_id) {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"WINDOW_UPDATE on idle stream",
+            );
+            return true;
+        }
         let increment =
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
         // §6.9.1: a 0 increment is an error (connection error on stream 0).
@@ -1060,6 +1081,10 @@ impl Connection {
         remaining: &[u8],
         padded: bool,
     ) -> StreamedDataStart {
+        if self.is_idle_peer_stream(sink, hdr.stream_id) {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
+            return StreamedDataStart::Fatal;
+        }
         let payload_avail = &remaining[wire::FRAME_HEADER_SIZE..];
         let mut pad = 0usize;
         let mut off = 0usize;
@@ -1166,6 +1191,10 @@ impl Connection {
     }
 
     fn handle_data(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+        if self.is_idle_peer_stream(sink, hdr.stream_id) {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
+            return true;
+        }
         let mut off = 0usize;
         let mut end = payload.len();
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
@@ -1905,6 +1934,59 @@ mod tests {
         assert_eq!(
             sink.goaway.get().map(|(code, _)| code),
             Some(ErrorCode::ProtocolError.as_u32())
+        );
+    }
+
+    #[test]
+    fn data_on_idle_is_goaway() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let f = frame(FrameType::Data, wire::flags::END_STREAM, 9, b"zz");
+        let fed = c.receive(&sink, &f);
+        assert!(fed.fatal);
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
+        assert!(sink.resets.borrow().is_empty());
+        assert!(sink.data.borrow().is_empty());
+    }
+
+    #[test]
+    fn window_update_on_idle_is_goaway() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let f = frame(FrameType::WindowUpdate, 0, 9, &64u32.to_be_bytes());
+        let fed = c.receive(&sink, &f);
+        assert!(fed.fatal);
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
+    }
+
+    #[test]
+    fn data_on_closed_evicted_stream_is_stream_error() {
+        // Unknown id <= last_stream_id is closed (evicted), not idle: stays a per-stream
+        // RST(STREAM_CLOSED) and the connection survives.
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(&sink, &frame(FrameType::Headers, flags, 3, &block));
+        c.close_stream(3);
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Data, wire::flags::END_STREAM, 3, b"x"),
+        );
+        assert!(!fed.fatal);
+        assert_eq!(sink.goaway.get(), None);
+        assert_eq!(
+            *sink.resets.borrow(),
+            vec![(3, ErrorCode::StreamClosed.as_u32())]
         );
     }
 

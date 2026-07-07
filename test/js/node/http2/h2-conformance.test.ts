@@ -306,6 +306,44 @@ describe("frame structure (checklist §2,§3)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
   });
+
+  // RFC 9113 §5.1: receiving any frame other than HEADERS or PRIORITY on an idle stream
+  // MUST be treated as a connection error of type PROTOCOL_ERROR. Node answers each of these
+  // with GOAWAY; a per-stream RST_STREAM(STREAM_CLOSED) is the closed-stream leniency path and
+  // wrong here because the stream was never opened.
+  test("DATA on an idle stream is a connection PROTOCOL_ERROR (§5.1)", async () => {
+    const c = await RawH2.connect(port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 9, Buffer.from("zz")); // stream 9 never opened
+    const reply = await c.waitFor(f => f.type === FrameType.GOAWAY || f.type === FrameType.RST_STREAM);
+    const code = reply.type === FrameType.GOAWAY ? goawayErrorCode(reply) : reply.payload.readUInt32BE(0);
+    expect({ type: reply.type, code }).toEqual({
+      type: FrameType.GOAWAY,
+      code: ErrorCode.PROTOCOL_ERROR,
+    });
+    await c.waitClosed();
+    c.destroy();
+  });
+
+  test("WINDOW_UPDATE on an idle stream is a connection PROTOCOL_ERROR (§5.1)", async () => {
+    const c = await RawH2.connect(port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    const inc = Buffer.alloc(4);
+    inc.writeUInt32BE(64, 0);
+    c.sendFrame(FrameType.WINDOW_UPDATE, 0, 9, inc); // stream 9 never opened
+    // Before the fix this was silently accepted; race the expected GOAWAY against a PING ACK
+    // so the assertion fails with a concrete frame rather than a waitFor timeout.
+    c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+    const reply = await c.waitFor(f => f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) !== 0));
+    expect({ type: reply.type, code: reply.type === FrameType.GOAWAY ? goawayErrorCode(reply) : -1 }).toEqual({
+      type: FrameType.GOAWAY,
+      code: ErrorCode.PROTOCOL_ERROR,
+    });
+    await c.waitClosed();
+    c.destroy();
+  });
 });
 
 describe("stream-id rules (checklist §3)", () => {

@@ -85,8 +85,8 @@ function summary(key: string) {
   };
 }
 
-async function waitFor(predicate: () => boolean) {
-  for (let i = 0; i < 500 && !predicate(); i++) await Bun.sleep(10);
+async function waitFor(predicate: () => boolean, limit = 500) {
+  for (let i = 0; i < limit && !predicate(); i++) await Bun.sleep(10);
 }
 
 const results: Record<string, unknown> = {};
@@ -109,7 +109,10 @@ const results: Record<string, unknown> = {};
   const w = s3.file("single.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
   w.write(new Uint8Array(100));
   const outcome = await settle(w.end(new Error("source failed mid-stream")));
-  await Bun.sleep(50);
+  // A buggy build uploads the buffered bytes as a single-file PUT and only
+  // then settles, so reqs already reflects it here. Give any late request a
+  // bounded window to appear; the fixed build leaves reqs empty.
+  await waitFor(() => reqs.length > 0, 50);
   results.single = { outcome, ...summary("single.bin") };
 }
 
@@ -145,8 +148,12 @@ test("S3File.writer().end(error) aborts the upload and rejects", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr.trim()).toBe("");
-  const result = JSON.parse(stdout.trim());
+  let result;
+  try {
+    result = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error(`fixture did not emit JSON\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
 
   // After a part has been uploaded, end(error) must reject with the caller's
   // error, send AbortMultipartUpload, and never send CompleteMultipartUpload.

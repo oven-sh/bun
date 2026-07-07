@@ -2442,6 +2442,7 @@ impl NetworkSink {
             self.end_promise = JSPromiseStrong::init(global_this);
         }
         let value = self.end_promise.value();
+        let _keep_value = bun_jsc::EnsureStillAlive(value);
         // Reject with the caller's error before `fail()` reaches the wrapper
         // callback; `reject()` swaps the Strong to empty so the callback's
         // Failure branch is a no-op and only `finalize()` runs.
@@ -2455,7 +2456,6 @@ impl NetworkSink {
                 message: b"The upload was aborted by the writer",
             });
         }
-        value.ensure_still_alive();
         bun_sys::Result::Ok(value)
     }
 

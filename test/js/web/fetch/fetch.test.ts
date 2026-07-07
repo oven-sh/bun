@@ -3044,6 +3044,41 @@ describe("Content-Type implied by the body init per fetch spec", () => {
     expect(res3.headers.get("content-type")).toBe("application/json");
   });
 
+  it.each([
+    ["string", "hello", textPlain],
+    ["non-ASCII string", "héllo ☃", textPlain],
+    ["URLSearchParams", new URLSearchParams("a=1"), urlencoded],
+  ] as const)("%s body: survives .clone() on both the clone and the original", (_, body, expected) => {
+    // Cloning before .headers is read exercises the lazy path: the body's
+    // implied type must not be lost when clone() normalizes the body variant.
+    const res = new Response(body);
+    const resClone = res.clone();
+    expect(resClone.headers.get("content-type")).toMatch(expected);
+    expect(res.headers.get("content-type")).toMatch(expected);
+
+    const req = new Request("http://x/", { method: "POST", body });
+    const reqClone = req.clone();
+    expect(reqClone.headers.get("content-type")).toMatch(expected);
+    expect(req.headers.get("content-type")).toMatch(expected);
+  });
+
+  it.each(["hello", "héllo ☃"] as const)(
+    "%p body: .clone() does not shadow an explicit Content-Type in .blob().type",
+    async body => {
+      // The body-implied text/plain must not override a user-set header on the
+      // returned Blob, either on the clone or the (mutated) original.
+      const res = new Response(body, { headers: { "content-type": "text/html" } });
+      const clone = res.clone();
+      expect((await clone.blob()).type).toMatch(/^text\/html/);
+      expect((await res.blob()).type).toMatch(/^text\/html/);
+
+      const json = Response.json({ v: body });
+      const jsonClone = json.clone();
+      expect((await jsonClone.blob()).type).toMatch(/^application\/json/);
+      expect((await json.blob()).type).toMatch(/^application\/json/);
+    },
+  );
+
   it("ArrayBuffer / typed-array body: no implicit Content-Type", () => {
     for (const body of [new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3]).buffer]) {
       const req = new Request("http://x/", { method: "POST", body });

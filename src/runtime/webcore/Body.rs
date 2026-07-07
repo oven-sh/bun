@@ -1611,6 +1611,16 @@ impl Value {
         }
 
         if let Value::InternalBlob(internal_blob) = self {
+            // String bodies stay `InternalBlob` so `was_string` survives on
+            // both the original and the clone; converting to `Blob` here would
+            // either lose `Value::content_type()`'s `text/plain` or (if
+            // stamped on the Blob) shadow an explicit header in `.blob().type`.
+            if internal_blob.was_string {
+                return Ok(Value::InternalBlob(InternalBlob {
+                    bytes: internal_blob.bytes.clone(),
+                    was_string: true,
+                }));
+            }
             let owned = internal_blob.to_owned_slice();
             *self = Value::Blob(Blob::init(owned, global_this));
         }

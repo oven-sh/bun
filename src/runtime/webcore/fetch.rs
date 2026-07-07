@@ -1134,9 +1134,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(signal__) = AbortSignal::from_js(signal_) {
                     // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
                     // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
-                    break 'extract_signal NonNull::new(
-                        bun_opaque::opaque_deref(signal__).ref_(),
-                    );
+                    break 'extract_signal NonNull::new(bun_opaque::opaque_deref(signal__).ref_());
                 }
                 let err = ctx.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_TYPE,

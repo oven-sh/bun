@@ -377,7 +377,12 @@ fn reject_on_exception(
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
             Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
             Some(exc) => exc.to_error().unwrap_or(exc),
-            None => return result,
+            None => {
+                // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
+                // pending; reaching here means it was cleared, which is a bug.
+                debug_assert!(false, "fetch_impl signaled a thrown exception but none is pending");
+                global_this.create_error_instance(format_args!("fetch() failed"))
+            }
         },
     };
     Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))

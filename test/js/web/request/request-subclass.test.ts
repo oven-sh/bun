@@ -73,7 +73,8 @@ test("fetch() with subclass containing invalid HTTP headers throws without crash
   expect(request.method).toBe("POST");
   await expect(fetch(request)).rejects.toThrow("Invalid header name");
 
-  // quick gc test
+  // quick gc test; 1e3 iterations since each now allocates a rejected Promise
+  // (previously 1e4 sync throws, which allocated nothing).
   for (let i = 0; i < 1e3; i++) {
     fetch(request).catch(() => {});
   }

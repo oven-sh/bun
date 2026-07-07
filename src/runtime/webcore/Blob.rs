@@ -104,7 +104,9 @@ pub trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::{Blob, Blob__deref, Blob__ref, ClosingState, MAX_SIZE, SizeType};
+pub use bun_jsc::webcore_types::{
+    Blob, BlobContentType, Blob__deref, Blob__ref, ClosingState, MAX_SIZE, SizeType,
+};
 
 pub type Ref = bun_ptr::ExternalShared<Blob>;
 
@@ -250,8 +252,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         relative_start: i64,
         relative_end: i64,
-        content_type: &[u8],
-        content_type_was_allocated: bool,
+        content_type: BlobContentType,
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_mime_type(&self) -> Option<MimeType>;
@@ -871,10 +872,10 @@ impl BlobExt for Blob {
             )
             .to_mime_type();
         }
-        let content_type_ptr = std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref());
+        let content_type = BlobContentType::from_mime(&store.mime_type);
 
         let blob = Blob::init_with_store(store, global_this);
-        blob.content_type.set(content_type_ptr);
+        blob.content_type.set(content_type);
         blob.content_type_was_set.set(true);
         blob
     }
@@ -981,15 +982,12 @@ impl BlobExt for Blob {
                 .unwrap_or_else(|_| bun_core::out_of_memory()),
         );
         let blob = Blob::init_with_store(store, global_this);
-        // Always allocate content_type with the default allocator so deinit() can
-        // free it unconditionally.
         const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
         let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
         ct.extend_from_slice(CONTENT_TYPE_PREFIX);
         ct.extend_from_slice(boundary);
         blob.content_type
-            .set(bun_core::heap::into_raw(ct.into_boxed_slice()));
-        blob.content_type_allocated.set(true);
+            .set(BlobContentType::Owned(ct.into_boxed_slice()));
         blob.content_type_was_set.set(true);
 
         blob
@@ -1372,20 +1370,12 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
-                        self.free_content_type();
                         self.content_type_was_set.set(true);
-
-                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            self.content_type
-                                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-                        } else {
-                            let mut buf = vec![0u8; slice.len()];
-                            strings::copy_lowercase(slice, &mut buf);
-                            self.content_type
-                                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                            self.content_type_allocated.set(true);
-                        }
+                        self.content_type
+                            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            });
                     }
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
@@ -1799,19 +1789,12 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
-                        self.free_content_type();
                         self.content_type_was_set.set(true);
-                        // SAFETY: see other `mime_type` call sites.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            self.content_type
-                                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-                        } else {
-                            let mut buf = vec![0u8; slice.len()];
-                            strings::copy_lowercase(slice, &mut buf);
-                            self.content_type
-                                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                            self.content_type_allocated.set(true);
-                        }
+                        self.content_type
+                            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            });
                     }
                 }
 
@@ -2017,8 +2000,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         relative_start: i64,
         relative_end: i64,
-        content_type: &[u8],
-        content_type_was_allocated: bool,
+        content_type: BlobContentType,
     ) -> JSValue {
         let offset = self
             .offset
@@ -2032,21 +2014,15 @@ impl BlobExt for Blob {
         blob.offset.set(offset);
         blob.size.set(len);
 
-        // dupe() deep-copies an allocated content_type; we're about to replace it,
-        // so release that copy first to avoid leaking it.
-        blob.free_content_type();
-
+        let content_type_was_allocated = content_type.is_owned();
         // infer the content type if it was not specified
         if content_type.is_empty()
-            && !self.content_type_slice().is_empty()
-            && !self.content_type_allocated.get()
+            && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
         {
-            blob.content_type.set(self.content_type.get());
+            blob.content_type.set(self.content_type.get().dupe());
         } else {
-            blob.content_type
-                .set(std::ptr::from_ref::<[u8]>(content_type));
+            blob.content_type.set(content_type);
         }
-        blob.content_type_allocated.set(content_type_was_allocated);
         blob.content_type_was_set
             .set(self.content_type_was_set.get() || content_type_was_allocated);
 
@@ -2113,8 +2089,7 @@ impl BlobExt for Blob {
             }
         }
 
-        let mut content_type: *const [u8] = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
-        let mut content_type_was_allocated = false;
+        let mut content_type = BlobContentType::default();
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
                 if content_type_.is_string() {
@@ -2124,35 +2099,15 @@ impl BlobExt for Blob {
                     if !is_valid_blob_type(slice) {
                         break 'inner;
                     }
-
-                    if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                        content_type = match mime.value {
-                            ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                            ::std::borrow::Cow::Owned(v) => {
-                                content_type_was_allocated = true;
-                                bun_core::heap::into_raw(v.into_boxed_slice())
-                            }
-                        };
-                        break 'inner;
-                    }
-
-                    content_type_was_allocated = !slice.is_empty();
-                    let mut buf = vec![0u8; slice.len()];
-                    strings::copy_lowercase(slice, &mut buf);
-                    content_type = bun_core::heap::into_raw(buf.into_boxed_slice());
+                    content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
+                        Some(mime) => BlobContentType::from(mime),
+                        None => BlobContentType::from_lowercased(slice),
+                    };
                 }
             }
         }
 
-        // SAFETY: content_type points to either a static literal, a 'static mime value,
-        // or a freshly-leaked Box<[u8]> (when content_type_was_allocated).
-        Ok(self.get_slice_from(
-            global_this,
-            relative_start,
-            relative_end,
-            unsafe { &*content_type },
-            content_type_was_allocated,
-        ))
+        Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
     }
 
     fn get_mime_type(&self) -> Option<MimeType> {
@@ -2499,28 +2454,13 @@ impl BlobExt for Blob {
                                     if !is_valid_blob_type(slice) {
                                         break 'inner;
                                     }
-                                    blob.free_content_type();
                                     blob.content_type_was_set.set(true);
-
-                                    if let Some(mime) =
-                                        global_this.bun_vm().as_mut().mime_type(slice)
-                                    {
-                                        blob.content_type.set(match mime.value {
-                                            ::std::borrow::Cow::Borrowed(s) => {
-                                                std::ptr::from_ref::<[u8]>(s)
-                                            }
-                                            ::std::borrow::Cow::Owned(v) => {
-                                                blob.content_type_allocated.set(true);
-                                                bun_core::heap::into_raw(v.into_boxed_slice())
-                                            }
-                                        });
-                                        break 'inner;
-                                    }
-                                    let mut buf = vec![0u8; slice.len()];
-                                    strings::copy_lowercase(slice, &mut buf);
-                                    blob.content_type
-                                        .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                                    blob.content_type_allocated.set(true);
+                                    blob.content_type.set(
+                                        match global_this.bun_vm().as_mut().mime_type(slice) {
+                                            Some(mime) => BlobContentType::from(mime),
+                                            None => BlobContentType::from_lowercased(slice),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -2528,8 +2468,7 @@ impl BlobExt for Blob {
                 }
 
                 if blob.content_type_slice().is_empty() {
-                    blob.content_type
-                        .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
+                    blob.content_type.set(BlobContentType::default());
                     blob.content_type_was_set.set(false);
                 }
             }
@@ -2579,9 +2518,8 @@ impl BlobExt for Blob {
             None
         });
         if was_string {
-            blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                bun_http_types::MimeType::TEXT.value.as_ref(),
-            ));
+            blob.content_type
+                .set(BlobContentType::from_mime(&bun_http_types::MimeType::TEXT));
         }
         blob.global_this.set(global_this);
         blob
@@ -2608,9 +2546,8 @@ impl BlobExt for Blob {
                     }));
                     let blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
-                        blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                            bun_http_types::MimeType::TEXT.value.as_ref(),
-                        ));
+                        blob.content_type
+                            .set(BlobContentType::from_mime(&bun_http_types::MimeType::TEXT));
                     }
                     return Ok(blob);
                 }
@@ -3446,14 +3383,6 @@ impl BlobExt for Blob {
                                 // (no clone, no into_raw leak) and field-copy the
                                 // rest, deep-owning `name`/`content_type` — net 0 on
                                 // the store refcount.
-                                let content_type = if blob.content_type_allocated.get() {
-                                    bun_core::heap::into_raw(
-                                        blob.content_type_slice().to_vec().into_boxed_slice(),
-                                    )
-                                    .cast_const()
-                                } else {
-                                    blob.content_type.get()
-                                };
                                 let _blob = Blob {
                                     reported_estimated_size: Cell::new(
                                         blob.reported_estimated_size.get(),
@@ -3461,10 +3390,7 @@ impl BlobExt for Blob {
                                     size: Cell::new(blob.size.get()),
                                     offset: Cell::new(blob.offset.get()),
                                     store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: Cell::new(content_type),
-                                    content_type_allocated: Cell::new(
-                                        blob.content_type_allocated.get(),
-                                    ),
+                                    content_type: JsCell::new(blob.content_type.get().dupe()),
                                     content_type_was_set: Cell::new(
                                         blob.content_type_was_set.get(),
                                     ),
@@ -3761,8 +3687,9 @@ impl BlobExt for Blob {
             }
         }
 
+        let ct = self.content_type.get();
         self.reported_estimated_size.set(
-            size + (self.content_type_slice().len() * (self.content_type_allocated.get() as usize))
+            size + (ct.as_slice().len() * (ct.is_owned() as usize))
                 + self.name.get().byte_slice().len(),
         );
     }
@@ -4265,10 +4192,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let offset = reader.read_int_le::<u64>()?;
 
     let content_type_len = reader.read_int_le::<u32>()?;
-    let mut content_type = read_slice(reader, content_type_len as usize)?;
-    // Ownership transfers to `blob.content_type` at the end of the success
-    // path below; until then `content_type`'s Drop is responsible for it.
-    // (error cleanup is automatic Drop on `?`.)
+    let content_type = read_slice(reader, content_type_len as usize)?;
 
     let content_type_was_set: bool = reader.read_int_le::<u8>()? != 0;
 
@@ -4401,14 +4325,10 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     }
 
     if !content_type.is_empty() {
-        let leaked = content_type.into_boxed_slice();
-        blob.content_type.set(bun_core::heap::into_raw(leaked));
-        blob.content_type_allocated.set(true);
+        blob.content_type
+            .set(BlobContentType::Owned(content_type.into_boxed_slice()));
         blob.content_type_was_set.set(content_type_was_set);
-        // Ownership handed to `blob`; disarm the implicit drop by replacing local.
-        content_type = Vec::new();
     }
-    let _ = content_type;
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
     // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
@@ -4941,7 +4861,7 @@ pub fn write_file_with_source_destination(
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
-        let blob_value = source_blob.get_slice_from(ctx, 0, 0, b"", false);
+        let blob_value = source_blob.get_slice_from(ctx, 0, 0, BlobContentType::default());
         return Ok(JSPromise::resolved_promise_value(ctx, blob_value));
     } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();
@@ -5757,26 +5677,12 @@ pub fn jsdom_file_construct_(
                         if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
-                        blob.free_content_type();
                         blob.content_type_was_set.set(true);
-
-                        // SAFETY: bun_vm() returns the live VM pointer for this global.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            blob.content_type.set(match mime.value {
-                                ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                                ::std::borrow::Cow::Owned(v) => {
-                                    blob.content_type_allocated.set(true);
-                                    bun_core::heap::into_raw(v.into_boxed_slice())
-                                }
+                        blob.content_type
+                            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
                             });
-                            break 'inner;
-                        }
-                        let mut content_type_buf = vec![0u8; slice.len()];
-                        strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type.set(bun_core::heap::into_raw(
-                            content_type_buf.into_boxed_slice(),
-                        ));
-                        blob.content_type_allocated.set(true);
                     }
                 }
             }
@@ -5796,8 +5702,7 @@ pub fn jsdom_file_construct_(
     }
 
     if blob.content_type_slice().is_empty() {
-        blob.content_type
-            .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
+        blob.content_type.set(BlobContentType::default());
         blob.content_type_was_set.set(false);
     }
 
@@ -5858,21 +5763,12 @@ pub fn construct_bun_file(
                         if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
-                        blob.free_content_type();
                         blob.content_type_was_set.set(true);
-                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(entry) = global_object.bun_vm().as_mut().mime_type(str.slice())
-                        {
-                            blob.content_type
-                                .set(std::ptr::from_ref::<[u8]>(entry.value.as_ref()));
-                            break 'inner;
-                        }
-                        let mut content_type_buf = vec![0u8; slice.len()];
-                        strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type.set(bun_core::heap::into_raw(
-                            content_type_buf.into_boxed_slice(),
-                        ));
-                        blob.content_type_allocated.set(true);
+                        blob.content_type
+                            .set(match global_object.bun_vm().as_mut().mime_type(slice) {
+                                Some(mime) => BlobContentType::from(mime),
+                                None => BlobContentType::from_lowercased(slice),
+                            });
                     }
                 }
             }
@@ -6256,10 +6152,8 @@ pub unsafe extern "C" fn Blob__fromBytesWithType(
         unsafe {
             (*blob)
                 .content_type
-                .set(std::ptr::from_ref::<[u8]>(mime_slice));
+                .set(BlobContentType::Owned(mime_slice.into()));
             (*blob).content_type_was_set.set(true);
-            // content_type_allocated stays false — caller guarantees the string
-            // outlives the Blob (it's a C string literal in the caller's .rodata).
         }
     }
     blob
@@ -6299,7 +6193,7 @@ pub unsafe extern "C" fn Blob__fromMmapWithType(
             unsafe {
                 (*blob)
                     .content_type
-                    .set(std::ptr::from_ref::<[u8]>(mime_slice));
+                    .set(BlobContentType::Owned(mime_slice.into()));
                 (*blob).content_type_was_set.set(true);
             }
         }
@@ -6611,7 +6505,6 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // StoreRef::drop on the replace below releases the store ref.
-                    blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
                 }
@@ -6906,7 +6799,6 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
-                b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());
             }

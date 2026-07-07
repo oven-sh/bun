@@ -40,6 +40,82 @@ pub enum ClosingState {
     Closing,
 }
 
+/// A Blob's `type` string with ownership encoded in the variant, so assigning
+/// a new value drops the old one and a static pointer can never be freed.
+pub enum BlobContentType {
+    Static(&'static [u8]),
+    Owned(Box<[u8]>),
+}
+
+impl Default for BlobContentType {
+    #[inline]
+    fn default() -> Self {
+        Self::Static(b"")
+    }
+}
+
+impl BlobContentType {
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Static(s) => s,
+            Self::Owned(b) => b,
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
+    #[inline]
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+
+    #[inline]
+    pub fn dupe(&self) -> Self {
+        match self {
+            Self::Static(s) => Self::Static(s),
+            Self::Owned(b) => Self::Owned(b.clone()),
+        }
+    }
+
+    /// Borrow a `MimeType`'s value: `'static` stays static, `Owned` is cloned.
+    #[inline]
+    pub fn from_mime(mime: &MimeType) -> Self {
+        match &mime.value {
+            std::borrow::Cow::Borrowed(s) => Self::Static(s),
+            std::borrow::Cow::Owned(v) => Self::Owned(v.as_slice().into()),
+        }
+    }
+
+    /// Heap-owned ASCII-lowercased copy of `slice`.
+    #[inline]
+    pub fn from_lowercased(slice: &[u8]) -> Self {
+        let mut buf = vec![0u8; slice.len()];
+        bun_core::strings::copy_lowercase(slice, &mut buf);
+        Self::Owned(buf.into_boxed_slice())
+    }
+}
+
+impl From<MimeType> for BlobContentType {
+    #[inline]
+    fn from(mime: MimeType) -> Self {
+        match mime.value {
+            std::borrow::Cow::Borrowed(s) => Self::Static(s),
+            std::borrow::Cow::Owned(v) => Self::Owned(v.into_boxed_slice()),
+        }
+    }
+}
+
+impl From<Box<[u8]>> for BlobContentType {
+    #[inline]
+    fn from(b: Box<[u8]>) -> Self {
+        Self::Owned(b)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
@@ -60,11 +136,7 @@ pub struct Blob {
     /// Intrusively-refcounted backing store. `StoreRef::clone`/`drop` map
     /// directly to `Store::ref_()`/`Store::deref()`.
     pub store: JsCell<Option<StoreRef>>,
-    /// Either a `&'static [u8]` (mime constant / literal) or a heap allocation
-    /// owned by this Blob, discriminated by `content_type_allocated`.
-    /// (`Cow<'static, [u8]>` is not `#[repr(C)]`, so the manual encoding stays.)
-    pub content_type: Cell<*const [u8]>,
-    pub content_type_allocated: Cell<bool>,
+    pub content_type: JsCell<BlobContentType>,
     pub content_type_was_set: Cell<bool>,
     /// Cached encoding probe of `shared_view()`.
     pub charset: Cell<AsciiStatus>,
@@ -83,11 +155,10 @@ pub struct Blob {
     pub name: bun_core::OwnedStringCell,
 }
 
-// SAFETY: `Blob` holds raw pointers (`content_type`, `global_this`) which
-// default to `!Send`/`!Sync`. `Blob` moves across threads
-// under `ObjectURLRegistry`'s mutex and via the work-pool read/write tasks;
-// the pointee data is either `'static`/heap-owned (`content_type`) or an
-// opaque JSC handle only ever dereferenced on its owning JS thread.
+// SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
+// `!Send`/`!Sync`. `Blob` moves across threads under `ObjectURLRegistry`'s
+// mutex and via the work-pool read/write tasks; `global_this` is an opaque
+// JSC handle only ever dereferenced on its owning JS thread.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
 // mutex or on the single owning JS thread; the `Cell` fields are never raced.
@@ -100,8 +171,7 @@ impl Default for Blob {
             size: Cell::new(0),
             offset: Cell::new(0),
             store: JsCell::new(None),
-            content_type: Cell::new(std::ptr::from_ref::<[u8]>(b"" as &'static [u8])),
-            content_type_allocated: Cell::new(false),
+            content_type: JsCell::new(BlobContentType::default()),
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
@@ -194,10 +264,7 @@ impl Blob {
 
     #[inline]
     pub fn content_type_slice(&self) -> &[u8] {
-        // SAFETY: `content_type` is always a valid (possibly empty) slice
-        // pointer owned either by `'static` data or by this `Blob` (when
-        // `content_type_allocated`).
-        unsafe { &*self.content_type.get() }
+        self.content_type.get().as_slice()
     }
 
     /// Borrowed accessor for the `JsCell`-wrapped store. R-2: the field is
@@ -228,34 +295,15 @@ impl Blob {
         (!p.is_null()).then(|| JSGlobalObject::opaque_ref(p))
     }
 
-    /// Free a heap-owned `content_type` (if any) and reset to the empty
-    /// static slice. Centralizes the `heap::take` so callers replacing
-    /// `content_type` don't each carry their own `unsafe` block.
-    #[inline]
-    pub fn free_content_type(&self) {
-        if self.content_type_allocated.get() {
-            // SAFETY: `content_type_allocated` implies `content_type` was set
-            // via `heap::alloc(_.into_boxed_slice())` and is solely owned
-            // by this `Blob`.
-            unsafe { drop(bun_core::heap::take(self.content_type.get().cast_mut())) };
-            self.content_type
-                .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
-            self.content_type_allocated.set(false);
-        }
-    }
-
     /// Accepts both
     /// `Box<Store>` (from `Store::new` / `Store::init*`) and `StoreRef`.
     pub fn init_with_store<S: Into<StoreRef>>(store: S, global_this: &JSGlobalObject) -> Blob {
         let store: StoreRef = store.into();
         let size = store.size();
-        // `MimeType::value` is `Cow<'static, [u8]>`; the raw slice pointer is
-        // stable for the life of `store` (either `'static` or backed by the heap
-        // allocation we hold a ref to in `self.store`).
-        let content_type: *const [u8] = if let store::Data::File(ref f) = store.data {
-            std::ptr::from_ref::<[u8]>(f.mime_type.value.as_ref())
+        let content_type = if let store::Data::File(ref f) = store.data {
+            BlobContentType::from_mime(&f.mime_type)
         } else {
-            std::ptr::from_ref::<[u8]>(b"" as &'static [u8])
+            BlobContentType::default()
         };
         let blob = Blob::default();
         blob.size.set(size);
@@ -334,20 +382,13 @@ impl Blob {
     /// borrow path was removed because it dropped user-supplied parameters
     /// like multipart boundaries on a static-mime miss).
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
-        let content_type = if self.content_type_allocated.get() {
-            let copy = self.content_type_slice().to_vec().into_boxed_slice();
-            bun_core::heap::into_raw(copy).cast_const()
-        } else {
-            self.content_type.get()
-        };
         // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
             offset: Cell::new(self.offset.get()),
             store: JsCell::new(self.store.get().clone()),
-            content_type: Cell::new(content_type),
-            content_type_allocated: Cell::new(self.content_type_allocated.get()),
+            content_type: JsCell::new(self.content_type.get().dupe()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
@@ -433,19 +474,13 @@ impl Blob {
         self.detach();
         self.name.set(bun_core::String::dead());
 
-        self.free_content_type();
+        self.content_type.set(BlobContentType::default());
 
         if self.is_heap_allocated() {
             // SAFETY: `self` is the `*mut Blob` originally produced by
             // `Blob::new` (`heap::alloc`).
             unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
         }
-    }
-}
-
-impl Drop for Blob {
-    fn drop(&mut self) {
-        self.free_content_type();
     }
 }
 

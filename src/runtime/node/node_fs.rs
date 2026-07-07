@@ -761,22 +761,6 @@ mod _async_tasks {
                 NodeFSFunctionEnum::Close => {
                     let args: &args::Close = args_as!(args::Close);
                     let fd = args.fd.uv();
-                    if fd == 1 || fd == 2 {
-                        sys::syslog!("uv close({}) SKIPPED", fd);
-                        // SAFETY: identity write — `R == ret::Close == ()` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Close>,
-                                Ok(()),
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop_mut()
-                            .enqueue_task(Task::init(task_ptr));
-                        return task.promise.value();
-                    }
                     // SAFETY: libuv async request.
                     let rc = unsafe {
                         uv::uv_fs_close(loop_, &mut task.req, fd, Some(Self::uv_callback))
@@ -4867,7 +4851,10 @@ impl NodeFS {
     }
 
     pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
-        if let Some(err) = args.fd.close_allowing_bad_file_descriptor(None) {
+        // Explicit `fs.close`/`fs.closeSync` must close the descriptor the user
+        // asked for, including stdio (0/1/2), and surface EBADF like Node does.
+        // The stdio guard only applies to Bun's own internal closes.
+        if let Some(err) = args.fd.close_allowing_standard_io(None) {
             Err(err)
         } else {
             Ok(())

@@ -211,7 +211,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         // NULL statement; db.run() handles that and re-raises real errors.
       }
 
-      if (stmt && stmt.columnNames.length > 0) {
+      if (stmt && stmt.native.columnsCount > 0) {
         let result: unknown[] | undefined;
 
         if (mode === SQLQueryResultMode.values) {

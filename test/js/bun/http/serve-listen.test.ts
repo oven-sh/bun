@@ -160,3 +160,61 @@ describe.each([
     });
   });
 });
+
+// Windows has no SO_REUSEPORT. Its SO_REUSEADDR lets any local process rebind an
+// in-use TCP port and receive its connections, so reusePort:true must not fall
+// back to SO_REUSEADDR there. See libuv issue #1360.
+describe.skipIf(!isWindows)("reusePort on Windows", () => {
+  test("Bun.serve({reusePort:true}) does not let a second listener bind the port", async () => {
+    using first = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      reusePort: true,
+      fetch: () => new Response("first"),
+    });
+    const port = first.port;
+    expect(port).toBeInteger();
+
+    let second: ReturnType<typeof serve> | undefined;
+    try {
+      expect(() => {
+        second = serve({
+          port,
+          hostname: "127.0.0.1",
+          reusePort: true,
+          fetch: () => new Response("second"),
+        });
+      }).toThrow(/EADDRINUSE|in use/i);
+    } finally {
+      second?.stop(true);
+    }
+
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(await res.text()).toBe("first");
+  });
+
+  test("Bun.listen({reusePort:true}) does not let a second listener bind the port", () => {
+    using first = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      reusePort: true,
+      socket: { data() {}, open() {}, close() {}, error() {} },
+    });
+    const port = first.port;
+    expect(port).toBeInteger();
+
+    let second: ReturnType<typeof Bun.listen> | undefined;
+    try {
+      expect(() => {
+        second = Bun.listen({
+          port,
+          hostname: "127.0.0.1",
+          reusePort: true,
+          socket: { data() {}, open() {}, close() {}, error() {} },
+        });
+      }).toThrow(/EADDRINUSE|in use/i);
+    } finally {
+      second?.stop(true);
+    }
+  });
+});

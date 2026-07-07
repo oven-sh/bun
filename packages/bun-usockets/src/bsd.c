@@ -1096,6 +1096,13 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int* error
 ) {
 
+#if _WIN32
+    //  Windows SO_REUSEADDR lets any local process rebind an in-use TCP port and
+    //  receive its connections. Never set it on TCP listeners (libuv issue #1360).
+    //  bsd_create_udp_socket keeps honoring LIBUS_LISTEN_REUSE_ADDR for multicast.
+    options &= ~LIBUS_LISTEN_REUSE_ADDR;
+#endif
+
     if (bsd_set_reuse(listenFd, options) != 0) {
         return LIBUS_SOCKET_ERROR;
     }

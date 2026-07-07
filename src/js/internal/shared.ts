@@ -290,6 +290,9 @@ export default {
   NodeEntryObserver,
 
   kHandle: Symbol("kHandle"),
+  // node:net and internal/cluster/child must agree on this symbol so the
+  // cluster disconnect protocol can find the net.Server owning a faux handle.
+  owner_symbol: Symbol("owner_symbol"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),

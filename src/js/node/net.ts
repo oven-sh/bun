@@ -34,6 +34,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  owner_symbol,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -115,7 +116,6 @@ const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBuf
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -3642,6 +3642,13 @@ function listenInCluster(
     err = checkBindError(err, port, handle);
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
+    }
+    // Bun keeps the real Bun.listen() handle as server._handle rather than the
+    // cluster faux handle, so link them here: Worker#_disconnect finds the
+    // server via owner_symbol, and closing the server closes the faux handle.
+    if (handle) {
+      handle[owner_symbol] = server;
+      server.once("close", () => handle.close());
     }
     server[kRealListen](
       path,

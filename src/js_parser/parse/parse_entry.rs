@@ -2158,11 +2158,21 @@ impl<'a> Parser<'a> {
                 panic!("server components requires a framework configured, but none was set")
             });
             let sc = fw.server_components.as_ref().unwrap();
+            // server_components_wrap_ref is only declared for these two modes.
+            let import_name = match p.options.features.server_components {
+                options::ServerComponents::WrapExportsForClientReference => {
+                    &sc.server_register_client_reference[..]
+                }
+                options::ServerComponents::WrapExportsForServerReference => {
+                    &sc.server_register_server_reference[..]
+                }
+                _ => unreachable!(),
+            };
             p.generate_react_refresh_import(
                 &mut before,
                 &sc.server_runtime_import[..],
                 &[crate::p::ReactRefreshImportClause {
-                    name: &sc.server_register_client_reference[..],
+                    name: import_name,
                     r#ref: p.server_components_wrap_ref,
                     enabled: true,
                 }],

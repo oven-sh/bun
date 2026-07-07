@@ -143,7 +143,10 @@ pub(crate) fn create_bun_socket_error_to_js(
             .err(ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
             .to_js(),
         E::invalid_crl => global
-            .err(ErrorCode::BORINGSSL, format_args!("Invalid CRL"))
+            .err(
+                ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to parse CRL"),
+            )
             .to_js(),
     }
 }

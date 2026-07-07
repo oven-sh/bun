@@ -1096,11 +1096,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         us_verify_callback);
   }
 
-  /* A leaf-only `cert` whose intermediate arrives via `ca` or `caFile` must
-   * still present that intermediate. Node gets this from OpenSSL auto-chain;
-   * BoringSSL has none, so build the same issuer path explicitly. */
-  if ((options.ca_file_name || (options.ca && options.ca_count > 0)) &&
-      ((options.cert && options.cert_count > 0) || options.cert_file_name)) {
+  /* A leaf-only `cert` whose intermediate lives in the trust store must still
+   * present that intermediate. Node clears SSL_MODE_NO_AUTO_CHAIN so BoringSSL
+   * builds this at handshake time (crypto_context.cc:1640); do the same walk
+   * eagerly here so the chain is fixed at CTX build time. Not gated on
+   * options.ca — Node auto-chains against NODE_EXTRA_CA_CERTS/system roots too. */
+  if ((options.cert && options.cert_count > 0) || options.cert_file_name) {
     STACK_OF(X509) *existing_chain = NULL;
     SSL_CTX_get0_chain_certs(ssl_context, &existing_chain);
     if (existing_chain == NULL || sk_X509_num(existing_chain) == 0) {
@@ -1238,7 +1239,18 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!store) {
     return 0;
   }
-  return add_ca_cert_to_ctx_store(ctx, content, store);
+  int rc = add_ca_cert_to_ctx_store(ctx, content, store);
+  /* PKCS#12-bundled intermediates reach here after the context was built with
+   * a leaf-only cert; re-run the auto-chain walk so the presented chain picks
+   * them up (Node's LoadPKCS12 adds them via SSL_CTX_add1_chain_cert). */
+  if (rc && SSL_CTX_get0_certificate(ctx) != NULL) {
+    STACK_OF(X509) *existing_chain = NULL;
+    SSL_CTX_get0_chain_certs(ctx, &existing_chain);
+    if (existing_chain == NULL || sk_X509_num(existing_chain) == 0) {
+      add_auto_chain_from_store(ctx);
+    }
+  }
+  return rc;
 }
 
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded

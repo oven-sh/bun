@@ -71,8 +71,14 @@ pub fn create_bun_socket_error_to_js(
                 format_args!("Invalid ciphers"),
             )
             .to_js(),
+        // Node's SetCRL wraps the parse in ClearErrorOnReturn and throws
+        // ERR_CRYPTO_OPERATION_FAILED("Failed to parse CRL"):
+        // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1893-L1903
         create_bun_socket_error_t::invalid_crl => global_object
-            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CRL"))
+            .err(
+                bun_jsc::ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to parse CRL"),
+            )
             .to_js(),
     }
 }

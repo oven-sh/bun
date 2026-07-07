@@ -35,11 +35,7 @@ static CLIPBOARD_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 /// What this build's backend can put on / take off the OS clipboard. The C++
 /// layer (`ClipboardItem.supports`, `write()` validation) asks through
 /// `Bun__Clipboard__supportsType`, so this is the single source of truth.
-/// `text/html` needs the `CF_HTML` envelope on Windows — not implemented.
-#[cfg(not(windows))]
 const SUPPORTED: &[Mime] = &[Mime::TextPlain, Mime::TextHtml, Mime::ImagePng];
-#[cfg(windows)]
-const SUPPORTED: &[Mime] = &[Mime::TextPlain, Mime::ImagePng];
 
 /// The POSIX one-shot helpers (`wl-copy`, `xclip`) own a single
 /// representation per invocation; the in-process backends write them all.
@@ -485,9 +481,9 @@ mod platform {
 }
 
 // ─── Windows ────────────────────────────────────────────────────────────────
-// Raw Win32 like `image/backend_wic.rs`. Text uses `CF_UNICODETEXT` (Windows
-// auto-synthesizes it from the legacy text formats); PNG uses the registered
-// "PNG" / "image/png" formats that browsers and most apps interchange.
+// Raw Win32 like `image/backend_wic.rs`. Text uses `CF_UNICODETEXT`, HTML the
+// registered "HTML Format" (CF_HTML) with its offset envelope, and PNG the
+// registered "PNG" / "image/png" formats browsers and most apps interchange.
 #[cfg(windows)]
 mod platform {
     use core::ffi::{CStr, c_int, c_uint, c_void};
@@ -532,7 +528,7 @@ mod platform {
         match mime {
             Mime::TextPlain => [Some(CF_UNICODETEXT), None],
             Mime::ImagePng => [register(c"PNG"), register(c"image/png")],
-            Mime::TextHtml => [None, None],
+            Mime::TextHtml => [register(c"HTML Format"), None],
         }
     }
 
@@ -541,8 +537,45 @@ mod platform {
         match mime {
             Mime::TextPlain => Some(CF_UNICODETEXT),
             Mime::ImagePng => register(c"PNG"),
-            Mime::TextHtml => None,
+            Mime::TextHtml => register(c"HTML Format"),
         }
+    }
+
+    /// Wraps a UTF-8 HTML fragment in the `CF_HTML` envelope: a fixed-width
+    /// header whose numbers are byte offsets into the whole payload.
+    /// https://learn.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
+    fn build_cf_html(fragment: &[u8]) -> Vec<u8> {
+        const PREFIX: &str = "<html>\r\n<body>\r\n<!--StartFragment-->";
+        const SUFFIX: &str = "<!--EndFragment-->\r\n</body>\r\n</html>";
+        const HEADER_LEN: usize = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n".len();
+        let start_html = HEADER_LEN;
+        let start_fragment = start_html + PREFIX.len();
+        let end_fragment = start_fragment + fragment.len();
+        let end_html = end_fragment + SUFFIX.len();
+        let mut out = format!(
+            "Version:0.9\r\nStartHTML:{start_html:010}\r\nEndHTML:{end_html:010}\r\nStartFragment:{start_fragment:010}\r\nEndFragment:{end_fragment:010}\r\n{PREFIX}"
+        )
+        .into_bytes();
+        out.extend_from_slice(fragment);
+        out.extend_from_slice(SUFFIX.as_bytes());
+        out
+    }
+
+    /// The `NAME:<digits>` header field of a `CF_HTML` payload, as a byte
+    /// offset into that payload.
+    fn cf_html_offset(payload: &[u8], key: &[u8]) -> Option<usize> {
+        let at = bun_core::strings::index_of(payload, key)?;
+        let digits = &payload[at + key.len()..];
+        let end = digits.iter().position(|byte| !byte.is_ascii_digit())?;
+        core::str::from_utf8(&digits[..end]).ok()?.parse().ok()
+    }
+
+    /// Extracts the fragment of a `CF_HTML` payload; other producers wrote
+    /// it, so the offsets are validated rather than trusted.
+    fn cf_html_fragment(payload: &[u8]) -> Option<Vec<u8>> {
+        let start = cf_html_offset(payload, b"StartFragment:")?;
+        let end = cf_html_offset(payload, b"EndFragment:")?;
+        (start <= end && end <= payload.len()).then(|| payload[start..end].to_vec())
     }
 
     /// `OpenClipboard` is system-wide exclusive, so a single attempt fails
@@ -611,32 +644,52 @@ mod platform {
         for format in formats.into_iter().flatten() {
             // SAFETY: the clipboard is open. A null handle ⇔ format absent.
             let h = unsafe { GetClipboardData(format) };
-            if !h.is_null() {
-                return copy_global(h, mime == Mime::TextPlain);
+            if h.is_null() {
+                continue;
             }
+            let Some(bytes) = copy_global(h, mime == Mime::TextPlain)? else {
+                return Ok(None);
+            };
+            if mime != Mime::TextHtml {
+                return Ok(Some(bytes));
+            }
+            // "HTML Format" payloads are NUL-padded UTF-8 with an offset
+            // header; hand back just the fragment.
+            let end = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(bytes.len());
+            return Ok(Some(cf_html_fragment(&bytes[..end]).unwrap_or(bytes)));
         }
         Ok(None)
     }
 
-    /// Build a `GMEM_MOVEABLE` HGLOBAL holding `bytes` (plus a NUL-terminated
-    /// UTF-16 conversion for text). Returns null on allocation failure.
+    /// Build a `GMEM_MOVEABLE` HGLOBAL holding `bytes` (as NUL-terminated
+    /// UTF-16 for text, in the `CF_HTML` envelope for HTML). Returns null on
+    /// allocation failure.
     fn make_global(mime: Mime, bytes: &[u8]) -> *mut c_void {
         let wide;
-        let payload: &[u8] = if mime == Mime::TextPlain {
-            // `fail_if_invalid = false` replaces ill-formed sequences and
-            // `sentinel` appends the NUL that `CF_UNICODETEXT` requires.
-            match bun_core::strings::to_utf16_alloc_for_real(bytes, false, true) {
-                Ok(w) => {
-                    wide = w;
-                    // SAFETY: a `&[u16]`'s bytes reinterpreted as `&[u8]`.
-                    unsafe {
-                        core::slice::from_raw_parts(wide.as_ptr().cast::<u8>(), wide.len() * 2)
+        let enveloped;
+        let payload: &[u8] = match mime {
+            Mime::TextPlain => {
+                // `fail_if_invalid = false` replaces ill-formed sequences and
+                // `sentinel` appends the NUL that `CF_UNICODETEXT` requires.
+                match bun_core::strings::to_utf16_alloc_for_real(bytes, false, true) {
+                    Ok(w) => {
+                        wide = w;
+                        // SAFETY: a `&[u16]`'s bytes reinterpreted as `&[u8]`.
+                        unsafe {
+                            core::slice::from_raw_parts(wide.as_ptr().cast::<u8>(), wide.len() * 2)
+                        }
                     }
+                    Err(_) => return ptr::null_mut(),
                 }
-                Err(_) => return ptr::null_mut(),
             }
-        } else {
-            bytes
+            Mime::TextHtml => {
+                enveloped = build_cf_html(bytes);
+                &enveloped
+            }
+            Mime::ImagePng => bytes,
         };
         // `GlobalAlloc(_, 0)` returns a discarded object whose `GlobalLock`
         // fails, so an empty representation still allocates one byte; zeroed

@@ -24,9 +24,9 @@
  */
 
 // https://w3c.github.io/clipboard-apis/#clipboard-interface
-// Bun: readText/writeText/read/write are implemented; the ClipboardItem
-// representations supported per platform are text/plain and image/png
-// everywhere plus text/html everywhere except Windows.
+// Bun: readText/writeText/read/write are implemented; the supported
+// ClipboardItem representations are text/plain, text/html, and image/png
+// on every platform.
 [
     Exposed=(Window,Worker)
 ] interface Clipboard : EventTarget {

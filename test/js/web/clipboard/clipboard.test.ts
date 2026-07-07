@@ -193,7 +193,7 @@ describe("ClipboardItem", () => {
   test("supports() tells the per-platform truth and coerces per WebIDL", () => {
     expect(ClipboardItem.supports("text/plain")).toBe(true);
     expect(ClipboardItem.supports("image/png")).toBe(true);
-    expect(ClipboardItem.supports("text/html")).toBe(process.platform !== "win32");
+    expect(ClipboardItem.supports("text/html")).toBe(true);
     expect(ClipboardItem.supports("application/x-bun-custom")).toBe(false);
     // WebIDL DOMString conversion: stringifiable objects work, Symbols throw,
     // and the argument is required.

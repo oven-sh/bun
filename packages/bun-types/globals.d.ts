@@ -1438,9 +1438,9 @@ interface Navigator {
    * The system clipboard, from the
    * [Clipboard API](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard_API).
    *
-   * Supported representations: `text/plain` everywhere, `image/png`
-   * everywhere, and `text/html` everywhere except Windows (use
-   * `ClipboardItem.supports()` to feature-detect).
+   * Supported representations on every platform: `text/plain`,
+   * `text/html`, and `image/png` (use `ClipboardItem.supports()` to
+   * feature-detect).
    *
    * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`
    * (text only), so one of those must be installed and `$WAYLAND_DISPLAY` or
@@ -1539,9 +1539,8 @@ declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
  * One clipboard "item" and its representations, keyed by MIME type.
  * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardItem)
  *
- * Bun supports `text/plain` and `image/png` on every platform, plus
- * `text/html` everywhere except Windows; use `ClipboardItem.supports()` to
- * feature-detect.
+ * Bun supports `text/plain`, `text/html`, and `image/png` on every
+ * platform; use `ClipboardItem.supports()` to feature-detect.
  */
 interface ClipboardItem {
   /** The MIME types this item holds, in insertion order (frozen). */

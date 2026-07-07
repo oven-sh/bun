@@ -488,7 +488,9 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
             if (abrupt)
                 handleError(globalObject, abrupt);
         } else if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
-            // The un-handled result promise is load-bearing: a rejected pull must still unhandledReject.
+            // Nothing reads the result promise, but it must be a real one: onFulfilled is undefined,
+            // so a fulfilled pull forwards through PromiseResolveWithoutHandlerJob, which needs a
+            // promise to forward into. onDirectPullRejected returns normally, so it stays fulfilled.
             auto* runtime = JSStreamsRuntime::from(globalObject);
             auto* rejectionResult = JSPromise::create(vm, globalObject->promiseStructure());
             pullPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), runtime->onDirectPullRejected(), rejectionResult, this);
@@ -703,9 +705,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObje
     JSValue error = callFrame->argument(0);
     controller->handleError(globalObject, error);
     RETURN_IF_EXCEPTION(scope, {});
-    // Re-throw so the (deliberately un-handled) result promise rejects with the pull error.
-    throwException(globalObject, scope, error);
-    return {};
+    return JSValue::encode(jsUndefined());
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.

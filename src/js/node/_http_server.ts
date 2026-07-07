@@ -1567,7 +1567,8 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     }
 
     // Node's server connection socket emits 'close' whenever the TCP
-    // connection closes, even with no request in flight; reaching here from a
+    // connection closes, even with no request in flight (this also covers
+    // tunneled/upgraded sockets, main's kIsTunnel case); reaching here from a
     // native close without a JS-initiated destroy must still surface it.
     if (!this.destroyed) {
       this.destroy();

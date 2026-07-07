@@ -1967,9 +1967,9 @@ interface BunFetchRequestInit extends RequestInit {
     | string
     | {
         /**
-         * The proxy URL
+         * The proxy URL, as a string or a `URL`.
          */
-        url: string;
+        url: string | URL;
         /**
          * Custom headers to send to the proxy server.
          * These headers are sent in the CONNECT request (for HTTPS targets)

@@ -23,16 +23,19 @@ import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDir } from "harness"
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");
+// Dedicated single-target fixture (see 30205-napi-app/binding.gyp) so the
+// beforeAll builds one plain-C addon instead of all of test/napi/napi-app.
+const napiAppDir = join(import.meta.dir, "30205-napi-app");
 const addon = join(napiAppDir, "build", "Debug", "isolate_finalizer_addon.node");
 
 describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   beforeAll(() => {
+    // Only the two --isolate/--parallel finalizer tests load the addon, and
+    // both are skipped on Windows; don't pay for node-gyp there.
+    if (isWindows) return;
     if (existsSync(addon)) return;
-    // Same one-shot build pattern as test/napi/napi.test.ts; the addon is
-    // tiny but node-gyp's toolchain detection is the slow part.
     const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
+      cmd: [bunExe(), "install"],
       cwd: napiAppDir,
       env: bunEnv,
       stderr: "inherit",

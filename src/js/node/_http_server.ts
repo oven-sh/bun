@@ -1018,6 +1018,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 
 const kBytesWritten = Symbol("kBytesWritten");
 const kEnableStreaming = Symbol("kEnableStreaming");
+const kIsTunnel = Symbol("kIsTunnel");
 function onServerSocketError(this: any, _err) {
   // Default 'error' listener so socket-level errors (e.g. res.destroy(err)
   // forwarding the error to the socket) do not crash the process as
@@ -1035,6 +1036,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
+  [kIsTunnel] = false;
   [kHandle];
   server: Server;
   _httpMessage;
@@ -1068,6 +1070,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   [kEnableStreaming](enable: boolean) {
+    // kIsTunnel latches: once a socket is detached into CONNECT/upgrade tunnel
+    // mode it never returns to normal request handling, and #onClose relies on
+    // it to emit 'close' on native close.
+    if (enable) this[kIsTunnel] = true;
     const handle = this[kHandle];
     if (handle) {
       if (enable) {
@@ -1154,6 +1160,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // onServerResponseClose socket listener does.
     if (message && !message._closed) {
       process.nextTick(emitCloseNT, message);
+    }
+
+    // A tunneled/upgraded connection (CONNECT or WebSocket upgrade) is detached
+    // from the request/response lifecycle, so end the Duplex on native close to
+    // emit 'close' for the upgrade handler and user listeners, like Node.js.
+    if (this[kIsTunnel] && !this.destroyed) {
+      this.destroy();
     }
   }
   #onCloseForDestroy(closeCallback, err?: Error) {

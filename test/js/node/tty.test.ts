@@ -1,5 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -189,6 +191,79 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+
+  // When setRawMode fails, Node emits an ErrnoException with code/errno/syscall
+  // populated so callers can branch on `err.code` (e.g. whitelist EIO when the
+  // terminal goes away). Bun used to emit a bare `Error` with the errno only
+  // baked into the message. Here the pty master is closed out from under the
+  // child, so its tcsetattr on the orphaned slave fails with EIO.
+  test.skipIf(isWindows)("emits an ErrnoException (code/errno/syscall) on failure", async () => {
+    using dir = tempDir("tty-setrawmode-errno", {
+      "child.mjs": `
+        import { writeFileSync } from "node:fs";
+        const OUT = process.argv[2];
+        const shape = e => ({
+          code: e?.code ?? null,
+          errno: e?.errno ?? null,
+          syscall: e?.syscall ?? null,
+          isError: e instanceof Error,
+        });
+        let done = false;
+        const finish = o => {
+          if (done) return;
+          done = true;
+          try { writeFileSync(OUT, JSON.stringify(o)); } catch {}
+          process.exit(0);
+        };
+        process.on("SIGHUP", () => {});
+        process.on("uncaughtException", e => finish(shape(e)));
+        process.stdin.on("error", e => finish(shape(e)));
+        process.stdin.setRawMode(true);
+        process.stdout.write("READY\\n");
+        const timer = setInterval(() => {
+          try {
+            process.stdin.setRawMode(false);
+            process.stdin.setRawMode(true);
+          } catch (e) {
+            clearInterval(timer);
+            finish(shape(e));
+          }
+        }, 20);
+        setTimeout(() => finish({ via: "timeout" }), 8000);
+      `,
+    });
+    const out = join(String(dir), "out.json");
+
+    let output = "";
+    let closed = false;
+    const decoder = new TextDecoder();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "child.mjs"), out],
+      env: bunEnv,
+      terminal: {
+        cols: 120,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (!closed && output.includes("READY")) {
+            closed = true;
+            proc.terminal?.close();
+          }
+        },
+        exit() {},
+      },
+    });
+
+    await proc.exited;
+    proc.terminal?.close();
+
+    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({
+      code: "EIO",
+      errno: -5,
+      syscall: "setRawMode",
+      isError: true,
+    });
   });
 });
 

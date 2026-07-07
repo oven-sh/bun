@@ -18,6 +18,15 @@ const fs = require("internal/fs/streams");
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
 
+// Node emits an ErrnoException (code/errno/syscall populated) on setRawMode
+// failure so callers can branch on `err.code`. Loaded lazily on the error
+// path to keep the common `require("node:tty")` light.
+let ErrnoException;
+function setRawModeError(uvErr) {
+  ErrnoException ??= require("internal/shared").ErrnoException;
+  return new ErrnoException(uvErr, "setRawMode");
+}
+
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
@@ -67,7 +76,7 @@ Object.defineProperty(ReadStream, "prototype", {
         if (this.fd === 0) {
           const err = ttySetMode(flag);
           if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
+            this.emit("error", setRawModeError(-err));
             return this;
           }
         } else {
@@ -84,7 +93,7 @@ Object.defineProperty(ReadStream, "prototype", {
 
           const err = handle.setRawMode(flag);
           if (err) {
-            this.emit("error", err);
+            this.emit("error", setRawModeError(err));
             return this;
           }
         }
@@ -92,7 +101,7 @@ Object.defineProperty(ReadStream, "prototype", {
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
         const err = ttySetMode(this.fd, flag, state);
         if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
+          this.emit("error", setRawModeError(-err));
           return this;
         }
       }

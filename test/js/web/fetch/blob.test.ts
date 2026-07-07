@@ -88,7 +88,7 @@ for (const info of [
   });
 }
 
-describe("Bun.file().slice with relative start/end", () => {
+describe.concurrent("Bun.file().slice with relative start/end", () => {
   // Each case slices a FRESH `Bun.file()` so the size has not been resolved by
   // a prior `.size` read. The slice clamp must stat the file itself rather than
   // compute against the lazy MAX_SIZE sentinel.

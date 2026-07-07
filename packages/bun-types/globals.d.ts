@@ -2080,6 +2080,29 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   maxRedirects?: number;
+
+  /**
+   * Control the socket idle timeout for this request. The timer is reset on
+   * every byte sent or received; if the connection stays idle for longer than
+   * this, the request fails with a timeout error.
+   *
+   * - A positive number sets the idle deadline in milliseconds, overriding
+   *   the `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default (5 minutes).
+   * - `0` or `false` disables the idle timer for this request.
+   * - `true` or an omitted/non-finite value uses the default.
+   *
+   * This is not a whole-request deadline; use `AbortSignal.timeout(ms)` for
+   * that. Not part of the Fetch API specification.
+   *
+   * @example
+   * ```js
+   * // Allow a slow streaming response to stay idle for up to an hour
+   * const response = await fetch("https://example.com/llm", {
+   *   timeout: 60 * 60 * 1000,
+   * });
+   * ```
+   */
+  timeout?: number | boolean;
 }
 
 /**

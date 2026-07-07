@@ -2002,7 +2002,7 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stdout.trim(), stderr, exitCode };
     };
-    const [extendsDefault, floorsSibling] = await Promise.all([
+    const [extendsDefault, floorsSibling, disarmsOnGlobalZero] = await Promise.all([
       // Global idle default = 1s. `{timeout:60000}` must extend the shared
       // socket's deadline past the 10s hold; the `{timeout:false}` sibling
       // coalesces onto the same session and rides along.
@@ -2030,6 +2030,20 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
           console.log(JSON.stringify({ noTimeout, shortTimeout }));
         `,
       ),
+      // Global idle default = 0 (disabled). The pre-per-request-override
+      // lower bound here was "disarmed"; `want.max(0)` cannot express that,
+      // so the session must disarm explicitly when a `{timeout:false}`
+      // client coexists with a short-explicit sibling under global=0.
+      run(
+        "0",
+        /* js */ `
+          const [noTimeout, shortTimeout] = await Promise.all([
+            get({ timeout: false }),
+            get({ timeout: 1000 }),
+          ]);
+          console.log(JSON.stringify({ noTimeout, shortTimeout }));
+        `,
+      ),
     ]);
     expect(extendsDefault).toEqual({
       stdout: JSON.stringify({ longTimeout: "hello", noTimeout: "hello" }),
@@ -2037,6 +2051,11 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
       exitCode: 0,
     });
     expect(floorsSibling).toEqual({
+      stdout: JSON.stringify({ noTimeout: "hello", shortTimeout: "hello" }),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(disarmsOnGlobalZero).toEqual({
       stdout: JSON.stringify({ noTimeout: "hello", shortTimeout: "hello" }),
       stderr: "",
       exitCode: 0,

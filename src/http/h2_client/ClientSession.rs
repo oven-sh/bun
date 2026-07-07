@@ -536,12 +536,14 @@ impl ClientSession {
         }
         // A `{timeout:false}` client contributes 0 to the max, which would let
         // a sibling's short explicit override arm the shared socket and kill
-        // both. Floor at the global default when the two coexist so the
-        // no-timeout stream keeps the same lower bound it had before
-        // per-request overrides existed; when every client opted out `want`
-        // is still 0 and the timer stays disarmed.
+        // both. Restore the pre-per-request-override lower bound for that
+        // stream: floor at the global default when one coexists with siblings
+        // that want a timer, or disarm entirely when the global is 0 (so
+        // `want.max(0)` cannot express "disarmed"). When every client opted
+        // out `want` is already 0 and the timer stays disarmed.
         if any_disabled && want != 0 {
-            want = want.max(crate::idle_timeout_seconds());
+            let global = crate::idle_timeout_seconds();
+            want = if global == 0 { 0 } else { want.max(global) };
         }
         self.socket.set_timeout(want);
     }

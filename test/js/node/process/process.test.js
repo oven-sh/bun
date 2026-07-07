@@ -846,8 +846,86 @@ describe.concurrent(() => {
       stderr: "ignore",
     });
     const exitCode = await proc.exited;
-    // SIGABRT on POSIX; _exit(134) on Windows.
-    expect(proc.signalCode === "SIGABRT" || exitCode === 134).toBe(true);
+    // SIGABRT on POSIX; STATUS_BREAKPOINT (0x80000003) or _exit(134) on
+    // Windows — the same set node's common.nodeProcessAborted accepts.
+    expect(proc.signalCode === "SIGABRT" || exitCode === 134 || exitCode >>> 0 === 0x80000003).toBe(true);
+  });
+
+  const spawnAbort = async src => {
+    const cmd = [bunExe(), "--abort-on-uncaught-exception", "-e", src];
+    const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  };
+  const aborted = r => r.signalCode === "SIGABRT" || r.exitCode === 134 || r.exitCode >>> 0 === 0x80000003;
+
+  it("--abort-on-uncaught-exception aborts a synchronous throw with no listeners", async () => {
+    // The primary contract of the flag with no domain, capture callback or
+    // listener installed. This is the domain-free path (m_domainErrorHandler
+    // slot empty), distinct from the test-domain-no-error-handler-* suite
+    // which throws inside d.run().
+    const r = await spawnAbort(`throw new Error("x")`);
+    expect(r.stderr).toContain("x");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts a synchronous throw even with an uncaughtException listener", async () => {
+    // Unlike promise rejections, listeners do not suppress the throw-time
+    // abort. Use setTimeout so the throw comes from a callback (origin=0).
+    const r = await spawnAbort(
+      `process.on("uncaughtException", () => process.exit(0)); setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception does not fire uncaughtExceptionMonitor before aborting", async () => {
+    // In Node the abort happens inside V8 (Isolate::Throw) before
+    // process._fatalException runs, so the monitor never observes the
+    // error when neither a capture callback nor a domain error handler is
+    // installed.
+    const r = await spawnAbort(
+      `process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("uncaughtExceptionCaptureCallback survives domain enter/exit and hasUncaughtExceptionCaptureCallback reflects only the user slot", async () => {
+    // Bun keeps the domain dispatch in a separate native slot, so a user
+    // capture callback set before loading node:domain is not clobbered by
+    // enter()/exit(). Node v26 still nulls it via updateExceptionCapture();
+    // this test pins Bun's chosen behaviour.
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        `
+        process.setUncaughtExceptionCaptureCallback(() => console.log("user cb ran"));
+        const domain = require("domain");
+        const d = domain.create();
+        d.on("error", () => {});
+        console.log("has-before-enter=" + process.hasUncaughtExceptionCaptureCallback());
+        d.enter();
+        console.log("has-inside=" + process.hasUncaughtExceptionCaptureCallback());
+        d.exit();
+        console.log("has-after-exit=" + process.hasUncaughtExceptionCaptureCallback());
+        setTimeout(() => { throw new Error("x") }, 0);
+      `,
+      ],
+      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual([
+      "has-before-enter=true",
+      "has-inside=true",
+      "has-after-exit=true",
+      "user cb ran",
+    ]);
+    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
   });
 
   it("aborts when the uncaughtException handler throws", async () => {

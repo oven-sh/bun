@@ -64,9 +64,11 @@ if (process.argv[2] === 'child') {
     });
 
     // Note for Bun: upstream also throws from an fs.exists callback here.
-    // That is omitted because errors thrown from fs callbacks surface
-    // through the unhandled rejection path in Bun, which does not yet route
-    // rejections through the domain uncaught-exception machinery.
+    // In Bun those callbacks are promise reactions, and Bun does not yet
+    // capture the reject-time domain and route unhandled rejections through
+    // it (Node's promiseInfo.domain path in
+    // lib/internal/process/promises.js). See the .todo mode-matrix tests in
+    // test/js/node/domain/domain.test.ts.
 
     setImmediate(function onSetImmediate() {
       throw new Error('Error from setImmediate callback');

@@ -1,5 +1,50 @@
 import assert from "assert";
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { bunEnv, bunExe } from "harness";
+
+test("enterWith at main-module scope does not drop a subsequent process.nextTick", async () => {
+  // Regression: cleanupAsyncHooksData ran on the microtask tick without
+  // draining the nextTick queue, so a tick scheduled after enterWith() at
+  // main-module scope with no other event-loop work was silently dropped.
+  // This is independent of node:domain.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { AsyncLocalStorage } = require("async_hooks"); new AsyncLocalStorage().enterWith(1); process.nextTick(() => console.log("tick"));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("tick");
+  expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+});
+
+test("AsyncResource does not read process.domain when node:domain is not loaded", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let calls = 0;
+      Object.defineProperty(process, "domain", { get() { calls++; return null; }, configurable: true });
+      const { AsyncResource } = require("async_hooks");
+      new AsyncResource("a");
+      new AsyncResource("b");
+      process.domain; // observable read: proves the getter itself works
+      console.log(JSON.stringify({ calls, hasOwn: Object.hasOwn(new AsyncResource("c"), "domain") }));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({ calls: 1, hasOwn: false });
+  expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+});
 
 test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage<Map<string, any>>();

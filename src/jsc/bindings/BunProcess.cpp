@@ -1224,9 +1224,13 @@ static bool shouldAbortOnUncaughtException()
 [[noreturn]] static void abortOnUncaughtException()
 {
 #if OS(WINDOWS)
-    // Raising SIGABRT on Windows terminates with an ambiguous exit code, so
-    // node calls _exit(134) in its place — the value the node test harness
-    // (common.nodeProcessAborted) expects.
+    // Match V8's base::OS::Abort() (kImmediateCrash → IMMEDIATE_CRASH →
+    // __debugbreak on MSVC): STATUS_BREAKPOINT 0x80000003 triggers WER so a
+    // minidump is captured, which is the point of the flag. Node's own
+    // ABORT() macro uses _exit(134) instead, and the node test harness
+    // (common.nodeProcessAborted) accepts either code.
+    if (IsDebuggerPresent()) DebugBreak();
+    __debugbreak();
     _exit(134);
 #else
     abort();
@@ -1249,6 +1253,22 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
+    auto domainHandler = process->getDomainErrorHandler();
+    auto capture = process->getUncaughtExceptionCaptureCallback();
+
+    // Under --abort-on-uncaught-exception with no capture callback and no
+    // node:domain hook installed, V8 aborts inside Isolate::Throw before
+    // process._fatalException runs, so 'uncaughtExceptionMonitor' never
+    // fires either. Handle that decidable-without-JS case up front so the
+    // monitor is not observably invoked. When node:domain is loaded the
+    // decision needs its handler's return value, so this cannot be hoisted.
+    if (origin != OriginRejection && shouldAbortOnUncaughtException()
+        && (domainHandler.isEmpty() || domainHandler.isUndefinedOrNull())
+        && (capture.isEmpty() || capture.isUndefinedOrNull())) {
+        Bun__logUnhandledException(JSValue::encode(exception));
+        abortOnUncaughtException();
+    }
+
     MarkedArgumentBuffer args;
     args.append(exception);
     if (origin != 0) {
@@ -1267,7 +1287,6 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // node:domain installs a dispatch hook when it is first loaded. It runs
     // before the public capture callback and 'uncaughtException' listeners
     // and returns true when an active domain handled the exception.
-    auto domainHandler = process->getDomainErrorHandler();
     if (!domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue handled = call(lexicalGlobalObject, domainHandler, args, "domainErrorHandler"_s);
@@ -1293,18 +1312,18 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         }
     }
 
-    auto capture = process->getUncaughtExceptionCaptureCallback();
-
     // --abort-on-uncaught-exception aborts (after printing the error) unless
     // a capture callback is installed — either explicitly or by a domain
     // with an 'error' handler (which returned true above). This mirrors
     // V8/node, where the abort happens at throw time, before
     // 'uncaughtException' listeners are consulted: listeners do not suppress
-    // the abort, only a capture callback does. True promise rejections are
-    // excluded: there is no throw-time abort for those — node routes them
-    // through process._fatalException first and aborts only if it returns
-    // unhandled (TriggerUncaughtException in node_errors.cc), so their abort
-    // lives in the no-handler branch at the bottom.
+    // the abort, only a capture callback does. The domain-free case aborted
+    // above before the monitor emit; this covers node:domain loaded but no
+    // domain (or none listening) claimed the error. True promise rejections
+    // are excluded: there is no throw-time abort for those — node routes
+    // them through process._fatalException first and aborts only if it
+    // returns unhandled (TriggerUncaughtException in node_errors.cc), so
+    // their abort lives in the no-handler branch at the bottom.
     if (origin != OriginRejection && shouldAbortOnUncaughtException()
         && (capture.isEmpty() || capture.isUndefinedOrNull())) {
         Bun__logUnhandledException(JSValue::encode(exception));

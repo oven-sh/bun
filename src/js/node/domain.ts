@@ -19,15 +19,20 @@
 // 'uncaughtException' listeners, mirroring where node's domain hooks into
 // process._fatalException.
 const EventEmitter = require("node:events");
-const { AsyncLocalStorage } = require("node:async_hooks");
+const asyncHooks = require("node:async_hooks");
+const { AsyncLocalStorage } = asyncHooks;
 
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectHasOwn = Object.hasOwn;
 const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypePush = Array.prototype.push;
+// Captured for tamper-proof dispatch: userland patching
+// AsyncLocalStorage.prototype.{getStore,enterWith} must not hijack domain's
+// frame reads or writes.
+const AlsGetStore = AsyncLocalStorage.prototype.getStore;
+const AlsEnterWith = AsyncLocalStorage.prototype.enterWith;
 
 const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 1);
 
@@ -60,7 +65,7 @@ let currentToken = 0;
 
 function writeBox(d: any) {
   globalActive = d;
-  als.enterWith({ d, token: ++currentToken });
+  AlsEnterWith.$call(als, { d, token: ++currentToken });
 }
 
 // True when the box was written by the currently-running synchronous
@@ -102,7 +107,7 @@ function unadopt() {
 }
 
 function currentActive(): any {
-  const box = als.getStore();
+  const box = AlsGetStore.$call(als);
   if (isCurrentExecution(box)) return globalActive;
   unadopt();
   if (isRestoredPairing(box)) return box.d;
@@ -110,7 +115,7 @@ function currentActive(): any {
 }
 
 function currentStack(): any[] {
-  const box = als.getStore();
+  const box = AlsGetStore.$call(als);
   if (isCurrentExecution(box)) return stack;
   unadopt();
   if (isRestoredPairing(box)) {
@@ -129,7 +134,7 @@ function currentStack(): any[] {
 // node's before() hook does at callback start. Writing the box marks the
 // pairing as entered so this happens at most once per callback.
 function adopt() {
-  const box = als.getStore();
+  const box = AlsGetStore.$call(als);
   if (isCurrentExecution(box)) return;
   unadopt();
   if (isRestoredPairing(box)) {
@@ -208,15 +213,17 @@ function fatalErrorDispatch(er: any) {
   adopt();
   let active = globalActive;
   if ((active === null || active === undefined) && stack.length > 0) {
-    // A synchronous throw unwound to the native fatal path without running
-    // any exit()s, and the async-local box doesn't survive the unwind (the
-    // context frame is restored when evaluation pops). The synchronous
-    // stack intentionally does survive — it records the domains entered at
-    // throw time, so the top of it is the active domain node would see.
+    // Reachable when userland nulls process.domain (or exports.active)
+    // while domains are still on the synchronous stack: enter() pushed and
+    // set globalActive together, but the setter can clear globalActive
+    // without popping. The stack intentionally survives thrown exceptions,
+    // so its top is the domain node's before() hook would have seen.
     active = stack[stack.length - 1];
     setActive(active);
   }
-  if (active !== null && active !== undefined) {
+  // A non-Domain value (e.g. userland `process.domain = {}`) falls through
+  // to the regular fatal handling — Node never routes into it either.
+  if (active !== null && active !== undefined && typeof active._errorHandler === "function") {
     // The domain set via the process.domain setter (or an async pairing
     // installed without enter()) may not be on the stack yet; node's
     // before() hook pushes it before running the callback.
@@ -227,7 +234,8 @@ function fatalErrorDispatch(er: any) {
     // Node only routes the exception into the domain when some domain on
     // the stack has an 'error' listener (updateExceptionCapture()).
     for (let i = 0; i < stack.length; i++) {
-      if (stack[i].listenerCount("error") > 0) {
+      const d = stack[i];
+      if (typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {
         return active._errorHandler(er);
       }
     }
@@ -367,15 +375,6 @@ class Domain extends EventEmitter {
       writable: true,
     } as PropertyDescriptor);
     ArrayPrototypePush.$call(this.members, ee);
-
-    // An emitter constructed with captureRejections before node:domain
-    // loaded carries the un-wrapped capture emit as an own property (the
-    // wrapped EventEmitter.init below only covers construction after
-    // load), which would shadow the domain-aware prototype emit. add() is
-    // how such an emitter acquires a domain, so wrap it here too.
-    if (ObjectHasOwn(ee, "emit") && typeof ee.emit === "function" && !ee.emit[kDomainAwareEmit]) {
-      ee.emit = makeDomainAwareEmit(ee.emit);
-    }
   }
 
   remove(ee: any) {
@@ -461,92 +460,80 @@ exports.create = exports.createDomain = function createDomain() {
 // Override EventEmitter methods to make it domain-aware.
 EventEmitter.usingDomains = true;
 
-// Marks emit functions produced by makeDomainAwareEmit so instances are
-// never double-wrapped.
-const kDomainAwareEmit = Symbol("kDomainAwareEmit");
+const eventEmit = EventEmitter.prototype.emit;
+EventEmitter.prototype.emit = function emit(this: any, ...args: any[]) {
+  const domain = this.domain;
 
-// Wraps an emit implementation with node's domain integration. Used for
-// EventEmitter.prototype.emit and for the capture-rejections emit that
-// Bun's EventEmitter.init installs as an own instance property (an own
-// property would otherwise shadow the prototype override entirely, so
-// captureRejections emitters would bypass domains).
-function makeDomainAwareEmit(innerEmit: any) {
-  function emit(this: any, ...args: any[]) {
-    const domain = this.domain;
+  const type = args[0];
+  const shouldEmitError = type === "error" && this.listenerCount(type) > 0;
 
-    const type = args[0];
-    const shouldEmitError = type === "error" && this.listenerCount(type) > 0;
-
-    // Just call original `emit` if current EE instance has `error` handler,
-    // there's no active domain or this is process
-    if (shouldEmitError || domain === null || domain === undefined || this === process) {
-      return innerEmit.$apply(this, args);
-    }
-
-    if (type === "error") {
-      const er = args.length > 1 && args[1] ? args[1] : $ERR_UNHANDLED_ERROR();
-
-      // Enter the async callback's scheduling-time domain context (node's
-      // before() hook equivalent) before manipulating the stack below.
-      adopt();
-
-      if (typeof er === "object") {
-        er.domainEmitter = this;
-        ObjectDefineProperty(er, "domain", {
-          __proto__: null,
-          configurable: true,
-          enumerable: false,
-          value: domain,
-          writable: true,
-        } as PropertyDescriptor);
-        er.domainThrown = false;
-      }
-
-      // Remove the current domain (and its duplicates) from the domains stack
-      // and set the active domain to its parent (if any) so that the domain's
-      // error handler doesn't run in its own context. This prevents any event
-      // emitter created or any exception thrown in that error handler from
-      // recursively executing that error handler.
-      const origDomainsStack = ArrayPrototypeSlice.$call(stack);
-      const origActiveDomain = currentActive();
-
-      // Travel the domains stack from top to bottom to find the first domain
-      // instance that is not a duplicate of the current active domain.
-      let idx = stack.length - 1;
-      while (idx > -1 && origActiveDomain === stack[idx]) {
-        --idx;
-      }
-
-      // Change the stack to not contain the current active domain, and only
-      // the domains above it on the stack.
-      if (idx < 0) {
-        stack.length = 0;
-      } else {
-        ArrayPrototypeSplice.$call(stack, idx + 1);
-      }
-
-      // Change the current active domain
-      setActive(stack.length > 0 ? stack[stack.length - 1] : null);
-
-      domain.emit("error", er);
-
-      // Now that the domain's error handler has completed, restore the
-      // domains stack and the active domain to their original values.
-      stack = origDomainsStack;
-      setActive(origActiveDomain);
-
-      return false;
-    }
-
-    domain.enter();
-    const ret = innerEmit.$apply(this, args);
-    domain.exit();
-
-    return ret;
+  // Just call original `emit` if current EE instance has `error` handler,
+  // there's no active domain or this is process
+  if (shouldEmitError || domain === null || domain === undefined || this === process) {
+    return eventEmit.$apply(this, args);
   }
-  emit[kDomainAwareEmit] = true;
-  return emit;
-}
+
+  if (type === "error") {
+    const er = args.length > 1 && args[1] ? args[1] : $ERR_UNHANDLED_ERROR();
+
+    // Enter the async callback's scheduling-time domain context (node's
+    // before() hook equivalent) before manipulating the stack below.
+    adopt();
+
+    if (typeof er === "object") {
+      er.domainEmitter = this;
+      ObjectDefineProperty(er, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: domain,
+        writable: true,
+      } as PropertyDescriptor);
+      er.domainThrown = false;
+    }
+
+    // Remove the current domain (and its duplicates) from the domains stack
+    // and set the active domain to its parent (if any) so that the domain's
+    // error handler doesn't run in its own context. This prevents any event
+    // emitter created or any exception thrown in that error handler from
+    // recursively executing that error handler.
+    const origDomainsStack = ArrayPrototypeSlice.$call(stack);
+    const origActiveDomain = currentActive();
+
+    // Travel the domains stack from top to bottom to find the first domain
+    // instance that is not a duplicate of the current active domain.
+    let idx = stack.length - 1;
+    while (idx > -1 && origActiveDomain === stack[idx]) {
+      --idx;
+    }
+
+    // Change the stack to not contain the current active domain, and only
+    // the domains above it on the stack.
+    if (idx < 0) {
+      stack.length = 0;
+    } else {
+      ArrayPrototypeSplice.$call(stack, idx + 1);
+    }
+
+    // Change the current active domain
+    setActive(stack.length > 0 ? stack[stack.length - 1] : null);
+
+    domain.emit("error", er);
+
+    // Now that the domain's error handler has completed, restore the
+    // domains stack and the active domain to their original values.
+    stack = origDomainsStack;
+    setActive(origActiveDomain);
+
+    return false;
+  }
+
+  domain.enter();
+  const ret = eventEmit.$apply(this, args);
+  domain.exit();
+
+  return ret;
+};
 
 const eventInit = EventEmitter.init;
 EventEmitter.init = function init(this: any, opts: any) {
@@ -562,21 +549,12 @@ EventEmitter.init = function init(this: any, opts: any) {
     this.domain = active;
   }
 
-  const ret = eventInit.$call(this, opts);
-
-  // Bun's EventEmitter.init installs a capture-rejections emit variant as an
-  // own instance property when captureRejections is enabled (node instead
-  // branches on kCapture inside the single prototype emit). An own property
-  // shadows the domain-aware prototype emit, so wrap it here too.
-  if (ObjectHasOwn(this, "emit") && typeof this.emit === "function" && !this.emit[kDomainAwareEmit]) {
-    this.emit = makeDomainAwareEmit(this.emit);
-  }
-
-  return ret;
+  return eventInit.$call(this, opts);
 };
 
-const eventEmit = EventEmitter.prototype.emit;
-EventEmitter.prototype.emit = makeDomainAwareEmit(eventEmit);
+// Install the AsyncResource domain-tagging getter now that node:domain has
+// loaded (mirrors Node registering its createHook init hook at load time).
+asyncHooks[Symbol.for("nodejs.async_hooks.domainActiveGetter")](currentActive);
 
 // Hook the native uncaught-exception path. This is installed once when the
 // domain module is first loaded, like node's per-Domain asyncHook.enable().

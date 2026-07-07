@@ -38,10 +38,12 @@ const test = (fn) => {
     throw ex;
   });
   // Note for Bun: upstream calls `d.run(fn, cb)` here, so the throw happens
-  // inside the async crypto callback. Errors thrown from crypto callbacks
-  // surface through the unhandled rejection path in Bun, which does not yet
-  // route rejections through the domain machinery, so this copy invokes the
-  // throwing callback synchronously instead (`fn` is deliberately unused).
+  // inside the async crypto callback. In Bun those callbacks are promise
+  // reactions, and Bun does not yet capture the reject-time domain and route
+  // unhandled rejections through it (Node's promiseInfo.domain path in
+  // lib/internal/process/promises.js). This copy invokes the throwing
+  // callback synchronously instead (`fn` is deliberately unused). See the
+  // .todo mode-matrix tests in test/js/node/domain/domain.test.ts.
   d.run(cb);
 };
 

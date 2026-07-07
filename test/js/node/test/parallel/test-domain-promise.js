@@ -127,6 +127,8 @@ process.on('warning', common.mustNotCall());
   }));
 }
 // Note for Bun: upstream has one more block here ("Unhandled rejections
-// become errors on the domain") that is omitted because Bun's unhandled
-// rejection path does not yet route rejections through the domain
-// uncaught-exception machinery.
+// become errors on the domain") that is omitted because Bun does not yet
+// capture the reject-time domain and route unhandled rejections through it
+// (Node's promiseInfo.domain path in lib/internal/process/promises.js --
+// distinct from the uncaught-exception capture callback). See the .todo
+// mode-matrix tests in test/js/node/domain/domain.test.ts.

@@ -470,10 +470,11 @@ impl EventLoop {
     ///
     /// `auto_tick` runs it at the end of an iteration rather than the start, so
     /// the cyclic order matches `uv_run`'s for every iteration but the first.
-    /// Callers about to enter the loop for the first time run one themselves,
-    /// so a timer that expired while the entry point was still running
-    /// dispatches before the tasks and `setImmediate` callbacks it queued, as
-    /// it does in Node.
+    /// Callers about to enter the loop for the first time run one themselves
+    /// (after a `tick()` that evaluated the entry body), so a timer that
+    /// expired while the entry point was still running dispatches before the
+    /// `setImmediate` callbacks it queued. Task-queue work the body queued is
+    /// dispatched by that `tick()` first.
     pub fn drain_expired_timers(&mut self) {
         // The real `timer::All` lives in `bun_runtime` (cycle), so the body
         // dispatches through `__bun_drain_expired_timers` (link-time extern).

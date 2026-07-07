@@ -220,7 +220,6 @@ describe.skipIf(!isWindows)("reusePort on Windows", () => {
     const SOL_SOCKET = 0xffff;
     const SO_REUSEADDR = 0x0004;
     const INVALID_SOCKET = 0xffffffffffffffffn;
-    const WSAEADDRINUSE = 10048;
     const WSAEACCES = 10013;
 
     const s = ws2.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);

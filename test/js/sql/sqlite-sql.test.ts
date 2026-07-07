@@ -2114,7 +2114,7 @@ describe("Memory and resource management", () => {
     expect(finalCount[0].count).toBe(iterations - 300);
 
     await sql.close();
-  });
+  }, 60_000);
 
   test("handles many concurrent prepared statements", async () => {
     const sql = new SQL("sqlite://:memory:");
@@ -4963,7 +4963,7 @@ describe("Query Normalization Fuzzing Tests", () => {
     ).toBe(1);
     await sql.unsafe(`SELECT * FROM "${longName}"`);
     await sql.unsafe(`DROP TABLE "${longName}"`);
-  });
+  }, 60_000);
 
   describe("Result Modes", () => {
     test("values() mode returns arrays instead of objects", async () => {

@@ -19,7 +19,6 @@ it.todoIf(isWindows || isASAN)("can run a .c file", () => {
 });
 
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-// TinyCC is disabled on Windows ARM64.
 describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {

@@ -30,9 +30,10 @@ const pgAuthenticationSASLFinal = (msg: string) => pgRaw("R", Buffer.concat([pgI
  * Drive a full SCRAM-SHA-256 handshake against Bun.SQL, verifying the ClientProof
  * against the RFC 5802 AuthMessage (computed from the messages as exchanged on the
  * wire), then send a valid server-final so connect() resolves iff both sides agree.
- * @param extension appended verbatim to the server-first-message after "i=N"
+ * @param firstExt appended verbatim to the server-first-message after "i=N"
+ * @param finalExt appended verbatim to the server-final-message after "v=<sig>"
  */
-async function runScramHandshake(extension: string): Promise<void> {
+async function runScramHandshake(firstExt: string, finalExt: string): Promise<void> {
   const {
     promise: gotProofs,
     resolve: resolveProofs,
@@ -84,7 +85,7 @@ async function runScramHandshake(extension: string): Promise<void> {
             salted = pbkdf2Sync(PASSWORD, salt, ITERS, 32, "sha256");
             serverFirst =
               `r=${clientNonce}${randomBytes(16).toString("base64")},` +
-              `s=${salt.toString("base64")},i=${ITERS}${extension}`;
+              `s=${salt.toString("base64")},i=${ITERS}${firstExt}`;
             socket.write(pgAuthenticationSASLContinue(serverFirst));
             saslState = 1;
           } else {
@@ -104,7 +105,11 @@ async function runScramHandshake(extension: string): Promise<void> {
             const serverKey = hmac(salted, "Server Key");
             const serverSig = hmac(serverKey, authMessage).toString("base64");
             socket.write(
-              Buffer.concat([pgAuthenticationSASLFinal(`v=${serverSig}`), pgAuthenticationOk(), pgReadyForQuery()]),
+              Buffer.concat([
+                pgAuthenticationSASLFinal(`v=${serverSig}${finalExt}`),
+                pgAuthenticationOk(),
+                pgReadyForQuery(),
+              ]),
             );
             saslState = 2;
           }
@@ -136,12 +141,20 @@ async function runScramHandshake(extension: string): Promise<void> {
   }
 }
 
-describe("postgres SCRAM-SHA-256 AuthMessage", () => {
-  test("canonical server-first-message (r=,s=,i=)", async () => {
-    await runScramHandshake("");
+describe("postgres SCRAM-SHA-256: RFC 5802 extension attributes", () => {
+  test("canonical server-first / server-final (no extensions)", async () => {
+    await runScramHandshake("", "");
   });
 
-  test("server-first-message carrying an RFC 5802 extension attribute", async () => {
-    await runScramHandshake(",x=future-ext");
+  test("server-first-message carrying an extension attribute", async () => {
+    await runScramHandshake(",x=future-ext", "");
+  });
+
+  test("server-final-message carrying an extension attribute", async () => {
+    await runScramHandshake("", ",x=future-ext");
+  });
+
+  test("both server-first and server-final carrying extension attributes", async () => {
+    await runScramHandshake(",x=future-ext", ",x=future-ext");
   });
 });

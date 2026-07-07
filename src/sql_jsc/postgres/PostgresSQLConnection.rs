@@ -2772,19 +2772,25 @@ impl PostgresSQLConnection {
 
                         let server_signature = sasl.server_signature();
 
-                        // This will usually start with "v="
-                        let comparison_signature = final_data.slice();
+                        // RFC 5802 §7: server-final-message = (server-error / verifier)
+                        // ["," extensions]. Compare only the verifier value up to the
+                        // first ',' and require the "v=" prefix.
+                        let server_final = final_data.slice();
+                        let first_attr = match strings::index_of_char(server_final, b',') {
+                            Some(i) => &server_final[..i as usize],
+                            None => server_final,
+                        };
 
-                        if comparison_signature.len() < 2
+                        if !first_attr.starts_with(b"v=")
                             || !BoringSSL::c::constant_time_eq(
                                 server_signature,
-                                &comparison_signature[2..],
+                                &first_attr[2..],
                             )
                         {
                             debug!(
                                 "SASLFinal - SASL Server signature mismatch\nExpected: {}\nActual: {}",
                                 bstr::BStr::new(server_signature),
-                                bstr::BStr::new(&comparison_signature[2..])
+                                bstr::BStr::new(server_final)
                             );
                             self.fail(
                                 b"The server did not return the correct signature",

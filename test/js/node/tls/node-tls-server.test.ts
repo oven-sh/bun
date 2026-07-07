@@ -1371,9 +1371,14 @@ describe("tls.createServer crl option", () => {
   });
 
   it("rejects an unparseable crl at secure-context creation", () => {
-    expect(() => tls.createSecureContext({ key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem"), ca: ca2, crl: "not a crl" })).toThrow(
-      expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
-    );
+    expect(() =>
+      tls.createSecureContext({
+        key: keys("agent1-key.pem"),
+        cert: keys("agent1-cert.pem"),
+        ca: ca2,
+        crl: "not a crl",
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }));
   });
 
   it("validates the crl option type", () => {

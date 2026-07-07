@@ -943,6 +943,59 @@ impl NodeHTTPResponse {
         raw_response.write_continue();
         Ok(JSValue::UNDEFINED)
     }
+
+    // Writes a caller-built 1xx informational response block to the same
+    // AsyncSocket buffer writeStatus/end use, so a pipelined replay stays
+    // ordered ahead of the final response bytes (node:http _writeRaw).
+    pub(crate) fn write_informational(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if self.is_done() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        {
+            let Some(raw_response) = self.raw_response.get() else {
+                return Ok(JSValue::UNDEFINED);
+            };
+            handle_ended_if_necessary(raw_response.state(), global_object)?;
+        }
+
+        let arguments = callframe.arguments();
+        let input_value = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
+        if input_value.is_undefined_or_null() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let encoding_value = arguments.get(1).copied().unwrap_or(JSValue::UNDEFINED);
+        let encoding = if encoding_value.is_string() {
+            crate::node::Encoding::from_js(encoding_value, global_object)?
+                .unwrap_or(crate::node::Encoding::Utf8)
+        } else {
+            crate::node::Encoding::Utf8
+        };
+
+        let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
+        if !crate::node::StringOrBuffer::from_js_with_encoding_into(
+            &mut string_or_buffer,
+            global_object,
+            input_value,
+            encoding,
+        )? {
+            return Err(global_object.throw_invalid_argument_type_value(
+                b"data",
+                b"string or buffer",
+                input_value,
+            ));
+        }
+
+        // Re-read after the JS-capable coercion above (R-2: re-entry may clear it).
+        let Some(raw_response) = self.raw_response.get() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        raw_response.write_informational(string_or_buffer.slice());
+        Ok(JSValue::UNDEFINED)
+    }
 }
 
 #[repr(u8)]

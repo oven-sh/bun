@@ -2252,7 +2252,13 @@ impl BlobExt for Blob {
                     resolve_file_stat(store);
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
+                let last_modified = store.data_mut().as_file().last_modified;
+                // If stat failed (file does not exist) the sentinel is still
+                // here; expose 0 to JS, mirroring `.size` == 0 for a missing file.
+                if last_modified == jsc::INIT_TIMESTAMP {
+                    return JSValue::js_number(0.0);
+                }
+                return JSValue::js_number(last_modified as f64);
             }
         }
 
@@ -2260,7 +2266,7 @@ impl BlobExt for Blob {
             return JSValue::js_number(self.last_modified.get());
         }
 
-        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
+        JSValue::js_number(0.0)
     }
 
     fn get_size_for_bindings(&self) -> u64 {

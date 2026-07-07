@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import * as os from "node:os";
+import { join } from "node:path";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -126,6 +127,46 @@ it("userInfo", () => {
     expect(info.uid).toBe(-1);
     expect(info.gid).toBe(-1);
   }
+});
+
+const printUserInfo = `console.log(JSON.stringify({ username: require("os").userInfo().username, env: process.env.USERNAME ?? null }));`;
+
+async function expectOsAccountUsername(proc, expectedEnv) {
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout, `stderr: ${stderr}`).toStartWith("{");
+  const info = JSON.parse(stdout);
+  expect(info.env).toBe(expectedEnv);
+  expect(typeof info.username).toBe("string");
+  expect(info.username).not.toBe("unknown");
+  expect(info.username.length).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
+}
+
+it.concurrent.skipIf(!isWindows)("userInfo() reads the username from the OS when USERNAME is unset", async () => {
+  // Bun.spawn re-adds USERNAME to explicit envs (libuv's required-vars list),
+  // so a cmd.exe hop performs the real unset for the child bun.
+  using dir = tempDir("os-userinfo", {
+    "print-userinfo.js": printUserInfo,
+  });
+  await using proc = Bun.spawn({
+    cmd: ["cmd", "/d", "/s", "/c", `"set USERNAME=& "${bunExe()}" "${join(String(dir), "print-userinfo.js")}""`],
+    windowsVerbatimArguments: true,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await expectOsAccountUsername(proc, null);
+});
+
+it.concurrent.skipIf(!isWindows)("userInfo() reads the username from the OS when USERNAME is empty", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", printUserInfo],
+    env: { ...bunEnv, USERNAME: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await expectOsAccountUsername(proc, "");
 });
 
 it("cpus", () => {

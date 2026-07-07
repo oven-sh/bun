@@ -69,15 +69,17 @@ async function captureBind(paramOid: number, param: unknown): Promise<PgBindMess
     });
   });
 
-  await using sql = new SQL({ hostname: "127.0.0.1", port, username: "x", database: "x", max: 1 });
   try {
-    await sql.unsafe("select $1", [param]);
-  } catch (e) {
-    reject(e as Error);
+    await using sql = new SQL({ hostname: "127.0.0.1", port, username: "x", database: "x", max: 1 });
+    try {
+      await sql.unsafe("select $1", [param]);
+    } catch (e) {
+      reject(e as Error);
+    }
+    return await promise;
+  } finally {
+    server.close();
   }
-  const result = await promise;
-  server.close();
-  return result;
 }
 
 const text = (b: Buffer | null) => (b === null ? null : b.toString("latin1"));
@@ -131,4 +133,10 @@ test("jsonb array parameter stays JSON, not a pg array literal", async () => {
   const bind = await captureBind(3802 /* jsonb */, ["a", "b"]);
   expect(bind.formatCodes).toEqual([0]);
   expect(text(bind.values[0])).toBe(`["a","b"]`);
+});
+
+test("box[] uses ; as the element delimiter", async () => {
+  const bind = await captureBind(1020 /* box_array */, ["(0,0),(1,1)", "(2,2),(3,3)"]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"(0,0),(1,1)";"(2,2),(3,3)"}`);
 });

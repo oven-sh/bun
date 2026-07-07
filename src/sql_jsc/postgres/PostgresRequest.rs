@@ -162,8 +162,11 @@ pub fn write_bind<Context: WriterContext>(
         // was declared as 0 (text) in the loop above. json/jsonb arrays are
         // excluded: they must stay JSON text (`[1,2,3]`), handled below.
         if value.is_array() && !matches!(tag, types::Tag::json | types::Tag::jsonb) {
+            // `box` is the one built-in type whose array literal uses `;` as the
+            // element delimiter (its scalar text already contains commas).
+            let delimiter = if tag == types::Tag::box_array { b';' } else { b',' };
             let mut buf: Vec<u8> = Vec::new();
-            write_array_literal(&mut buf, value, global, 0)?;
+            write_array_literal(&mut buf, value, global, delimiter, 0)?;
             let l = writer.length()?;
             bun_core::scoped_log!(Postgres, "    array literal {} bytes", buf.len());
             writer.write(&buf)?;
@@ -280,12 +283,14 @@ pub fn write_bind<Context: WriterContext>(
 /// `{"a","b"}`, `{1,NULL,3}`). Nested arrays become nested braces. Scalar
 /// elements are double-quoted with `"` and `\` escaped, which postgres accepts
 /// for every element type; `null`/`undefined` become an unquoted `NULL`.
-/// `depth` guards against stack overflow from pathologically nested input;
-/// postgres itself rejects more than 6 dimensions.
+/// `delimiter` is `;` for `box[]` and `,` for every other type. `depth` guards
+/// against stack overflow from pathologically nested input; postgres itself
+/// rejects more than 6 dimensions.
 fn write_array_literal(
     out: &mut Vec<u8>,
     value: JSValue,
     global: &JSGlobalObject,
+    delimiter: u8,
     depth: u32,
 ) -> Result<(), AnyPostgresError> {
     const MAX_ARRAY_DEPTH: u32 = 64;
@@ -296,7 +301,7 @@ fn write_array_literal(
     let len = value.get_length(global).map_err(js_error_to_postgres)?;
     for idx in 0..len {
         if idx > 0 {
-            out.push(b',');
+            out.push(delimiter);
         }
         let element = value
             .get_index(global, idx as u32)
@@ -304,7 +309,7 @@ fn write_array_literal(
         if element.is_empty_or_undefined_or_null() {
             out.extend_from_slice(b"NULL");
         } else if element.is_array() {
-            write_array_literal(out, element, global, depth + 1)?;
+            write_array_literal(out, element, global, delimiter, depth + 1)?;
         } else {
             out.push(b'"');
             let str = bun_core::OwnedString::new(

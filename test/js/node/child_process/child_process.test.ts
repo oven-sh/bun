@@ -729,6 +729,44 @@ done
   expect(asyncOut.trim().split("\n")).toEqual(expected);
 });
 
+// Node documents 'close' as firing only after the process has exited AND every
+// stdio stream has closed. Extra pipe fds (index >= 3) must participate in that
+// accounting so data written to them is observable at 'close'.
+it.skipIf(isWindows)("'close' waits for extra stdio pipes (index >= 3) to end", async () => {
+  const child = spawn("/bin/sh", ["-c", "printf A; printf B >&2; printf CCC >&3; printf DDD >&4"], {
+    stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  const got = ["", "", "", "", ""];
+  const order: string[] = [];
+  const ended: Promise<void>[] = [];
+  for (const i of [1, 2, 3, 4]) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    ended.push(promise);
+    child.stdio[i]!.on("data", d => (got[i] += d));
+    child.stdio[i]!.on("end", () => {
+      order.push(`end${i}`);
+      resolve();
+    });
+  }
+
+  const closed = Promise.withResolvers<{ got: string[]; order: string[] }>();
+  child.on("error", closed.reject);
+  child.on("close", () => {
+    order.push("close");
+    closed.resolve({ got: [...got], order: [...order] });
+  });
+
+  const [atClose] = await Promise.all([closed.promise, ...ended]);
+
+  expect(atClose.got).toEqual(["", "A", "B", "CCC", "DDD"]);
+  for (const i of [1, 2, 3, 4]) {
+    expect(atClose.order.indexOf(`end${i}`)).toBeGreaterThanOrEqual(0);
+    expect(atClose.order.indexOf(`end${i}`)).toBeLessThan(atClose.order.indexOf("close"));
+  }
+});
+
 describe("uid/gid options", () => {
   const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.

@@ -1494,15 +1494,17 @@ it("process.memoryUsage.arrayBuffers counts Buffer and typed array allocations",
     for (let i = 0; i < N; i++) held[i].buffer;
     const a4after = process.memoryUsage().arrayBuffers;
 
-    const e = process.memoryUsage().external;
+    // Sample external and arrayBuffers from the same call; the clamp only
+    // guarantees external >= arrayBuffers within a single memoryUsage() call.
+    const m = process.memoryUsage();
 
     process.stdout.write(JSON.stringify({
       bufferAlloc: a1 - a0,
       uint8Array: a2 - a1,
       arrayBuffer: a3 - a2,
       promoteDelta: a4after - a4before,
-      external: e,
-      arrayBuffers: process.memoryUsage().arrayBuffers,
+      external: m.external,
+      arrayBuffers: m.arrayBuffers,
     }));
   `;
 

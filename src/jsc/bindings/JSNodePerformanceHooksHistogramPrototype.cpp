@@ -530,4 +530,13 @@ extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue 
     hist->record(delay_ns);
 }
 
+// Called from VM teardown when a monitor is freed out from under its histogram
+extern "C" void JSNodePerformanceHooksHistogram_clearMonitor(JSC::EncodedJSValue histogram)
+{
+    if (!histogram) return;
+
+    auto* hist = uncheckedDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(histogram));
+    hist->m_eventLoopDelayMonitor = nullptr;
+}
+
 } // namespace Bun

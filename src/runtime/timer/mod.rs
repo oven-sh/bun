@@ -371,10 +371,9 @@ impl Maps {
 // host fns see the same nominal type.
 pub use crate::test_runner::timers::fake_timers::FakeTimers;
 
-// ─── DateHeaderTimer / EventLoopDelayMonitor (struct-only) ───────────────────
-// Method bodies (`enable`/`run`) call `vm.timer.*` and `vm.uws_loop()` which
-// need `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape
-// is real so `All` embeds them by value with the correct layout.
+// ─── DateHeaderTimer / EventLoopDelayMonitor ─────────────────────────────────
+// `DateHeaderTimer` is embedded by value in `All`. `EventLoopDelayMonitor`
+// instances are heap-allocated per `monitorEventLoopDelay()` histogram.
 
 pub struct DateHeaderTimer {
     pub event_loop_timer: EventLoopTimer,
@@ -434,6 +433,7 @@ pub struct EventLoopDelayMonitor {
     pub last_fire_ns: u64,
     pub enabled: bool,
 }
+bun_event_loop::impl_timer_owner!(EventLoopDelayMonitor; from_timer_ptr => event_loop_timer);
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
@@ -1185,6 +1185,7 @@ impl All {
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
+        let mut delay_monitors: Vec<*mut EventLoopDelayMonitor> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
         // SAFETY: `this` is the live per-thread `All` (JS thread only).
@@ -1226,6 +1227,11 @@ impl All {
                     // field of a live boxed `abort_signal::Timeout`.
                     signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
                 }
+                EventLoopTimerTag::EventLoopDelayMonitor => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live boxed `EventLoopDelayMonitor`.
+                    delay_monitors.push(unsafe { EventLoopDelayMonitor::from_timer_ptr(node) });
+                }
                 _ => {}
             }
         }
@@ -1260,6 +1266,25 @@ impl All {
                 if !signal.is_null() {
                     crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
                 }
+            }
+        }
+
+        // Heap-allocated `monitorEventLoopDelay()` monitors still enabled at
+        // teardown: null the owning histogram's pointer, unlink, drop Strong,
+        // and free.
+        for m in delay_monitors {
+            unsafe extern "C" {
+                safe fn JSNodePerformanceHooksHistogram_clearMonitor(histogram: JSValue);
+            }
+            // SAFETY: each `m` was collected from the live heap above; the
+            // box is still owned by the histogram's `m_eventLoopDelayMonitor`
+            // which we clear here. JS thread.
+            unsafe {
+                if let Some(histogram) = (*m).js_histogram.get() {
+                    JSNodePerformanceHooksHistogram_clearMonitor(histogram);
+                }
+                (*m).disable(&mut *vm);
+                bun_core::heap::destroy(m);
             }
         }
     }

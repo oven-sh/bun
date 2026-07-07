@@ -12,7 +12,7 @@ pub(super) extern "C" fn Timer_enableEventLoopDelayMonitoring(
 ) -> *mut EventLoopDelayMonitor {
     // SAFETY: vm is a valid non-null pointer passed from C++.
     let vm = unsafe { &mut *vm };
-    let monitor = Box::into_raw(Box::<EventLoopDelayMonitor>::default());
+    let monitor = bun_core::heap::into_raw(Box::new(EventLoopDelayMonitor::default()));
     // SAFETY: `monitor` was just allocated; the raw pointer has full provenance
     // for the intrusive timer node that `enable()` inserts into `All.timers`.
     unsafe { (*monitor).enable(vm, histogram, resolution_ms) };
@@ -32,5 +32,5 @@ pub(super) unsafe extern "C" fn Timer_disableEventLoopDelayMonitoring(
     // SAFETY: per fn contract; remove the intrusive timer node before reclaim.
     unsafe { (*monitor).disable(vm) };
     // SAFETY: per fn contract; reclaim the allocation from `enable`.
-    drop(unsafe { Box::from_raw(monitor) });
+    unsafe { bun_core::heap::destroy(monitor) };
 }

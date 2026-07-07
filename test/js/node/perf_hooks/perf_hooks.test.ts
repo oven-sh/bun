@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import perf, { monitorEventLoopDelay } from "perf_hooks";
 
 test("stubs", () => {
@@ -86,5 +87,27 @@ describe("monitorEventLoopDelay", () => {
       a.disable();
       b.disable();
     }
+  });
+
+  test("process exits cleanly with monitors still enabled", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { monitorEventLoopDelay } = require("node:perf_hooks");
+         monitorEventLoopDelay({ resolution: 1 }).enable();
+         monitorEventLoopDelay({ resolution: 2 }).enable();
+         setTimeout(() => {
+           console.log("ok");
+           process.exit(0);
+         }, 10);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });

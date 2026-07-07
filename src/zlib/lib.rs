@@ -1263,8 +1263,10 @@ impl InflateDecoder {
         }
         if matches!(self.state, State::End) {
             // A prior call completed a gzip member at the chunk boundary.
-            // If this chunk begins another member, reset and decode it.
-            if self.multi_member && input.first().is_some_and(|&b| b != 0x00) {
+            // Only resume when the next byte is the gzip magic ID1 (RFC 1952
+            // §2.3.1); any other trailing bytes are tolerated as garbage so
+            // stray CRLF/footer junk does not turn into a decode error.
+            if self.multi_member && input.first() == Some(&0x1f) {
                 if self.reset() != ReturnCode::Ok {
                     self.state = State::Error;
                     return Err(ZlibError::ZlibError);
@@ -1290,10 +1292,11 @@ impl InflateDecoder {
             match rc {
                 ReturnCode::StreamEnd => {
                     self.state = State::End;
-                    // Matches Node's GUNZIP loop (node_zlib.cc): remaining
-                    // non-zero bytes may be another gzip member; trailing
-                    // zero bytes are padding and end the stream.
-                    if self.multi_member && input.first().is_some_and(|&b| b != 0x00) {
+                    // Continue only when the next byte is the gzip magic ID1
+                    // (0x1f). Anything else is trailing garbage/padding and
+                    // ends the stream, keeping prior tolerance for origins
+                    // that append stray bytes after a valid member.
+                    if self.multi_member && input.first() == Some(&0x1f) {
                         if self.reset() != ReturnCode::Ok {
                             self.state = State::Error;
                             return Err(ZlibError::ZlibError);

@@ -590,6 +590,9 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
     ["chunked, one chunk per member", [M1, M2], true],
     // gzip padding: trailing zeros after the last member must be tolerated.
     ["content-length, trailing zero padding", [Buffer.concat([BODY, Buffer.alloc(8)])], false],
+    // Trailing non-gzip-magic bytes after the last member must be tolerated
+    // as garbage (not treated as another member), matching browsers/curl/Go.
+    ["content-length, trailing CRLF garbage", [Buffer.concat([BODY, Buffer.from("\r\n")])], false],
   ];
 
   describe.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", noLibdeflate => {
@@ -642,6 +645,49 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
         server.close();
       }
     });
+  });
+
+  // A single valid gzip member followed by non-gzip-magic trailing bytes
+  // must still decode successfully (prior Bun behavior, and what browsers /
+  // curl / Go do). The multi-member loop only resumes on 0x1f so stray
+  // CRLF/footer junk from misconfigured origins does not fail the fetch.
+  it.each(["0", "1"])("single member with trailing garbage (NO_LIBDEFLATE=%s)", async noLibdeflate => {
+    const body = Buffer.concat([M1, Buffer.from("\r\ngarbage")]);
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.end(
+        Buffer.concat([
+          Buffer.from(
+            `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+          ),
+          body,
+        ]),
+      );
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.argv[1]);
+           process.stdout.write(Buffer.from(await res.arrayBuffer()));`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ len: stdout.length, stdout, stderr, exitCode }).toEqual({
+        len: P1.length,
+        stdout: P1.toString(),
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
+    }
   });
 
   // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so

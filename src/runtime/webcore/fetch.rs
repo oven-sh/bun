@@ -1121,19 +1121,33 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // signal: AbortSignal | undefined;
+    // signal: AbortSignal | null | undefined;
+    // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
+    // detaches (no fallback to the input Request's signal); a present non-null
+    // non-AbortSignal is a TypeError.
     signal.0 = 'extract_signal: {
         if let Some(options) = options_object {
             if let Some(signal_) = options.get(global_this, "signal")? {
-                if !signal_.is_undefined() {
-                    if let Some(signal__) = AbortSignal::from_js(signal_) {
-                        // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
-                        // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
-                        break 'extract_signal NonNull::new(
-                            bun_opaque::opaque_deref(signal__).ref_(),
-                        );
-                    }
+                if signal_.is_null() {
+                    break 'extract_signal None;
                 }
+                if let Some(signal__) = AbortSignal::from_js(signal_) {
+                    // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
+                    // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
+                    break 'extract_signal NonNull::new(
+                        bun_opaque::opaque_deref(signal__).ref_(),
+                    );
+                }
+                let err = ctx.to_type_error(
+                    jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("signal is not of type AbortSignal."),
+                );
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err,
+                    ),
+                );
             }
 
             if global_this.has_exception() {
@@ -1150,15 +1164,24 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(options) = request_init_object {
             if let Some(signal_) = options.get(global_this, "signal")? {
-                if signal_.is_undefined() {
+                if signal_.is_null() {
                     break 'extract_signal None;
                 }
-
                 if let Some(signal__) = AbortSignal::from_js(signal_) {
                     // `AbortSignal` is an opaque ZST FFI handle (S008) — safe
                     // `*mut → &` via `opaque_deref`; `ref_` bumps refcount.
                     break 'extract_signal NonNull::new(bun_opaque::opaque_deref(signal__).ref_());
                 }
+                let err = ctx.to_type_error(
+                    jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("signal is not of type AbortSignal."),
+                );
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err,
+                    ),
+                );
             }
         }
 

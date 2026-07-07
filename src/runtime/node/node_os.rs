@@ -750,52 +750,23 @@ mod _impl {
                 }
             }
 
-            // From libuv:
-            // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-            // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-            // > will not usually be large.
-            // Instead of always using an allocation, first try a stack allocation
-            // of 4096, then fallback to heap.
-            let mut stack_string_bytes = [0u8; 4096];
-            let mut heap_bytes: Vec<u8>;
-            let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
-            let mut using_heap = false;
-
-            // SAFETY: zeroed POD
-            let mut pw: libc::passwd = bun_core::ffi::zeroed();
-            let mut result: *mut libc::passwd = core::ptr::null_mut();
-
-            let ret: c_int = loop {
-                // SAFETY: valid buffers and out-pointer
-                let ret = unsafe {
-                    libc::getpwuid_r(
-                        libc::geteuid(),
-                        &raw mut pw,
-                        string_bytes.as_mut_ptr().cast::<c_char>(),
-                        string_bytes.len(),
-                        &raw mut result,
-                    )
-                };
-
-                if ret == bun_sys::E::EINTR as c_int {
-                    continue;
+            return match with_passwd_entry(|pw| clone_passwd_cstr(pw.pw_dir)) {
+                Ok(Some(dir)) => Ok(dir),
+                Ok(None) => {
+                    // bionic has no passwd entries for app uids; with HOME also unset
+                    // (zygote/run-as), return a usable default rather than throwing.
+                    #[cfg(target_os = "android")]
+                    {
+                        Ok(BunString::static_("/data/local/tmp"))
+                    }
+                    // in uv__getpwuid_r, null result throws UV_ENOENT.
+                    #[cfg(not(target_os = "android"))]
+                    Err(global.throw_value(
+                        bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
+                            .to_js(global),
+                    ))
                 }
-
-                // If the system call wants more memory, double it.
-                if ret == bun_sys::E::ERANGE as c_int {
-                    let len = string_bytes.len();
-                    heap_bytes = vec![0u8; len * 2];
-                    string_bytes = &mut heap_bytes[..];
-                    using_heap = true;
-                    continue;
-                }
-
-                break ret;
-            };
-            let _ = using_heap;
-
-            if ret != 0 {
-                return Err(global.throw_value(
+                Err(ret) => Err(global.throw_value(
                     bun_sys::Error::from_code(
                         // `ret` is a libc errno; `E::from_raw` is the centralized
                         // `@enumFromInt` (debug-asserts the discriminant).
@@ -803,31 +774,73 @@ mod _impl {
                         bun_sys::Tag::uv_os_homedir,
                     )
                     .to_js(global),
-                ));
-            }
-
-            if result.is_null() {
-                // bionic has no passwd entries for app uids; with HOME also unset
-                // (zygote/run-as), return a usable default rather than throwing.
-                #[cfg(target_os = "android")]
-                {
-                    return Ok(BunString::static_("/data/local/tmp"));
-                }
-                // in uv__getpwuid_r, null result throws UV_ENOENT.
-                #[cfg(not(target_os = "android"))]
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
-                        .to_js(global),
-                ));
-            }
-
-            return Ok(if !pw.pw_dir.is_null() {
-                // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
-                BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
-            } else {
-                BunString::empty()
-            });
+                )),
+            };
         }
+    }
+
+    /// Run `f` with the effective uid's passwd entry. `Ok(None)` means no entry exists
+    /// (libuv maps this to `UV_ENOENT`); `Err(errno)` is a `getpwuid_r` failure.
+    #[cfg(not(windows))]
+    fn with_passwd_entry<R>(f: impl FnOnce(&libc::passwd) -> R) -> Result<Option<R>, c_int> {
+        // From libuv:
+        // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
+        // > is frequently 1024 or 4096, so we can just use that directly. The pwent
+        // > will not usually be large.
+        // Instead of always using an allocation, first try a stack allocation
+        // of 4096, then fallback to heap.
+        let mut stack_string_bytes = [0u8; 4096];
+        let mut heap_bytes: Vec<u8>;
+        let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
+
+        // SAFETY: zeroed POD
+        let mut pw: libc::passwd = bun_core::ffi::zeroed();
+        let mut result: *mut libc::passwd = core::ptr::null_mut();
+
+        let ret: c_int = loop {
+            // SAFETY: valid buffers and out-pointer
+            let ret = unsafe {
+                libc::getpwuid_r(
+                    libc::geteuid(),
+                    &raw mut pw,
+                    string_bytes.as_mut_ptr().cast::<c_char>(),
+                    string_bytes.len(),
+                    &raw mut result,
+                )
+            };
+
+            if ret == bun_sys::E::EINTR as c_int {
+                continue;
+            }
+
+            // If the system call wants more memory, double it.
+            if ret == bun_sys::E::ERANGE as c_int {
+                let len = string_bytes.len();
+                heap_bytes = vec![0u8; len * 2];
+                string_bytes = &mut heap_bytes[..];
+                continue;
+            }
+
+            break ret;
+        };
+
+        if ret != 0 {
+            return Err(ret);
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(f(&pw)))
+    }
+
+    #[cfg(not(windows))]
+    #[inline]
+    fn clone_passwd_cstr(p: *const c_char) -> BunString {
+        if p.is_null() {
+            return BunString::empty();
+        }
+        // SAFETY: field of a getpwuid_r-filled passwd struct is NUL-terminated
+        BunString::clone_utf8(unsafe { bun_core::ffi::cstr(p) }.to_bytes())
     }
 
     pub(crate) fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1613,20 +1626,37 @@ mod _impl {
         }
         #[cfg(not(windows))]
         {
-            let username = env_var::USER.get().unwrap_or(b"unknown");
+            // Node reads pw_name/pw_shell via uv_os_get_passwd and never consults the
+            // environment; keep the cheap USER/SHELL reads but fall back to the passwd
+            // entry when either is unset or empty (cron, systemd, minimal containers).
+            let env_user = env_var::USER.get_not_empty();
+            let env_shell = env_var::SHELL.get_not_empty();
 
-            result.put(
-                global_this,
-                b"username",
-                ZigString::init(username).with_encoding().to_js(global_this),
-            );
-            result.put(
-                global_this,
-                b"shell",
-                ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown"))
-                    .with_encoding()
-                    .to_js(global_this),
-            );
+            let (pw_name, pw_shell) = if env_user.is_none() || env_shell.is_none() {
+                with_passwd_entry(|pw| (clone_passwd_cstr(pw.pw_name), clone_passwd_cstr(pw.pw_shell)))
+                    .ok()
+                    .flatten()
+                    .unwrap_or((BunString::empty(), BunString::empty()))
+            } else {
+                (BunString::empty(), BunString::empty())
+            };
+            let pw_name = scopeguard::guard(pw_name, |s| s.deref());
+            let pw_shell = scopeguard::guard(pw_shell, |s| s.deref());
+
+            let username = match env_user {
+                Some(name) => ZigString::init(name).with_encoding().to_js(global_this),
+                None if !pw_name.is_empty() => pw_name.to_js(global_this)?,
+                None => ZigString::init(b"unknown").with_encoding().to_js(global_this),
+            };
+            result.put(global_this, b"username", username);
+
+            let shell = match env_shell {
+                Some(shell) => ZigString::init(shell).with_encoding().to_js(global_this),
+                None if !pw_shell.is_empty() => pw_shell.to_js(global_this)?,
+                None => ZigString::init(b"unknown").with_encoding().to_js(global_this),
+            };
+            result.put(global_this, b"shell", shell);
+
             // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
             // fail) — discharges the per-site proof the raw `libc` re-export needed.
             result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import * as os from "node:os";
 
 it("arch", () => {
@@ -116,8 +116,21 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
-    expect(info.shell).toBe(process.env.SHELL || "unknown");
+    // USER/SHELL take precedence; when unset the value comes from the passwd
+    // database (pw_name/pw_shell), not "unknown".
+    if (process.env.USER) {
+      expect(info.username).toBe(process.env.USER);
+    } else {
+      expect(typeof info.username).toBe("string");
+      expect(info.username.length).toBeGreaterThan(0);
+      expect(info.username).not.toBe("unknown");
+    }
+    if (process.env.SHELL) {
+      expect(info.shell).toBe(process.env.SHELL);
+    } else {
+      expect(typeof info.shell).toBe("string");
+      expect(info.shell).not.toBe("unknown");
+    }
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);
   } else {
@@ -126,6 +139,65 @@ it("userInfo", () => {
     expect(info.uid).toBe(-1);
     expect(info.gid).toBe(-1);
   }
+});
+
+describe.skipIf(!isPosix)("userInfo() passwd fallback (POSIX)", () => {
+  const printUserInfo = `
+    const { username, shell } = require("os").userInfo();
+    console.log(JSON.stringify({ username, shell, envUSER: process.env.USER ?? null, envSHELL: process.env.SHELL ?? null }));
+  `;
+
+  async function expectPasswdFallback(env, expectedEnvUSER, expectedEnvSHELL) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", printUserInfo],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout, `stderr: ${stderr}`).toStartWith("{");
+    const info = JSON.parse(stdout);
+    // Precondition: the child really saw USER/SHELL in the intended state.
+    expect({ envUSER: info.envUSER, envSHELL: info.envSHELL }).toEqual({
+      envUSER: expectedEnvUSER,
+      envSHELL: expectedEnvSHELL,
+    });
+    expect(typeof info.username).toBe("string");
+    expect(info.username).not.toBe("unknown");
+    expect(info.username).not.toBe("");
+    expect(typeof info.shell).toBe("string");
+    expect(info.shell).not.toBe("unknown");
+    expect(info.shell).not.toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  it.concurrent("reads pw_name/pw_shell when USER and SHELL are unset", async () => {
+    await expectPasswdFallback({ ...bunEnv, USER: undefined, SHELL: undefined }, null, null);
+  });
+
+  it.concurrent("reads pw_name/pw_shell when USER and SHELL are empty", async () => {
+    await expectPasswdFallback({ ...bunEnv, USER: "", SHELL: "" }, "", "");
+  });
+
+  it.concurrent("reads pw_shell when only SHELL is missing", async () => {
+    // USER present → env path; SHELL absent → passwd path. Exercises the
+    // single-lookup branch and confirms env precedence is kept for USER.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", printUserInfo],
+      env: { ...bunEnv, USER: "from-env", SHELL: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, `stderr: ${stderr}`).toStartWith("{");
+    const info = JSON.parse(stdout);
+    expect(info.envSHELL).toBe(null);
+    expect(info.username).toBe("from-env");
+    expect(info.shell).not.toBe("unknown");
+    expect(info.shell).not.toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("cpus", () => {

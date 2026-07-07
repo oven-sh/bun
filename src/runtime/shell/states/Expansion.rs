@@ -281,7 +281,12 @@ impl Expansion {
             if atom.has_glob_expansion() {
                 return Self::transition_to_glob_state(interp, this);
             }
-            Self::push_current_out(me);
+            // Flush the in-progress word. Skip an empty `current_out` once a
+            // word was already committed: a trailing IFS separator already
+            // committed the last field, so there is no final word to add.
+            if !me.current_out.is_empty() || !me.out.committed {
+                Self::push_current_out(me);
+            }
             me.state = ExpansionState::Done;
         }
         let parent = interp.as_expansion(this).base.parent;
@@ -583,15 +588,24 @@ impl Expansion {
     /// whitespace is ignored, runs of IFS whitespace collapse to one
     /// delimiter, and each non-whitespace IFS byte (with adjacent IFS
     /// whitespace) delimits one field, so consecutive ones yield empty fields.
-    fn ifs_split_fields<'a>(s: &'a [u8], ifs: &[u8]) -> Vec<&'a [u8]> {
+    ///
+    /// Also returns whether a separator touched each edge of the input: leading
+    /// IFS whitespace (`.1`) and a trailing delimiter (`.2`). A leading
+    /// non-whitespace delimiter instead surfaces as an empty first field, so it
+    /// is not reported here. The caller uses these to break the word against an
+    /// adjacent literal (`a$(echo " b")` -> `a`, `b`).
+    fn ifs_split_fields<'a>(s: &'a [u8], ifs: &[u8]) -> (Vec<&'a [u8]>, bool, bool) {
         let is_ifs = |b: u8| ifs.contains(&b);
         let is_ifs_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n') && ifs.contains(&b);
         let n = s.len();
         let mut fields: Vec<&[u8]> = Vec::new();
         let mut i = 0usize;
+        let ws_start = i;
         while i < n && is_ifs_ws(s[i]) {
             i += 1;
         }
+        let leading_ws_sep = i > ws_start;
+        let mut trailing_sep = false;
         while i < n {
             let start = i;
             while i < n && !is_ifs(s[i]) {
@@ -612,8 +626,13 @@ impl Expansion {
                     i += 1;
                 }
             }
+            // A delimiter that consumed the rest of the input is a trailing
+            // separator: no further field follows it.
+            if i >= n {
+                trailing_sep = true;
+            }
         }
-        fields
+        (fields, leading_ws_sep, trailing_sep)
     }
 
     /// Split an unquoted command-substitution result into argv words using
@@ -642,7 +661,14 @@ impl Expansion {
             Some(v) => v,
             None => b" \t\n",
         };
-        let fields = Self::ifs_split_fields(&stdout, ifs_bytes);
+        let (fields, leading_ws_sep, trailing_sep) = Self::ifs_split_fields(&stdout, ifs_bytes);
+        // Leading IFS whitespace separates a preceding literal (the prefix held
+        // in `current_out`) from the first field, so flush the prefix as its
+        // own word before appending. A leading non-whitespace delimiter needs
+        // no special handling: it surfaces as an empty first field below.
+        if leading_ws_sep && !me.current_out.is_empty() {
+            Self::push_current_out(me);
+        }
         // Commit every field but the last as its own word; the last stays in
         // `current_out` so following atoms can concatenate onto it (it is
         // flushed later by `push_current_out`). `push_current_out` tracks word
@@ -659,6 +685,12 @@ impl Expansion {
             Self::push_current_out(me);
         }
         me.current_out.extend_from_slice(last);
+        // A trailing delimiter separates the last field from a following
+        // literal, so commit it now; the walk-end flush skips the now-empty
+        // `current_out` (see `next`).
+        if trailing_sep {
+            Self::push_current_out(me);
+        }
     }
 
     pub fn child_done(

@@ -1307,6 +1307,21 @@ describe("deno_task", () => {
       .stdout(`["a","b","c"]\n`)
       .runAsTest("default IFS collapses whitespace runs");
 
+    // A separator at the edge of the substitution result breaks the word
+    // against an adjacent literal instead of gluing onto it.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} a$(echo ${" b"})`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("leading IFS whitespace splits from preceding literal");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${"a "})b`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("trailing IFS whitespace splits from following literal");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} a$(echo ${"  "})b`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("all-whitespace result splits adjacent literals");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,)x`
+      .stdout(`["a","x"]\n`)
+      .runAsTest("trailing non-whitespace IFS splits from following literal");
+
     // A quoted command substitution is never field-split.
     TestBuilder.command`IFS=:; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} "$(echo a:b:c)"`
       .stdout(`["a:b:c"]\n`)

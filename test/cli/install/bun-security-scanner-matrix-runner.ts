@@ -2,7 +2,7 @@ import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harn
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isCI } from "../../harness";
-import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
+import { SimpleRegistry } from "./simple-dummy-registry";
 
 const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
 
@@ -56,16 +56,12 @@ async function globEverything(dir: string) {
   );
 }
 
-let registryUrl: string;
-
 async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
-  const registry = getRegistry();
+  // Each test gets its own registry (on its own OS-assigned port) so that the
+  // request log and scanner behavior are isolated, letting tests run concurrently.
+  using registry = new SimpleRegistry(DO_TEST_DEBUG);
+  const registryUrl = `http://localhost:${await registry.start()}`;
 
-  if (!registry) {
-    throw new Error("Registry not found");
-  }
-
-  registry.clearRequestLog();
   registry.setScannerBehavior(options.scannerReturns ?? "none");
 
   const {
@@ -501,15 +497,7 @@ scanner = "${scannerPath}"`,
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
   let i = 0;
 
-  const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
-
-  beforeAll(async () => {
-    registryUrl = await startRegistry(DO_TEST_DEBUG);
-  });
-
-  afterAll(() => {
-    stopRegistry();
-  });
+  const { describe, test } = Bun.jest(selfModuleName);
 
   const ttyConfigs = [
     { hasTTY: false, ttyResponse: "n", ttyLabel: "no-TTY" } as const,
@@ -579,7 +567,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   scannerReturns === "fatal" ||
                   (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
 
-                test(testName, async () => {
+                test.concurrent(testName, async () => {
                   await runSecurityScannerTest({
                     command,
                     args,

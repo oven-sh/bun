@@ -33,6 +33,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import pLimit from "./p-limit.mjs";
 import {
   getAbi,
@@ -2094,6 +2095,20 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
   } else {
     filteredTests.push(...availableTests);
   }
+
+  // Run docker-backed tests (the prefixes the coordinator prestarts) last in
+  // the shard: the coordinator kicks off `compose up` for their services when
+  // the runner starts, but a cold mysqld/postgres takes ~10s to become
+  // healthy. Scheduling those files after the non-docker ones lets container
+  // init overlap with real test work instead of being paid as wall time
+  // inside the first docker test's beforeAll. Stable sort: relative order is
+  // otherwise preserved, and sharding above is unaffected.
+  const dockerPrefixes = Object.keys(dockerPrestartMap);
+  const needsDockerService = testPath => {
+    const normalized = testPath.replaceAll("\\", "/");
+    return dockerPrefixes.some(prefix => normalized.startsWith(prefix));
+  };
+  filteredTests.sort((a, b) => Number(needsDockerService(a)) - Number(needsDockerService(b)));
 
   // Prioritize modified test files
   if (allFiles.length > 0) {

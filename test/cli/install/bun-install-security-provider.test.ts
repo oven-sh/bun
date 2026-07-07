@@ -1,5 +1,4 @@
-import { bunEnv, runBunInstall, tmpdirSync } from "harness";
-import { rm } from "node:fs/promises";
+import { bunEnv, runBunInstall } from "harness";
 import { join } from "node:path";
 import {
   createTestContext,
@@ -113,7 +112,9 @@ test("basic", {
 
 test("shows progress message when scanner takes more than 1 second", {
   scanner: async () => {
-    await Bun.sleep(2000);
+    // Product boundary is `duration >= 1000` (security_scanner.rs); 1250ms
+    // crosses it with margin without burning 2s of wall clock per lane.
+    await Bun.sleep(1250);
     return [];
   },
   expect: async ({ err }) => {
@@ -698,34 +699,21 @@ describe("Package Resolution", () => {
 });
 
 describe("Large payload via ipc pipe", () => {
-  let tgzTempDir: string;
-
   // Pad package names so the JSON exceeds 1MB with fewer packages. Each
   // package resolution triggers an HTTP round-trip to the dummy registry,
   // which is the slow part on Windows aarch64. The name appears twice in
-  // each JSON entry (name field + tarball URL), so 150-char padding gives
-  // ~430 bytes/entry; 3000 entries = ~1.3MB. Filenames stay under 200 chars.
-  const PKG_COUNT = 3000;
-  const NAME_PAD = Buffer.alloc(150, "x").toString();
+  // each JSON entry (name field + tarball URL), so 170-char padding gives
+  // ~470 bytes/entry; 2500 entries = ~1.2MB. Filenames stay under 200 chars.
+  const PKG_COUNT = 2500;
+  const NAME_PAD = Buffer.alloc(170, "x").toString();
   const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
 
+  // Every package resolves to the same tarball bytes, served from memory so
+  // the registry never touches the filesystem.
+  let barTarballBytes: Uint8Array;
+
   beforeAll(async () => {
-    tgzTempDir = tmpdirSync();
-
-    const barTarball = await Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`).bytes();
-    const writes: Promise<number>[] = [];
-    for (let i = 0; i < PKG_COUNT; i++) {
-      writes.push(Bun.write(`${tgzTempDir}/${pkgName(i)}-0.0.2.tgz`, barTarball));
-      if (writes.length >= 256) {
-        await Promise.all(writes);
-        writes.length = 0;
-      }
-    }
-    await Promise.all(writes);
-  });
-
-  afterAll(async () => {
-    await rm(tgzTempDir, { recursive: true, force: true });
+    barTarballBytes = await Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`).bytes();
   });
 
   test("handles packages JSON larger than max arg length (>1MB)", {
@@ -765,7 +753,7 @@ describe("Large payload via ipc pipe", () => {
         const url = request.url.replaceAll("%2f", "/");
         expect(request.method).toBe("GET");
         if (url.endsWith(".tgz")) {
-          return new Response(Bun.file(join(tgzTempDir, url.slice(url.lastIndexOf("/") + 1).toLowerCase())));
+          return new Response(barTarballBytes);
         }
         expect(request.headers.get("accept")).toBe(
           "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",

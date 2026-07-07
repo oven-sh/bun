@@ -1929,6 +1929,21 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("redirect into NO_PROXY-exempt host with credentialed http_proxy", async () => {
+    // Covers the proxy_authorization lifecycle: the Basic auth Vec must be
+    // clone-owned so dropping it on redirect is not a double-free under ASAN.
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { http_proxy: `http://user:pass@127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originB.port}` },
+      `http://127.0.0.1:${originA.port}/r302`,
+    );
+    expect({ stdout, proxyLog }).toEqual({
+      stdout: "FINAL-ORIGIN-B",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
   test("no redirect: proxy decision still honors NO_PROXY", async () => {
     const { stdout, stderr, exitCode, proxyLog } = await runFetch(
       { http_proxy: `http://127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originB.port}` },

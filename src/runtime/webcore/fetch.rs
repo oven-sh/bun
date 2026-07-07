@@ -380,7 +380,10 @@ fn reject_on_exception(
             None => {
                 // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
                 // pending; reaching here means it was cleared, which is a bug.
-                debug_assert!(false, "fetch_impl signaled a thrown exception but none is pending");
+                debug_assert!(
+                    false,
+                    "fetch_impl signaled a thrown exception but none is pending"
+                );
                 global_this.create_error_instance(format_args!("fetch() failed"))
             }
         },

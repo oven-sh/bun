@@ -201,12 +201,9 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
     const { sql, values, mode, parsedInfo } = this;
     try {
       const command = parsedInfo.command;
-      // Let SQLite decide whether the statement yields rows: a prepared
-      // statement with result columns is row-returning (SELECT, VALUES,
-      // row-producing PRAGMA, INSERT/UPDATE/DELETE ... RETURNING). Preparing
-      // compiles without executing, so this never double-runs the statement.
-      // db.query caches the compiled statement, so repeated queries stay cheap.
-      const stmt = db.query(sql);
+      // Let SQLite decide: a prepared statement with result columns is row-
+      // returning. Preparing compiles without executing, so nothing runs twice.
+      const stmt = db.prepare(sql);
 
       if (stmt.columnNames.length > 0) {
         let result: unknown[] | undefined;
@@ -224,10 +221,12 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
+        stmt.finalize();
         query.resolve(sqlResult);
       } else {
-        // No result columns: writes/DDL. Use db.run(), which also executes
-        // every statement when multiple are provided in a single string.
+        // No result columns: writes/DDL. db.run() also executes every
+        // statement when multiple are provided in a single string.
+        stmt.finalize();
         const changes = db.run.$apply(db, [sql].concat(values));
         const sqlResult = new SQLResultArray();
 

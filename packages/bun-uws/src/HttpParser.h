@@ -821,15 +821,16 @@ namespace uWS
                 if (postPaddedBuffer[1] == '\n') {
                     /* Store this header, it is valid */
                     if (hasObsFold) [[unlikely]] {
-                        /* Compact the value in place, dropping only the CRLF pairs that were
-                         * skipped above. Bytes after the value are untouched, so consumed-byte
-                         * accounting in the caller is unaffected. */
+                        /* Compact the value in place, dropping the CRLF pairs skipped above,
+                         * then SP-fill the vacated tail so a shortRead re-parse over these
+                         * bytes is idempotent (trimmed as trailing whitespace). */
                         char *w = preliminaryValue;
                         for (char *r = preliminaryValue; r < postPaddedBuffer; r++) {
                             if (*r == '\r') { r++; continue; }
                             *w++ = *r;
                         }
                         headers->value = std::string_view(preliminaryValue, (size_t) (w - preliminaryValue));
+                        while (w < postPaddedBuffer) *w++ = ' ';
                     } else {
                         headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     }

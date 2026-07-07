@@ -9,7 +9,7 @@ import { connect } from "node:net";
 
 type Served = { url: string; xA: unknown; cl: unknown; te: unknown; body: string };
 
-async function runServer(insecure: boolean, rawRequest: string) {
+async function runServer(insecure: boolean, rawRequest: string | readonly string[]) {
   const served: Served[] = [];
   const clientErrors: string[] = [];
   const options = insecure ? { insecureHTTPParser: true } : {};
@@ -34,14 +34,22 @@ async function runServer(insecure: boolean, rawRequest: string) {
   await once(srv.listen(0, "127.0.0.1"), "listening");
   try {
     const { port } = srv.address() as AddressInfo;
+    const chunks = typeof rawRequest === "string" ? [rawRequest] : rawRequest;
     const response = await new Promise<string>((resolve, reject) => {
-      const client = connect(port, "127.0.0.1");
+      const client = connect({ port, host: "127.0.0.1", noDelay: true });
       let out = "";
       client.setEncoding("latin1");
       client.on("data", c => (out += c));
       client.on("error", reject);
       client.on("close", () => resolve(out));
-      client.on("connect", () => client.write(Buffer.from(rawRequest, "latin1")));
+      client.on("connect", async () => {
+        for (let i = 0; i < chunks.length; i++) {
+          // TCP-stack yield so each chunk reaches the parser as its own read
+          // and exercises the shortRead re-parse path (TCP_NODELAY is set).
+          if (i > 0) await new Promise(r => setTimeout(r, 20));
+          client.write(Buffer.from(chunks[i], "latin1"));
+        }
+      });
     });
     return { served, clientErrors, response };
   } finally {
@@ -56,6 +64,20 @@ describe("http.createServer insecureHTTPParser", () => {
     const { served, clientErrors } = await runServer(true, raw);
     expect({ served, clientErrors }).toEqual({
       served: [{ url: "/obsfold", xA: "one two\tthree", cl: undefined, te: undefined, body: "" }],
+      clientErrors: [],
+    });
+  });
+
+  test.concurrent("obs-fold header value survives a shortRead re-parse", async () => {
+    // The obs-fold CRLF is compacted in place; splitting the request after the
+    // folded header but before the terminating CRLF forces a re-parse over the
+    // mutated bytes, which must yield the same value.
+    const { served, clientErrors } = await runServer(true, [
+      "GET /obsfold HTTP/1.1\r\nHost: x\r\nX-A: one\r\n two\r\nConnection: close\r\n",
+      "\r\n",
+    ]);
+    expect({ served, clientErrors }).toEqual({
+      served: [{ url: "/obsfold", xA: "one two", cl: undefined, te: undefined, body: "" }],
       clientErrors: [],
     });
   });

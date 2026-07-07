@@ -139,6 +139,18 @@ const results: Record<string, unknown> = {};
   results.ok = { outcome, ...summary("ok.bin") };
 }
 
+{
+  // Control: a non-Error argument (e.g. an options bag) is not treated as an
+  // abort request and the upload commits.
+  reqs.length = 0;
+  const w = s3.file("opts.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
+  w.write(new Uint8Array(PART));
+  w.write(new Uint8Array(100));
+  const outcome = await settle((w.end as any)({ signal: new AbortController().signal }));
+  await waitFor(() => reqs.some(r => r.startsWith("COMMIT ") || r.startsWith("ABORT ")));
+  results.opts = { outcome, ...summary("opts.bin") };
+}
+
 console.log(JSON.stringify(results));
 server.close();
 process.exit(0);
@@ -205,6 +217,16 @@ test("S3File.writer().end(error) aborts the upload and rejects", async () => {
 
   // end() with no error still commits normally.
   expect(result.ok).toEqual({
+    outcome: "resolved",
+    committed: true,
+    commits: 1,
+    puts: 0,
+    aborts: 0,
+    inits: 1,
+  });
+
+  // end() with a non-Error argument commits normally.
+  expect(result.opts).toEqual({
     outcome: "resolved",
     committed: true,
     commits: 1,

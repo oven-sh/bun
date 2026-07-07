@@ -2387,7 +2387,9 @@ impl NetworkSink {
         global_this: &JSGlobalObject,
         err: JSValue,
     ) -> bun_sys::Result<JSValue> {
-        if !err.is_empty_or_undefined_or_null() {
+        // Only an Error-like value aborts; other argument shapes (e.g. option
+        // bags) are ignored so callers that pass them still commit.
+        if err.is_any_error() {
             return self.fail_from_js(global_this, err);
         }
         let _ = self.end(None);

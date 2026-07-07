@@ -556,3 +556,40 @@ describe("slice bounds are respected when streaming and serving", () => {
     expect(await get.text()).toBe("3456");
   });
 });
+
+// Wrapping a Blob whose type is heap-owned (not in the mime table) with a
+// known mime type overwrote content_type with a static pointer without
+// clearing content_type_allocated, so GC sweep freed a static pointer.
+test.skipIf(!isASAN).each(["Blob", "File"] as const)(
+  "new %s([typedBlob], {type}) with a known mime type does not free a static pointer",
+  async Ctor => {
+    const make =
+      Ctor === "Blob"
+        ? `new Blob([inner], { type: "text/plain" })`
+        : `new File([inner], "f", { type: "text/plain" })`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const inner = new Blob(["y"], { type: "x/not-in-the-table" });
+          for (let i = 0; i < 2000; i++) {
+            ${make};
+            if ((i & 127) === 0) Bun.gc(true);
+          }
+          Bun.gc(true); Bun.gc(true);
+          console.log(${make}.type);
+        `,
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: expect.stringMatching(/^text\/plain(;charset=utf-8)?\n$/),
+      stderr: expect.not.stringContaining("AddressSanitizer"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);

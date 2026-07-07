@@ -2499,6 +2499,7 @@ impl BlobExt for Blob {
                                     if !is_valid_blob_type(slice) {
                                         break 'inner;
                                     }
+                                    blob.free_content_type();
                                     blob.content_type_was_set.set(true);
 
                                     if let Some(mime) =
@@ -5756,6 +5757,7 @@ pub fn jsdom_file_construct_(
                         if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
+                        blob.free_content_type();
                         blob.content_type_was_set.set(true);
 
                         // SAFETY: bun_vm() returns the live VM pointer for this global.
@@ -5856,6 +5858,7 @@ pub fn construct_bun_file(
                         if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
+                        blob.free_content_type();
                         blob.content_type_was_set.set(true);
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
                         if let Some(entry) = global_object.bun_vm().as_mut().mime_type(str.slice())

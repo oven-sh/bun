@@ -159,6 +159,7 @@ void CookieMap::set(Ref<Cookie> cookie)
     if (index == notFound) {
         m_entries.append(Entry { cookie.copyRef() });
     } else {
+        m_entries[index].pair = {};
         m_entries[index].cookie = cookie.copyRef();
         for (size_t i = m_entries.size(); i-- > index + 1;) {
             if (m_entries[i].name() == name)

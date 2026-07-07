@@ -1422,8 +1422,10 @@ impl VirtualMachine {
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
             // down and there is no loop turn left to defer to: print the error
-            // and exit, like node's fatal-exception path.
-            if self.exit_on_uncaught_exception {
+            // and exit, like node's fatal-exception path. A worker falls
+            // through to `on_unhandled_rejection` below so the parent Worker
+            // receives the `error` event before `exit` (matching Node).
+            if self.exit_on_uncaught_exception && self.worker.is_none() {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -1431,12 +1433,6 @@ impl VirtualMachine {
                 self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-                if self.worker.is_some() {
-                    // Worker: `process_exit` armed termination and RETURNED
-                    // (main thread diverges). Return handled; `spin()`
-                    // observes the terminate flag and reaches `shutdown()`.
-                    return true;
-                }
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions

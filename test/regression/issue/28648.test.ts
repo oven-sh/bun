@@ -15,7 +15,7 @@ describe.concurrent("nested uncaught exceptions in a worker don't abort the proc
     const script = /* js */ `
       const { Worker } = require("node:worker_threads");
       new Worker(${JSON.stringify(workerBody)}, { eval: true })
-        .on("error", () => {})
+        .on("error", () => console.log("worker-error"))
         .on("exit", c => console.log("worker-exit:" + c));
     `;
     await using proc = Bun.spawn({
@@ -28,8 +28,10 @@ describe.concurrent("nested uncaught exceptions in a worker don't abort the proc
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
+  // The parent Worker must receive `error` then `exit:1` (Node's behaviour),
+  // and the process must not crash.
   const expected = {
-    stdout: "worker-exit:1\n",
+    stdout: "worker-error\nworker-exit:1\n",
     stderr: expect.any(String),
     exitCode: 0,
     signalCode: null,

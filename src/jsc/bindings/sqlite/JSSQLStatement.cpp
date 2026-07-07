@@ -280,6 +280,13 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 
     for (auto& db : dbs) {
         if (db->db) {
+            // With un-finalized statements close_v2 zombifies the connection
+            // and defers the WAL checkpoint to a finalize that never comes.
+            // Checkpoint explicitly so nothing is stranded in the -wal file;
+            // zero busy_timeout first so a cross-process reader can't stall
+            // process.exit() via TRUNCATE's busy-handler wait.
+            sqlite3_busy_timeout(db->db, 0);
+            sqlite3_wal_checkpoint_v2(db->db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
             // close_v2: with unfinalized statements still alive, plain
             // sqlite3_close() returns SQLITE_BUSY and leaves the connection
             // open, which would leak it once the pointer is nulled below.

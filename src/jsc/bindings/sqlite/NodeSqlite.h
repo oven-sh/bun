@@ -2,9 +2,12 @@
 //
 // This uses the bundled sqlite3 amalgamation (sqlite3_local.h / sqlite3.c)
 // on all platforms, matching Node.js which always bundles its own SQLite.
-// Unlike bun:sqlite, it does not participate in macOS's LAZY_LOAD_SQLITE
-// dlopen path — node:sqlite users expect Node's bundled-SQLite semantics
-// (and functions like sqlite3_changes64 that older system libraries lack).
+// bun:sqlite links the same object by default (staticSqlite=true) so both
+// modules share one library and one POSIX-lock inode map — two SQLite
+// copies in one process is a documented corruption vector
+// (howtocorrupt.html §2.2.1). A --static-sqlite=off build restores the
+// macOS dlopen path for bun:sqlite; opening the same file via both APIs
+// in that configuration is unsafe.
 //
 // Reference: https://github.com/nodejs/node/blob/main/src/node_sqlite.cc
 #pragma once
@@ -139,18 +142,6 @@ public:
 
     const DatabaseSyncOpenConfiguration& config() const { return m_config; }
 
-    // User-defined functions call back into JS from inside sqlite3_step().
-    // If the JS callback throws, we record that here so the enclosing
-    // step()/exec() can propagate the JS exception instead of wrapping the
-    // uninformative "user-defined function raised exception" SQLite error.
-    bool takeIgnoreNextSqliteError()
-    {
-        bool v = m_ignoreNextSqliteError;
-        m_ignoreNextSqliteError = false;
-        return v;
-    }
-    void setIgnoreNextSqliteError() { m_ignoreNextSqliteError = true; }
-
     void trackSession(Ref<NodeSqliteSessionRecord>&& record) { m_sessions.append(WTF::move(record)); }
     void untrackSession(NodeSqliteSessionRecord* record)
     {
@@ -258,7 +249,6 @@ private:
     };
     WTF::Vector<NamedRegistration> m_namedRegistrations;
     bool m_enableLoadExtension = false;
-    bool m_ignoreNextSqliteError = false;
 };
 
 class JSDatabaseSyncPrototype final : public JSC::JSNonFinalObject {
@@ -412,6 +402,11 @@ private:
     sqlite3_stmt* m_stmt = nullptr;
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;
     WTF::Vector<int8_t> m_columnOffsets;
+    // sqlite3_stmt native heap footprint reported to JSC's GC so
+    // preparing many statements applies memory pressure. Sampled once
+    // at creation via SQLITE_STMTSTATUS_MEMUSED (mirrors bun:sqlite's
+    // JSSQLStatement).
+    size_t m_extraMemorySize = 0;
     int m_rowColumnCount = -1;
     // Reset-generation the cached row structure was built at. Column
     // *count* alone isn't a sufficient shape key: sqlite3_prepare_v2
@@ -579,7 +574,9 @@ private:
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Session — thin wrapper over sqlite3_session* returned by
-// DatabaseSync.prototype.createSession(). No public constructor.
+// DatabaseSync.prototype.createSession(). Exported so `instanceof Session`
+// works, but the constructor throws ERR_ILLEGAL_CONSTRUCTOR (matches Node's
+// IllegalConstructor template).
 // ─────────────────────────────────────────────────────────────────────────────
 
 class JSNodeSqliteSession final : public JSC::JSDestructibleObject {
@@ -661,6 +658,31 @@ private:
     {
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSNodeSqliteSessionConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    DECLARE_INFO;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSNodeSqliteSessionConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype);
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+private:
+    JSNodeSqliteSessionConstructor(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure, call, construct)
+    {
+    }
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -813,6 +835,31 @@ private:
     {
     }
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSNodeSqliteTagStoreConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    DECLARE_INFO;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSNodeSqliteTagStoreConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype);
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+private:
+    JSNodeSqliteTagStoreConstructor(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure, call, construct)
+    {
+    }
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
 };
 
 // Module-level constants object (SQLITE_CHANGESET_* + authorizer codes).

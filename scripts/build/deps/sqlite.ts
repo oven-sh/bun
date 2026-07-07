@@ -5,17 +5,16 @@
  * sqlite3 amalgamation (single .c file). No fetch step; tracked in git.
  *
  * Always built: node:sqlite uses the bundled copy unconditionally (matching
- * Node.js). bun:sqlite additionally supports dlopen()ing the system sqlite
- * on macOS when staticSqlite=false (LAZY_LOAD_SQLITE=1), but NodeSqlite.cpp
- * includes sqlite3_local.h directly and links against these symbols on
- * every platform.
+ * Node.js). bun:sqlite links the same object (staticSqlite defaults true on
+ * every platform; --static-sqlite=off restores the macOS dlopen path but
+ * ships two SQLite libraries in one process — see the corruption caveat in
+ * config.ts).
  *
  * Bundling on macOS (previously dlopen-only there) grows the darwin binaries
  * by ~1.8 MB. That is the cost of node:sqlite parity: Apple's system
  * libsqlite3 ships without the session extension or percentile() and with
  * extension loading disabled, so the bundled build is required — Node.js
- * bundles SQLite for the same reason. Linux/Windows already linked the
- * bundled copy.
+ * bundles SQLite for the same reason.
  */
 
 import type { Dependency } from "../source.ts";
@@ -48,7 +47,10 @@ export const sqlite: Dependency = {
       // node:sqlite exposes createSession/applyChangeset + columns()
       // metadata. Match Node.js's compile-time feature set so those
       // APIs work identically. PREUPDATE_HOOK is a prerequisite for the
-      // session extension.
+      // session extension. bun:sqlite links the same object, so it too
+      // now sees dbstat/geopoly/percentile and pays PREUPDATE_HOOK's
+      // codegen cost on write paths — measured to be noise on
+      // INSERT-OR-REPLACE / bulk-insert benches; kept for Node parity.
       SQLITE_ENABLE_SESSION: 1,
       SQLITE_ENABLE_PREUPDATE_HOOK: 1,
       SQLITE_ENABLE_DBSTAT_VTAB: 1,
@@ -56,6 +58,9 @@ export const sqlite: Dependency = {
       SQLITE_ENABLE_RBU: 1,
       SQLITE_ENABLE_PERCENTILE: 1,
     },
+    // The sqlite3_* API symbols are hidden by the -fvisibility=hidden
+    // default computeDepFlags applies to every dep object; SQLITE_API
+    // (default `extern`) does not override it.
     cflags: [
       "-Wno-incompatible-pointer-types-discards-qualifiers",
       // Match the static CRT bun links; /U_DLL keeps sqlite from picking

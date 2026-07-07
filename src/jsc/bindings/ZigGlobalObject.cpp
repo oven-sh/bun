@@ -2680,8 +2680,11 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = Bun::JSNodeSqliteSessionPrototype::create(
                 init.vm, init.global, Bun::JSNodeSqliteSessionPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
             auto* structure = Bun::JSNodeSqliteSession::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSNodeSqliteSessionConstructor::create(
+                init.vm, init.global, Bun::JSNodeSqliteSessionConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
+            init.setConstructor(constructor);
         });
 
     m_JSNodeSqliteLimitsClassStructure.initLater(
@@ -2698,8 +2701,11 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = Bun::JSNodeSqliteTagStorePrototype::create(
                 init.vm, init.global, Bun::JSNodeSqliteTagStorePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
             auto* structure = Bun::JSNodeSqliteTagStore::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSNodeSqliteTagStoreConstructor::create(
+                init.vm, init.global, Bun::JSNodeSqliteTagStoreConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
+            init.setConstructor(constructor);
         });
 
     m_JSFFIFunctionStructure.initLater(

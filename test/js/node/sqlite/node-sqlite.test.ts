@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, statSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import path from "node:path";
-import { DatabaseSync, StatementSync, backup, constants } from "node:sqlite";
+import { DatabaseSync, SQLTagStore, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 test("node:sqlite is a built-in module", () => {
@@ -68,16 +68,57 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
-  test("binds small integers with INTEGER storage class (not REAL)", () => {
+  test("binds JS numbers as REAL (matches Node) and is representation-independent", () => {
+    // Node v26.3.0 unconditionally uses sqlite3_bind_double for JS numbers —
+    // no IsInt32 fast path — so typeof(?) on a bare parameter (no column
+    // affinity) is 'real' and expandedSQL shows 42.0. Branching on JSC's
+    // tag-bit isInt32() would also give literal 42 vs Float64Array[0]=42
+    // different storage classes.
     const db = new DatabaseSync(":memory:");
-    // Without the isInt32() fast path, 42 would bind via sqlite3_bind_double
-    // and typeof(?) on a bare parameter (no column affinity) returns 'real'.
-    expect(db.prepare("SELECT typeof(?) AS t").get(42).t).toBe("integer");
+    expect(db.prepare("SELECT typeof(?) AS t").get(42).t).toBe("real");
+    expect(db.prepare("SELECT typeof(?) AS t").get(new Float64Array([42])[0]).t).toBe("real");
     expect(db.prepare("SELECT typeof(?) AS t").get(1.5).t).toBe("real");
+    // BigInt is the way to bind an INTEGER.
+    expect(db.prepare("SELECT typeof(?) AS t").get(42n).t).toBe("integer");
+    // UDF results follow the same rule.
+    db.function("f", () => 42);
+    expect(db.prepare("SELECT typeof(f()) AS t").get().t).toBe("real");
     // expandedSQL reflects the bound storage class.
     const stmt = db.prepare("SELECT ?");
     stmt.get(42);
-    expect(stmt.expandedSQL).toBe("SELECT 42");
+    expect(stmt.expandedSQL).toBe("SELECT 42.0");
+    db.close();
+  });
+
+  test("binds a detached ArrayBufferView as a zero-length BLOB, not NULL", () => {
+    // Matches Node (whose ArrayBufferViewContents falls back to non-null
+    // stack storage). NULL vs X'' is observable via a NOT NULL column and
+    // via typeof(?).
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (b BLOB NOT NULL)");
+    const buf = new Uint8Array(4);
+    // Detach by transferring the underlying ArrayBuffer to a MessageChannel port.
+    structuredClone(buf.buffer, { transfer: [buf.buffer] });
+    expect(buf.byteLength).toBe(0);
+    expect(db.prepare("SELECT typeof(?) AS t").get(buf).t).toBe("blob");
+    expect(() => db.prepare("INSERT INTO t VALUES (?)").run(buf)).not.toThrow();
+    expect(db.prepare("SELECT length(b) AS n FROM t").get().n).toBe(0);
+    db.close();
+  });
+
+  test("decodes non-UTF-8 TEXT with replacement characters, not empty strings", () => {
+    // Regression: WTF::String::fromUTF8 returns null on invalid bytes and
+    // jsString(null) becomes "". Matches bun:sqlite (#31514) and Node.
+    const db = new DatabaseSync(":memory:");
+    expect(db.prepare("SELECT CAST(x'4A6F73E9' AS TEXT) AS v").get().v).toBe("Jos�");
+    // >64-byte variant to ensure the slow decode path is covered.
+    const long = db.prepare("SELECT CAST((? || x'E9') AS TEXT) AS v").get("x".repeat(80)).v;
+    expect(long).toBe("x".repeat(80) + "�");
+    // UDF argv path (sqliteValueToJS) hits the same replacement decode.
+    let seen: string | undefined;
+    db.function("cap", v => void (seen = v));
+    db.prepare("SELECT cap(CAST(x'4A6F73E9' AS TEXT))").get();
+    expect(seen).toBe("Jos�");
     db.close();
   });
 
@@ -559,6 +600,7 @@ describe("StatementSync.prototype.iterate()", () => {
   });
 
   test("return() is tolerant of a finalized statement (IteratorClose on break)", () => {
+    // Diverges from Node v26.3.0, which throws ERR_INVALID_STATE here.
     const db = setup();
     const stmt = db.prepare("SELECT n FROM t ORDER BY n");
     const iter = stmt.iterate();
@@ -1394,4 +1436,219 @@ describe("GC lifetime", () => {
     session.close();
     db.close();
   });
+});
+
+describe("module exports", () => {
+  test("Session and SQLTagStore are exported and instanceof works", () => {
+    expect(typeof Session).toBe("function");
+    expect(typeof SQLTagStore).toBe("function");
+    expect(() => new Session()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+    expect(() => new SQLTagStore()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    expect(db.createSession()).toBeInstanceOf(Session);
+    expect(db.createTagStore()).toBeInstanceOf(SQLTagStore);
+    db.close();
+  });
+
+  test("named ESM import of Session links (spawned subprocess)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `import { Session } from "node:sqlite"; console.log(typeof Session);`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "function\n", exitCode: 0 });
+    void stderr;
+  });
+});
+
+describe("loadExtension() / enableLoadExtension()", () => {
+  test("loadExtension() on {allowExtension: false} throws ERR_INVALID_STATE", () => {
+    const db = new DatabaseSync(":memory:");
+    expect(() => db.loadExtension("/nonexistent")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_STATE",
+        message: expect.stringMatching(/extension loading is not allowed/),
+      }),
+    );
+    db.close();
+  });
+
+  test("enableLoadExtension(true) on {allowExtension: false} throws Node's exact message", () => {
+    const db = new DatabaseSync(":memory:");
+    expect(() => db.enableLoadExtension(true)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_STATE",
+        message: expect.stringMatching(/Cannot enable extension loading because it was disabled at database creation/),
+      }),
+    );
+    // enableLoadExtension(false) is always permitted.
+    expect(() => db.enableLoadExtension(false)).not.toThrow();
+    db.close();
+  });
+
+  test("enableLoadExtension() with no argument throws ERR_INVALID_ARG_TYPE", () => {
+    const db = new DatabaseSync(":memory:", { allowExtension: true });
+    expect(() => db.enableLoadExtension()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    db.close();
+  });
+
+  test("loadExtension() after enableLoadExtension(false) throws", () => {
+    const db = new DatabaseSync(":memory:", { allowExtension: true });
+    db.enableLoadExtension(false);
+    expect(() => db.loadExtension("/nonexistent")).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    db.close();
+  });
+
+  test("loadExtension() on a nonexistent path throws ERR_LOAD_SQLITE_EXTENSION", () => {
+    // Exercises the sqlite3_free(errmsg) path.
+    const db = new DatabaseSync(":memory:", { allowExtension: true });
+    db.enableLoadExtension(true);
+    expect(() => db.loadExtension("/bun-nonexistent-extension-path")).toThrow(
+      expect.objectContaining({ code: "ERR_LOAD_SQLITE_EXTENSION" }),
+    );
+    db.close();
+  });
+});
+
+// bun:sqlite and node:sqlite share the bundled amalgamation (staticSqlite=true
+// on every platform), so opening the same file via both is safe. This is
+// platform-differential coverage: on a --static-sqlite=off build the two
+// modules would use separate SQLite libraries with separate POSIX-lock inode
+// maps (howtocorrupt.html §2.2.1).
+test("bun:sqlite and node:sqlite can open the same on-disk file concurrently", async () => {
+  using dir = tempDir("node-sqlite-cross-module", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require('bun:sqlite');
+       const { DatabaseSync } = require('node:sqlite');
+       const bunDb = new Database('shared.db');
+       bunDb.exec('PRAGMA journal_mode = WAL');
+       bunDb.exec('CREATE TABLE t (x INTEGER)');
+       bunDb.exec('INSERT INTO t VALUES (1)');
+       const nodeDb = new DatabaseSync('shared.db');
+       // node:sqlite sees bun:sqlite's committed row.
+       console.log('n1=' + nodeDb.prepare('SELECT x FROM t').get().x);
+       // Write via node:sqlite; bun:sqlite sees it.
+       nodeDb.exec('INSERT INTO t VALUES (2)');
+       console.log('b1=' + bunDb.query('SELECT COUNT(*) c FROM t').get().c);
+       // Closing the bun:sqlite handle must not drop the process's fcntl locks
+       // out from under node:sqlite (the two-library corruption vector).
+       bunDb.close();
+       nodeDb.exec('INSERT INTO t VALUES (3)');
+       console.log('ok=' + nodeDb.prepare('PRAGMA integrity_check').get().integrity_check);
+       nodeDb.close();`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("n1=1\nb1=2\nok=ok\n");
+  void stderr;
+  expect(exitCode).toBe(0);
+});
+
+// Worker-owned databases are closed via ~VM → lastChanceToFinalize →
+// ~JSDatabaseSync — a completely different path than the main-thread exit
+// sweep. Sibling of "unclosed file-backed database is closed on process exit".
+test("worker-owned unclosed database is checkpointed on worker exit", async () => {
+  using dir = tempDir("node-sqlite-worker-exit", {
+    "worker.mjs": `import { DatabaseSync } from 'node:sqlite';
+      const db = new DatabaseSync('exit.db');
+      db.exec('PRAGMA journal_mode = WAL');
+      db.exec('CREATE TABLE t (x INTEGER)');
+      const stmt = db.prepare('INSERT INTO t VALUES (?)');
+      stmt.run(99);
+      // stmt and db intentionally not closed; worker exits naturally.
+      postMessage('done');`,
+    "main.mjs": `import { Worker } from 'node:worker_threads';
+      const w = new Worker('./worker.mjs');
+      await new Promise((res, rej) => {
+        w.on('message', () => {}); // drain
+        w.on('error', rej);
+        w.on('exit', code => (code === 0 ? res() : rej(new Error('exit ' + code))));
+      });
+      // Verify the row landed in the main file (~JSDatabaseSync ran on
+      // lastChanceToFinalize) — reopen from the parent thread.
+      const { DatabaseSync } = await import('node:sqlite');
+      const db = new DatabaseSync('exit.db');
+      console.log(db.prepare('SELECT x FROM t').get().x);
+      db.close();`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("99\n");
+  void stderr;
+  expect(exitCode).toBe(0);
+});
+
+describe("GC stress", () => {
+  // Interleave Bun.gc(true) with the mutations that race visitChildren, so
+  // a marker-vs-mutator lock miss is loud under ASAN rather than flaky.
+  // Debug+ASAN builds run 10-100x slower — sized for that budget.
+  test("re-registering db.function() while GC runs concurrently", () => {
+    const db = new DatabaseSync(":memory:");
+    db.function("f", () => -1);
+    const stmt = db.prepare("SELECT f() AS v");
+    for (let i = 0; i < 500; i++) {
+      db.function("f", () => i);
+      Bun.gc(true);
+      expect(stmt.get().v).toBe(i);
+    }
+    db.close();
+  }, 30_000);
+
+  test("TagStore LRU churn under GC pressure", () => {
+    const db = new DatabaseSync(":memory:");
+    const sql = db.createTagStore({ capacity: 4 });
+    for (let i = 0; i < 500; i++) {
+      // Rotate the SQL text so the LRU inserts/evicts every iteration.
+      const j = i % 8;
+      const v = sql.get(["SELECT ", ` + ${j} AS v`], i).v;
+      Bun.gc(true);
+      expect(v).toBe(i + j);
+    }
+    db.close();
+  }, 30_000);
+
+  test("aggregate step callback triggering GC between rows", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.exec(`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 200) INSERT INTO t SELECT x FROM c`);
+    db.aggregate("gcsum", {
+      start: 0,
+      step: (acc, x) => {
+        Bun.gc(true);
+        return acc + x;
+      },
+    });
+    // The Strong<> in sqlite3_aggregate_context must survive GC between xStep calls.
+    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get().s).toBe(20100);
+    db.close();
+  });
+
+  test("session churn under GC pressure (finalizer ordering)", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+    for (let i = 0; i < 500; i++) {
+      const s = db.createSession();
+      Bun.gc(true);
+      s.changeset();
+      // Half explicitly close, half drop — races wrapperGone/dbGone.
+      if (i & 1) s.close();
+    }
+    db.close();
+  }, 30_000);
 });

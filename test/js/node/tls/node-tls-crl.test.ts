@@ -5,7 +5,8 @@ import { once } from "node:events";
 import { join } from "path";
 import tls, { connect, createServer, Server } from "tls";
 
-const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f));
+const keyPath = (f: string) => join(import.meta.dir, "../test/fixtures/keys", f);
+const keys = (f: string) => readFileSync(keyPath(f));
 // agent4's serial number is listed in ca2-crl.pem; agent3's is not.
 const ca2 = keys("ca2-cert.pem");
 const ca2Crl = keys("ca2-crl.pem");
@@ -71,6 +72,15 @@ describe("tls.createServer crl option", () => {
 
   it("accepts crl as an array", async () => {
     const revoked = await handshake({ ...serverBase, crl: [ca2Crl] }, "agent4-cert.pem", "agent4-key.pem");
+    expect(revoked).toEqual({ authorized: false, authorizationError: "CERT_REVOKED" });
+  });
+
+  it("accepts crl as a BunFile", async () => {
+    const revoked = await handshake(
+      { ...serverBase, crl: Bun.file(keyPath("ca2-crl.pem")) as never },
+      "agent4-cert.pem",
+      "agent4-key.pem",
+    );
     expect(revoked).toEqual({ authorized: false, authorizationError: "CERT_REVOKED" });
   });
 

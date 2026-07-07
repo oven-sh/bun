@@ -684,9 +684,10 @@ describe("Histogram", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      assert.strictEqual(stderr, "");
-      assert.deepStrictEqual(JSON.parse(stdout), { count: 3, min: 5, max: 100, added: 3 });
-      assert.strictEqual(exitCode, 0);
+      assert.deepStrictEqual(
+        { stdout: stdout.trim(), stderr, exitCode },
+        { stdout: JSON.stringify({ count: 3, min: 5, max: 100, added: 3 }), stderr: "", exitCode: 0 },
+      );
     });
   });
 });

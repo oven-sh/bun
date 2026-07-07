@@ -56,6 +56,9 @@ class HistogramData : public ThreadSafeRefCounted<HistogramData> {
     WTF_MAKE_NONCOPYABLE(HistogramData);
 
 public:
+    // Structured clone shares this object across threads, so every accessor
+    // that touches the fields below must hold m_lock.
+    mutable WTF::Lock m_lock;
     hdr_histogram* histogram;
     uint64_t prevDeltaTime = 0;
     size_t exceedsCount = 0;

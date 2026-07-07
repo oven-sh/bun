@@ -18,7 +18,10 @@
 #pragma once
 
 #ifndef UWS_HTTP_MAX_HEADERS_COUNT
-#define UWS_HTTP_MAX_HEADERS_COUNT 200
+/* Slot 0 is the request line and the last slot is the terminating sentinel,
+ * so this stores up to UWS_HTTP_MAX_HEADERS_COUNT - 2 header fields. 1002
+ * matches Node.js's default parser.maxHeaderPairs = 2000 (1000 fields). */
+#define UWS_HTTP_MAX_HEADERS_COUNT 1002
 #endif
 
 // todo: HttpParser is in need of a few clean-ups and refactorings
@@ -757,13 +760,22 @@ namespace uWS
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
 
+            /* Last array slot holds the null-key terminator; never store a field there. */
+            HttpRequest::Header * const headersEnd = headers + (UWS_HTTP_MAX_HEADERS_COUNT - 1);
             headers++;
 
-            for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
+            /* Once the array is full we keep parsing into this scratch slot and drop the
+             * result, matching Node.js (parser.maxHeaderPairs truncates; it never rejects
+             * on count). The header-size byte limit still bounds total work. */
+            HttpRequest::Header discarded;
+
+            while (true) {
+                const bool storing = headers < headersEnd;
+                HttpRequest::Header * const slot = storing ? headers : &discarded;
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
-                headers->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
+                slot->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
                 if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }
@@ -779,8 +791,18 @@ namespace uWS
                 /* RFC 9112 5.1: field-name is a non-empty token. An empty name would also
                  * collide with the end-of-headers sentinel and hide later headers from the
                  * Content-Length / Transfer-Encoding request-smuggling checks. */
-                if (headers->key.length() == 0) {
+                if (slot->key.length() == 0) {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                }
+                /* Body framing is derived from the stored array after this function returns;
+                 * a Content-Length or Transfer-Encoding we cannot store would be invisible to
+                 * that logic and misframe the body on a pipelined connection (request
+                 * smuggling), so reject rather than silently drop it. */
+                if (!storing) [[unlikely]] {
+                    if ((slot->key.length() == 14 && !strncasecmp(slot->key.data(), "content-length", 14)) ||
+                        (slot->key.length() == 17 && !strncasecmp(slot->key.data(), "transfer-encoding", 17))) {
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+                    }
                 }
                 postPaddedBuffer++;
 
@@ -810,22 +832,24 @@ namespace uWS
                     * This way we can have this one single check to see if we found \r\n WITHIN our allowed search space. */
                 if (postPaddedBuffer[1] == '\n') {
                     /* Store this header, it is valid */
-                    headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
+                    slot->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     postPaddedBuffer += 2;
                     /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
-                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.back())) {
-                        headers->value.remove_suffix(1);
+                    while (slot->value.length() && isHTTPHeaderValueWhitespace(slot->value.back())) {
+                        slot->value.remove_suffix(1);
                     }
 
                     /* Trim initial whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
-                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.front())) {
-                        headers->value.remove_prefix(1);
+                    while (slot->value.length() && isHTTPHeaderValueWhitespace(slot->value.front())) {
+                        slot->value.remove_prefix(1);
                     }
 
                     if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     }
-                    headers++;
+                    if (storing) {
+                        headers++;
+                    }
 
                     /* We definitely have at least one header (or request line), so check if we are done */
                     if (*postPaddedBuffer == '\r') {
@@ -851,8 +875,6 @@ namespace uWS
                     return HttpParserResult::shortRead();
                 }
             }
-            /* We ran out of header space, too large request */
-            return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */

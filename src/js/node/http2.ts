@@ -2372,8 +2372,9 @@ class Http2Stream extends Duplex {
     markStreamClosed(this);
     // RST code 8 not emitted as an error as its used by clients to signify
     // abort and is already covered by aborted event, also allows more
-    // seamless compatibility with http1
-    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
+    // seamless compatibility with http1. A stream user code never received (rejected before the
+    // 'stream' event) has no possible listener; synthesizing the error there would be uncatchable.
+    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL && !this[kNeverAnnounced])
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     this[bunHTTP2Session] = null;
@@ -3483,6 +3484,9 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
+      // The stream is not surfaced until streamHeaders fires the 'stream' event; until then an
+      // error on it has no possible listener and must not be synthesized by _destroy.
+      stream[kNeverAnnounced] = true;
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
       return stream;
@@ -3589,6 +3593,7 @@ class ServerHttp2Session extends Http2Session {
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
         stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+        stream[kNeverAnnounced] = false;
         if (onServerStreamCreatedChannel.hasSubscribers) {
           onServerStreamCreatedChannel.publish({ stream, headers });
         }

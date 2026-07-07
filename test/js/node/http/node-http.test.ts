@@ -2092,9 +2092,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const raw = "GET /obsfold HTTP/1.1\r\nHost: x\r\nX-A: one\r\n two\r\n\tthree\r\nConnection: close\r\n\r\n";
       const { served, clientErrors } = await runServer(true, raw);
       expect(clientErrors).toEqual([]);
-      expect(served).toEqual([
-        { url: "/obsfold", xA: "one two\tthree", cl: undefined, te: undefined, body: "" },
-      ]);
+      expect(served).toEqual([{ url: "/obsfold", xA: "one two\tthree", cl: undefined, te: undefined, body: "" }]);
     });
 
     test("tolerates Content-Length together with Transfer-Encoding: chunked", async () => {

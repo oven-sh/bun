@@ -41,7 +41,9 @@ function frame(opcode: number, payload: Buffer, opts: { fin?: boolean; rsv1?: bo
   return Buffer.concat([head, mask, masked]);
 }
 
-type PerMessageDeflate = boolean | { compress?: true | "shared" | "dedicated"; decompress?: true | "shared" | "dedicated" };
+type PerMessageDeflate =
+  | boolean
+  | { compress?: true | "shared" | "dedicated"; decompress?: true | "shared" | "dedicated" };
 
 // Raw TCP WebSocket client that negotiates permessage-deflate against a
 // Bun.serve websocket server and exposes exactly what message() saw.

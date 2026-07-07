@@ -294,6 +294,11 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
+  // SQLite has a single underlying connection. While a transaction (or a
+  // reserved connection) holds it, other acquisitions wait here so they
+  // cannot interleave with or read uncommitted state from the transaction.
+  private reservedConnection: boolean = false;
+  private connectQueue: Array<{ onConnected: OnConnected<BunSQLiteModule.Database>; reserved: boolean }> = [];
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -420,28 +425,54 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       return onConnected(this.connectionClosedError(), null);
     }
 
-    // SQLite doesn't support reserved connections since it doesn't have a connection pool
-    // Reserved connections are meant for exclusive use from a pool, which SQLite doesn't have
-    if (reserved) {
-      return onConnected(new Error("SQLite doesn't support connection reservation (no connection pool)"), null);
+    // A transaction or reserved connection owns the single connection
+    // exclusively; queue this acquisition until it is released.
+    if (this.reservedConnection) {
+      this.connectQueue.push({ onConnected, reserved: !!reserved });
+      return;
     }
 
-    // Since SQLite connection is synchronous, we immediately know the result
+    this.#handConnection(onConnected, !!reserved);
+  }
+
+  #handConnection(onConnected: OnConnected<BunSQLiteModule.Database>, reserved: boolean) {
     const storedError = this.storedError;
-    let db;
+    const db = this.db;
     if (storedError) {
       onConnected(storedError, null);
-    } else if ((db = this.db)) {
+    } else if (db) {
+      if (reserved) {
+        this.reservedConnection = true;
+      }
       onConnected(null, db);
     } else {
       onConnected(this.connectionClosedError(), null);
     }
   }
 
+  #drainConnectQueue() {
+    const queue = this.connectQueue;
+    // Hand the connection to queued acquisitions in FIFO order, stopping as
+    // soon as a reserved acquisition takes exclusive ownership again.
+    while (queue.length > 0 && !this.reservedConnection) {
+      const pending = queue.shift()!;
+      if (this._closed) {
+        pending.onConnected(this.connectionClosedError(), null);
+        continue;
+      }
+      this.#handConnection(pending.onConnected, pending.reserved);
+    }
+  }
+
   release(_connection: BunSQLiteModule.Database, _connectingEvent?: boolean) {
-    // SQLite doesn't need to release connections since we don't pool. We
-    // shouldn't throw or prevent the user facing API from releasing connections
-    // so we can just no-op here
+    // Release the exclusive hold a transaction/reserved connection had and let
+    // any queued acquisitions proceed. Regular queries run synchronously and
+    // never reserve, so for them this is a no-op.
+    if (!this.reservedConnection) {
+      return;
+    }
+    this.reservedConnection = false;
+    this.#drainConnectQueue();
   }
 
   async close(_options?: { timeout?: number }) {
@@ -452,6 +483,18 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     this._closed = true;
 
     this.storedError = new Error("Connection closed");
+
+    // Reject any acquisitions still waiting on the connection, using the same
+    // coded error connect() and #drainConnectQueue() reject with.
+    this.reservedConnection = false;
+    const pending = this.connectQueue;
+    this.connectQueue = [];
+    const closedError = this.connectionClosedError();
+    for (const item of pending) {
+      try {
+        item.onConnected(closedError, null);
+      } catch {}
+    }
 
     if (this.db) {
       try {
@@ -480,8 +523,17 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   supportsReservedConnections(): boolean {
-    // SQLite doesn't have a connection pool, so it doesn't support reserved connections
+    // The public reserve() API hands out a connection from a pool for
+    // exclusive use while the pool keeps serving others. SQLite has a single
+    // connection, so a reserve() inside a transaction could never get a
+    // second one; keep it unsupported to avoid that deadlock.
     return false;
+  }
+
+  supportsTransactionReservation(): boolean {
+    // Transactions still need exclusive use of the single connection: while
+    // one is open, other queries and begin()s queue behind it.
+    return true;
   }
 
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {

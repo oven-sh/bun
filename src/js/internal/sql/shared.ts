@@ -2122,6 +2122,9 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   get closed(): boolean;
 
   supportsReservedConnections?(): boolean;
+  // Whether a transaction should acquire the connection exclusively even when
+  // the public reserve() API is not supported (e.g. single-connection SQLite).
+  supportsTransactionReservation?(): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
   attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;

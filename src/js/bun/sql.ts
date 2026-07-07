@@ -877,7 +877,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    const useReserved = pool.supportsReservedConnections?.() ?? true;
+    const useReserved = pool.supportsTransactionReservation?.() ?? pool.supportsReservedConnections?.() ?? true;
     pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), useReserved);
     return promise;
   };
@@ -898,7 +898,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    const useReserved = pool.supportsReservedConnections?.() ?? true;
+    const useReserved = pool.supportsTransactionReservation?.() ?? pool.supportsReservedConnections?.() ?? true;
     pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
     return promise;
   };

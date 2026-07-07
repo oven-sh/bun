@@ -1144,6 +1144,85 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  test("outer queries do not interleave with an open transaction", async () => {
+    // A write issued on the outer handle while begin()'s callback is running
+    // must be serialized after the transaction, not swept up by its rollback.
+    const txnUpdated = Promise.withResolvers<void>();
+    const releaseTxn = Promise.withResolvers<void>();
+
+    const txn = sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        txnUpdated.resolve();
+        // Hold the transaction open until the outer write has been issued.
+        await releaseTxn.promise;
+        throw new Error("business-logic rollback");
+      })
+      .catch(() => {});
+
+    await txnUpdated.promise;
+
+    // This awaited, fulfilled write must survive the transaction's rollback,
+    // and must not run while the transaction holds the connection.
+    let outerRan = false;
+    const outer = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`.then(() => {
+      outerRan = true;
+    });
+    await Promise.resolve();
+    expect(outerRan).toBe(false);
+
+    releaseTxn.resolve();
+    await txn;
+    await outer;
+
+    const accounts = await sql`SELECT balance FROM accounts ORDER BY id`;
+    expect(accounts.map(r => r.balance)).toEqual([1000, 507]);
+  });
+
+  test("a second begin() queues behind the first instead of erroring", async () => {
+    const order: string[] = [];
+
+    const first = sql.begin(async tx => {
+      order.push("first:start");
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      order.push("first:end");
+    });
+
+    const second = sql.begin(async tx => {
+      order.push("second:start");
+      await tx`UPDATE accounts SET balance = balance + 100 WHERE id = 2`;
+      order.push("second:end");
+    });
+
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(["first:start", "first:end", "second:start", "second:end"]);
+
+    const accounts = await sql`SELECT * FROM accounts ORDER BY id`;
+    expect(accounts[0].balance).toBe(900);
+    expect(accounts[1].balance).toBe(600);
+  });
+
+  test("reserve() inside a transaction rejects instead of hanging", async () => {
+    // SQLite has a single connection held by the open transaction, so a nested
+    // reserve can never get a second one. It must reject, not deadlock.
+    let reserveError: Error | undefined;
+    await sql.begin(async tx => {
+      try {
+        await tx.reserve();
+      } catch (err) {
+        reserveError = err as Error;
+      }
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+    });
+
+    expect(reserveError).toBeInstanceOf(Error);
+    expect(reserveError?.message).toBe("This adapter doesn't support connection reservation");
+
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts[0].balance).toBe(900);
+  });
 });
 
 describe("SQLite-specific features", () => {

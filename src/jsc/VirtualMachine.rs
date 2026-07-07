@@ -2443,27 +2443,18 @@ impl VirtualMachine {
         Ok(self.pending_internal_promise.unwrap_or(promise))
     }
 
-    /// Run the entry point's synchronous body, then the timers phase.
+    /// Run the entry point's synchronous body with a full tick, then the timers
+    /// phase.
     ///
-    /// Module evaluation runs on the microtask queue, so draining microtasks
-    /// reaches the first `await` (or the end of a synchronous entry point).
-    /// Leaving that to the `tick()` in the wait loop would dispatch the *task*
-    /// queue in the same tick, running an I/O completion or port message the
-    /// body queued ahead of a timer that expired while it ran. `uv_run` opens
-    /// with `uv__run_timers`, so Node dispatches that timer before either.
+    /// `tick()` evaluates the module body (on the microtask queue) and reports
+    /// rejections exactly as the wait loop would, so nothing about exception or
+    /// unhandled-rejection handling changes. It does dispatch the task queue, so
+    /// a port message or I/O completion the body queued still runs before the
+    /// timers phase (see the Known-exclusion note on the PR); `setImmediate`
+    /// callbacks wait in the immediate queue, which `auto_tick` drains, so the
+    /// timers phase runs ahead of them. `uv_run` opens with `uv__run_timers`.
     fn run_entry_point_body(&mut self, evaluation: *mut JSInternalPromise) {
-        // The body has to evaluate with the loop entered, the way it did inside
-        // `tick()`: a nested callback's `exit()` drains microtasks at count 1, and
-        // draining them mid-body reorders a constructor against its own
-        // continuations. `exit()` drains what the body left behind. Reporting
-        // rejections is left to the wait loop's `tick()`, as on the pre-existing
-        // path, so this stays a pure microtask drain.
-        self.event_loop_mut().enter();
-        let drained = self.event_loop_mut().drain_microtasks();
-        self.event_loop_mut().exit();
-        if drained.is_err() {
-            return;
-        }
+        self.tick();
         // SAFETY: `evaluation` is a live JSC heap cell returned by
         // `reload_entry_point*` and kept alive by the module loader. A body that
         // threw rejects it; Node reports the error and exits without a loop.

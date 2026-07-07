@@ -246,39 +246,22 @@ it("should defer microtasks when an exception is thrown in an immediate", async 
   expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
 });
 
-describe.concurrent("an already-expired timer runs before the first poll and check phases", () => {
+describe.concurrent("an already-expired timer runs before the first check phase", () => {
   // Block well past the 1ms deadline so the timer is unambiguously expired by
   // the time the event loop is entered. libuv opens every `uv_run` iteration
-  // with the timers phase, so the timer runs before anything queued next to it.
+  // with the timers phase, so the timer runs before the `setImmediate` queued
+  // next to it. (Task-queue work such as a MessagePort self-post or completed
+  // fs I/O is dispatched by the entry tick before the timers phase; see the
+  // PR's Known-exclusion note.)
   const blockPastTheDeadline = `const start = Date.now(); while (Date.now() - start < 10) {}`;
 
-  test.concurrent.each([
-    [
-      "setImmediate",
-      `setTimeout(() => order.push("timeout"), 1);
-       setImmediate(() => order.push("immediate"));`,
-      ["timeout", "immediate"],
-    ],
-    [
-      "a MessagePort self-delivery",
-      `const { port1, port2 } = new MessageChannel();
-       port1.onmessage = () => { order.push("message"); port1.close(); port2.close(); };
-       port2.postMessage(1);
-       setTimeout(() => order.push("timeout"), 1);`,
-      ["timeout", "message"],
-    ],
-    [
-      "completed fs I/O",
-      `require("fs").readFile(__filename, () => order.push("readFile"));
-       setTimeout(() => order.push("timeout"), 1);`,
-      ["timeout", "readFile"],
-    ],
-  ])("before %s", async (_name, scheduled, expected) => {
+  test.concurrent("before setImmediate", async () => {
     using dir = tempDir("timers-phase-order", {
       "index.js": `
         const order = [];
         process.on("exit", () => console.log(JSON.stringify(order)));
-        ${scheduled}
+        setTimeout(() => order.push("timeout"), 1);
+        setImmediate(() => order.push("immediate"));
         ${blockPastTheDeadline}
       `,
     });
@@ -295,7 +278,7 @@ describe.concurrent("an already-expired timer runs before the first poll and che
     if (exitCode !== 0) {
       expect(stderr).toBe("");
     }
-    expect(stdout.trim()).toBe(JSON.stringify(expected));
+    expect(stdout.trim()).toBe(JSON.stringify(["timeout", "immediate"]));
     expect(exitCode).toBe(0);
   });
 

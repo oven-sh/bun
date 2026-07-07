@@ -22,11 +22,11 @@ namespace Bun {
 
 using namespace JSC;
 
-const ClassInfo JSNodePerformanceHooksHistogramConstructor::s_info = { "Histogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramConstructor) };
+const ClassInfo JSNodePerformanceHooksHistogramConstructor::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramConstructor) };
 
 void JSNodePerformanceHooksHistogramConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSObject* prototype)
 {
-    Base::finishCreation(vm, 3, "Histogram"_s, PropertyAdditionMode::WithStructureTransition); // lowest, highest, figures
+    Base::finishCreation(vm, 3, "RecordableHistogram"_s, PropertyAdditionMode::WithStructureTransition); // lowest, highest, figures
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -70,7 +70,7 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
     Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);
+    return JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, HistogramKind::Recordable, lowest, highest, figures);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramConstructorCall, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -94,19 +94,40 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramConstructorConstruct, (J
     return JSValue::encode(histogram);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramIllegalConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+    return {};
+}
+
 void setupJSNodePerformanceHooksHistogramClassStructure(LazyClassStructure::Initializer& init)
 {
-    auto* prototypeStructure = JSNodePerformanceHooksHistogramPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
-    auto* prototype = JSNodePerformanceHooksHistogramPrototype::create(init.vm, init.global, prototypeStructure);
+    auto* baseProtoStructure = JSNodePerformanceHooksHistogramPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
+    auto* basePrototype = JSNodePerformanceHooksHistogramPrototype::create(init.vm, init.global, baseProtoStructure);
+
+    auto* baseConstructor = JSFunction::create(init.vm, init.global, 0, "Histogram"_s, jsNodePerformanceHooksHistogramIllegalConstructor, ImplementationVisibility::Public);
+    basePrototype->putDirect(init.vm, init.vm.propertyNames->constructor, baseConstructor, JSC::PropertyAttribute::DontEnum | 0);
+
+    auto* recordableProtoStructure = JSNodePerformanceHooksRecordableHistogramPrototype::createStructure(init.vm, init.global, basePrototype);
+    auto* recordablePrototype = JSNodePerformanceHooksRecordableHistogramPrototype::create(init.vm, init.global, recordableProtoStructure);
 
     auto* constructorStructure = JSNodePerformanceHooksHistogramConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
-    auto* constructor = JSNodePerformanceHooksHistogramConstructor::create(init.vm, init.global, constructorStructure, prototype);
+    auto* constructor = JSNodePerformanceHooksHistogramConstructor::create(init.vm, init.global, constructorStructure, recordablePrototype);
 
-    auto* structure = JSNodePerformanceHooksHistogram::createStructure(init.vm, init.global, prototype);
+    auto* structure = JSNodePerformanceHooksHistogram::createStructure(init.vm, init.global, recordablePrototype);
 
-    init.setPrototype(prototype);
+    init.setPrototype(recordablePrototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
+}
+
+Structure* createJSNodePerformanceHooksIntervalHistogramStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    JSObject* recordablePrototype = globalObject->m_JSNodePerformanceHooksHistogramClassStructure.prototype(globalObject);
+    JSValue basePrototype = recordablePrototype->getPrototypeDirect();
+    ASSERT(basePrototype.inherits<JSNodePerformanceHooksHistogramPrototype>());
+    return JSNodePerformanceHooksHistogram::createStructure(vm, globalObject, basePrototype);
 }
 
 } // namespace Bun

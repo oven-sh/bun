@@ -26,6 +26,14 @@ class JSNodePerformanceHooksHistogram;
 class JSNodePerformanceHooksHistogramPrototype;
 class JSNodePerformanceHooksHistogramConstructor;
 
+// Node.js exposes two user-visible Histogram subclasses that must not share
+// mutation surface: RecordableHistogram (createHistogram) owns record/add,
+// IntervalHistogram (monitorEventLoopDelay) is read-only except enable/disable.
+enum class HistogramKind : uint8_t {
+    Recordable,
+    Interval,
+};
+
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecordDelta);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd);
@@ -106,6 +114,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
+        HistogramKind kind,
         int64_t lowest,
         int64_t highest,
         int figures);
@@ -114,6 +123,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
+        HistogramKind kind,
         HistogramData&& existingHistogramData);
 
     void finishCreation(JSC::VM& vm);
@@ -141,15 +151,17 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); });
     }
 
-    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)
+    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramKind kind, HistogramData&& histogramData)
         : Base(vm, structure)
         , m_histogramData(std::move(histogramData))
+        , m_kind(kind)
     {
     }
 
     ~JSNodePerformanceHooksHistogram();
 
     hdr_histogram& histogram() { return *m_histogramData.histogram; }
+    HistogramKind kind() const { return m_kind; }
 
     bool record(int64_t value);
     uint64_t recordDelta(JSGlobalObject* globalObject);
@@ -168,9 +180,11 @@ public:
     // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
 private:
+    HistogramKind m_kind;
     uint16_t m_extraMemorySizeForGC = 0;
 };
 
 void setupJSNodePerformanceHooksHistogramClassStructure(JSC::LazyClassStructure::Initializer& init);
+Structure* createJSNodePerformanceHooksIntervalHistogramStructure(JSC::VM& vm, Zig::GlobalObject* globalObject);
 
 } // namespace Bun

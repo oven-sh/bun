@@ -9,6 +9,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
+  setServerAppFlags,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -28,6 +29,13 @@ const {
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
     onConnection?: (socketHandle: any) => undefined,
+  ) => void;
+  setServerAppFlags: (
+    server: any,
+    requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
+    httpAllowHalfOpen: boolean,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
@@ -621,6 +629,7 @@ export {
   setMaxHTTPHeaderSize,
   setRequestTimeout,
   setServerCustomOptions,
+  setServerAppFlags,
   setServerIdleTimeout,
   statusCodeSymbol,
   statusMessageSymbol,

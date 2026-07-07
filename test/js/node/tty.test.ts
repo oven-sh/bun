@@ -193,11 +193,9 @@ describe("ReadStream.prototype.setRawMode", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // When setRawMode fails, Node emits an ErrnoException with code/errno/syscall
-  // populated so callers can branch on `err.code` (e.g. whitelist EIO when the
-  // terminal goes away). Bun used to emit a bare `Error` with the errno only
-  // baked into the message. Here the pty master is closed out from under the
-  // child, so its tcsetattr on the orphaned slave fails with EIO.
+  // Closing the pty master out from under the child makes tcsetattr on the
+  // orphaned slave fail with EIO; assert setRawMode emits an ErrnoException
+  // (code/errno/syscall) rather than a bare Error.
   test.skipIf(isWindows)("emits an ErrnoException (code/errno/syscall) on failure", async () => {
     using dir = tempDir("tty-setrawmode-errno", {
       "child.mjs": `
@@ -221,14 +219,11 @@ describe("ReadStream.prototype.setRawMode", () => {
         process.stdin.on("error", e => finish(shape(e)));
         process.stdin.setRawMode(true);
         process.stdout.write("READY\\n");
-        const timer = setInterval(() => {
-          try {
-            process.stdin.setRawMode(false);
-            process.stdin.setRawMode(true);
-          } catch (e) {
-            clearInterval(timer);
-            finish(shape(e));
-          }
+        // setRawMode emits "error" rather than throwing, so the failure is
+        // observed through the listener above, not a try/catch here.
+        setInterval(() => {
+          process.stdin.setRawMode(false);
+          process.stdin.setRawMode(true);
         }, 20);
         setTimeout(() => finish({ via: "timeout" }), 8000);
       `,

@@ -74,9 +74,12 @@ Object.defineProperty(ReadStream, "prototype", {
         // Special case for stdin, as it has a shared uv_tty handle
         // and it's stream is constructed differently
         if (this.fd === 0) {
+          // Source__setRawModeStdin returns a signed libuv error code, so
+          // (unlike the raw positive errno from the POSIX branch) it is not
+          // negated before building the exception.
           const err = ttySetMode(flag);
           if (err) {
-            this.emit("error", setRawModeError(-err));
+            this.emit("error", setRawModeError(err));
             return this;
           }
         } else {
@@ -91,9 +94,11 @@ Object.defineProperty(ReadStream, "prototype", {
           // This corresponds to the `ensureConstructed` function in `native-readable.ts`
           this.$start();
 
+          // On failure this returns a native SystemError object with
+          // code/errno/syscall already populated, so emit it as-is.
           const err = handle.setRawMode(flag);
           if (err) {
-            this.emit("error", setRawModeError(err));
+            this.emit("error", err);
             return this;
           }
         }

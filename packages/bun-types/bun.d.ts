@@ -1828,7 +1828,7 @@ declare module "bun" {
    * - `<` becomes `"&lt;"`
    * - `>` becomes `"&gt;"`
    *
-   * This function is optimized for large input. On an M1 Max, it processes 480 MB/s -
+   * This function is optimized for large input. On an M1X, it processes 480 MB/s -
    * 20 GB/s, depending on how much data is being escaped and whether there is non-ASCII
    * text.
    *

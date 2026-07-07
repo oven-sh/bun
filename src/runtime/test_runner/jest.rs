@@ -327,7 +327,7 @@ pub mod Jest {
     }
 
     pub(crate) fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let module = JSValue::create_empty_object(global_object, 24);
+        let module = JSValue::create_empty_object(global_object, 23);
 
         let test_scope_functions = create_bound(
             global_object,
@@ -398,11 +398,6 @@ pub mod Jest {
             global_object,
             b"setDefaultTimeout",
             jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
-        );
-        module.put(
-            global_object,
-            b"fileGeneration",
-            jsc::JSFunction::create(global_object, "fileGeneration", __jsc_host_js_file_generation, 0, Default::default()),
         );
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
         module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
@@ -514,17 +509,21 @@ pub mod Jest {
 
         Ok(JSValue::UNDEFINED)
     }
+}
 
-    #[bun_jsc::host_fn]
-    fn js_file_generation(
-        _global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // node:test compares this to detect a fresh enter_file (across both
-        // multiple files and --rerun-each iterations); 0 outside `bun test`.
-        let generation = runner().map(|r| r.bun_test_root.file_generation).unwrap_or(0);
-        Ok(JSValue::from(generation))
-    }
+/// Reached only from `node:test`, through `$newRustFunction` rather than the
+/// public `bun:test` module object. Returns 0 outside `bun test`.
+pub(crate) fn js_file_generation(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // `runner_ptr()` rather than `runner()`: node:test calls this on every test
+    // registration, and an exclusive `&mut TestRunner` would invalidate the
+    // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
+    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
+    let generation =
+        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    Ok(JSValue::from(generation))
 }
 
 pub mod on_unhandled_rejection {

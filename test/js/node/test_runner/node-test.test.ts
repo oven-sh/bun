@@ -174,6 +174,42 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should keep node's zero-delay mock interval semantics", async () => {
+    const { exitCode, stderr } = await runTests(["18-mock-timers-interval-zero.js"]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should apply the plan option before beforeEach so a hook cannot snapshot a null plan", async () => {
+    const { exitCode, stderr } = await runTests(["19-plan-option-order.js"]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should enforce a hook-level signal and install t.assert.ok separately", async () => {
+    const { exitCode, stderr } = await runTests(["20-hook-signal-and-assert-ok.js"]);
+    expect(stderr).toContain("2 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should let a registered ok assertion override the built-in one", async () => {
+    const { exitCode, stderr } = await runTests(["21-register-ok.js"]);
+    expect(stderr).toContain("2 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

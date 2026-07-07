@@ -303,6 +303,9 @@ class MockTimers {
   }
 
   #createTimer(isInterval, callback, delay, ...args) {
+    // Only the upper bound is clamped, like Node: `setInterval(fn, 0)` re-fires
+    // within one tick() until cleared. Real timers clamp to 1ms; clamping here
+    // would diverge from the port.
     if (delay > TIMEOUT_MAX) {
       delay = 1;
     }

@@ -574,6 +574,7 @@ function snapshot(_value: unknown, _options: { serializers?: Function[] } = kEmp
 }
 
 const nodeAssert = require("node:assert");
+const { innerOk } = require("internal/assert/utils");
 
 // Custom assertions registered through `require("node:test").assert.register()`.
 // They become part of every TestContext's `t.assert` built afterwards.
@@ -622,7 +623,8 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
   for (const key of Object.keys(nodeAssert)) {
     // CallTracker is also excluded: bun's node:assert still ships it (Node 26
     // does not), and copying it would trigger its deprecation accessor.
-    if (key === "AssertionError" || key === "strict" || key === "CallTracker") continue;
+    // `ok` is installed below, outside the generic wrapper.
+    if (key === "AssertionError" || key === "strict" || key === "CallTracker" || key === "ok") continue;
     const value = nodeAssert[key];
     if (!$isCallable(value)) continue;
     add(key, value);
@@ -631,6 +633,14 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
   add("fileSnapshot", fileSnapshot);
   for (const name of Object.keys(customAssertions)) {
     add(name, customAssertions[name]);
+  }
+  // `ok` is its own stackStartFn so the trace starts at the caller instead of a
+  // node:test wrapper frame; a registered `ok` still wins (nodejs/node@028c5864).
+  if (customAssertions.ok === undefined) {
+    result.ok = function ok(...args: unknown[]) {
+      plan?.count();
+      innerOk(ok, args.length, ...args);
+    };
   }
   return result;
 }
@@ -866,15 +876,18 @@ class TestNode {
   }
 }
 
+// Bumped by the runner's enter_file. Bound privately rather than read off the
+// bun:test module object, which is public API.
+const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
+
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
-let fileGeneration: (() => number) | undefined;
 
 function getRootNode(): TestNode {
   // Fresh root on each runner enter_file (per file AND per --rerun-each
   // iteration) so file-level hooks/state never leak between them; Bun.main
   // alone can't detect a rerun of the same file.
-  const generation = (fileGeneration ??= bunTest().fileGeneration)();
+  const generation = fileGeneration();
   if (rootNode === undefined || rootGeneration !== generation) {
     const isNewFile = rootNode !== undefined;
     rootGeneration = generation;
@@ -895,21 +908,16 @@ function getRootNode(): TestNode {
 // Contexts
 // -----------------------------------------------------------------------------
 
-const contextNode: WeakMap<object, TestNode> = new WeakMap();
-
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
  */
 class TestContext {
+  #node: TestNode;
   #abortController?: AbortController;
   #assert: Record<string, Function> | undefined;
 
   constructor(node: TestNode) {
-    contextNode.set(this, node);
-  }
-
-  get #node(): TestNode {
-    return contextNode.get(this)!;
+    this.#node = node;
   }
 
   get signal(): AbortSignal {
@@ -1060,14 +1068,11 @@ class TestContext {
  * @link https://nodejs.org/api/test.html#class-suitecontext
  */
 class SuiteContext {
+  #node: TestNode;
   #abortController?: AbortController;
 
   constructor(node: TestNode) {
-    contextNode.set(this, node);
-  }
-
-  get #node(): TestNode {
-    return contextNode.get(this)!;
+    this.#node = node;
   }
 
   get signal(): AbortSignal {
@@ -1418,6 +1423,14 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   const ancestors = ancestorChain(node);
   let failure: unknown;
 
+  // Node applies the plan option before the beforeEach hooks run, and only for a
+  // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
+  // `t.assert` snapshots the plan at first access, so hooks must see it already.
+  const { plan: planOption } = node.options;
+  if (planOption && node.plan === null) {
+    node.plan = new TestPlan(planOption);
+  }
+
   try {
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
@@ -1429,11 +1442,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   }
 
   if (failure === undefined) {
-    const { plan: planOption } = node.options;
-    if (planOption !== undefined && node.plan === null) {
-      node.plan = new TestPlan(planOption);
-    }
-
     // Node arms one stopPromise (timeout + signal) and races both the body
     // AND the plan wait against it. Arm timeout once here so plan({wait:true})
     // is bounded by the same test timeout, not left unbounded.

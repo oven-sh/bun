@@ -52,7 +52,8 @@ use bun_windows_sys::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFORMATION,
     GetCurrentDirectoryW, GetFileInformationByHandle, GetFinalPathNameByHandleW, GetLongPathNameW,
     GetShortPathNameW, HANDLE, INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, NTSTATUS, OPEN_EXISTING,
-    ReadDirectoryChangesW, SetLastError, TRUE, ULONG, VOLUME_NAME_DOS, VOLUME_NAME_NONE, Win32Error,
+    ReadDirectoryChangesW, SetLastError, TRUE, ULONG, VOLUME_NAME_DOS, VOLUME_NAME_NONE,
+    Win32Error,
 };
 
 use crate::event_loop::Loop;

@@ -1421,9 +1421,12 @@ test("header field value byte validation per RFC 9110 5.5", async () => {
     return { byte, status: match ? match[1] : "none" };
   }
 
-  const bytes = Array.from({ length: 256 }, (_, i) => i).filter(b => b !== 0x0d && b !== 0x0a);
+  // Every CTL (0x00-0x1F, 0x7F) except CR/LF which would end the header line,
+  // plus the accept/reject boundaries around SP, VCHAR and obs-text.
+  const ctls = Array.from({ length: 0x20 }, (_, i) => i).filter(b => b !== 0x0d && b !== 0x0a);
+  const bytes = [...ctls, 0x20, 0x21, 0x7e, 0x7f, 0x80, 0xff];
   const results: Awaited<ReturnType<typeof probe>>[] = [];
-  // Small batches so the listen backlog never overflows on Windows.
+  // Batches keep the listen backlog from overflowing on Windows.
   const batchSize = 8;
   for (let i = 0; i < bytes.length; i += batchSize) {
     results.push(...(await Promise.all(bytes.slice(i, i + batchSize).map(probe))));
@@ -1438,6 +1441,36 @@ test("header field value byte validation per RFC 9110 5.5", async () => {
   );
   // No rejected byte ever reaches the application.
   expect(seen.every(value => !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value))).toBe(true);
+});
+
+test("node:http emits clientError HPE_INVALID_HEADER_TOKEN for DEL (0x7F) in a header value", async () => {
+  const events: string[] = [];
+  const server = createServer((req, res) => {
+    events.push(`served ${req.headers["x-a"]}`);
+    res.end("ok");
+  });
+  server.on("clientError", (err: NodeJS.ErrnoException) => {
+    events.push(`clientError ${err.code}`);
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as { port: number };
+    const response = await new Promise<string>((resolve, reject) => {
+      const client = net.connect(port, "127.0.0.1");
+      const chunks: Buffer[] = [];
+      client.on("error", reject);
+      client.on("data", chunk => chunks.push(chunk));
+      client.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+      client.write(Buffer.from("GET / HTTP/1.1\r\nHost: x\r\nX-A: a\x7Fb\r\nConnection: close\r\n\r\n", "latin1"));
+    });
+    expect({ events, status: response.split("\r\n", 1)[0] }).toEqual({
+      events: ["clientError HPE_INVALID_HEADER_TOKEN"],
+      status: "HTTP/1.1 400 Bad Request",
+    });
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
 });
 
 describe("Host header field values in request.url", () => {

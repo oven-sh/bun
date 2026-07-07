@@ -4,28 +4,31 @@
 // segmentation luck (eager client, proxy writev, loopback coalescing).
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
+import { tls as tlsCert } from "harness";
 import net from "node:net";
+import tls from "node:tls";
 
-describe("frames coalesced with the upgrade request", () => {
-  function maskedFrame(opcode: number, payload: Buffer): Buffer {
-    const mask = Buffer.from([0x37, 0xfa, 0x21, 0x3d]);
-    const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
-    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, masked]);
-  }
+function maskedFrame(opcode: number, payload: Buffer): Buffer {
+  const mask = Buffer.from([0x37, 0xfa, 0x21, 0x3d]);
+  const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
+  return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, masked]);
+}
 
-  const upgradeRequest =
-    "GET / HTTP/1.1\r\n" +
-    "Host: localhost\r\n" +
-    "Connection: Upgrade\r\n" +
-    "Upgrade: websocket\r\n" +
-    "Sec-WebSocket-Version: 13\r\n" +
-    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-    "\r\n";
+const upgradeRequest =
+  "GET / HTTP/1.1\r\n" +
+  "Host: localhost\r\n" +
+  "Connection: Upgrade\r\n" +
+  "Upgrade: websocket\r\n" +
+  "Sec-WebSocket-Version: 13\r\n" +
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+  "\r\n";
 
-  type Events = { messages: unknown[]; pings: string[]; pongs: string[]; close?: { code: number; reason: string } };
+type Events = { messages: unknown[]; pings: string[]; pongs: string[]; close?: { code: number; reason: string } };
 
-  // Raw TCP WebSocket client that writes the upgrade request and any initial
-  // frames in ONE socket.write() so they reach the server in one read.
+describe.each([{ useTls: false }, { useTls: true }])("frames coalesced with the upgrade request (tls: $useTls)", ({ useTls }) => {
+  // Raw WebSocket client that writes the upgrade request and any initial frames
+  // in ONE socket.write() so they reach HttpContext::onData in one read (the
+  // SSL layer decrypts a TLS record into one plaintext dispatch, too).
   async function connectRaw(initialBytes: Buffer) {
     const events: Events = { messages: [], pings: [], pongs: [] };
     const listeners: (() => void)[] = [];
@@ -35,6 +38,7 @@ describe("frames coalesced with the upgrade request", () => {
     const opened = Promise.withResolvers<void>();
     const server = serve({
       port: 0,
+      tls: useTls ? { ...tlsCert } : undefined,
       fetch(req, server) {
         if (server.upgrade(req)) return;
         return new Response("upgrade failed", { status: 400 });
@@ -59,7 +63,9 @@ describe("frames coalesced with the upgrade request", () => {
       },
     });
 
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket: net.Socket = useTls
+      ? tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(server.port, "127.0.0.1");
     const closed = Promise.withResolvers<string>();
     const upgraded = Promise.withResolvers<void>();
     socket.on("close", () => {
@@ -97,7 +103,7 @@ describe("frames coalesced with the upgrade request", () => {
 
     socket.setNoDelay(true);
     await new Promise<void>((resolve, reject) => {
-      socket.once("connect", resolve);
+      socket.once(useTls ? "secureConnect" : "connect", resolve);
       socket.once("error", reject);
     });
     // One write: request head + any coalesced frames.

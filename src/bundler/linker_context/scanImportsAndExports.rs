@@ -1552,7 +1552,7 @@ mod __css_validation {
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
                         bun_ast::alloc_print(format_args!(
-                            "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
+                            "The value of {} in the class {} is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         )),

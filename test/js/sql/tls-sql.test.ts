@@ -1,9 +1,9 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import tls from "node:tls";
 import { describeWithContainer, isDockerEnabled } from "harness";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import tls from "node:tls";
 import {
   listeningServer,
   pgAuthenticationCleartextPassword,

@@ -1156,7 +1156,6 @@ WebCore::EventTarget& GlobalObject::eventTarget()
     return globalEventScope;
 }
 
-
 JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))

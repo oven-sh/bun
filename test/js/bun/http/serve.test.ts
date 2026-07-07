@@ -2196,6 +2196,92 @@ it("should be able to abrupt stop the server", async () => {
   }
 });
 
+describe("server.stop(true) after a prior graceful stop", () => {
+  async function setup(stopper: (server: Server) => void) {
+    const enc = new TextEncoder();
+    const firstChunk = Promise.withResolvers<void>();
+    const aborted = mock(() => {});
+    const cancelled = mock(() => {});
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", aborted);
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(enc.encode("data: x\n\n"));
+              await Bun.sleep(20);
+            },
+            cancel: cancelled,
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+    const closed = Promise.withResolvers<void>();
+    const sock = net.connect(server.port, "127.0.0.1", () => {
+      sock.write(`GET /sse HTTP/1.1\r\nHost: x\r\n\r\n`);
+    });
+    sock.once("data", () => firstChunk.resolve());
+    sock.on("error", () => {});
+    sock.on("close", () => closed.resolve());
+    try {
+      await firstChunk.promise;
+
+      server.stop(false);
+      expect(server.pendingRequests).toBe(1);
+
+      stopper(server);
+      await closed.promise;
+
+      expect({
+        pendingRequests: server.pendingRequests,
+        cancelled: cancelled.mock.calls.length,
+        aborted: aborted.mock.calls.length,
+      }).toEqual({ pendingRequests: 0, cancelled: 1, aborted: 1 });
+    } finally {
+      sock.destroy();
+      server.stop(true);
+    }
+  }
+
+  it("force-closes in-flight connections", async () => {
+    await setup(server => server.stop(true));
+  });
+
+  it("force-closes in-flight connections via [Symbol.dispose]", async () => {
+    await setup(server => server[Symbol.dispose]());
+  });
+
+  it("resolves the stop() promise once connections are gone", async () => {
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        return new Response(new ReadableStream({ pull: () => Bun.sleep(1000) }));
+      },
+    });
+    const gotData = Promise.withResolvers<void>();
+    const sock = net.connect(server.port, "127.0.0.1", () => {
+      sock.write(`GET / HTTP/1.1\r\nHost: x\r\n\r\n`);
+    });
+    sock.once("data", () => gotData.resolve());
+    sock.on("error", () => {});
+    try {
+      await gotData.promise;
+      const gracefulPromise = server.stop(false);
+      expect(server.pendingRequests).toBe(1);
+      const forcePromise = server.stop(true);
+      await Promise.all([gracefulPromise, forcePromise]);
+      expect(server.pendingRequests).toBe(0);
+    } finally {
+      sock.destroy();
+      server.stop(true);
+    }
+  });
+});
+
 it.concurrent("should not instanciate error instances in each request", async () => {
   const startErrorCount = heapStats().objectTypeCounts.Error || 0;
   using server = Bun.serve({

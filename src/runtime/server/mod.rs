@@ -1522,8 +1522,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();
-                if abrupt {
-                    self.flags.insert(ServerFlags::TERMINATED);
+            }
+            // A previous graceful stop already took the listener. An abrupt stop
+            // still needs to close the app so in-flight connections are torn down.
+            if abrupt && !self.flags.contains(ServerFlags::TERMINATED) {
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.app = None;
+                }
+                self.flags.insert(ServerFlags::TERMINATED);
+                if let Some(app) = self.app {
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).close();
                 }
             }
             return;

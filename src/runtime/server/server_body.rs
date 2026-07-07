@@ -2502,15 +2502,15 @@ where
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        if self.has_listener() {
-            let abrupt = 'brk: {
-                if let Some(val) = abruptly {
-                    if val.is_boolean() && val.to_boolean() {
-                        break 'brk true;
-                    }
+        let abrupt = 'brk: {
+            if let Some(val) = abruptly {
+                if val.is_boolean() && val.to_boolean() {
+                    break 'brk true;
                 }
-                false
-            };
+            }
+            false
+        };
+        if self.has_listener() || (abrupt && !self.flags.contains(ServerFlags::TERMINATED)) {
             self.stop(abrupt);
         }
 
@@ -2518,7 +2518,7 @@ where
     }
 
     pub fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() {
+        if self.has_listener() || !self.flags.contains(ServerFlags::TERMINATED) {
             self.stop(true);
         }
         JSValue::UNDEFINED

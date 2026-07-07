@@ -2107,14 +2107,48 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     filteredTests.push(...Array.from(smokeTests));
     !isQuiet && console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
-    for (let i = 0; i < availableTests.length; i++) {
-      if (i % maxShards === shardId) {
-        filteredTests.push(availableTests[i]);
+    // Longest-processing-time-first bin packing across shards using the
+    // checked-in median wall-clock durations (see scripts/update-test-durations.mjs).
+    // Every shard computes the same deterministic assignment from the same
+    // sorted input and picks its own bin, so the result is identical across
+    // machines without any coordination. Tests absent from the table (new
+    // files, or the file failing to load) fall back to the table's median so
+    // they spread across shards instead of all landing on shard 0.
+    let durations = {};
+    try {
+      const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
+      const lane = (options["step"] || "").includes("asan") ? "asan" : "default";
+      for (const [path, entry] of Object.entries(raw)) {
+        if (path === "_meta") continue;
+        const ms = entry[lane] ?? entry.default ?? entry.asan;
+        if (typeof ms === "number") durations[path] = ms;
       }
+    } catch (e) {
+      console.warn("expected-durations.json not loaded, sharding by index:", e?.message || e);
     }
+    const known = Object.values(durations).sort((a, b) => a - b);
+    const unknownCost = known.length ? known[Math.floor(known.length / 2)] : 100;
+    const costOf = testPath => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
+
+    // Stable order for equal costs so the packing is reproducible.
+    const order = availableTests
+      .map((testPath, originalIndex) => ({ testPath, originalIndex, cost: costOf(testPath) }))
+      .sort((a, b) => b.cost - a.cost || a.originalIndex - b.originalIndex);
+    const load = new Float64Array(maxShards);
+    const assigned = Array.from({ length: maxShards }, () => []);
+    for (const { testPath, originalIndex, cost } of order) {
+      let bin = 0;
+      for (let s = 1; s < maxShards; s++) if (load[s] < load[bin]) bin = s;
+      load[bin] += cost;
+      assigned[bin].push({ testPath, originalIndex });
+    }
+    // Restore the within-shard order the rest of the pipeline expects
+    // (docker-last / modified-first sorts below are stable over this).
+    assigned[shardId].sort((a, b) => a.originalIndex - b.originalIndex);
+    for (const { testPath } of assigned[shardId]) filteredTests.push(testPath);
     !isQuiet &&
       console.log(
-        "Sharding tests:",
+        "Sharding tests (LPT):",
         shardId,
         "/",
         maxShards,
@@ -2122,6 +2156,10 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
         filteredTests.length,
         "/",
         availableTests.length,
+        "est",
+        Math.round(load[shardId] / 1000) + "s",
+        "of",
+        Math.round(Math.max(...load) / 1000) + "s max",
       );
   } else {
     filteredTests.push(...availableTests);

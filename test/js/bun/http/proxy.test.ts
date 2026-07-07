@@ -1159,40 +1159,36 @@ for (const scheme of ["http", "https"] as const) {
   // 4.7-4.9s of the default 5s budget after sustained runs. Fixture startup
   // dominates; 5 iterations still covers "rejects cleanly, doesn't hang".
   const iterations = 5;
-  test(
-    `outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`,
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, String(iterations)],
-        env: {
-          ...bunEnv,
-          // The explicit per-request proxy must not be bypassed or rerouted
-          // by ambient proxy configuration on CI hosts; clear them in the
-          // spawn env so the child starts clean (see PROXY_ENV_KEYS above).
-          NO_PROXY: undefined,
-          no_proxy: undefined,
-          HTTP_PROXY: undefined,
-          http_proxy: undefined,
-          HTTPS_PROXY: undefined,
-          https_proxy: undefined,
-        },
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (exitCode !== 0) console.error("stderr:", stderr);
-      const lines = stdout.trim().split("\n");
-      // Every iteration must reject with a connection-flavored error, not
-      // TimeoutError (which would mean the request stalled on a dead socket
-      // and only the AbortSignal freed it) and not "resolved".
-      expect(lines).toHaveLength(iterations);
-      for (const line of lines) {
-        expect(line).toMatch(/^rejected: (ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused)$/);
-      }
-      expect(stderr).not.toContain("hung");
-      expect(exitCode).toBe(0);
-    },
-    15000,
-  );
+  test(`outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, String(iterations)],
+      env: {
+        ...bunEnv,
+        // The explicit per-request proxy must not be bypassed or rerouted
+        // by ambient proxy configuration on CI hosts; clear them in the
+        // spawn env so the child starts clean (see PROXY_ENV_KEYS above).
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    const lines = stdout.trim().split("\n");
+    // Every iteration must reject with a connection-flavored error, not
+    // TimeoutError (which would mean the request stalled on a dead socket
+    // and only the AbortSignal freed it) and not "resolved".
+    expect(lines).toHaveLength(iterations);
+    for (const line of lines) {
+      expect(line).toMatch(/^rejected: (ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused)$/);
+    }
+    expect(stderr).not.toContain("hung");
+    expect(exitCode).toBe(0);
+  }, 15000);
 }
 
 describe.concurrent("proxy object format with headers", () => {

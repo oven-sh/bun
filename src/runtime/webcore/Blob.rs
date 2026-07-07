@@ -4,11 +4,8 @@
 //! operations like writing `Store::File` to another `Store::File` knows to use a
 //! basic file copy instead of a naive read write loop.
 
-use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
-
-use bun_jsc::JsCell;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
@@ -2194,6 +2191,11 @@ impl BlobExt for Blob {
 
     // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
+        if self.is_jsdom_file.get() {
+            // `new File()` always fills `last_modified` (explicit option or
+            // Date.now()); a file-backed store's live mtime must not override it.
+            return JSValue::js_number(self.last_modified.get());
+        }
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
                 // do not hold a pattern-bound `&File` across
@@ -2210,10 +2212,6 @@ impl BlobExt for Blob {
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
                 return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
             }
-        }
-
-        if self.is_jsdom_file.get() {
-            return JSValue::js_number(self.last_modified.get());
         }
 
         JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
@@ -3361,44 +3359,18 @@ impl BlobExt for Blob {
                         if let Some(blob_ptr) = top_value.as_::<Blob>() {
                             // SAFETY: JS heap pointer; single-threaded JS execution.
                             let blob = unsafe { &mut *blob_ptr };
+                            // Parts contribute only their bytes: share the store
+                            // (or move it), but never the part's content_type /
+                            // last_modified / name / is_jsdom_file.
+                            let out = blob.dupe_without_metadata();
                             if MOVE {
-                                // Move the store without bumping its refcount, but take
-                                // independent ownership of name/content_type so the
-                                // source's eventual finalize() doesn't double-free them.
-                                // *Take* the StoreRef out of `blob`
-                                // (no clone, no into_raw leak) and field-copy the
-                                // rest, deep-owning `name`/`content_type` — net 0 on
-                                // the store refcount.
-                                let _blob = Blob {
-                                    reported_estimated_size: Cell::new(
-                                        blob.reported_estimated_size.get(),
-                                    ),
-                                    size: Cell::new(blob.size.get()),
-                                    offset: Cell::new(blob.offset.get()),
-                                    store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: JsCell::new(blob.content_type.get().clone()),
-                                    content_type_was_set: Cell::new(
-                                        blob.content_type_was_set.get(),
-                                    ),
-                                    charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
-                                    ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-                                    global_this: Cell::new(blob.global_this.get()),
-                                    last_modified: Cell::new(blob.last_modified.get()),
-                                    name: blob.name.clone(),
-                                };
-                                return Ok(_blob);
-                            } else {
-                                return Ok(blob.dupe());
+                                out.store.set(blob.take_store());
                             }
+                            return Ok(out);
                         } else if let Some(artifact) =
                             top_value.as_class_ref::<crate::api::BuildArtifact>()
                         {
-                            // The previous "move" path here only nulled the store on a
-                            // local copy and left `build.blob` fully intact, so it was
-                            // never a real move. Share the store and deep-copy owned
-                            // buffers instead — regardless of `MOVE`.
-                            return Ok(artifact.blob.dupe());
+                            return Ok(artifact.blob.dupe_without_metadata());
                         } else {
                             // Dispatch on the `ZigStringSlice` variant to detect an
                             // owned (heap) slice. Pass

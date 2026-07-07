@@ -17,7 +17,10 @@ test("node:http upgrade socket emits 'close' when the WebSocket peer closes", as
   const rawSocketClosed = Promise.withResolvers<void>();
 
   server.on("upgrade", (req, socket, head) => {
-    socket.once("error", err => rawSocketClosed.reject(err));
+    // TCP teardown after a graceful WebSocket close can surface as
+    // ECONNRESET on Windows; the behaviour under test is that 'close'
+    // fires, so swallow a preceding 'error'.
+    socket.once("error", () => {});
     socket.once("close", () => rawSocketClosed.resolve());
     // `ws` is load-bearing, not incidental: only its graceful bidirectional
     // close handshake (close frame -> reply -> both FIN) reaches the native

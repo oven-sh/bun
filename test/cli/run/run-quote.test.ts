@@ -45,7 +45,7 @@ const argvEchoFixture = {
   "args.js": "console.log(JSON.stringify(process.argv.slice(2)));",
 };
 
-it.each([
+it.concurrent.each([
   ["bun run <script>", ["run", "p"]],
   ["bun run <script> --", ["run", "p", "--"]],
   ["bun <script>", ["p"]],
@@ -63,7 +63,7 @@ it.each([
   expect(exitCode).toBe(0);
 });
 
-it("preserves empty passthrough arguments (bun --filter)", async () => {
+it.concurrent("preserves empty passthrough arguments (bun --filter)", async () => {
   using dir = tempDir("run-empty-arg-filter", argvEchoFixture);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--filter", "*", "p", "a", "", "b"],

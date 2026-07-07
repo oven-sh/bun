@@ -156,6 +156,8 @@ public:
     uint64_t recordDelta(JSGlobalObject* globalObject);
     void reset();
     int64_t getMin() const;
+    // Node.js returns min as if it were unsigned when converting to double (INT64_MIN initial-state quirk).
+    double getMinAsDouble() const { return static_cast<double>(static_cast<uint64_t>(getMin())); }
     int64_t getMax() const;
     double getMean() const;
     double getStddev() const;
@@ -170,6 +172,18 @@ public:
     // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
 private:
+    template<typename Callback>
+    void forEachPercentile(Callback&& callback)
+    {
+        if (!m_histogramData.histogram) return;
+        struct hdr_iter iter;
+        hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
+        while (hdr_iter_next(&iter)) {
+            if (!callback(iter.specifics.percentiles.percentile, iter.highest_equivalent_value))
+                return;
+        }
+    }
+
     uint16_t m_extraMemorySizeForGC = 0;
 };
 

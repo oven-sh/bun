@@ -216,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncToJSON, (JSGlob
     RETURN_IF_EXCEPTION(scope, {});
 
     result->putDirect(vm, Identifier::fromString(vm, "count"_s), jsNumber(static_cast<double>(thisObject->getCount())));
-    result->putDirect(vm, Identifier::fromString(vm, "min"_s), jsNumber(static_cast<double>(static_cast<uint64_t>(thisObject->getMin()))));
+    result->putDirect(vm, Identifier::fromString(vm, "min"_s), jsNumber(thisObject->getMinAsDouble()));
     result->putDirect(vm, Identifier::fromString(vm, "max"_s), jsNumber(static_cast<double>(thisObject->getMax())));
     result->putDirect(vm, Identifier::fromString(vm, "mean"_s), jsNumber(thisObject->getMean()));
     result->putDirect(vm, Identifier::fromString(vm, "exceeds"_s), jsNumber(static_cast<double>(thisObject->getExceeds())));
@@ -266,11 +266,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObj
         return {};
     }
 
-    int64_t minValue = thisObject->getMin();
-
-    // Node.js returns the value as if it were unsigned when converting to double
-    // This handles the special case where the initial value is INT64_MIN
-    return JSValue::encode(jsNumber(static_cast<double>(static_cast<uint64_t>(minValue))));
+    return JSValue::encode(jsNumber(thisObject->getMinAsDouble()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

@@ -547,6 +547,24 @@ describe("Histogram", () => {
       }
     });
 
+    test("toJSON percentiles with fractional keys", () => {
+      const h = createHistogram();
+      for (let i = 1; i <= 100; i++) h.record(i);
+
+      const json = h.toJSON();
+      assert.deepStrictEqual(json.percentiles, {
+        "0": 1,
+        "50": 50,
+        "75": 75,
+        "87.5": 88,
+        "93.75": 94,
+        "96.875": 97,
+        "98.4375": 99,
+        "99.21875": 100,
+        "100": 100,
+      });
+    });
+
     test("toJSON on empty histogram", () => {
       const h = createHistogram();
       const json = h.toJSON();

@@ -504,6 +504,16 @@ struct RwLoadScan {
 /// with the actual layout.
 fn scan_load_segments(data: &[u8], ehdr: Elf64_Ehdr) -> Result<RwLoadScan, ElfError> {
     let phdr_size = size_of::<Elf64_Phdr>();
+
+    // `--compile-executable-path` accepts arbitrary files; reject a bogus
+    // e_phoff/e_phnum up front instead of indexing past `data`.
+    let phdr_table_end = ehdr
+        .e_phoff
+        .saturating_add((ehdr.e_phnum as u64).saturating_mul(phdr_size as u64));
+    if phdr_table_end > data.len() as u64 {
+        return Err(ElfError::InvalidElfFile);
+    }
+
     let mut rw_phdr_index: Option<usize> = None;
     let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
     let mut max_vaddr_end: u64 = 0;
@@ -514,7 +524,7 @@ fn scan_load_segments(data: &[u8], ehdr: Elf64_Ehdr) -> Result<RwLoadScan, ElfEr
             continue;
         }
 
-        let vaddr_end = phdr.p_vaddr + phdr.p_memsz;
+        let vaddr_end = phdr.p_vaddr.saturating_add(phdr.p_memsz);
         if vaddr_end > max_vaddr_end {
             max_vaddr_end = vaddr_end;
         }

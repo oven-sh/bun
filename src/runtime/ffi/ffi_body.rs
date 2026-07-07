@@ -724,7 +724,7 @@ impl CompileC {
                         $(p.push(b'/');
                           p.extend_from_slice($seg);)+
                         p.push(0);
-                        if let Ok(z) = bun_core::ZStr::from_bytes_with_nul(&p) {
+                        let z = bun_core::ZStr::from_slice_with_nul(&p);
                             if $is_lib {
                                 let _ = state.add_library_path(z);
                             } else {

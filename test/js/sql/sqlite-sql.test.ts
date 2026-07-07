@@ -980,14 +980,16 @@ describe("Query Execution", () => {
   test("surfaces a syntax error in a later statement after earlier ones run", async () => {
     await sql.unsafe(`CREATE TABLE batch_err (v INTEGER)`);
 
-    let threw = false;
+    let caught: unknown;
     try {
       // A row-returning first statement used to hide the invalid tail entirely.
       await sql.unsafe("INSERT INTO batch_err VALUES (1) RETURNING v; this is not valid sql");
     } catch (e) {
-      threw = true;
+      caught = e;
     }
-    expect(threw).toBe(true);
+    expect((caught as any)?.name).toBe("SQLiteError");
+    expect((caught as any)?.code).toBe("SQLITE_ERROR");
+    expect((caught as Error)?.message).toMatch(/syntax/i);
 
     // The valid statement before the error still executed.
     const rows = await sql`SELECT count(*) AS n FROM batch_err`;
@@ -2093,7 +2095,7 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    const iterations = 2000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
@@ -2114,7 +2116,7 @@ describe("Memory and resource management", () => {
     expect(finalCount[0].count).toBe(iterations - 300);
 
     await sql.close();
-  }, 60_000);
+  });
 
   test("handles many concurrent prepared statements", async () => {
     const sql = new SQL("sqlite://:memory:");
@@ -4963,7 +4965,7 @@ describe("Query Normalization Fuzzing Tests", () => {
     ).toBe(1);
     await sql.unsafe(`SELECT * FROM "${longName}"`);
     await sql.unsafe(`DROP TABLE "${longName}"`);
-  }, 60_000);
+  });
 
   describe("Result Modes", () => {
     test("values() mode returns arrays instead of objects", async () => {

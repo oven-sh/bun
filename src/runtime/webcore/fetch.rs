@@ -380,12 +380,7 @@ fn reject_on_exception(
             None => return result,
         },
     };
-    Ok(
-        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-            global_this,
-            err,
-        ),
-    )
+    Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

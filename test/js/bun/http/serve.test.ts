@@ -2539,7 +2539,10 @@ it.concurrent(
     const results = await Promise.all([
       raw("get", "GET /get HTTP/1.1\r\nHost: a\r\n\r\n"),
       raw("post-cl", "POST /post-cl HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"),
-      raw("post-chunked", "POST /post-chunked HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n"),
+      raw(
+        "post-chunked",
+        "POST /post-chunked HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n",
+      ),
       raw("post-t6", "POST /t6 HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"),
     ]);
 

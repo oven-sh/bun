@@ -19,6 +19,10 @@ test("node:http upgrade socket emits 'close' when the WebSocket peer closes", as
   server.on("upgrade", (req, socket, head) => {
     socket.once("error", err => rawSocketClosed.reject(err));
     socket.once("close", () => rawSocketClosed.resolve());
+    // `ws` is load-bearing, not incidental: only its graceful bidirectional
+    // close handshake (close frame -> reply -> both FIN) reaches the native
+    // socket-closed callback. A raw client `destroy()` takes the abort path,
+    // which already emitted 'close' before the fix, so it does not reproduce.
     wss.handleUpgrade(req, socket, head, ws => {
       ws.on("error", err => {
         echoed.reject(err);

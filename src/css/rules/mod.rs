@@ -540,7 +540,8 @@ impl<R> CssRuleList<R> {
                         if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
                             && last_rule.condition.eql(&supp.condition)
                         {
-                            // Drop the duplicate-condition rule outright.
+                            last_rule.rules.v.append(&mut supp.rules.v);
+                            last_rule.minify(context, parent_is_unused)?;
                             break 'arm;
                         }
                         supp.minify(context, parent_is_unused)?;

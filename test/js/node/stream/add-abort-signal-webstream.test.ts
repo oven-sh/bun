@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { addAbortSignal } from "node:stream";
 
 // node:stream's addAbortSignal is documented to accept WHATWG web streams since Node 19 and

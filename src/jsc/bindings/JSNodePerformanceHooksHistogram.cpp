@@ -246,17 +246,23 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     forEachPercentile([&](double percentile, int64_t value) {
-        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        if (scope.exception()) [[unlikely]]
-            return false;
-        map->set(globalObject, jsNumber(percentile), jsValue);
+        map->set(globalObject, jsNumber(percentile), jsNumber(static_cast<double>(value)));
         return !scope.exception();
     });
 }
 
 void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globalObject, JSC::JSMap* map)
 {
-    getPercentiles(globalObject, map);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    forEachPercentile([&](double percentile, int64_t value) {
+        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
+        if (scope.exception()) [[unlikely]]
+            return false;
+        map->set(globalObject, jsNumber(percentile), jsValue);
+        return !scope.exception();
+    });
 }
 
 JSC::JSObject* JSNodePerformanceHooksHistogram::getPercentilesObject(JSGlobalObject* globalObject)

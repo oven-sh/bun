@@ -464,14 +464,25 @@ describe("Histogram", () => {
 
       assert.strictEqual(percentiles.size, percentilesBigInt.size);
 
-      for (const [key, value] of percentiles) {
+      for (const [key, value] of percentilesBigInt) {
         assert.strictEqual(typeof key, "number");
         assert.strictEqual(typeof value, "bigint");
+        assert.ok(percentiles.has(key));
+      }
+    });
 
-        assert.ok(percentilesBigInt.has(key));
-        const bigIntValue = percentilesBigInt.get(key);
-        assert.strictEqual(typeof bigIntValue, "bigint");
-        assert.strictEqual(value, bigIntValue);
+    test("percentiles returns number values, percentilesBigInt returns bigint values", () => {
+      const h = createHistogram();
+      for (let i = 1; i <= 10; i++) h.record(i);
+
+      for (const [key, value] of h.percentiles) {
+        assert.strictEqual(typeof key, "number");
+        assert.strictEqual(typeof value, "number");
+      }
+
+      for (const [key, value] of h.percentilesBigInt) {
+        assert.strictEqual(typeof key, "number");
+        assert.strictEqual(typeof value, "bigint");
       }
     });
 

@@ -174,7 +174,7 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 promise.resolve(global, empty)?;
                 fire_event(global, false);
             }
-            Outcome::Items(items) => match create_items_array(global, items) {
+            Outcome::Items(items) => match create_items_array(global, &items) {
                 Ok(value) => {
                     promise.resolve(global, value)?;
                     fire_event(global, false);
@@ -207,7 +207,7 @@ fn fire_event(global: &JSGlobalObject, is_copy: bool) {
 }
 
 /// `[ClipboardItem]` (or `[]`) from the representations a `read()` found.
-fn create_items_array(global: &JSGlobalObject, items: Vec<(Mime, Vec<u8>)>) -> JsResult<JSValue> {
+fn create_items_array(global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) -> JsResult<JSValue> {
     if items.is_empty() {
         return JSValue::create_empty_array(global, 0);
     }

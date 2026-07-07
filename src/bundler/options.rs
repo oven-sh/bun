@@ -2583,7 +2583,10 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
     loop {
         let sep = rest.iter().position(|&b| b == b'/' || b == b'\\');
         let seg = sep.map_or(rest, |i| &rest[..i]);
-        PathTemplate::write_replacing_slashes_on_windows(writer, if seg == b".." { b"_.._" } else { seg })?;
+        PathTemplate::write_replacing_slashes_on_windows(
+            writer,
+            if seg == b".." { b"_.._" } else { seg },
+        )?;
         let Some(i) = sep else { return Ok(()) };
         PathTemplate::write_replacing_slashes_on_windows(writer, b"/")?;
         rest = &rest[i + 1..];

@@ -6177,10 +6177,23 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         // the `W` entry point like every other Windows path in this crate.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, filename.as_bytes());
-        // SAFETY: `to_w_path` NUL-terminates `wbuf`; `hFile` is reserved (NULL);
-        // `dwFlags = 0` is equivalent to `LoadLibraryW`.
+        // Match libuv `uv_dlopen` (and Bun's own `process.dlopen`): request
+        // altered search so dependent DLLs resolve next to the loaded module.
+        // MSDN documents that flag as undefined for relative paths, so only
+        // set it when absolute; bare names keep the standard search order.
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+        let dw_flags = if bun_paths::is_absolute_windows(filename.as_bytes()) {
+            LOAD_WITH_ALTERED_SEARCH_PATH
+        } else {
+            0
+        };
+        // SAFETY: `to_w_path` NUL-terminates `wbuf`; `hFile` is reserved (NULL).
         let p = unsafe {
-            bun_windows_sys::kernel32::LoadLibraryExW(wpath.as_ptr(), core::ptr::null_mut(), 0)
+            bun_windows_sys::kernel32::LoadLibraryExW(
+                wpath.as_ptr(),
+                core::ptr::null_mut(),
+                dw_flags,
+            )
         };
         if p.is_null() { None } else { Some(p.cast()) }
     }

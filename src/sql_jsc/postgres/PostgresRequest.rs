@@ -293,7 +293,11 @@ fn write_array_literal(
     }
     // `box` is the one built-in type whose array literal uses `;` as the
     // element delimiter (its scalar text already contains commas).
-    let delimiter = if tag == types::Tag::box_array { b';' } else { b',' };
+    let delimiter = if tag == types::Tag::box_array {
+        b';'
+    } else {
+        b','
+    };
     let is_bytea = tag == types::Tag::bytea_array;
     let is_json = matches!(tag, types::Tag::json_array | types::Tag::jsonb_array);
 
@@ -310,7 +314,9 @@ fn write_array_literal(
             out.extend_from_slice(b"NULL");
         } else if element.is_array() {
             write_array_literal(out, element, global, tag, depth + 1)?;
-        } else if is_json || (element.is_object() && !element.is_date() && !element.is_buffer(global)) {
+        } else if is_json
+            || (element.is_object() && !element.is_date() && !element.is_buffer(global))
+        {
             // json[]/jsonb[] elements must be valid JSON text, so every scalar
             // element goes through JSON.stringify. Plain objects elsewhere use
             // the same path.

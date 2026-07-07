@@ -220,6 +220,17 @@ test("addCACert on one user-facing context does not affect another with identica
   expect(a.context).not.toBe(b.context);
 });
 
+// The digest-interned cache is deliberately reachable only through internal
+// paths, but if one leaks (Symbol.for constructor, TLSSocket internals) the
+// mutator itself must refuse rather than silently poison every consumer.
+test("addCACert on a digest-interned context throws instead of poisoning the cache", () => {
+  const NativeSecureContext = tls.Server.prototype[Symbol.for("::buntlsnativesecurecontextctor::")];
+  const a = NativeSecureContext.intern({ ca: tlsCerts.cert });
+  const b = NativeSecureContext.intern({ ca: tlsCerts.cert });
+  expect(a).toBe(b);
+  expect(() => a.addCACert(tlsCerts.ca)).toThrow("cannot mutate a shared SecureContext");
+});
+
 // The exported constructor is user-facing too: it must never hand out the
 // digest-interned SSL_CTX, or addCACert on one instance would silently extend
 // the trust store of every context sharing that digest.
@@ -243,7 +254,12 @@ test("addCACert on one exported SecureContext instance does not change what anot
   const b = new (tls as any).SecureContext({ ca: fx("ca2-cert.pem") });
   a.context.addCACert(fx("ca1-cert.pem"));
   const outcome = Promise.withResolvers<string>();
-  const socket = tls.connect({ port, secureContext: b, checkServerIdentity: () => undefined });
+  const socket = tls.connect({
+    port,
+    secureContext: b,
+    rejectUnauthorized: true,
+    checkServerIdentity: () => undefined,
+  });
   socket.on("secureConnect", () => outcome.resolve(`secureConnect authorized=${socket.authorized}`));
   socket.on("error", error => outcome.resolve(`error ${(error as NodeJS.ErrnoException).code}`));
   try {

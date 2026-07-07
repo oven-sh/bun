@@ -1275,15 +1275,272 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
     return X509_verify(const_cast<X509*>(cert_), pkey.get()) == 1;
 }
 
+// BoringSSL's X509_check_host/X509_check_email drop several OpenSSL options
+// that Node's X509Certificate.checkHost/checkEmail expose: ALWAYS_CHECK_SUBJECT,
+// NO_PARTIAL_WILDCARDS, MULTI_LABEL_WILDCARDS and SINGLE_LABEL_SUBDOMAINS are
+// all #defined to 0, and the subject-DN fallback / partial-wildcard matching
+// is gone. To match Node, port OpenSSL crypto/x509/v3_utl.c do_x509_check and
+// its helpers here and drive them with X509View::CheckFlags.
+namespace {
+
+// Internal flag set when the caller-provided name begins with '.'.
+constexpr int kDotSubdomainsFlag = 0x8000;
+
+using CheckFlags = X509View::CheckFlags;
+using EqualFn = int (*)(const unsigned char*, size_t, const unsigned char*, size_t, unsigned int);
+
+void skip_prefix(const unsigned char** p, size_t* plen, size_t subject_len, unsigned int flags)
+{
+    if ((flags & kDotSubdomainsFlag) == 0) return;
+    const unsigned char* pattern = *p;
+    size_t pattern_len = *plen;
+    while (pattern_len > subject_len && *pattern) {
+        if ((flags & CheckFlags::SINGLE_LABEL_SUBDOMAINS) && *pattern == '.') break;
+        ++pattern;
+        --pattern_len;
+    }
+    if (pattern_len == subject_len) {
+        *p = pattern;
+        *plen = pattern_len;
+    }
+}
+
+int equal_nocase(const unsigned char* pattern, size_t pattern_len,
+    const unsigned char* subject, size_t subject_len, unsigned int flags)
+{
+    skip_prefix(&pattern, &pattern_len, subject_len, flags);
+    if (pattern_len != subject_len) return 0;
+    while (pattern_len != 0) {
+        unsigned char l = *pattern;
+        unsigned char r = *subject;
+        if (l == 0) return 0;
+        if (l != r) {
+            if ('A' <= l && l <= 'Z') l = (l - 'A') + 'a';
+            if ('A' <= r && r <= 'Z') r = (r - 'A') + 'a';
+            if (l != r) return 0;
+        }
+        ++pattern;
+        ++subject;
+        --pattern_len;
+    }
+    return 1;
+}
+
+int equal_case(const unsigned char* pattern, size_t pattern_len,
+    const unsigned char* subject, size_t subject_len, unsigned int flags)
+{
+    skip_prefix(&pattern, &pattern_len, subject_len, flags);
+    if (pattern_len != subject_len) return 0;
+    return memcmp(pattern, subject, pattern_len) == 0;
+}
+
+int equal_email(const unsigned char* a, size_t a_len,
+    const unsigned char* b, size_t b_len, unsigned int)
+{
+    if (a_len != b_len) return 0;
+    size_t i = a_len;
+    while (i > 0) {
+        --i;
+        if (a[i] == '@' || b[i] == '@') {
+            if (!equal_nocase(a + i, a_len - i, b + i, a_len - i, 0)) return 0;
+            break;
+        }
+    }
+    if (i == 0) i = a_len;
+    return equal_case(a, i, b, i, 0);
+}
+
+int wildcard_match(const unsigned char* prefix, size_t prefix_len,
+    const unsigned char* suffix, size_t suffix_len,
+    const unsigned char* subject, size_t subject_len, unsigned int flags)
+{
+    if (subject_len < prefix_len + suffix_len) return 0;
+    if (!equal_nocase(prefix, prefix_len, subject, prefix_len, flags)) return 0;
+    const unsigned char* wildcard_start = subject + prefix_len;
+    const unsigned char* wildcard_end = subject + (subject_len - suffix_len);
+    if (!equal_nocase(wildcard_end, suffix_len, suffix, suffix_len, flags)) return 0;
+    int allow_multi = 0;
+    int allow_idna = 0;
+    if (prefix_len == 0 && *suffix == '.') {
+        if (wildcard_start == wildcard_end) return 0;
+        allow_idna = 1;
+        if (flags & CheckFlags::MULTI_LABEL_WILDCARDS) allow_multi = 1;
+    }
+    if (!allow_idna && subject_len >= 4
+        && OPENSSL_strncasecmp(reinterpret_cast<const char*>(subject), "xn--", 4) == 0)
+        return 0;
+    if (wildcard_end == wildcard_start + 1 && *wildcard_start == '*') return 1;
+    for (const unsigned char* p = wildcard_start; p != wildcard_end; ++p) {
+        if (!(('0' <= *p && *p <= '9') || ('A' <= *p && *p <= 'Z')
+                || ('a' <= *p && *p <= 'z') || *p == '-' || (allow_multi && *p == '.')))
+            return 0;
+    }
+    return 1;
+}
+
+constexpr int kLabelStart = 1 << 0;
+constexpr int kLabelHyphen = 1 << 2;
+constexpr int kLabelIdna = 1 << 3;
+
+const unsigned char* valid_star(const unsigned char* p, size_t len, unsigned int flags)
+{
+    const unsigned char* star = nullptr;
+    int state = kLabelStart;
+    int dots = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (p[i] == '*') {
+            int atstart = (state & kLabelStart);
+            int atend = (i == len - 1 || p[i + 1] == '.');
+            if (star != nullptr || (state & kLabelIdna) != 0 || dots) return nullptr;
+            if ((flags & CheckFlags::NO_PARTIAL_WILDCARDS) && (!atstart || !atend))
+                return nullptr;
+            if (!atstart && !atend) return nullptr;
+            star = &p[i];
+            state &= ~kLabelStart;
+        } else if (('a' <= p[i] && p[i] <= 'z') || ('A' <= p[i] && p[i] <= 'Z')
+            || ('0' <= p[i] && p[i] <= '9')) {
+            if ((state & kLabelStart) != 0 && len - i >= 4
+                && OPENSSL_strncasecmp(reinterpret_cast<const char*>(&p[i]), "xn--", 4) == 0)
+                state |= kLabelIdna;
+            state &= ~(kLabelHyphen | kLabelStart);
+        } else if (p[i] == '.') {
+            if ((state & (kLabelHyphen | kLabelStart)) != 0) return nullptr;
+            state = kLabelStart;
+            ++dots;
+        } else if (p[i] == '-') {
+            if ((state & kLabelStart) != 0) return nullptr;
+            state |= kLabelHyphen;
+        } else {
+            return nullptr;
+        }
+    }
+    if ((state & (kLabelStart | kLabelHyphen)) != 0 || dots < 2) return nullptr;
+    return star;
+}
+
+int equal_wildcard(const unsigned char* pattern, size_t pattern_len,
+    const unsigned char* subject, size_t subject_len, unsigned int flags)
+{
+    const unsigned char* star = nullptr;
+    if (!(subject_len > 1 && subject[0] == '.'))
+        star = valid_star(pattern, pattern_len, flags);
+    if (star == nullptr)
+        return equal_nocase(pattern, pattern_len, subject, subject_len, flags);
+    return wildcard_match(pattern, star - pattern, star + 1,
+        (pattern + pattern_len) - star - 1, subject, subject_len, flags);
+}
+
+int do_check_string(const ASN1_STRING* a, int cmp_type, EqualFn equal,
+    unsigned int flags, const char* b, size_t blen, char** peername)
+{
+    if (!a->data || !a->length) return 0;
+    int rv = 0;
+    if (cmp_type > 0) {
+        if (cmp_type != a->type) return 0;
+        if (cmp_type == V_ASN1_IA5STRING)
+            rv = equal(a->data, a->length, reinterpret_cast<const unsigned char*>(b), blen, flags);
+        else if (a->length == static_cast<int>(blen) && memcmp(a->data, b, blen) == 0)
+            rv = 1;
+        if (rv > 0 && peername != nullptr) {
+            *peername = OPENSSL_strndup(reinterpret_cast<const char*>(a->data), a->length);
+            if (*peername == nullptr) return -1;
+        }
+    } else {
+        unsigned char* astr;
+        int astrlen = ASN1_STRING_to_UTF8(&astr, a);
+        if (astrlen < 0) return -1;
+        rv = equal(astr, astrlen, reinterpret_cast<const unsigned char*>(b), blen, flags);
+        if (rv > 0 && peername != nullptr) {
+            *peername = OPENSSL_strndup(reinterpret_cast<const char*>(astr), astrlen);
+            if (*peername == nullptr) {
+                OPENSSL_free(astr);
+                return -1;
+            }
+        }
+        OPENSSL_free(astr);
+    }
+    return rv;
+}
+
+int do_x509_check(const X509* x, const char* chk, size_t chklen,
+    unsigned int flags, int check_type, char** peername)
+{
+    int cnid = NID_undef;
+    int alt_type;
+    int san_present = 0;
+    int rv = 0;
+    EqualFn equal;
+
+    flags &= ~kDotSubdomainsFlag;
+    if (check_type == GEN_EMAIL) {
+        cnid = NID_pkcs9_emailAddress;
+        alt_type = V_ASN1_IA5STRING;
+        equal = equal_email;
+    } else if (check_type == GEN_DNS) {
+        cnid = NID_commonName;
+        if (chklen > 1 && chk[0] == '.') flags |= kDotSubdomainsFlag;
+        alt_type = V_ASN1_IA5STRING;
+        if (flags & CheckFlags::NO_WILDCARDS)
+            equal = equal_nocase;
+        else
+            equal = equal_wildcard;
+    } else {
+        alt_type = V_ASN1_OCTET_STRING;
+        equal = equal_case;
+    }
+
+    GENERAL_NAMES* gens = static_cast<GENERAL_NAMES*>(
+        X509_get_ext_d2i(x, NID_subject_alt_name, nullptr, nullptr));
+    if (gens) {
+        for (OPENSSL_SIZE_T i = 0; i < sk_GENERAL_NAME_num(gens); i++) {
+            const GENERAL_NAME* gen = sk_GENERAL_NAME_value(gens, i);
+            const ASN1_STRING* cstr;
+            if (gen->type == GEN_EMAIL && check_type == GEN_EMAIL)
+                cstr = gen->d.rfc822Name;
+            else if (gen->type == GEN_DNS && check_type == GEN_DNS)
+                cstr = gen->d.dNSName;
+            else if (gen->type == GEN_IPADD && check_type == GEN_IPADD)
+                cstr = gen->d.iPAddress;
+            else
+                continue;
+            san_present = 1;
+            if ((rv = do_check_string(cstr, alt_type, equal, flags, chk, chklen,
+                     peername))
+                != 0)
+                break;
+        }
+        GENERAL_NAMES_free(gens);
+        if (rv != 0) return rv;
+        if (san_present && !(flags & CheckFlags::ALWAYS_CHECK_SUBJECT)) return 0;
+    }
+
+    if (cnid == NID_undef || (flags & CheckFlags::NEVER_CHECK_SUBJECT)) return 0;
+
+    const X509_NAME* name = X509_get_subject_name(x);
+    int j = -1;
+    while ((j = X509_NAME_get_index_by_NID(name, cnid, j)) >= 0) {
+        const X509_NAME_ENTRY* ne = X509_NAME_get_entry(name, j);
+        const ASN1_STRING* str = X509_NAME_ENTRY_get_data(ne);
+        if ((rv = do_check_string(str, -1, equal, flags, chk, chklen, peername)) != 0)
+            return rv;
+    }
+    return 0;
+}
+
+} // namespace
+
 X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     int flags,
     DataPointer* peerName) const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    char* peername;
-    switch (X509_check_host(
-        const_cast<X509*>(cert_), host.data(), host.size(), flags, &peername)) {
+    if (host.data() == nullptr) return CheckMatch::INVALID_NAME;
+    if (memchr(host.data(), '\0', host.size()) != nullptr)
+        return CheckMatch::INVALID_NAME;
+    char* peername = nullptr;
+    switch (do_x509_check(cert_, host.data(), host.size(), flags, GEN_DNS,
+        &peername)) {
     case 0:
         return CheckMatch::NO_MATCH;
     case 1: {
@@ -1305,8 +1562,11 @@ X509View::CheckMatch X509View::checkEmail(const std::span<const char> email,
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    switch (X509_check_email(
-        const_cast<X509*>(cert_), email.data(), email.size(), flags)) {
+    if (email.data() == nullptr) return CheckMatch::INVALID_NAME;
+    if (memchr(email.data(), '\0', email.size()) != nullptr)
+        return CheckMatch::INVALID_NAME;
+    switch (do_x509_check(cert_, email.data(), email.size(), flags, GEN_EMAIL,
+        nullptr)) {
     case 0:
         return CheckMatch::NO_MATCH;
     case 1:

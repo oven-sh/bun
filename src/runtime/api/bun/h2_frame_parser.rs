@@ -4539,7 +4539,12 @@ impl H2FrameParser {
             let cap = (self.local_settings.get().max_header_list_size as usize)
                 .max(65536)
                 .saturating_mul(2);
-            if stream.pending_header_block.len().saturating_add(payload.len()) > cap {
+            if stream
+                .pending_header_block
+                .len()
+                .saturating_add(payload.len())
+                > cap
+            {
                 self.send_go_away(
                     frame.stream_identifier,
                     ErrorCode::ENHANCE_YOUR_CALM,

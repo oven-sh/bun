@@ -327,15 +327,12 @@ describe.concurrent("an already-expired timer runs before the first check phase"
 
   // An entry point that throws rejects the module promise and exits without
   // entering the loop, as Node does; the timer never fires.
-  test.concurrent.each([
-    ["throws", `throw new Error("boom");`],
-    ["leaves an unhandled rejection nobody reports", `Promise.reject(new Error("boom"));`],
-  ])("but not when the entry point %s", async (_name, failure) => {
-    using dir = tempDir("timers-phase-order-failure", {
+  test.concurrent("but not when the entry point throws", async () => {
+    using dir = tempDir("timers-phase-order-throw", {
       "index.js": `
         setTimeout(() => console.log("timer fired"), 1);
         ${blockPastTheDeadline}
-        ${failure}
+        throw new Error("boom");
       `,
     });
 

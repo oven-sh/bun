@@ -426,6 +426,76 @@ it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB 
   });
 }, 60_000);
 
+describe("corrupt compressed responses", () => {
+  // A body decompression failure is a body error: fetch() must resolve (status
+  // and headers are available) and the body reader rejects. Previously, when
+  // head+body arrived in a single read, the decompress error failed the HTTP
+  // task before the head reached JS and fetch() itself rejected, so the error
+  // surface depended on packet timing.
+  const corrupt = (compress: (b: Buffer) => Buffer) => {
+    const payload = compress(Buffer.alloc(18000, "The quick brown fox jumps over the lazy dog. "));
+    // Flip a run of early bytes so every codec reports a decode error (br/zstd
+    // store this input near-literally, so a single mid-stream flip passes).
+    for (let i = 2; i < 8; i++) payload[i] ^= 0xff;
+    return payload;
+  };
+  const bodies = {
+    gzip: corrupt(gzipSync),
+    deflate: corrupt(deflateSync),
+    br: corrupt(brotliCompressSync),
+    zstd: corrupt(zstdCompressSync),
+  };
+  const listen = (srv: import("node:net").Server) =>
+    new Promise<number>(r => srv.listen(0, "127.0.0.1", () => r((srv.address() as { port: number }).port)));
+
+  for (const [encoding, body] of Object.entries(bodies)) {
+    for (const framing of ["content-length", "chunked"] as const) {
+      it(`${encoding} ${framing}: fetch() resolves, body read rejects`, async () => {
+        const head =
+          framing === "content-length"
+            ? `HTTP/1.1 200 OK\r\nx-marker: present\r\nContent-Encoding: ${encoding}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`
+            : `HTTP/1.1 200 OK\r\nx-marker: present\r\nContent-Encoding: ${encoding}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n`;
+        const payload =
+          framing === "content-length"
+            ? body
+            : Buffer.concat([Buffer.from(body.length.toString(16) + "\r\n"), body, Buffer.from("\r\n0\r\n\r\n")]);
+
+        // Single write so head+body land in one client read (the case that
+        // previously rejected fetch()). The split-read timing was already
+        // correct and is equivalent after this fix.
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.end(Buffer.concat([Buffer.from(head), payload]));
+        });
+        const port = await listen(srv);
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          expect(res.status).toBe(200);
+          expect(res.headers.get("x-marker")).toBe("present");
+          const bodyErr = await res.arrayBuffer().then(
+            () => null,
+            e => e,
+          );
+          expect(bodyErr).toBeInstanceOf(Error);
+          // The streaming body reader must surface the same failure.
+          const res2 = await fetch(`http://127.0.0.1:${port}/`);
+          expect(res2.status).toBe(200);
+          const reader = res2.body!.getReader();
+          let streamErr: unknown = null;
+          try {
+            while (!(await reader.read()).done) {}
+          } catch (e) {
+            streamErr = e;
+          }
+          expect(streamErr).toBeInstanceOf(Error);
+        } finally {
+          srv.close();
+        }
+      });
+    }
+  }
+});
+
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.

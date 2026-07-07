@@ -1027,7 +1027,10 @@ impl FetchTasklet {
             this.promise = jsc::JSPromiseStrong::empty();
         };
 
-        let success = self.result.is_success();
+        // WHATWG fetch: once the response head is available the promise
+        // resolves; post-head failures (body decompression etc.) surface on
+        // the body reader regardless of whether head+body arrived in one read.
+        let success = self.result.is_success() || self.metadata.is_some();
         let result = if success {
             StrongOptional::create(self.on_resolve(), &global_this)
         } else {
@@ -1668,6 +1671,11 @@ impl FetchTasklet {
     fn to_body_value(&mut self) -> BodyValue {
         if let Some(err) = self.get_abort_error() {
             return BodyValue::Error(err);
+        }
+        if self.result.fail.is_some() {
+            // Head received but body failed in the same callback; surface on
+            // the body so this matches the split-read `on_body_received` path.
+            return BodyValue::Error(self.on_reject());
         }
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);

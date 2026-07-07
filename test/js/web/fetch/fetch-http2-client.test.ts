@@ -1959,3 +1959,89 @@ test("await fetch() over HTTP/2 resolves on headers, before a content-length bod
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/16682 (h2 aggregate path): the
+// session's shared socket timer is the max over every attached client's
+// effective idle deadline.
+test("h2: per-request `timeout` extends the session idle deadline, and {timeout:false} is not killed by a sibling's shorter explicit timeout", async () => {
+  const HOLD_MS = 10_000;
+  const server = makeH2Server({}, (_req, res) => {
+    // Hold every request idle past uSockets' worst-case firing window for a
+    // 1s short-tick timer (~5s), then respond.
+    setTimeout(() => {
+      try {
+        res.end("hello");
+      } catch {}
+    }, HOLD_MS);
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("node:net").AddressInfo;
+  try {
+    const run = async (idleDefault: string, body: string) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--no-warnings",
+          "-e",
+          /* js */ `
+            const url = "https://localhost:${port}";
+            const get = init => fetch(url, { tls: { rejectUnauthorized: false }, ...init })
+              .then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
+            ${body}
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: "1",
+          BUN_CONFIG_HTTP_IDLE_TIMEOUT: idleDefault,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    };
+    const [extendsDefault, floorsSibling] = await Promise.all([
+      // Global idle default = 1s. `{timeout:60000}` must extend the shared
+      // socket's deadline past the 10s hold; the `{timeout:false}` sibling
+      // coalesces onto the same session and rides along.
+      run(
+        "1",
+        /* js */ `
+          const [longTimeout, noTimeout] = await Promise.all([
+            get({ timeout: 60_000 }),
+            get({ timeout: false }),
+          ]);
+          console.log(JSON.stringify({ longTimeout, noTimeout }));
+        `,
+      ),
+      // Global idle default = 20s. `{timeout:false}` contributes 0 to the
+      // session max and the `{timeout:1000}` sibling contributes 1s; the
+      // session must floor at the 20s global default so the no-timeout
+      // stream is not killed by the sibling's short explicit deadline.
+      run(
+        "20",
+        /* js */ `
+          const [noTimeout, shortTimeout] = await Promise.all([
+            get({ timeout: false }),
+            get({ timeout: 1000 }),
+          ]);
+          console.log(JSON.stringify({ noTimeout, shortTimeout }));
+        `,
+      ),
+    ]);
+    expect(extendsDefault).toEqual({
+      stdout: JSON.stringify({ longTimeout: "hello", noTimeout: "hello" }),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(floorsSibling).toEqual({
+      stdout: JSON.stringify({ noTimeout: "hello", shortTimeout: "hello" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  } finally {
+    server.close();
+  }
+}, 60_000);

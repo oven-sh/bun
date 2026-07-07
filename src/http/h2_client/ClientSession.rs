@@ -522,13 +522,26 @@ impl ClientSession {
         // longest effective idle timeout among them (0 = every client
         // disabled the timer, or none are attached).
         let mut want: core::ffi::c_uint = 0;
+        let mut any_disabled = false;
         for &s in self.streams.values() {
             if let Some(c) = stream_ref(s).client_ref() {
+                any_disabled |= c.flags.disable_timeout;
                 want = want.max(c.effective_idle_timeout_seconds());
             }
         }
         for &c in &self.pending_attach {
-            want = want.max(pending_client_mut(c).effective_idle_timeout_seconds());
+            let c = pending_client_mut(c);
+            any_disabled |= c.flags.disable_timeout;
+            want = want.max(c.effective_idle_timeout_seconds());
+        }
+        // A `{timeout:false}` client contributes 0 to the max, which would let
+        // a sibling's short explicit override arm the shared socket and kill
+        // both. Floor at the global default when the two coexist so the
+        // no-timeout stream keeps the same lower bound it had before
+        // per-request overrides existed; when every client opted out `want`
+        // is still 0 and the timer stays disarmed.
+        if any_disabled && want != 0 {
+            want = want.max(crate::idle_timeout_seconds());
         }
         self.socket.set_timeout(want);
     }

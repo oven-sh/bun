@@ -2581,7 +2581,11 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
 ) -> bun_io::Result<()> {
     let mut rest: &[u8] = dir;
     loop {
-        let sep = rest.iter().position(|&b| b == b'/' || b == b'\\');
+        // On POSIX `\` is a legal filename byte, not a separator, so only split
+        // on it under Windows (matches `write_replacing_slashes_on_windows`).
+        let sep = rest
+            .iter()
+            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
         let seg = sep.map_or(rest, |i| &rest[..i]);
         PathTemplate::write_replacing_slashes_on_windows(
             writer,
@@ -2591,6 +2595,27 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
         PathTemplate::write_replacing_slashes_on_windows(writer, b"/")?;
         rest = &rest[i + 1..];
     }
+}
+
+#[cfg(test)]
+#[test]
+fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
+    fn run(dir: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_sanitized_parent_dirs(&mut out, dir).unwrap();
+        out
+    }
+    // Leading `..` (the `[dir]` placeholder shape).
+    assert_eq!(run(b".."), b"_.._");
+    assert_eq!(run(b"../../worker.js"), b"_.._/_.._/worker.js");
+    // Non-leading `..` from a custom `--entry-naming` prefix before `[dir]`.
+    assert_eq!(run(b"out/../../worker.js"), b"out/_.._/_.._/worker.js");
+    // No traversal passes through; `..foo` is a filename, not a parent segment.
+    assert_eq!(run(b"a/b/c.js"), b"a/b/c.js");
+    assert_eq!(run(b"..foo/x.js"), b"..foo/x.js");
+    // POSIX: `\` is an ordinary filename byte, not a separator.
+    #[cfg(not(windows))]
+    assert_eq!(run(br"weird\dir/x.js"), br"weird\dir/x.js");
 }
 
 impl PathTemplate {

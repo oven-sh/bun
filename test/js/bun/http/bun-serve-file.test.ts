@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { appendFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1138,3 +1138,85 @@ console.log("OK");
   },
   60_000,
 );
+
+describe.concurrent("Bun.file response after the file grew on disk", () => {
+  // Touching `.size`/`.exists()` caches the stat result on the BunFile. If the
+  // file then grows before the Response is sent, the stale cached size must not
+  // be mistaken for a `.slice()` bound: the fresh stat taken at send time wins,
+  // and the whole file is served as a plain 200.
+  async function run(mode: string, init?: ResponseInit, reqInit?: RequestInit) {
+    using dir = tempDir("serve-file-grow", {});
+    const p = join(String(dir), "asset.bin");
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        writeFileSync(p, Buffer.alloc(1000, 65));
+        const f = Bun.file(p);
+        if (mode === "size") void f.size;
+        if (mode === "exists") await f.exists();
+        appendFileSync(p, Buffer.alloc(4000, 66));
+        return new Response(f, init);
+      },
+    });
+    const res = await fetch(server.url, reqInit);
+    const body = new Uint8Array(await res.arrayBuffer());
+    return {
+      status: res.status,
+      contentRange: res.headers.get("content-range"),
+      contentLength: res.headers.get("content-length"),
+      bodyLength: body.byteLength,
+      body,
+    };
+  }
+
+  it.each(["none", "size", "exists"])(
+    "serves the fresh file as 200 after %s was touched (no init headers)",
+    async mode => {
+      const r = await run(mode);
+      expect({
+        status: r.status,
+        contentRange: r.contentRange,
+        contentLength: r.contentLength,
+        bodyLength: r.bodyLength,
+      }).toEqual({ status: 200, contentRange: null, contentLength: "5000", bodyLength: 5000 });
+      expect(r.body.subarray(0, 1000)).toEqual(Buffer.alloc(1000, 65));
+      expect(r.body.subarray(1000)).toEqual(Buffer.alloc(4000, 66));
+    },
+  );
+
+  it.each(["none", "size", "exists"])(
+    "serves the fresh file as 200 after %s was touched (with init headers)",
+    async mode => {
+      const r = await run(mode, { headers: { "x-a": "b" } });
+      expect({
+        status: r.status,
+        contentRange: r.contentRange,
+        contentLength: r.contentLength,
+        bodyLength: r.bodyLength,
+      }).toEqual({ status: 200, contentRange: null, contentLength: "5000", bodyLength: 5000 });
+    },
+  );
+
+  it("still resolves an incoming Range header against the fresh size", async () => {
+    const r = await run("size", undefined, { headers: { Range: "bytes=0-1999" } });
+    expect({
+      status: r.status,
+      contentRange: r.contentRange,
+      contentLength: r.contentLength,
+      bodyLength: r.bodyLength,
+    }).toEqual({ status: 206, contentRange: "bytes 0-1999/5000", contentLength: "2000", bodyLength: 2000 });
+    expect(r.body.subarray(0, 1000)).toEqual(Buffer.alloc(1000, 65));
+    expect(r.body.subarray(1000)).toEqual(Buffer.alloc(1000, 66));
+  });
+
+  it("a Range past the stale cached size is satisfiable against the fresh size", async () => {
+    const r = await run("size", undefined, { headers: { Range: "bytes=2000-2999" } });
+    expect({
+      status: r.status,
+      contentRange: r.contentRange,
+      contentLength: r.contentLength,
+      bodyLength: r.bodyLength,
+    }).toEqual({ status: 206, contentRange: "bytes 2000-2999/5000", contentLength: "1000", bodyLength: 1000 });
+    expect(r.body).toEqual(Buffer.alloc(1000, 66));
+  });
+});

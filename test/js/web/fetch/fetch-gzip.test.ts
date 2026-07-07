@@ -644,6 +644,50 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
     });
   });
 
+  // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
+  // the libdeflate fast path takes the decompress_to_vec branch, which must
+  // also detect unconsumed input and fall through.
+  it("content-length, last member > 512 KiB (decompress_to_vec branch)", async () => {
+    const big = Buffer.alloc(600 * 1024, "BIG-LAST-MEMBER-");
+    const body = Buffer.concat([M1, gzipSync(big)]);
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.end(
+        Buffer.concat([
+          Buffer.from(
+            `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+          ),
+          body,
+        ]),
+      );
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const expected = Buffer.concat([P1, big]);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.argv[1]);
+           const buf = Buffer.from(await res.arrayBuffer());
+           console.log(buf.length, Bun.hash(buf).toString(16));`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `${expected.length} ${Bun.hash(expected).toString(16)}`,
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
   // Streaming body path (ResponseBodyStreaming signal set): exercises the
   // per-chunk Decompressor::decompress_chunk path with a member boundary
   // between chunks.

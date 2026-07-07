@@ -1265,7 +1265,10 @@ impl InflateDecoder {
             // A prior call completed a gzip member at the chunk boundary.
             // If this chunk begins another member, reset and decode it.
             if self.multi_member && input.first().is_some_and(|&b| b != 0x00) {
-                self.reset();
+                if self.reset() != ReturnCode::Ok {
+                    self.state = State::Error;
+                    return Err(ZlibError::ZlibError);
+                }
             } else {
                 return Ok(());
             }
@@ -1291,7 +1294,10 @@ impl InflateDecoder {
                     // non-zero bytes may be another gzip member; trailing
                     // zero bytes are padding and end the stream.
                     if self.multi_member && input.first().is_some_and(|&b| b != 0x00) {
-                        self.reset();
+                        if self.reset() != ReturnCode::Ok {
+                            self.state = State::Error;
+                            return Err(ZlibError::ZlibError);
+                        }
                         continue;
                     }
                     return Ok(());

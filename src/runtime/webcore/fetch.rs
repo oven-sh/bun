@@ -1025,77 +1025,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         // Get the URL from the proxy object
                         if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {
                             if !proxy_url_arg.is_undefined_or_null() {
-                                if proxy_url_arg.is_string() && proxy_url_arg.get_length(ctx)? > 0 {
-                                    // +1 ref; see the string-format branch above.
-                                    let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
-                                        proxy_url_arg,
-                                        global_this,
-                                    )?);
-                                    if href.tag() == BunStringTag::Dead {
-                                        let err = ctx.to_type_error(
-                                            jsc::ErrorCode::INVALID_ARG_VALUE,
-                                            format_args!("fetch() proxy URL is invalid"),
-                                        );
-                                        return Ok(
-                                            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                                global_this, err,
-                                            ),
-                                        );
-                                    }
-                                    let mut buffer: Vec<u8> =
-                                        Vec::with_capacity(url_proxy_buffer.len());
-                                    buffer.extend_from_slice(&url_proxy_buffer);
-                                    write!(&mut buffer, "{}", href)
-                                        .expect("write to Vec cannot fail");
-                                    let url_len = url.href.len();
-                                    url = parse_url_detached!(&buffer[0..url_len]);
-                                    if url.is_file() {
-                                        url_type = URLType::File;
-                                    } else if url.is_blob() {
-                                        url_type = URLType::Blob;
-                                    }
-
-                                    proxy = Some(parse_url_detached!(&buffer[url_len..]));
-                                    // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
-                                    url_proxy_buffer = buffer;
-
-                                    // Get the headers from the proxy object (optional)
-                                    if let Some(headers_value) =
-                                        proxy_arg.get(global_this, "headers")?
-                                    {
-                                        if !headers_value.is_undefined_or_null() {
-                                            if let Some(fetch_hdrs) =
-                                                FetchHeaders::cast(headers_value)
-                                            {
-                                                // `cast` returns a live JS-owned FetchHeaders*;
-                                                // BackRef invariant holds for this read.
-                                                let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
-                                                proxy_headers = Some(from_fetch_headers(
-                                                    Some(&*fetch_hdrs),
-                                                    None,
-                                                ));
-                                            } else if let Some(fetch_hdrs) =
-                                                FetchHeaders::create_from_js(ctx, headers_value)?
-                                            {
-                                                // `create_from_js` returns a +1-ref NonNull<FetchHeaders>;
-                                                // RAII guard releases it on scope exit.
-                                                let _guard = FetchHeadersRef(Some(fetch_hdrs));
-                                                let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
-                                                proxy_headers = Some(from_fetch_headers(
-                                                    Some(&*fetch_hdrs),
-                                                    None,
-                                                ));
-                                            }
-                                        }
-                                    }
-
-                                    break 'extract_proxy url_proxy_buffer;
-                                } else {
+                                // Deliberately no type gate: `href_from_js` accepts a string
+                                // or a `URL` object and is the sole validator (Dead = invalid).
+                                // +1 ref; see the string-format branch above.
+                                let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
+                                    proxy_url_arg,
+                                    global_this,
+                                )?);
+                                if href.tag() == BunStringTag::Dead {
                                     let err = ctx.to_type_error(
                                         jsc::ErrorCode::INVALID_ARG_VALUE,
-                                        format_args!(
-                                            "fetch() proxy.url must be a non-empty string"
-                                        ),
+                                        format_args!("fetch() proxy URL is invalid"),
                                     );
                                     return Ok(
                                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1103,6 +1043,48 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                         ),
                                     );
                                 }
+                                let mut buffer: Vec<u8> =
+                                    Vec::with_capacity(url_proxy_buffer.len());
+                                buffer.extend_from_slice(&url_proxy_buffer);
+                                write!(&mut buffer, "{}", href).expect("write to Vec cannot fail");
+                                let url_len = url.href.len();
+                                url = parse_url_detached!(&buffer[0..url_len]);
+                                if url.is_file() {
+                                    url_type = URLType::File;
+                                } else if url.is_blob() {
+                                    url_type = URLType::Blob;
+                                }
+
+                                proxy = Some(parse_url_detached!(&buffer[url_len..]));
+                                // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
+                                url_proxy_buffer = buffer;
+
+                                // Get the headers from the proxy object (optional)
+                                if let Some(headers_value) =
+                                    proxy_arg.get(global_this, "headers")?
+                                {
+                                    if !headers_value.is_undefined_or_null() {
+                                        if let Some(fetch_hdrs) = FetchHeaders::cast(headers_value)
+                                        {
+                                            // `cast` returns a live JS-owned FetchHeaders*;
+                                            // BackRef invariant holds for this read.
+                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
+                                            proxy_headers =
+                                                Some(from_fetch_headers(Some(&*fetch_hdrs), None));
+                                        } else if let Some(fetch_hdrs) =
+                                            FetchHeaders::create_from_js(ctx, headers_value)?
+                                        {
+                                            // `create_from_js` returns a +1-ref NonNull<FetchHeaders>;
+                                            // RAII guard releases it on scope exit.
+                                            let _guard = FetchHeadersRef(Some(fetch_hdrs));
+                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
+                                            proxy_headers =
+                                                Some(from_fetch_headers(Some(&*fetch_hdrs), None));
+                                        }
+                                    }
+                                }
+
+                                break 'extract_proxy url_proxy_buffer;
                             }
                         }
                     }

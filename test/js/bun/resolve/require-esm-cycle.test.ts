@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // require() of an ES module that is currently on the import evaluation stack
@@ -30,11 +30,7 @@ console.log("alive");
       cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "b required a: !ERR_REQUIRE_CYCLE_MODULE\na done\nalive\n",
@@ -64,11 +60,7 @@ console.log("alive");
       cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "self required: !ERR_REQUIRE_CYCLE_MODULE\nalive\n",
@@ -102,11 +94,7 @@ console.log("alive");
       cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "caught: ERR_REQUIRE_CYCLE_MODULE\nalive\n",

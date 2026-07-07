@@ -115,7 +115,6 @@ public:
     /* Trailer fields received after the current request's chunked body, as a
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
      * when there are none. Clears the captured section. */
-    JSC::JSValue takeRequestTrailers(JSC::JSGlobalObject* globalObject);
 
     /* Set the trailer fields (pre-rendered "name: value\r\n" lines) to write
      * between the terminating 0 chunk and the final CRLF of the current

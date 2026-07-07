@@ -343,3 +343,80 @@ test("Trailer response header on a body-less status throws ERR_HTTP_TRAILER_INVA
     expect(raw.toString("latin1")).not.toMatch(/^trailer:/im);
   }
 });
+
+// The trailer section is captured on the CONNECTION during the parse. Both
+// tests pipeline two requests in one TCP segment, so the second request's
+// parse runs before the first request's handler drains its trailers; only a
+// per-REQUEST snapshot at each body's fin keeps them apart.
+
+test("pipelined request whose body is never read does not inherit trailers", async () => {
+  const done = Promise.withResolvers<{ trailers: object; raw: string[] }>();
+  await using server = createServer((req, res) => {
+    if (req.method === "POST") {
+      // Never read the body; answer on a later tick so /b is pipelined behind it.
+      setImmediate(() => res.end("a"));
+      return;
+    }
+    req.resume();
+    req.on("end", () => {
+      res.end("b");
+      done.resolve({ trailers: { ...req.trailers }, raw: [...req.rawTrailers] });
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: X-T\r\n\r\n0\r\nX-T: leak\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  socket.on("error", done.reject);
+  socket.resume();
+  const got = await done.promise;
+  socket.destroy();
+  expect(got).toEqual({ trailers: {}, raw: [] });
+});
+
+test("pipelined chunked request keeps its own trailers when the next one is parsed first", async () => {
+  // /a is chunked with its own trailer and its body is read two ticks late; /b, a
+  // second chunked request in the SAME segment, has a different one. /b's parse
+  // overwrites the connection's trailer buffer before /a's late drain runs, so
+  // without the per-request snapshot /a receives /b's trailers instead of its own.
+  const done = Promise.withResolvers<Record<string, string | string[] | undefined>>();
+  await using server = createServer((req, res) => {
+    if (req.url === "/a") {
+      setImmediate(() =>
+        setImmediate(() => {
+          req.resume();
+          req.on("end", () => {
+            res.setHeader("Content-Length", "1");
+            res.end("a");
+            done.resolve({ ...req.trailers });
+          });
+        }),
+      );
+      return;
+    }
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("Content-Length", "1");
+      res.end("b");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: X-A\r\n\r\n0\r\nX-A: a\r\n\r\n" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: X-B\r\n\r\n0\r\nX-B: b\r\n\r\n",
+    );
+  });
+  socket.on("error", done.reject);
+  socket.resume();
+  const trailers = await done.promise;
+  socket.destroy();
+  expect(trailers).toEqual({ "x-a": "a" });
+});

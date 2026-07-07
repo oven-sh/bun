@@ -524,7 +524,9 @@ fn scan_load_segments(data: &[u8], ehdr: Elf64_Ehdr) -> Result<RwLoadScan, ElfEr
             continue;
         }
 
-        let vaddr_end = phdr.p_vaddr.saturating_add(phdr.p_memsz);
+        let Some(vaddr_end) = phdr.p_vaddr.checked_add(phdr.p_memsz) else {
+            return Err(ElfError::InvalidElfFile);
+        };
         if vaddr_end > max_vaddr_end {
             max_vaddr_end = vaddr_end;
         }

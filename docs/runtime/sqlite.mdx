@@ -628,7 +628,11 @@ db.loadExtension("myext");
 ```
 
 <Note>
-Bun bundles its own SQLite build on all platforms with extension loading enabled, so `loadExtension()` works out of the box on macOS. `Database.setCustomSQLite(path)` is retained for backward compatibility but is a no-op in the default build; it only takes effect on custom builds compiled with `--static-sqlite=off`. Mixing a custom SQLite with `node:sqlite` (which always uses the bundled copy) on the same file is unsafe — see [SQLite: How To Corrupt §2.2.1](https://www.sqlite.org/howtocorrupt.html#posix_close_bug).
+  Bun bundles its own SQLite build on all platforms with extension loading enabled, so `loadExtension()` works out of
+  the box on macOS. `Database.setCustomSQLite(path)` is retained for backward compatibility but is a no-op in the
+  default build; it only takes effect on custom builds compiled with `--static-sqlite=off`. Mixing a custom SQLite with
+  `node:sqlite` (which always uses the bundled copy) on the same file is unsafe — see [SQLite: How To Corrupt
+  §2.2.1](https://www.sqlite.org/howtocorrupt.html#posix_close_bug).
 </Note>
 
 ### `.fileControl(cmd: number, value: any)`

@@ -1671,7 +1671,7 @@ describe("GC stress", () => {
 
   test("TagStore LRU churn under GC pressure", () => {
     const db = new DatabaseSync(":memory:");
-    const sql = db.createTagStore({ capacity: 4 });
+    const sql = db.createTagStore(4);
     for (let i = 0; i < 500; i++) {
       // Rotate the SQL text so the LRU inserts/evicts every iteration.
       const j = i % 8;

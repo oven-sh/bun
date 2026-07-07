@@ -2969,8 +2969,8 @@ it("server connection socket emits 'close' when the peer disconnects after a com
     await socketClosed;
     expect(closeCount).toBe(1);
   } finally {
-    server.close();
     server.closeAllConnections();
+    server.close();
   }
 });
 

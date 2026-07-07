@@ -4,7 +4,6 @@ import { promises as fs } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
-
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.

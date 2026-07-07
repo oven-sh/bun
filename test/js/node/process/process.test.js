@@ -550,6 +550,102 @@ describe.concurrent(() => {
       expect(stderr).toInclude("error: boom");
       expect(stdout).toBeEmpty();
     });
+
+    it("throwing inside runs uncaughtExceptionMonitor and uncaughtException", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
+           process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+           let thrown = false;
+           process.on("beforeExit", () => { if (!thrown) { thrown = true; throw new Error("boom"); } });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("monitor boom uncaughtException\nuncaughtException boom\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("throwing inside runs the uncaughtException capture callback", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.setUncaughtExceptionCaptureCallback(e => console.log("captured", e.message));
+           let thrown = false;
+           process.on("beforeExit", () => { if (!thrown) { thrown = true; throw new Error("boom"); } });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("captured boom\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a throw from work scheduled inside beforeExit still reaches uncaughtException", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+           let scheduled = false;
+           process.on("beforeExit", () => {
+             if (scheduled) return;
+             scheduled = true;
+             setImmediate(() => { throw new Error("late"); });
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("uncaughtException late\n");
+      expect(stderr).not.toInclude("error: late");
+      expect(exitCode).toBe(0);
+    });
+
+    it("throwing inside a worker runs that worker's uncaughtException handler", async () => {
+      using dir = tempDir("process-beforeexit-worker", {
+        "worker.js": `process.on("uncaughtException", e => console.log("worker uncaughtException", e.message));
+                      let thrown = false;
+                      process.on("beforeExit", () => { if (!thrown) { thrown = true; throw new Error("boom"); } });`,
+        "index.js": `const { Worker } = require("node:worker_threads");
+                     const worker = new Worker(require("path").join(__dirname, "worker.js"));
+                     worker.on("exit", code => console.log("worker exit", code));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "index.js")],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("worker uncaughtException boom\nworker exit 0\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("exits 1, not 7, when an exit listener also throws and nothing handles it", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => { throw new Error("a"); });
+           process.on("exit", () => { throw new Error("b"); });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).toInclude("error: a");
+      expect(stdout).toBeEmpty();
+      // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("process.onExit", () => {
@@ -563,6 +659,24 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
       expect(stderr).toInclude("error: boom");
       expect(stdout).toBeEmpty();
+    });
+
+    it("throwing inside runs uncaughtExceptionMonitor and uncaughtException", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
+           process.on("uncaughtException", e => console.log("uncaughtException", e.message));
+           process.on("exit", () => { throw new Error("boom"); });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("monitor boom uncaughtException\nuncaughtException boom\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
     });
   });
 

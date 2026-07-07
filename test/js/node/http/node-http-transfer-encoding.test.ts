@@ -152,9 +152,8 @@ test("bare-LF in trailer section fires clientError instead of hanging", async ()
     socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\n");
   });
   socket.on("error", () => {});
-  const timer = setTimeout(() => reject(new Error("hang: no clientError within 2s")), 2000);
+  socket.on("close", () => reject(new Error("connection closed without clientError")));
   const err = await promise;
-  clearTimeout(timer);
   socket.destroy();
   expect(err.code).toMatch(/^HPE_/);
 });
@@ -180,9 +179,8 @@ test("bare-LF between trailer fields is rejected, not silently accepted", async 
     socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nFoo: bar\nBaz: qux\r\n\r\n");
   });
   socket.on("error", () => {});
-  const timer = setTimeout(() => reject(new Error("hang")), 2000);
+  socket.on("close", () => reject(new Error("connection closed without clientError")));
   const result = await promise;
-  clearTimeout(timer);
   socket.destroy();
   expect("err" in result).toBe(true);
 });
@@ -205,11 +203,36 @@ test("createServer({maxHeaderSize:0}) still bounds trailer section", async () =>
     socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n" + `0\r\nX-Big: ${big}\r\n\r\n`);
   });
   socket.on("error", () => {});
-  const timer = setTimeout(() => reject(new Error("no clientError for 20KB trailer under maxHeaderSize:0")), 2000);
+  socket.on("close", () => reject(new Error("connection closed without clientError")));
   const err = await promise;
-  clearTimeout(timer);
   socket.destroy();
   expect(err.code).toBe("HPE_HEADER_OVERFLOW");
+});
+
+test("pipelined responses arrive in request order when handlers complete out of order", async () => {
+  await using server = createServer((req, res) => {
+    if (req.url === "/1") setImmediate(() => res.end("/1"));
+    else res.end(req.url);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /3 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let out = "";
+  socket.on("data", chunk => (out += chunk.toString()));
+  socket.on("close", () => resolve(out));
+  socket.on("error", reject);
+  const raw = await promise;
+  // Response bodies must appear in wire order /1 /2 /3 even though /2 and /3
+  // completed before /1 in the handler.
+  expect(raw).toMatch(/\/1[\s\S]*HTTP\/1\.1 200[\s\S]*\/2[\s\S]*HTTP\/1\.1 200[\s\S]*\/3/);
 });
 
 test("pipelined non-chunked request does not read prior request's trailers", async () => {

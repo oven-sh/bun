@@ -194,8 +194,15 @@ function emitEOFIncomingMessageOuter(self) {
   if (self[kHandle] !== undefined) {
     const socketHandle = self.socket?.[kHandle];
     if (socketHandle != null) {
-      const rawTrailers = socketHandle.takeRequestTrailers();
+      let rawTrailers = socketHandle.takeRequestTrailers();
       if (rawTrailers !== undefined) {
+        // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
+        // does (the same maxHeaderPairs limit covers both). The parser hard-caps
+        // at 199 fields; Node's C++ imposes no count limit, only this JS clamp.
+        const maxHeadersCount = self.socket?.server?.maxHeadersCount;
+        if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawTrailers.length > maxHeadersCount * 2) {
+          rawTrailers.length = maxHeadersCount * 2;
+        }
         self._addHeaderLines(rawTrailers, rawTrailers.length);
       }
     }

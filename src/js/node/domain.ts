@@ -19,7 +19,7 @@ domain.createDomain = domain.create = function () {
         __proto__: null,
         configurable: true,
         enumerable: false,
-        value: domain,
+        value: d,
         writable: true,
       });
       e.domainThrown = false;

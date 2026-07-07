@@ -244,9 +244,9 @@ pub struct Connection {
     header_stream_refused: bool,
     /// A locally-detected connection error already tore the session down: ignore further input.
     terminated: bool,
-    /// PING/SETTINGS ACKs queued during the current receive() batch (nghttp2's
-    /// obq_flood_counter_: ACKs pile up between transport drains; a drain happens between
-    /// batches, so the counter resets per batch).
+    /// PING/SETTINGS ACKs queued behind a non-reading peer (nghttp2's
+    /// obq_flood_counter_). Reset only via note_outbound_drained() when the
+    /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.

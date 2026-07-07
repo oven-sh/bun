@@ -106,11 +106,7 @@ function validateSecureProtocol(secureProtocol) {
     ]);
     if (!_SECURE_PROTOCOL_METHODS.has(secureProtocol)) message = `Unknown method: ${secureProtocol}`;
   }
-  if (message !== undefined) {
-    const error = new TypeError(message);
-    error.code = "ERR_TLS_INVALID_PROTOCOL_METHOD";
-    throw error;
-  }
+  if (message !== undefined) throw $ERR_TLS_INVALID_PROTOCOL_METHOD(message);
 }
 
 // Node's legacy secureProtocol string pins both bounds to a single version

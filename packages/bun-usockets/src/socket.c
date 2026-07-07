@@ -515,12 +515,9 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
          * polling writable - retrying can never succeed. */
         if (fatal_write_error) *fatal_write_error = errno;
 #else
-        /* Windows: WSA-to-errno translation is not wired up here yet, but we
-         * must still signal a fatal write (like main did) so node:net can fail
-         * the pending write and clear the undeliverable buffer. Without this
-         * the JS layer waits forever on a drain that never comes. When this
-         * translation is added, note that a truthy fatal previously stalled
-         * drain into an RST on test-http-no-content-length (a5e7ba5905). */
+        /* Windows: no WSA-to-errno mapping yet; signal generic fatal so
+         * node:net fails the write instead of stalling. See a5e7ba5905
+         * before mapping (drain-into-RST on test-http-no-content-length). */
         if (fatal_write_error) *fatal_write_error = 1;
 #endif
         return 0;

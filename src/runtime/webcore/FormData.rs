@@ -133,7 +133,9 @@ impl FormData<'_> {
     ) -> Result<JSValue, bun_core::Error> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = ZigString::from_utf8(strings::without_utf8_bom(input));
+                // The URL Standard parses each name/value with "UTF-8 decode
+                // without BOM", which treats a leading U+FEFF as data.
+                let str = ZigString::from_utf8(input);
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
                 DOMFormData::create_from_url_query(global, &str).map_err(|_| err!("JSError"))
@@ -280,16 +282,8 @@ pub fn to_js_from_multipart_data(
                 blob.detach();
                 blob.free_content_type();
             } else {
-                let value = ZigString::init_utf8(
-                    // > Each part whose `Content-Disposition` header does not
-                    // > contain a `filename` parameter must be parsed into an
-                    // > entry whose value is the UTF-8 decoded without BOM
-                    // > content of the part. This is done regardless of the
-                    // > presence or the value of a `Content-Type` header and
-                    // > regardless of the presence or the value of a
-                    // > `charset` parameter.
-                    strings::without_utf8_bom(value_str),
-                );
+                // "UTF-8 decode without BOM" keeps a leading U+FEFF as data.
+                let value = ZigString::init_utf8(value_str);
                 wrap.form.append(&key, &value);
             }
         }

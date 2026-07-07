@@ -866,10 +866,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
                         let ms = timeout_value.as_number();
                         if ms.is_finite() && ms > 0.0 {
-                            idle_timeout_seconds = Some(
-                                (ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
-                                    as core::ffi::c_uint,
-                            );
+                            idle_timeout_seconds =
+                                Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                                    as core::ffi::c_uint);
                         }
                         break 'extract_disable_timeout timeout_value.to_int32() == 0;
                     }

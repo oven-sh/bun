@@ -295,7 +295,11 @@ pub fn idle_timeout_seconds() -> c_uint {
 #[inline]
 pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
     let raw = raw.min(239 * 60);
-    (if raw > 240 { raw.div_ceil(60) * 60 } else { raw }) as c_uint
+    (if raw > 240 {
+        raw.div_ceil(60) * 60
+    } else {
+        raw
+    }) as c_uint
 }
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";

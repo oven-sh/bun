@@ -74,6 +74,18 @@ describe("hash", () => {
         expect(() => hash()).toThrow();
       });
 
+      test("password must be a string or TypedArray", () => {
+        for (const value of [undefined, null, 123, true, {}, []]) {
+          // @ts-expect-error
+          expect(() => hash(value)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+            }),
+          );
+        }
+      });
+
       test("invalid algorithm throws", () => {
         // @ts-expect-error
         expect(() => hash(placeholder, "scrpyt")).toThrow();
@@ -185,6 +197,25 @@ describe("verify", () => {
         expect(await verify("$", "")).toBeFalse();
       });
 
+      test("password and hash must be a string or TypedArray", () => {
+        for (const value of [undefined, null, 123, true, {}, []]) {
+          // @ts-expect-error
+          expect(() => verify(value, "$")).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+            }),
+          );
+          // @ts-expect-error
+          expect(() => verify("$", value)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+            }),
+          );
+        }
+      });
+
       test("invalid algorithm throws", () => {
         // @ts-expect-error
         expect(() => verify(placeholder, "$", "scrpyt")).toThrow();
@@ -243,6 +274,16 @@ describe("verify", () => {
       }
     }
   });
+});
+
+test("async verify() does not ToString-coerce an undefined password against a hash of the string 'undefined'", () => {
+  // The async path used to coerce via ToString, so `verify(undefined, h)`
+  // resolved `true` when `h` was a hash of the 9-byte string "undefined".
+  const h = password.hashSync("undefined", { algorithm: "bcrypt", cost: 4 });
+  expect(password.verifySync("undefined", h)).toBeTrue();
+  expect(() => password.verify(undefined as any, h)).toThrow(
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+  );
 });
 
 // The async hashing tests below only await the thread-pooled password.hash /

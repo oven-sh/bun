@@ -753,15 +753,15 @@ pub(crate) fn js_password_object_hash(
         algorithm = AlgorithmValue::from_js(global_object, arguments[1])?;
     }
 
-    // TODO: this most likely should error like `hashSync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
-    let password_to_hash = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
-    // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
+    let Some(string_or_buffer) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+        return Err(global_object.throw_invalid_argument_type(
+            "hash",
+            "password",
+            "string or TypedArray",
+        ));
+    };
 
-    if password_to_hash.is_empty() {
+    if string_or_buffer.slice().is_empty() {
         return Err(
             global_object.throw_invalid_arguments(format_args!("password must not be empty"))
         );
@@ -769,7 +769,7 @@ pub(crate) fn js_password_object_hash(
 
     JSPasswordObject::hash::<false>(
         global_object,
-        password_to_hash.into_boxed_slice(),
+        Box::<[u8]>::from(string_or_buffer.slice()),
         algorithm,
     )
 }
@@ -856,36 +856,31 @@ pub(crate) fn js_password_object_verify(
         };
     }
 
-    // TODO: this most likely should error like `verifySync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
-    let owned_password = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
-
-    // TODO: this most likely should error like `verifySync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
-    let owned_hash = match StringOrBuffer::from_js_to_owned_slice(global_object, arguments[1]) {
-        Ok(h) => h,
-        Err(err) => {
-            drop(owned_password);
-            return Err(err);
-        }
+    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+        return Err(global_object.throw_invalid_argument_type(
+            "verify",
+            "password",
+            "string or TypedArray",
+        ));
     };
 
-    if owned_hash.is_empty() {
-        drop(owned_password);
+    let Some(hash_) = StringOrBuffer::from_js(global_object, arguments[1])? else {
+        drop(password);
+        return Err(global_object.throw_invalid_argument_type(
+            "verify",
+            "hash",
+            "string or TypedArray",
+        ));
+    };
+
+    if hash_.slice().is_empty() {
         return Ok(JSPromise::resolved_promise_value(
             global_object,
             JSValue::FALSE,
         ));
     }
 
-    if owned_password.is_empty() {
-        drop(owned_hash);
+    if password.slice().is_empty() {
         return Ok(JSPromise::resolved_promise_value(
             global_object,
             JSValue::FALSE,
@@ -894,8 +889,8 @@ pub(crate) fn js_password_object_verify(
 
     JSPasswordObject::verify::<false>(
         global_object,
-        owned_password.into_boxed_slice(),
-        owned_hash.into_boxed_slice(),
+        Box::<[u8]>::from(password.slice()),
+        Box::<[u8]>::from(hash_.slice()),
         algorithm,
     )
 }

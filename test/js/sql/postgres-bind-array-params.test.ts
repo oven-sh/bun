@@ -153,6 +153,12 @@ test("object elements in a jsonb[] serialize as JSON", async () => {
   expect(text(bind.values[0])).toBe(`{"{\\"a\\":1}","{\\"b\\":[2,3]}"}`);
 });
 
+test("primitive elements in a jsonb[] serialize as JSON", async () => {
+  const bind = await captureBind(3807 /* jsonb_array */, ["hello", 42, true]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"\\"hello\\"","42","true"}`);
+});
+
 test("Buffer elements in a bytea[] serialize as hex", async () => {
   const bind = await captureBind(1001 /* bytea_array */, [Buffer.from([1, 2, 255]), Buffer.from([0])]);
   expect(bind.formatCodes).toEqual([0]);

@@ -397,6 +397,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
+    // Index into stdio[0..3] when "ipc" occupies stdin/stdout/stderr.
+    // Node's stdio array index is the child fd, so the channel must be dup2'd
+    // onto that fd rather than appended as an extra fd.
+    #[cfg_attr(windows, allow(unused_mut))]
+    let mut ipc_stdio_index: i32 = -1;
     let mut timeout: Option<i32> = None;
     let mut uid: Option<u32> = None;
     let mut gid: Option<u32> = None;
@@ -633,6 +638,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
                             Stdio::extract(&mut stdio[i as usize], global_this, i, value, IS_SYNC)?;
+                            // Windows still routes 'ipc' at 0-2 through an
+                            // extra_fds slot (libuv named pipe); only POSIX
+                            // can dup2 the socketpair onto stdin/out/err.
+                            #[cfg(unix)]
+                            if matches!(stdio[i as usize], Stdio::Ipc) {
+                                ipc_stdio_index = i;
+                            }
                             if i == 2 {
                                 break;
                             }
@@ -982,6 +994,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 return Ok(JSValue::ZERO);
             }
             let ipc_fd: i32 = 'brk: {
+                if ipc_stdio_index != -1 {
+                    // "ipc" is at stdin/stdout/stderr; the channel is that fd
+                    // in the child and no extra_fds slot is appended.
+                    break 'brk ipc_stdio_index;
+                }
                 if ipc_channel == -1 {
                     // If the user didn't specify an IPC channel, we need to add one
                     ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
@@ -1263,6 +1280,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
+    #[cfg(unix)]
+    let spawned_ipc = spawned.ipc.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     // `to_process` returns a freshly Box-allocated `Process` carrying an
     // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
@@ -1273,8 +1292,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
-        spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
+        if ipc_stdio_index != -1 {
+            spawned_ipc.unwrap_or(Fd::INVALID)
+        } else {
+            spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
+        }
     } else {
+        // No ipc callback: spawn_process_posix still created a socketpair for
+        // 'ipc' at stdin/stdout/stderr; close the parent end so it isn't leaked
+        // (the extra_fds path would close it via stdio_pipes/finalize_streams).
+        if let Some(fd) = spawned_ipc {
+            fd.close();
+        }
         Fd::INVALID
     };
 
@@ -1386,6 +1415,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
                 if let Some(fd) = spawned_stderr {
                     fd.close();
+                }
+                if ipc_stdio_index != -1 && posix_ipc_fd != Fd::INVALID {
+                    posix_ipc_fd.close();
                 }
             }
             #[cfg(not(unix))]
@@ -1524,6 +1556,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     IPC::SocketUnion::Uninitialized,
                 )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
+            } else if ipc_stdio_index != -1 && posix_ipc_fd != Fd::INVALID {
+                // Not in stdio_pipes; close it here so it isn't leaked. The
+                // extra_fds path leaves it OwnedFd in stdio_pipes for
+                // finalize_streams to close.
+                posix_ipc_fd.close();
             }
         }
     }
@@ -1543,9 +1580,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
-            });
+            if ipc_channel != -1 {
+                subprocess.stdio_pipes.with_mut(|v| {
+                    v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                });
+            }
         }
         #[cfg(not(unix))]
         {

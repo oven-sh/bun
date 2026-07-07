@@ -773,8 +773,26 @@ pub unsafe fn spawn_process_posix(
             PosixStdio::Inherit => {
                 actions.inherit(fileno)?;
             }
-            PosixStdio::Ipc | PosixStdio::Ignore => {
+            PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+            }
+            PosixStdio::Ipc => {
+                // Node's stdio array index IS the child fd, including 'ipc':
+                // `['ipc','pipe','pipe']` means the channel is the child's fd 0.
+                // Mirror the extra_fds IPC handling (socketpair + dup2) so the
+                // requested slot is the channel instead of /dev/null.
+                let fds: [Fd; 2] =
+                    match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+                        Ok(p) => p,
+                        Err(e) => return Ok(Err(e)),
+                    };
+                cleanup.to_close_at_end.push(fds[1]);
+                cleanup.to_close_on_error.push(fds[0]);
+                actions.dup2(fds[1], fileno)?;
+                if fds[1] != fileno {
+                    actions.close(fds[1])?;
+                }
+                spawned.ipc = Some(fds[0]);
             }
             PosixStdio::Path(path) => {
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;

@@ -2950,18 +2950,17 @@ describe("Content-Type implied by the body init per fetch spec", () => {
   const urlencoded = /^application\/x-www-form-urlencoded;charset=utf-8$/i;
 
   it("string body: fetch() sends it on the wire", async () => {
-    let lastHead = "";
-    let nextHead = Promise.withResolvers<void>();
+    let nextHead = Promise.withResolvers<string>();
     await using server = net.createServer(socket => {
+      const resolver = nextHead;
       let buf = Buffer.alloc(0);
       socket.on("data", d => {
         buf = Buffer.concat([buf, d]);
         if (buf.indexOf("\r\n\r\n") < 0) return;
-        lastHead = buf.toString("latin1").split("\r\n\r\n")[0];
         socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-        nextHead.resolve();
+        resolver.resolve(buf.toString("latin1").split("\r\n\r\n")[0]);
       });
-      socket.on("error", () => {});
+      socket.on("error", err => resolver.reject(err));
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
@@ -2969,10 +2968,9 @@ describe("Content-Type implied by the body init per fetch spec", () => {
     const contentTypeHeader = (head: string) => head.split("\r\n").find(l => /^content-type:/i.test(l)) ?? null;
 
     const doFetch = async (init: RequestInit) => {
-      nextHead = Promise.withResolvers<void>();
+      nextHead = Promise.withResolvers<string>();
       await (await fetch(`http://127.0.0.1:${port}/`, { method: "POST", ...init })).arrayBuffer();
-      await nextHead.promise;
-      return contentTypeHeader(lastHead);
+      return contentTypeHeader(await nextHead.promise);
     };
 
     // Plain string body, no headers.

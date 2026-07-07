@@ -200,20 +200,9 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     };
     let blob = Blob::init(data, global_this);
 
-    let mut allocated = false;
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, Some(&mut allocated));
-    // `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is
-    // `*const [u8]` discriminated by `content_type_allocated` (Blob's Drop reclaims
-    // via `heap::take` when set). Use `heap::alloc` (paired alloc/free), not
-    // leaking.
-    blob.content_type.set(match mime_type.value {
-        std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-        std::borrow::Cow::Owned(v) => {
-            blob.content_type_allocated.set(true);
-            bun_core::heap::into_raw(v.into_boxed_slice()).cast_const()
-        }
-    });
-    debug_assert_eq!(allocated, blob.content_type_allocated.get());
+    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+    blob.content_type
+        .set(crate::webcore::blob::BlobContentType::from(mime_type));
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {

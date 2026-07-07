@@ -613,7 +613,8 @@ describe("Histogram", () => {
       const eld = monitorEventLoopDelay();
       assert.throws(
         () => h.add(eld),
-        err => err.name === "TypeError" && err.code === "ERR_INVALID_ARG_TYPE" && /RecordableHistogram/.test(err.message),
+        err =>
+          err.name === "TypeError" && err.code === "ERR_INVALID_ARG_TYPE" && /RecordableHistogram/.test(err.message),
       );
       assert.strictEqual(h.count, 1);
     });

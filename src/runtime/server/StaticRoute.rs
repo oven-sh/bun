@@ -156,6 +156,13 @@ impl StaticRoute {
         // unsafe in `JSValue`); every `Response` accessor used below takes
         // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
+            if !HTTPStatusText::is_sendable(response.status_code()) {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Cannot use a Response with status {} as a static route. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+                    response.status_code(),
+                )));
+            }
+
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();
@@ -214,15 +221,22 @@ impl StaticRoute {
                 h.fast_remove(HTTPHeaderName::ContentLength);
             }
 
-            let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                bun_http_jsc::headers_jsc::from_fetch_headers(Some(h), any_blob_content_type(&blob))
-            } else {
-                Headers::default()
-            };
-
-            if was_string && headers.get_content_type().is_none() {
-                headers.append(b"Content-Type", b"text/plain; charset=utf-8");
+            // Consuming the body left a plain `Blob` behind, which no longer implies
+            // the `text/plain` a string body carried. Record it on the response's own
+            // headers so re-registering the same `Response` serves the same type.
+            if was_string {
+                let text_mime = bun_http_types::MimeType::TEXT;
+                response.get_or_create_headers(global_this)?.put_default(
+                    HTTPHeaderName::ContentType,
+                    &bun_core::String::ascii(text_mime.value.as_ref()),
+                    global_this,
+                )?;
             }
+
+            let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+                response.get_init_headers(),
+                any_blob_content_type(&blob),
+            );
 
             // Generate ETag if not already present
             if headers.get(b"etag").is_none() {

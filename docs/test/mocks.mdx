@@ -408,6 +408,27 @@ test("clearing all mocks", () => {
 });
 ```
 
+### Reset All Mocks
+
+`jest.resetAllMocks()` (and its `vi.resetAllMocks()` alias) calls `mockFn.mockReset()` on every mock: on top of what `clearAllMocks()` does, it drops the implementations set by `mockImplementation()`, `mockReturnValue()` and friends. It does not restore the original implementation of a spy:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { expect, jest, test } from "bun:test";
+
+const random = jest.fn(() => Math.random());
+
+test("resetting all mocks", () => {
+  random();
+  expect(random).toHaveBeenCalledTimes(1);
+
+  jest.resetAllMocks();
+
+  expect(random).toHaveBeenCalledTimes(0);
+  // unlike clearAllMocks(), the implementation is gone
+  expect(random()).toBeUndefined();
+});
+```
+
 ### Restore All Mocks
 
 `mock.restore()` restores every mock at once, instead of calling `mockFn.mockRestore()` on each one. It does not reset modules overridden with `mock.module()`.
@@ -468,6 +489,7 @@ test("vitest compatibility", () => {
   // vi.spyOn
   // vi.mock
   // vi.restoreAllMocks
+  // vi.resetAllMocks
   // vi.clearAllMocks
 });
 ```

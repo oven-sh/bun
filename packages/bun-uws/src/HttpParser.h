@@ -975,7 +975,15 @@ namespace uWS
             /* RFC 9112 6.3
              * If a message is received with both a Transfer-Encoding and a Content-Length header field,
              * the Transfer-Encoding overrides the Content-Length. */
-            if (transferEncoding.has) {
+            if (isConnectRequest) {
+                // This only serves to mark that the connect request read all headers
+                // and can start emitting data. Don't try to parse remaining data as HTTP -
+                // it's pipelined data that we've already captured in req->head.
+                remainingStreamingBytes = STATE_IS_CHUNKED;
+                // Mark remaining data as consumed and break - it's not HTTP
+                consumedTotal += length;
+                break;
+            } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
@@ -1013,14 +1021,6 @@ namespace uWS
                         return HttpParserResult::success(consumedTotal, returnedUser);
                     }
                 }
-            } else if(isConnectRequest) {
-                // This only serves to mark that the connect request read all headers
-                // and can start emitting data. Don't try to parse remaining data as HTTP -
-                // it's pipelined data that we've already captured in req->head.
-                remainingStreamingBytes = STATE_IS_CHUNKED;
-                // Mark remaining data as consumed and break - it's not HTTP
-                consumedTotal += length;
-                break;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 void *returnedUser = dataHandler(user, {}, true);

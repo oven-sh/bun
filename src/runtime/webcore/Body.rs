@@ -1021,8 +1021,11 @@ impl Value {
         value.ensure_still_alive();
 
         if let Some(readable) = ReadableStream::from_js(value, global_this)? {
-            if readable.is_disturbed(global_this) {
-                return Err(global_this.throw(format_args!("ReadableStream has already been used")));
+            // fetch spec: a body init stream must be neither disturbed nor locked (TypeError).
+            if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
+                return Err(global_this.throw_type_error(format_args!(
+                    "Body object should not be disturbed or locked"
+                )));
             }
 
             match readable.ptr {

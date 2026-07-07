@@ -1152,12 +1152,7 @@ impl FetchTasklet {
                             // mark to wait until deinit
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, check_result);
-                            self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(&self.global_this);
-                            // we need to abort the request
-                            if let Some(http_) = self.http.as_mut() {
-                                http::http_thread().schedule_shutdown(http_);
-                            }
+                            self.abort_task();
                             self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                             return false;
                         }
@@ -1177,11 +1172,7 @@ impl FetchTasklet {
                             let hostname_err_result = global_object.try_take_exception().unwrap();
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, hostname_err_result);
-                            self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(&self.global_this);
-                            if let Some(http_) = self.http.as_mut() {
-                                http::http_thread().schedule_shutdown(http_);
-                            }
+                            self.abort_task();
                             self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                             return false;
                         }
@@ -1202,13 +1193,7 @@ impl FetchTasklet {
                         // mark to wait until deinit
                         self.is_waiting_abort = self.result.has_more;
                         self.abort_reason.set(&global_object, check_result);
-                        self.signal_store.aborted.store(true, Ordering::Relaxed);
-                        self.tracker.did_cancel(&self.global_this);
-
-                        // we need to abort the request
-                        if let Some(http_) = self.http.as_mut() {
-                            http::http_thread().schedule_shutdown(http_);
-                        }
+                        self.abort_task();
                         self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                         return false;
                     }
@@ -1622,6 +1607,9 @@ impl FetchTasklet {
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
+        // reader.cancel() / body.cancel() aborts the fetch so the server sees the
+        // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
+        this.abort_task();
         this.ignore_remaining_response_body(false);
     }
 
@@ -1766,14 +1754,21 @@ impl FetchTasklet {
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
+        // An aborted fetch is already shutting down; don't re-arm receive/resume
+        // draining, which would read the rest of an unbounded body and hold the
+        // socket open (drain_events resumes before shutdowns).
+        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
         if self
             .signal_store
             .set_receive_mode_terminal(BodyReceiveMode::Ignore)
+            && !aborted
         {
             self.schedule_receive_resume();
         }
         if let Some(http_) = self.http.as_mut() {
-            http_.enable_response_body_streaming();
+            if !aborted {
+                http_.enable_response_body_streaming();
+            }
         }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
@@ -2254,7 +2249,12 @@ impl FetchTasklet {
     }
 
     pub(crate) fn abort_task(&mut self) {
-        self.signal_store.aborted.store(true, Ordering::Relaxed);
+        // Idempotent: reader.cancel() and an AbortSignal can both reach here for
+        // the same fetch. Only the first abort enqueues a shutdown; a second
+        // would append a redundant ShutdownMessage for an already-closing socket.
+        if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
+            return;
+        }
         self.tracker.did_cancel(&self.global_this);
 
         if let Some(http_) = self.http.as_mut() {

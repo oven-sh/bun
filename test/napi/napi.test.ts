@@ -475,6 +475,61 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_create_arraybuffer", () => {
+    it("returns zero-filled memory", async () => {
+      const output = await checkSameOutput("test_create_arraybuffer_zeroed", []);
+      expect(output).toBe("PASS: napi_create_arraybuffer memory is zero-filled");
+    });
+  });
+
+  describe("napi_get_typedarray_info", () => {
+    it("reports a zero byte offset for a view over the whole buffer and the view's byte offset for an offset view", async () => {
+      const whole = await checkSameOutput("test_typedarray_info_byte_offset", "[new Uint8Array(new ArrayBuffer(64))]");
+      expect(whole).toBe(
+        "byte_offset=0 length=64 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+      const offset = await checkSameOutput(
+        "test_typedarray_info_byte_offset",
+        "[new Uint8Array(new ArrayBuffer(64), 48)]",
+      );
+      expect(offset).toBe(
+        "byte_offset=48 length=16 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+
+    it("reports the view's byte offset into its backing buffer", async () => {
+      const output = await checkSameOutput(
+        "test_typedarray_info_byte_offset",
+        "[new Uint8Array(new ArrayBuffer(64), 16, 8)]",
+      );
+      expect(output).toBe(
+        "byte_offset=16 length=8 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+
+    it("reports the byte offset in bytes for an element type wider than one byte", async () => {
+      const output = await checkSameOutput(
+        "test_typedarray_info_byte_offset",
+        "[new Int32Array(new ArrayBuffer(64), 32, 4)]",
+      );
+      expect(output).toBe(
+        "byte_offset=32 length=4 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+  });
+
+  describe("napi_get_dataview_info", () => {
+    it("reports the view's byte offset into its backing buffer", async () => {
+      const output = await checkSameOutput(
+        "test_dataview_info_byte_offset",
+        "[new DataView(new ArrayBuffer(64), 24, 8)]",
+      );
+      expect(output).toBe(
+        "byte_offset=24 byte_length=8 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+  });
+
   // TODO(@190n) test allocating in a finalizer from a napi module with the right version
 
   describe("napi_wrap", () => {
@@ -576,12 +631,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ["[1, 2, 3]", false],
       ["'hello'", false],
     ];
-    it("returns consistent values with node.js", async () => {
-      for (const [value, expected] of tests) {
-        // main.js does eval then spread so to pass a single value we need to wrap in an array
-        const output = await checkSameOutput(`test_is_${kind}`, "[" + value + "]");
-        expect(output).toBe(`napi_is_${kind} -> ${expected.toString()}`);
-      }
+    // main.js does eval then spread so to pass a single value we need to wrap in an array
+    it.each(tests)("returns consistent values with node.js for %s", async (value, expected) => {
+      const output = await checkSameOutput(`test_is_${kind}`, "[" + value + "]");
+      expect(output).toBe(`napi_is_${kind} -> ${expected.toString()}`);
     });
   });
 

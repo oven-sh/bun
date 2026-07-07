@@ -1311,6 +1311,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     TMPDIR: tmpdirPath,
     BUN_TMPDIR: tmpdirPath,
     USER: username,
+    USERNAME: isWindows ? username : undefined, // %USERNAME% for ported Windows tests
     HOME: homedir,
     SHELL: shellPath,
     FORCE_COLOR: "1",

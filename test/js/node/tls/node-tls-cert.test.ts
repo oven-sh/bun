@@ -247,10 +247,8 @@ it("Fail to complete client's chain.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    // The handshake is aborted by the server at the first X509 failure so the
-    // client receives a fatal alert; the server reports the reason it aborted
-    // on. For an incomplete chain that is UNABLE_TO_GET_ISSUER_CERT_LOCALLY
-    // (the intermediate could not be found).
+    // Server aborts the handshake at the first X509 failure (fatal alert to the
+    // client); for a missing intermediate that is UNABLE_TO_GET_ISSUER_CERT_LOCALLY.
     expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
   }
 });
@@ -329,15 +327,9 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
 });
 
 it("client sees a fatal TLS alert when the server rejects its certificate under rejectUnauthorized", async () => {
-  // The server must refuse an unverifiable client certificate inside the
-  // handshake so the rejection reaches the wire as a fatal TLS alert. If the
-  // handshake were allowed to complete and the connection torn down afterwards
-  // with a clean close_notify, a client cannot tell "my certificate was
-  // rejected" from "the server had nothing to say". Over TLS 1.3 the alert
-  // arrives after the client's secureConnect (one-RTT handshake); surfacing
-  // that as a client-side error is tracked separately. Over TLS 1.2 the
-  // server aborts before the client's Finished is accepted, so the client
-  // never completes the handshake and the alert is unambiguous.
+  // The server must reject an unverifiable client cert inside the handshake
+  // (fatal alert), not after: a post-handshake clean close is invisible to the
+  // peer. Pinned to TLS 1.2; over TLS 1.3 the alert lands post-secureConnect.
   const untrustedClient = {
     key: readFileSync(join(import.meta.dir, "fixtures", "agent2-key.pem"), "utf8"),
     cert: readFileSync(join(import.meta.dir, "fixtures", "agent2-cert.pem"), "utf8"),
@@ -377,19 +369,20 @@ it("client sees a fatal TLS alert when the server rejects its certificate under 
         });
         c.on("secureConnect", () => (secureConnect = true));
         c.on("data", d => (data += d));
-        c.on("error", e => (error = e));
+        c.on("error", e => (error = e?.code ?? String(e)));
         c.on("close", hadError => resolve({ error, secureConnect, hadError, data }));
       },
     );
 
-    // The server must not have handed the connection to the application.
-    expect(outcome.data).toBe("");
-    // The client's handshake never completes: it receives a fatal alert.
-    expect(outcome.secureConnect).toBe(false);
-    expect(outcome.error).not.toBeNull();
-    expect(outcome.hadError).toBe(true);
-    // The server reports the specific X509 verification failure.
-    expect(serverClientError?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    // The client's handshake never completes (fatal alert from the server),
+    // and the server reports the specific X509 verification failure.
+    expect({ ...outcome, serverClientError: serverClientError?.code }).toEqual({
+      data: "",
+      secureConnect: false,
+      error: "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA",
+      hadError: true,
+      serverClientError: "DEPTH_ZERO_SELF_SIGNED_CERT",
+    });
   } finally {
     server.close();
   }

@@ -81,6 +81,7 @@ async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unkno
 
 const BOOL = 16;
 const TEXT = 25;
+const JSON_OID = 114;
 const INT4_ARRAY = 1007;
 const FLOAT4 = 700;
 const FLOAT8 = 701;
@@ -220,9 +221,14 @@ test.concurrent("well-formed binary numeric still parses", async () => {
 });
 
 // A BINARY CURSOR FETCH over the simple protocol sends format=1 for every
-// column; textsend()/varcharsend() emit raw bytes identical to text, so this
-// must decode as a string, not be rejected.
+// column. Types whose *send() output is byte-identical to text (text/varchar/
+// bpchar/name/char/json/xml) must decode via the text path, not be rejected.
 test.concurrent("text column with binary format code is exempt from the guard", async () => {
   const result: any = await runMockQuery(Buffer.from("hello"), TEXT);
   expect(result[0].c).toBe("hello");
+});
+
+test.concurrent("json column with binary format code is exempt from the guard", async () => {
+  const result: any = await runMockQuery(Buffer.from('{"a":1}'), JSON_OID);
+  expect(result[0].c).toEqual({ a: 1 });
 });

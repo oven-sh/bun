@@ -207,12 +207,13 @@ impl Tag {
     }
 
     /// True when this type's binary `*send()` output is byte-identical to its
-    /// text output (textsend/namesend/charsend), so decoding the binary datum
-    /// via the text path is already correct.
+    /// text output, so decoding the binary datum via the text path is already
+    /// correct. `jsonb` is intentionally absent (jsonb_send prepends a version
+    /// byte).
     pub fn is_binary_format_textlike(self) -> bool {
         matches!(
             self,
-            Tag::text | Tag::varchar | Tag::bpchar | Tag::name | Tag::char
+            Tag::text | Tag::varchar | Tag::bpchar | Tag::name | Tag::char | Tag::json | Tag::xml
         )
     }
 

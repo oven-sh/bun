@@ -5346,3 +5346,61 @@ describe("fs.promises.writeFile with iterables", () => {
     expect(fs.readFileSync(file, "utf8")).toBe("start;then;end");
   });
 });
+
+describe("fs.close on stdio descriptors", () => {
+  it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
+    using dir = tempDir("fs-close-stdio", {
+      "redirect-fixture.mjs": `
+        import fs from "node:fs";
+        fs.writeSync(2, "PRE.");
+        fs.closeSync(2);
+        const fd = fs.openSync(process.argv[2], "w");
+        // On POSIX, open() returns the lowest free descriptor. fd 2 was just
+        // closed, so reopening must hand it back.
+        process.stdout.write(String(fd));
+        fs.writeSync(2, "POST.");
+      `,
+    });
+    const redirected = path.join(String(dir), "redirected.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "redirect-fixture.mjs"), redirected],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("2");
+    // Writes after the reopen land in the new file; the original stderr pipe
+    // only keeps the byte written before the close.
+    expect(stderr).toBe("PRE.");
+    expect(readFileSync(redirected, "utf8")).toBe("POST.");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // descriptor is never really closed and the second close cannot raise EBADF.
+  it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
+    using dir = tempDir("fs-close-stdio-dbl", {
+      "double-close-fixture.mjs": `
+        import fs from "node:fs";
+        fs.closeSync(2);
+        try {
+          fs.closeSync(2);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "double-close-fixture.mjs")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("EBADF");
+    expect(exitCode).toBe(0);
+  });
+});

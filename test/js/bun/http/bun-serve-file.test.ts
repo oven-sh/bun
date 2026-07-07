@@ -801,7 +801,9 @@ const server = Bun.serve({
 // server drains the FIFO, so \`pumped\` tracks how far the server has read.
 // The chain is intentionally never awaited to completion: a correctly
 // backpressured server stops draining the pipe once the client stops reading.
-const CHUNK = Buffer.alloc(4 * 1024, 120);
+// 8 KiB stays under the 16 KiB macOS FIFO capacity while halving the number of
+// threadpool round-trips needed to fill the kernel socket buffers.
+const CHUNK = Buffer.alloc(8 * 1024, 120);
 let pumped = 0;
 let stopPumping = false;
 function pump(err, n) {
@@ -848,13 +850,16 @@ console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill "
 // must eventually report backpressure and the reader must park; the pump then
 // stops making progress. The extra readable events delivered between the first
 // backpressured write and the stall are what used to over-release the
-// in-flight-read reference. Bounded poll so a broken build fails instead of
-// hanging.
+// in-flight-read reference. "Stalled" means the pump advanced by less than one
+// CHUNK across 5 consecutive samples, i.e. body writes are already returning
+// backpressure; waiting for byte-for-byte stability would mean waiting for the
+// kernel socket buffers to fill completely. Bounded poll so a broken build
+// fails instead of hanging.
 let last = -1;
 let stable = 0;
 for (let i = 0; i < 500 && stable < 5; i++) {
   await Bun.sleep(10);
-  if (pumped === last) {
+  if (last >= 0 && pumped - last < CHUNK.length) {
     stable++;
   } else {
     stable = 0;

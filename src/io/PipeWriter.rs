@@ -740,6 +740,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.is_not_empty()
     }
 
+    /// Bytes accepted from callers that have not reached the fd yet.
+    pub fn buffered_len(&self) -> usize {
+        self.outgoing.size()
+    }
+
     pub fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
@@ -1949,6 +1954,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
+    }
+
+    /// Bytes accepted from callers that have not reached the fd yet: queued in
+    /// `outgoing` or handed to the engine in `current_payload`.
+    pub fn buffered_len(&self) -> usize {
+        self.outgoing.size() + self.current_payload.size()
     }
 
     /// Engine write callback (pipe and tty share the signature). Fires

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -14,26 +14,52 @@ import {
 } from "harness";
 import { join } from "path";
 
+// The napi-app addons don't link against bun, so existing binaries stay valid
+// across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
+// of every target), so skip it when every target's .node output already exists
+// and is newer than every native source / gyp / package file in napi-app.
+function needsInstall(): boolean {
+  const app = join(__dirname, "napi-app");
+  if (!existsSync(join(app, "node_modules/node-addon-api"))) return true;
+  const targets = [...readFileSync(join(app, "binding.gyp"), "utf8").matchAll(/"target_name":\s*"([\w-]+)"/g)].map(
+    m => m[1],
+  );
+  if (targets.length === 0) return true;
+  const newestInput = Math.max(
+    ...readdirSync(app)
+      .filter(f => /\.(c|cc|cpp|h)$/.test(f) || f === "binding.gyp" || f === "package.json")
+      .map(f => statSync(join(app, f)).mtimeMs),
+  );
+  for (const target of targets) {
+    const built = join(app, `build/Debug/${target}.node`);
+    if (!existsSync(built)) return true;
+    if (statSync(built).mtimeMs < newestInput) return true;
+  }
+  return false;
+}
+
 describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   beforeAll(async () => {
     // Resolve (and possibly download) the ABI-matching node here, under the
     // generous hook timeout, instead of inside the first test that needs it.
     await nodeExeMatchingAbi();
     // build gyp
-    console.time("Building node-gyp");
-    const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
-      cwd: join(__dirname, "napi-app"),
-      stderr: "inherit",
-      env: bunEnv,
-      stdout: "inherit",
-      stdin: "inherit",
-    });
-    if (!install.success) {
-      console.error("build failed, bailing out!");
-      process.exit(1);
+    if (needsInstall()) {
+      console.time("Building node-gyp");
+      const install = spawnSync({
+        cmd: [bunExe(), "install", "--verbose"],
+        cwd: join(__dirname, "napi-app"),
+        stderr: "inherit",
+        env: bunEnv,
+        stdout: "inherit",
+        stdin: "inherit",
+      });
+      if (!install.success) {
+        console.error("build failed, bailing out!");
+        process.exit(1);
+      }
+      console.timeEnd("Building node-gyp");
     }
-    console.timeEnd("Building node-gyp");
     // node-gyp rebuild can take a while under a debug/ASAN binary (and the
     // hook may first download an ABI-matching node); default 5s hook timeout
     // kills the install subprocess mid-build.

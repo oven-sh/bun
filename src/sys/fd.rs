@@ -33,14 +33,14 @@ pub trait FdExt: Copy + Sized {
     /// as you see EBADF errors in unrelated places.
     fn close(self);
     /// fd function will NOT CLOSE stdin/stdout/stderr.
-    /// Use fd API to implement `node:fs` close.
     /// Prefer asserting that EBADF does not happen with `.close()`.
     fn close_allowing_bad_file_descriptor(
         self,
         return_address: Option<usize>,
     ) -> Option<sys::Error>;
     /// fd allows you to close standard io. It also returns the error.
-    /// Consider fd the raw close method.
+    /// Use fd API to implement `node:fs` close: stdio must actually close and
+    /// EBADF must surface to the caller. Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;

@@ -4454,7 +4454,10 @@ impl NodeFS {
     }
 
     pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
-        if let Some(err) = args.fd.close_allowing_bad_file_descriptor(None) {
+        // Explicit `fs.close`/`fs.closeSync` must close the descriptor the user
+        // asked for, including stdio (0/1/2), and surface EBADF like Node does.
+        // The stdio guard only applies to Bun's own internal closes.
+        if let Some(err) = args.fd.close_allowing_standard_io(None) {
             Err(err)
         } else {
             Ok(())

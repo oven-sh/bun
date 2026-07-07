@@ -383,6 +383,21 @@ impl TokenList {
                                 !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
                             debug_assert!(*d <= 0x7F);
                             dest.delim(*d as u8, ws_before)?;
+                            // `delim()` emits no surrounding whitespace when minifying, so
+                            // consecutive `/` and `*` delims would be printed adjacently and
+                            // form a `/*` or `*/` comment delimiter. Emit a real space when
+                            // the next token is the other half of that pair.
+                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
+                                if let Some(TokenOrValue::Token(Token::Delim(next))) =
+                                    self.v.get(i + 1)
+                                {
+                                    if (*d == b'/' as u32 && *next == b'*' as u32)
+                                        || (*d == b'*' as u32 && *next == b'/' as u32)
+                                    {
+                                        dest.write_char(b' ')?;
+                                    }
+                                }
+                            }
                         }
                         has_whitespace = true;
                     }

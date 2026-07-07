@@ -750,8 +750,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Some(signal_ref),
                 body_hive,
             )));
-        // SAFETY: freshly allocated; uniquely owned here.
-        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(unsafe { &mut *request_object });
+        // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
+        // carries the allocation's provenance, as `init_ref` requires.
+        ctx_mut.request_weakref = unsafe { bun_ptr::WeakPtr::init_ref(request_object) };
 
         // (H3 eager-url/header population is unreachable on this path.)
 

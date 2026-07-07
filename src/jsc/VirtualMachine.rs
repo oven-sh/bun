@@ -1402,12 +1402,6 @@ impl VirtualMachine {
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
             panic!("Uncaught exception while handling uncaught exception");
         }
-        if self.exit_on_uncaught_exception {
-            self.run_error_handler(err, None);
-            // SAFETY: see above.
-            unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-            panic!("made it past process.exit()");
-        }
         self.is_handling_uncaught_exception = true;
         let handled = Bun__handleUncaughtException(
             global_object,
@@ -1415,6 +1409,19 @@ impl VirtualMachine {
             if is_rejection { 1 } else { 0 },
         ) > 0;
         if !handled {
+            // `beforeExit` has already been dispatched, so the run is winding
+            // down and there is no loop turn left to defer to: print the error
+            // and exit, like node's fatal-exception path.
+            if self.exit_on_uncaught_exception {
+                self.run_error_handler(err, None);
+                // `process_exit` emits `exit`, re-entering here if a listener
+                // throws. No handler is running, so drop the recursion guard or
+                // that re-entry exits 7 ("handler threw") instead of 1.
+                self.is_handling_uncaught_exception = false;
+                // SAFETY: see above.
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                panic!("made it past process.exit()");
+            }
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;

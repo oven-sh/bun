@@ -13,6 +13,11 @@ const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: Abor
     tls: { rejectUnauthorized: false },
   } as RequestInit);
 
+// Deadline for the post-stop() "new request must fail" checks. The QUIC client
+// never fails fast on a dead UDP port, so only this abort rejects the promise;
+// a live loopback server answers in well under this even on the ASAN lane.
+const DEAD_PORT_ABORT_MS = 1000;
+
 const fixture = `
 import { serve } from "bun";
 
@@ -312,7 +317,7 @@ describe("Bun.serve HTTP/3", () => {
       send("stop");
       await waitForStderr(/STOPPED/);
       // After stop(), the UDP socket should be closed; a new request fails.
-      await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(2000) })).rejects.toThrow();
+      await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(DEAD_PORT_ABORT_MS) })).rejects.toThrow();
     });
   });
 
@@ -517,8 +522,11 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     await withServer(async port => {
       // Patterned (not crypto-random) so the test is deterministic but still
       // crosses many QUIC packets and stresses the recvmmsg/sendmmsg paths.
-      const payload = Buffer.alloc(8 * 1024 * 1024);
-      for (let i = 0; i < payload.length; i++) payload[i] = (i * 131) & 0xff;
+      // (i * 131) & 0xff has period 256, so tile one 256-byte block instead of
+      // an 8M-iteration per-byte JS loop (slow under ASAN/debug JSC).
+      const block = Buffer.alloc(256);
+      for (let i = 0; i < block.length; i++) block[i] = (i * 131) & 0xff;
+      const payload = Buffer.alloc(8 * 1024 * 1024, block);
       const res = await fetchH3(port, "/echo-bytes", {
         method: "POST",
         body: payload,
@@ -898,7 +906,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       send("stop");
       await waitForStderr(/STOPPED/);
       // port should now be dead — connect must fail, not hang
-      await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(2000) })).rejects.toThrow();
+      await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(DEAD_PORT_ABORT_MS) })).rejects.toThrow();
     });
   });
 
@@ -944,7 +952,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       const results = await Promise.all(inflight);
       for (const r of results) expect(r).toBe("late");
       // New connection during drain is rejected (engine cooling down).
-      await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(2000) })).rejects.toThrow();
+      await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(DEAD_PORT_ABORT_MS) })).rejects.toThrow();
       send("exit");
     });
   });

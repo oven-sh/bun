@@ -1372,17 +1372,22 @@ impl Request {
             }
 
             if !fields.contains(Fields::Signal) {
-                match value.fast_get_truthy(global_this, bun_jsc::BuiltinName::signal) {
+                // WebIDL `AbortSignal?`: present iff the member is not undefined.
+                // `fast_get` maps absent/undefined → None; `null` is Some(null) and
+                // means "present, detach" (no fallback to the input Request's signal).
+                match value.fast_get(global_this, bun_jsc::BuiltinName::signal) {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
-                        if let Some(signal) = AbortSignal::ref_from_js(signal_) {
+                        if signal_.is_null() {
+                            // explicit detach; leave `req.signal` as None
+                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
                             // Keep it alive
                             signal_.ensure_still_alive();
                             // `ref_from_js` already ref'd.
                             req.signal.set(Some(signal));
                         } else {
                             if !global_this.has_exception() {
-                                bail!(Err(global_this.throw(format_args!(
+                                bail!(Err(global_this.throw_type_error(format_args!(
                                     "Failed to construct 'Request': signal is not of type AbortSignal."
                                 ))));
                             }

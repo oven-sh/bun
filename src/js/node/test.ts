@@ -1406,11 +1406,23 @@ function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
 }
 
 async function runOwnBeforeHooks(node: TestNode) {
-  const { before } = node.hooks;
-  if (before.length === 0) return;
-  const arg = node.isSuite ? node.getSuiteCtx() : node.getCtx();
-  for (const hook of before) {
-    await runBeforeHookOnce(hook, node, arg);
+  // Node runs suites strictly sequentially, so a subtest is gated on the before
+  // hooks of every enclosing inline suite and the owning test, outermost first;
+  // runBeforeHookOnce memoizes each, so the racing siblings share one result.
+  const owners: TestNode[] = [];
+  for (let owner: TestNode | undefined = node; owner !== undefined; owner = owner.parent) {
+    owners.unshift(owner);
+    // Stop at the owning collection-phase test/suite: hooks above it were
+    // registered through bun:test's own beforeAll and are not run by the shim.
+    if (!owner.isExecutionPhase) break;
+  }
+  for (const owner of owners) {
+    const { before } = owner.hooks;
+    if (before.length === 0) continue;
+    const arg = owner.isSuite ? owner.getSuiteCtx() : owner.getCtx();
+    for (const hook of before) {
+      await runBeforeHookOnce(hook, owner, arg);
+    }
   }
 }
 
@@ -1646,27 +1658,18 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-function createTopLevelTestRunner(
-  node: TestNode,
-  fn: TestFn,
-  resolveDeferred: (() => void) | undefined,
-  declaredTodo = false,
-) {
+function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
     executeTestNode(node, fn).then(
       failure => {
-        resolveDeferred?.();
         // A runtime t.skip()/t.todo() suppresses the failure, like Node; a
         // declared todo body's failure must reach bun:test's todo accounting.
         const runtimeMarked = node.skipped || (node.todoFlag && !declaredTodo);
         done(failure === undefined || runtimeMarked ? undefined : failure);
       },
-      err => {
-        resolveDeferred?.();
-        done(err);
-      },
+      err => done(err),
     );
   };
 }
@@ -1709,7 +1712,6 @@ function addTest(
   node.ownTags = ownTags;
 
   const { test } = bunTest();
-  const insideSuite = parent.parent !== undefined;
   const passOptions = bunTestOptions(options);
 
   const effectiveMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
@@ -1717,7 +1719,7 @@ function addTest(
   if (effectiveMode === "todo" || effectiveMode === "skip") {
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
-    const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, undefined, true) : kDefaultFunction;
+    const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
     if (passOptions !== undefined) {
       register(name, body, passOptions);
     } else {
@@ -1726,28 +1728,21 @@ function addTest(
     return Promise.resolve(undefined);
   }
 
-  let resolveDeferred: (() => void) | undefined;
-  let promise: Promise<undefined>;
-  if (insideSuite) {
-    // Inside a describe() callback Node returns an already-resolved promise.
-    promise = Promise.resolve(undefined);
-  } else {
-    promise = new Promise(resolve => {
-      resolveDeferred = () => resolve(undefined);
-    });
-  }
-
   // Node's `only` (the option and the test.only()/describe.only() spellings)
   // is a no-op unless --test-only is passed, so it registers an ordinary
   // test/suite; bun:test's only() would skip siblings and is rejected in CI.
-  const runner = createTopLevelTestRunner(node, fn, resolveDeferred);
+  const runner = createTopLevelTestRunner(node, fn);
   if (passOptions !== undefined) {
     test(name, runner, passOptions);
   } else {
     test(name, runner);
   }
 
-  return promise;
+  // Resolved eagerly rather than when the runner settles: bun:test never invokes
+  // the runner for a test `--test-name-pattern` filters out, so a deferred tied
+  // to it would hang an awaiting caller forever. Node resolves those too, and
+  // the timing is unobservable under bun:test's collect-then-execute model.
+  return Promise.resolve(undefined);
 }
 
 function addSuite(

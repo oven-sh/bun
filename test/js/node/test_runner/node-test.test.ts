@@ -210,6 +210,25 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should gate a nested inline subtest on every ancestor suite's before hooks", async () => {
+    const { exitCode, stderr } = await runTests(["22-nested-suite-before.js"]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should resolve the promise of a test that a name pattern filters out", async () => {
+    const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
+    expect(stderr).not.toContain("timed out");
+    expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

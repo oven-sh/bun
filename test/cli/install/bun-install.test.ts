@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
-import { readlinkSync, realpathSync } from "fs";
+import { existsSync, readlinkSync, realpathSync, statSync, symlinkSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -17,6 +17,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
+import { tmpdir } from "os";
 import { join, resolve, sep } from "path";
 import {
   createTestContext,
@@ -10019,3 +10020,111 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+// Windows openat with O_DIRECTORY on a regular file does not reliably fail
+// with ENOTDIR the way POSIX does, so this repro cannot portably force the
+// `<cache>/.tmp` fallback to fail there. The error-message code path itself
+// is platform-agnostic.
+it.skipIf(isWindows)("names the install cache directory when it cannot be written to", async () => {
+  // The temporary directory probe falls back to `<cache>/.tmp` when the
+  // configured tempdir is unusable. If that fallback also fails, the error
+  // must blame the install cache directory (and suggest
+  // $BUN_INSTALL_CACHE_DIR), not the tempdir.
+  using dir = tempDir("install-cache-unwritable", {
+    "project/package.json": JSON.stringify({
+      name: "cache-unwritable-app",
+      version: "1.0.0",
+      dependencies: { "some-pkg": "1.0.0" },
+    }),
+    // A regular file where the `.tmp` fallback directory would be created,
+    // so `makeOpenPath("<cache>/.tmp")` fails with ENOTDIR.
+    "cache/.tmp": "not a directory",
+    // A regular file that $BUN_TMPDIR will point beneath, so opening the
+    // configured tempdir fails and the `.tmp` fallback is taken.
+    "not-a-dir": "file",
+  });
+  const root = String(dir);
+  const cacheDir = join(root, "cache");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: cacheDir,
+      BUN_TMPDIR: join(root, "not-a-dir", "sub"),
+      TMPDIR: join(root, "not-a-dir", "sub"),
+    },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("unable to write to the install cache directory");
+  expect(stderr).toContain(cacheDir);
+  expect(stderr).toContain("$BUN_INSTALL_CACHE_DIR");
+  expect(stderr).not.toContain("tempdir");
+  expect(stderr).not.toContain("$BUN_TMPDIR");
+  expect(stdout).not.toContain("installed");
+  expect(exitCode).not.toBe(0);
+});
+
+// Forcing the `renameat(<cache>/.tmp -> <cache>)` step to fail requires `.tmp`
+// to live on a different filesystem than the cache directory. `/dev/shm` is a
+// tmpfs on Linux, so verify at collection time that it really is a distinct
+// device from where `tempDir()` roots its fixtures; skip otherwise.
+const shmIsSeparateDevice = !isWindows && existsSync("/dev/shm") && statSync("/dev/shm").dev !== statSync(tmpdir()).dev;
+
+it.skipIf(!shmIsSeparateDevice)(
+  "names the install cache directory when the rename out of its .tmp fallback fails",
+  async () => {
+    // An already-used cache has a `.tmp/` subdirectory, so the probe reaches
+    // it, creates the probe file, and only then fails moving it into the cache
+    // directory. That terminal error must also blame the cache directory, not
+    // the tempdir (the rename destination is always the cache directory).
+    const shmTarget = join("/dev/shm", `bun-install-exdev-${crypto.randomUUID()}`);
+    await mkdir(shmTarget, { recursive: true });
+    try {
+      using dir = tempDir("install-cache-exdev", {
+        "project/package.json": JSON.stringify({
+          name: "cache-exdev-app",
+          version: "1.0.0",
+          dependencies: { "some-pkg": "1.0.0" },
+        }),
+        "cache/keep": "",
+        // A regular file that $BUN_TMPDIR will point beneath, so the probe
+        // skips straight to the `<cache>/.tmp` fallback.
+        "not-a-dir": "file",
+      });
+      const root = String(dir);
+      const cacheDir = join(root, "cache");
+      // `.tmp` opens fine and is writable, but renaming out of it into the
+      // cache directory crosses a filesystem boundary and fails with EXDEV.
+      symlinkSync(shmTarget, join(cacheDir, ".tmp"));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: join(root, "project"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          BUN_INSTALL_CACHE_DIR: cacheDir,
+          BUN_TMPDIR: join(root, "not-a-dir", "sub"),
+          TMPDIR: join(root, "not-a-dir", "sub"),
+        },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("unable to write to the install cache directory");
+      expect(stderr).toContain(cacheDir);
+      expect(stderr).toContain("$BUN_INSTALL_CACHE_DIR");
+      expect(stderr).not.toContain("tempdir");
+      expect(stderr).not.toContain("$BUN_TMPDIR");
+      expect(stdout).not.toContain("installed");
+      expect(exitCode).not.toBe(0);
+    } finally {
+      await rm(shmTarget, { recursive: true, force: true });
+    }
+  },
+);

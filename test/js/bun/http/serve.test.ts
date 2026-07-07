@@ -2511,6 +2511,66 @@ it.concurrent(
   20_000,
 );
 
+it.concurrent(
+  "server.timeout(req, N) does not leak into the keep-alive idle window",
+  async () => {
+    // The handler responds immediately; the client then holds the connection
+    // idle. The server-configured idleTimeout must reap all three connections
+    // regardless of any per-request server.timeout() override.
+    using server = Bun.serve({
+      idleTimeout: 2,
+      port: 0,
+      development: false,
+      fetch(req, srv) {
+        const p = new URL(req.url).pathname;
+        if (p === "/t0") srv.timeout(req, 0);
+        if (p === "/t60") srv.timeout(req, 60);
+        return new Response("ok");
+      },
+    });
+
+    const rawKeepAlive = (name: string, path: string) =>
+      new Promise<{ name: string; closed: boolean; gotResponse: boolean }>(resolve => {
+        const s = net.connect(server.port, "127.0.0.1");
+        let gotResponse = false;
+        let done = false;
+        const finish = (closed: boolean) => {
+          if (done) return;
+          done = true;
+          clearTimeout(deadline);
+          try {
+            s.destroy();
+          } catch {}
+          resolve({ name, closed, gotResponse });
+        };
+        s.on("connect", () => {
+          s.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: keep-alive\r\n\r\n`);
+        });
+        s.on("data", () => {
+          gotResponse = true;
+        });
+        s.on("error", () => {});
+        s.on("close", () => finish(true));
+        // idleTimeout: 2 with uWS ~4s tick granularity reaps at ~4-8s;
+        // 14s bound distinguishes "reaped" from "never reaped".
+        const deadline = setTimeout(() => finish(false), 14_000);
+      });
+
+    const results = await Promise.all([
+      rawKeepAlive("control", "/plain"),
+      rawKeepAlive("timeout(req, 0)", "/t0"),
+      rawKeepAlive("timeout(req, 60)", "/t60"),
+    ]);
+
+    expect(results).toEqual([
+      { name: "control", closed: true, gotResponse: true },
+      { name: "timeout(req, 0)", closed: true, gotResponse: true },
+      { name: "timeout(req, 60)", closed: true, gotResponse: true },
+    ]);
+  },
+  20_000,
+);
+
 it.concurrent("#6462", async () => {
   let headers: string[] = [];
   using server = Bun.serve({

@@ -60,6 +60,16 @@ public:
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
+        data->keepAliveTimeout = seconds;
+        Super::timeout(data->idleTimeout);
+    }
+
+    /* Per-request override: affects resetTimeout() while this response is
+     * in flight but does not change the connection's keep-alive window;
+     * markDone() restores idleTimeout from keepAliveTimeout. */
+    void setRequestTimeout(uint8_t seconds) {
+        auto* data = getHttpResponseData();
+        data->idleTimeout = seconds;
         Super::timeout(data->idleTimeout);
     }
 

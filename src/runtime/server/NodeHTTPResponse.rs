@@ -1876,7 +1876,7 @@ impl NodeHTTPResponse {
             return;
         }
 
-        raw.timeout(seconds);
+        raw.request_timeout(seconds);
     }
 
     pub(crate) fn cork(

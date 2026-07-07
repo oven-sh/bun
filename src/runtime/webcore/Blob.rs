@@ -3573,18 +3573,14 @@ impl BlobExt for Blob {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                                         // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
-                                        if parts_can_run_js {
-                                            joiner.push_cloned(blob.shared_view());
-                                        } else {
-                                            // SAFETY: the prescan above proved no
-                                            // remaining part can run user JS, so this
-                                            // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
-                                            joiner.push(unsafe {
-                                                bun_ptr::detach_lifetime(blob.shared_view())
-                                            });
-                                        }
+                                        // last ref to this Blob's Store before `done()`;
+                                        // borrow only when the prescan proved otherwise.
+                                        push_blob_part_bytes(
+                                            blob,
+                                            &mut joiner,
+                                            global,
+                                            !parts_can_run_js,
+                                        )?;
                                         continue;
                                     } else {
                                         let sliced = item.to_slice_clone(global)?;
@@ -3611,8 +3607,8 @@ impl BlobExt for Blob {
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
+                        // free this Blob's Store before `done()`, so never borrow.
+                        push_blob_part_bytes(blob, &mut joiner, global, false)?;
                     } else {
                         let sliced = current.to_slice_clone(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
@@ -3854,6 +3850,62 @@ impl BlobExt for Blob {
         result.set_not_heap_allocated();
         result
     }
+}
+
+/// Push a Blob part's bytes into `joiner` for `new Blob([...])`'s multi-part
+/// join. In-memory stores use `shared_view()`; file-backed stores are read
+/// synchronously (the constructor is sync and the spec's "process blob parts"
+/// requires the bytes). S3 stores throw rather than silently contribute zero
+/// bytes. `borrow_bytes` controls whether an in-memory view is borrowed past
+/// the call (only safe when the caller's prescan proved no later part runs JS).
+fn push_blob_part_bytes(
+    blob: &Blob,
+    joiner: &mut bun_core::string_joiner::StringJoiner,
+    global: &JSGlobalObject,
+    borrow_bytes: bool,
+) -> JsResult<()> {
+    let Some(store) = blob.store.get() else {
+        return Ok(());
+    };
+    match &store.data {
+        store::Data::Bytes(_) => {
+            if borrow_bytes {
+                // SAFETY: caller's prescan proved no remaining part runs user
+                // JS, so this Blob (rooted via the constructor's `_keep`/`arg`)
+                // keeps its Store alive until `joiner.done()`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
+            } else {
+                joiner.push_cloned(blob.shared_view());
+            }
+        }
+        store::Data::File(file) => {
+            let size = blob.size.get();
+            if size == 0 {
+                return Ok(());
+            }
+            let mut node_fs = crate::node::fs::NodeFS::default();
+            let mut rf_args = crate::node::fs::args::ReadFile::default();
+            rf_args.encoding = crate::node::types::Encoding::Buffer;
+            rf_args.path = file.pathlike.clone();
+            rf_args.offset = blob.offset.get();
+            rf_args.max_size = if size == MAX_SIZE { None } else { Some(size) };
+            match node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync) {
+                Err(err) => return Err(global.throw_value(err.to_js(global))),
+                Ok(mut result) => {
+                    joiner.push_cloned(result.slice());
+                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
+                        buf.destroy();
+                    }
+                }
+            }
+        }
+        store::Data::S3(_) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "new Blob() cannot read an S3 file synchronously; await .bytes() or .arrayBuffer() first"
+            )));
+        }
+    }
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -591,3 +592,45 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
     });
   },
 );
+
+describe("new Blob([...]) with a file-backed Blob part", () => {
+  async function check(blob: Blob, expected: string) {
+    const text = await blob.text();
+    expect({ size: blob.size, text }).toEqual({ size: expected.length, text: expected });
+  }
+
+  test("contributes the file's bytes alongside other parts", async () => {
+    using dir = tempDir("blob-file-part", { "f.bin": "ABCDEFGHIJ" });
+    const p = path.join(String(dir), "f.bin");
+    const file = Bun.file(p);
+
+    // single-part fast path (already worked; kept as baseline)
+    await check(new Blob([file]), "ABCDEFGHIJ");
+    // file + string (after)
+    await check(new Blob([file, "-tail"]), "ABCDEFGHIJ-tail");
+    // string + file (before)
+    await check(new Blob(["head-", file]), "head-ABCDEFGHIJ");
+    // in-memory Blob + sliced file
+    await check(new Blob([new Blob(["M"]), file.slice(2, 6)]), "MCDEF");
+    // File constructor
+    await check(new File([file, "!"], "n"), "ABCDEFGHIJ!");
+    // file + typed array + file (same file twice)
+    await check(new Blob([file, new Uint8Array([0x2d]), file]), "ABCDEFGHIJ-ABCDEFGHIJ");
+  });
+
+  test("fd-backed BunFile part", async () => {
+    using dir = tempDir("blob-fd-part", { "f.bin": "0123456789" });
+    const fd = fs.openSync(path.join(String(dir), "f.bin"), "r");
+    try {
+      await check(new Blob(["<", Bun.file(fd), ">"]), "<0123456789>");
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  test("throws when the file cannot be read", () => {
+    using dir = tempDir("blob-file-part-missing", {});
+    const missing = Bun.file(path.join(String(dir), "does-not-exist"));
+    expect(() => new Blob(["x", missing])).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+});

@@ -1066,7 +1066,10 @@ impl CompileResult {
 /// heap. Windows hosts and any `mmap` failure fall back to `read_to_end`.
 enum SourceBytes {
     #[cfg(not(windows))]
-    Mapped { ptr: *mut u8, len: usize },
+    Mapped {
+        ptr: *mut u8,
+        len: usize,
+    },
     Owned(Vec<u8>),
 }
 
@@ -1103,9 +1106,7 @@ impl core::ops::Deref for SourceBytes {
         match self {
             #[cfg(not(windows))]
             // SAFETY: `ptr` is a live `mmap` of `len` bytes until `Drop` unmaps it.
-            SourceBytes::Mapped { ptr, len } => unsafe {
-                core::slice::from_raw_parts(*ptr, *len)
-            },
+            SourceBytes::Mapped { ptr, len } => unsafe { core::slice::from_raw_parts(*ptr, *len) },
             SourceBytes::Owned(v) => v,
         }
     }

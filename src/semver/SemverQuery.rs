@@ -1050,6 +1050,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         second_version.major = second_version.major.saturating_add(1);
                         second_version.minor = 0;
                         second_version.patch = 0;
+                        second_version.tag = Default::default();
 
                         Range {
                             left: Comparator {
@@ -1066,6 +1067,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
                         second_version.minor = second_version.minor.saturating_add(1);
                         second_version.patch = 0;
+                        second_version.tag = Default::default();
 
                         Range {
                             left: Comparator {

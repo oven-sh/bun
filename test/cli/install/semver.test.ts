@@ -510,6 +510,12 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("1.0.0 - 2.x.5", "2.9.9", true);
     testSatisfies("1.0.0 - 2.x.5", "3.0.0", false);
     testSatisfies("1.0.0 - x.5.5", "999.0.0", true);
+
+    // Right endpoint drops any prerelease after a wildcard.
+    testSatisfies("1.0.0 - 2.x.5-beta", "2.9.9", true);
+    testSatisfies("1.0.0 - 2.x.5-beta", "3.0.0-alpha", false);
+    testSatisfies("1.0.0 - 2.0.x-beta", "2.0.9", true);
+    testSatisfies("1.0.0 - 2.0.x-beta", "2.1.0-alpha", false);
   });
 
   test("range includes", () => {

@@ -443,21 +443,15 @@ impl MySQLConnection {
                         // match the intended host. Absence of a configured server name is
                         // not a license to skip the check — fail closed.
                         if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            if servername.is_null() {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                            let hostname = self.server_name();
                             // SAFETY: native handle of a connected TLS socket is `SSL*`.
                             let ssl_ptr: *mut bun_boringssl_sys::SSL = self
                                 .socket
                                 .get_native_handle()
                                 .map(|h| h.cast())
                                 .unwrap_or(core::ptr::null_mut());
-                            // SAFETY: `server_name` is a NUL-terminated C string owned by
-                            // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            if ssl_ptr.is_null()
+                            if hostname.is_empty()
+                                || ssl_ptr.is_null()
                                 || !bun_boringssl::check_server_identity(
                                     // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
                                     unsafe { &mut *ssl_ptr },

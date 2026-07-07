@@ -1154,8 +1154,7 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_slice();
-                                let mime_type =
-                                    MimeType::init(content_slice.slice(), true, None);
+                                let mime_type = MimeType::init(content_slice.slice(), true, None);
                                 set_blob_content_type(blob, mime_type);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }

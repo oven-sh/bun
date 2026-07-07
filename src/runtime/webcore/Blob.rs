@@ -105,7 +105,7 @@ pub trait ReadBytesHandler {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::{
-    Blob, BlobContentType, Blob__deref, Blob__ref, ClosingState, MAX_SIZE, SizeType,
+    Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
 };
 
 pub type Ref = bun_ptr::ExternalShared<Blob>;
@@ -1371,11 +1371,12 @@ impl BlobExt for Blob {
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
                         self.content_type_was_set.set(true);
-                        self.content_type
-                            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                        self.content_type.set(
+                            match global_this.bun_vm().as_mut().mime_type(slice) {
                                 Some(mime) => BlobContentType::from(mime),
                                 None => BlobContentType::from_lowercased(slice),
-                            });
+                            },
+                        );
                     }
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
@@ -1790,11 +1791,12 @@ impl BlobExt for Blob {
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
                         self.content_type_was_set.set(true);
-                        self.content_type
-                            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                        self.content_type.set(
+                            match global_this.bun_vm().as_mut().mime_type(slice) {
                                 Some(mime) => BlobContentType::from(mime),
                                 None => BlobContentType::from_lowercased(slice),
-                            });
+                            },
+                        );
                     }
                 }
 
@@ -5678,11 +5680,12 @@ pub fn jsdom_file_construct_(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        blob.content_type
-                            .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                        blob.content_type.set(
+                            match global_this.bun_vm().as_mut().mime_type(slice) {
                                 Some(mime) => BlobContentType::from(mime),
                                 None => BlobContentType::from_lowercased(slice),
-                            });
+                            },
+                        );
                     }
                 }
             }
@@ -5764,11 +5767,12 @@ pub fn construct_bun_file(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        blob.content_type
-                            .set(match global_object.bun_vm().as_mut().mime_type(slice) {
+                        blob.content_type.set(
+                            match global_object.bun_vm().as_mut().mime_type(slice) {
                                 Some(mime) => BlobContentType::from(mime),
                                 None => BlobContentType::from_lowercased(slice),
-                            });
+                            },
+                        );
                     }
                 }
             }

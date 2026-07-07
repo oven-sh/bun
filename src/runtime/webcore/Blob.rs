@@ -987,7 +987,7 @@ impl BlobExt for Blob {
         ct.extend_from_slice(CONTENT_TYPE_PREFIX);
         ct.extend_from_slice(boundary);
         blob.content_type
-            .set(BlobContentType::Owned(ct.into_boxed_slice()));
+            .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
         blob.content_type_was_set.set(true);
 
         blob
@@ -2016,12 +2016,12 @@ impl BlobExt for Blob {
         blob.offset.set(offset);
         blob.size.set(len);
 
-        let content_type_was_allocated = content_type.is_owned();
+        let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
         if content_type.is_empty()
             && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
         {
-            blob.content_type.set(self.content_type.get().dupe());
+            blob.content_type.set(self.content_type.get().clone());
         } else {
             blob.content_type.set(content_type);
         }
@@ -3392,7 +3392,7 @@ impl BlobExt for Blob {
                                     size: Cell::new(blob.size.get()),
                                     offset: Cell::new(blob.offset.get()),
                                     store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: JsCell::new(blob.content_type.get().dupe()),
+                                    content_type: JsCell::new(blob.content_type.get().clone()),
                                     content_type_was_set: Cell::new(
                                         blob.content_type_was_set.get(),
                                     ),
@@ -4328,7 +4328,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     if !content_type.is_empty() {
         blob.content_type
-            .set(BlobContentType::Owned(content_type.into_boxed_slice()));
+            .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
         blob.content_type_was_set.set(content_type_was_set);
     }
 

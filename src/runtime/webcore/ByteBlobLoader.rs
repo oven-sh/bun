@@ -80,7 +80,7 @@ impl ByteBlobLoader {
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
         let content_type = if blob.content_type_was_set.get() {
-            blob.content_type.get().dupe()
+            blob.content_type.get().clone()
         } else {
             blob::BlobContentType::default()
         };

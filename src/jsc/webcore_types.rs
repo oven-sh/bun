@@ -42,9 +42,11 @@ pub enum ClosingState {
 
 /// A Blob's `type` string with ownership encoded in the variant, so assigning
 /// a new value drops the old one and a static pointer can never be freed.
+/// `Owned` is `Arc` so `clone()` just bumps a refcount.
+#[derive(Clone)]
 pub enum BlobContentType {
     Static(&'static [u8]),
-    Owned(Box<[u8]>),
+    Owned(std::sync::Arc<[u8]>),
 }
 
 impl Default for BlobContentType {
@@ -73,20 +75,12 @@ impl BlobContentType {
         matches!(self, Self::Owned(_))
     }
 
-    #[inline]
-    pub fn dupe(&self) -> Self {
-        match self {
-            Self::Static(s) => Self::Static(s),
-            Self::Owned(b) => Self::Owned(b.clone()),
-        }
-    }
-
-    /// Borrow a `MimeType`'s value: `'static` stays static, `Owned` is cloned.
+    /// Borrow a `MimeType`'s value: `'static` stays static, `Owned` is copied.
     #[inline]
     pub fn from_mime(mime: &MimeType) -> Self {
         match &mime.value {
             std::borrow::Cow::Borrowed(s) => Self::Static(s),
-            std::borrow::Cow::Owned(v) => Self::Owned(v.as_slice().into()),
+            std::borrow::Cow::Owned(v) => Self::Owned(std::sync::Arc::from(v.as_slice())),
         }
     }
 
@@ -95,7 +89,7 @@ impl BlobContentType {
     pub fn from_lowercased(slice: &[u8]) -> Self {
         let mut buf = vec![0u8; slice.len()];
         bun_core::strings::copy_lowercase(slice, &mut buf);
-        Self::Owned(buf.into_boxed_slice())
+        Self::Owned(std::sync::Arc::from(buf))
     }
 }
 
@@ -104,15 +98,8 @@ impl From<MimeType> for BlobContentType {
     fn from(mime: MimeType) -> Self {
         match mime.value {
             std::borrow::Cow::Borrowed(s) => Self::Static(s),
-            std::borrow::Cow::Owned(v) => Self::Owned(v.into_boxed_slice()),
+            std::borrow::Cow::Owned(v) => Self::Owned(std::sync::Arc::from(v)),
         }
-    }
-}
-
-impl From<Box<[u8]>> for BlobContentType {
-    #[inline]
-    fn from(b: Box<[u8]>) -> Self {
-        Self::Owned(b)
     }
 }
 
@@ -388,7 +375,7 @@ impl Blob {
             size: Cell::new(self.size.get()),
             offset: Cell::new(self.offset.get()),
             store: JsCell::new(self.store.get().clone()),
-            content_type: JsCell::new(self.content_type.get().dupe()),
+            content_type: JsCell::new(self.content_type.get().clone()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),

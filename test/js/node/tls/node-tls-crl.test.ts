@@ -1,9 +1,9 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { AddressInfo } from "net";
 import { once } from "node:events";
 import { join } from "path";
 import tls, { connect, createServer, Server } from "tls";
-import { describe, expect, it } from "bun:test";
 
 const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f));
 // agent4's serial number is listed in ca2-crl.pem; agent3's is not.

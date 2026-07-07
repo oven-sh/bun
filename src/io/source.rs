@@ -704,7 +704,9 @@ pub(crate) extern "C" fn Bun__Tty__getWindowSize(
     }
     // SAFETY: caller-provided out-pointers (C contract: non-null, writable).
     unsafe {
-        *width = i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1;
+        // quirk: TTY-48 — width is the BUFFER width (dwSize.X), height is the
+        // window height; wrapping happens at the buffer edge.
+        *width = i32::from(info.dwSize.X);
         *height = i32::from(info.srWindow.Bottom) - i32::from(info.srWindow.Top) + 1;
     }
     0

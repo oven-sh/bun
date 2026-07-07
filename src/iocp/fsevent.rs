@@ -52,7 +52,7 @@ use bun_windows_sys::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFORMATION,
     GetCurrentDirectoryW, GetFileInformationByHandle, GetFinalPathNameByHandleW, GetLongPathNameW,
     GetShortPathNameW, HANDLE, INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, NTSTATUS, OPEN_EXISTING,
-    ReadDirectoryChangesW, TRUE, ULONG, VOLUME_NAME_DOS, VOLUME_NAME_NONE, Win32Error,
+    ReadDirectoryChangesW, SetLastError, TRUE, ULONG, VOLUME_NAME_DOS, VOLUME_NAME_NONE, Win32Error,
 };
 
 use crate::event_loop::Loop;
@@ -653,7 +653,10 @@ unsafe fn process_batch(lp: *mut Loop, h: *mut FsEventHandle, bytes: usize, dir_
             // that restarts the watcher cannot invalidate it mid-call.
             // // quirk: SIGEV-30
             name_scratch.clear();
-            if name_len > 0 && name_len.is_multiple_of(2) && name_len <= rem - RECORD_HEADER_BYTES {
+            if name_len > 0 {
+                if !name_len.is_multiple_of(2) || name_len > rem - RECORD_HEADER_BYTES {
+                    return; // malformed record: never read past the batch
+                }
                 name_scratch.resize(name_len / 2, 0);
                 ptr::copy_nonoverlapping(
                     base.add(pos + RECORD_HEADER_BYTES),
@@ -901,7 +904,10 @@ fn two_call_wide(mut call: impl FnMut(*mut u16, DWORD) -> DWORD) -> Option<Vec<u
             return Some(buf);
         }
         if n == buf.len() {
-            return None; // contract violation; refuse to spin
+            // Contract violation; refuse to spin. Report a deterministic error
+            // so `.ok_or_else(Win32Error::get)` at callers is not stale.
+            SetLastError(DWORD::from(Win32Error::INSUFFICIENT_BUFFER.int()));
+            return None;
         }
         buf.resize(n, 0);
     }

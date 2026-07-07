@@ -509,8 +509,12 @@ impl Process {
         // `uv_spawn`; libuv never overwrites it. `process` is not
         // dereferenced again after this point.
         let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*process).data) };
-        let exit_code: u8 = if exit_status >= 0 {
-            (exit_status as u64) as u8
+        // Windows exit codes are a full 32-bit DWORD (GetExitCodeProcess).
+        // NTSTATUS crash codes live in the high bits (e.g. 0xC0000005 for an
+        // access violation), so narrowing here would collapse them into small
+        // ambiguous integers.
+        let exit_code: u32 = if exit_status >= 0 {
+            exit_status as u32
         } else {
             0
         };
@@ -719,7 +723,9 @@ pub enum Status {
 
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
-    pub code: u8,
+    /// POSIX `WEXITSTATUS` is 8 bits, but Windows `GetExitCodeProcess` returns
+    /// a full `DWORD`. Store the wide value so NTSTATUS crash codes survive.
+    pub code: u32,
     /// Raw signal number. `0` means "no signal".
     /// `SignalCode` discriminants are 1..=31; storing it as the
     /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
@@ -733,7 +739,7 @@ impl Status {
 
     #[cfg(unix)]
     pub fn from(pid: PidT, waitpid_result: &Maybe<WaitPidResult>) -> Option<Status> {
-        let mut exit_code: Option<u8> = None;
+        let mut exit_code: Option<u32> = None;
         let mut signal: Option<u8> = None;
 
         match waitpid_result {
@@ -749,7 +755,7 @@ impl Status {
                 let status = result.status as c_int;
 
                 if libc::WIFEXITED(status) {
-                    exit_code = Some(libc::WEXITSTATUS(status) as u8);
+                    exit_code = Some(libc::WEXITSTATUS(status) as u32);
                     // True if the process terminated due to receipt of a signal.
                 }
 

@@ -422,7 +422,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
     // Map `Status` → `Term` (the subset
     // `repository.exec` matches on — `Exited`/else).
     let term = match result.status {
-        Status::Exited(e) => Term::Exited(u32::from(e.code)),
+        Status::Exited(e) => Term::Exited(e.code),
         Status::Signaled(sig) => Term::Signal(u32::from(sig)),
         Status::Err(_) | Status::Running => Term::Unknown(0),
     };

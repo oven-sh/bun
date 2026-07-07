@@ -823,8 +823,8 @@ impl PmVersionCommand {
             }
             Ok(result) => {
                 if !result.is_ok() {
-                    let exit_code: i32 = match &result.status {
-                        ProcStatus::Exited(e) => i32::from(e.code),
+                    let exit_code: i64 = match &result.status {
+                        ProcStatus::Exited(e) => i64::from(e.code),
                         _ => -1,
                     };
                     Output::err_generic("Git add failed with exit code {}", (exit_code,));

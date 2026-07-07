@@ -2150,7 +2150,7 @@ impl NodeHTTPResponse {
         // ECMAScript ToUint32 — same bit pattern as
         // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
         let secs = (seconds.to_int32() as c_uint).min(255) as u8;
-        raw.timeout(secs);
+        raw.request_timeout(secs);
         true
     }
 }

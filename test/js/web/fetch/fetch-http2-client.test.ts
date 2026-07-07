@@ -1965,14 +1965,17 @@ test("await fetch() over HTTP/2 resolves on headers, before a content-length bod
 // effective idle deadline.
 test("h2: per-request `timeout` extends the session idle deadline, and {timeout:false} is not killed by a sibling's shorter explicit timeout", async () => {
   const HOLD_MS = 10_000;
+  const holdTimers = new Set<ReturnType<typeof setTimeout>>();
   const server = makeH2Server({}, (_req, res) => {
     // Hold every request idle past uSockets' worst-case firing window for a
     // 1s short-tick timer (~5s), then respond.
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      holdTimers.delete(timer);
       try {
         res.end("hello");
       } catch {}
     }, HOLD_MS);
+    holdTimers.add(timer);
   });
   server.listen(0);
   await once(server, "listening");
@@ -2061,6 +2064,7 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
       exitCode: 0,
     });
   } finally {
+    for (const timer of holdTimers) clearTimeout(timer);
     server.close();
   }
 }, 60_000);

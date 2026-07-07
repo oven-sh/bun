@@ -2086,10 +2086,11 @@ interface BunFetchRequestInit extends RequestInit {
    * every byte sent or received; if the connection stays idle for longer than
    * this, the request fails with a timeout error.
    *
-   * - A positive number sets the idle deadline in milliseconds, overriding
-   *   the `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default (5 minutes).
-   * - `0` or `false` disables the idle timer for this request.
-   * - `true` or an omitted/non-finite value uses the default.
+   * - A finite positive number sets the idle deadline in milliseconds,
+   *   overriding the `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default (5 minutes).
+   * - `0`, `false`, or a non-finite number disables the idle timer for this
+   *   request.
+   * - `true` or an omitted value uses the default.
    *
    * This is not a whole-request deadline; use `AbortSignal.timeout(ms)` for
    * that. Not part of the Fetch API specification.

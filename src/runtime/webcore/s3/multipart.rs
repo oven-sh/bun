@@ -114,8 +114,8 @@ use bun_s3_signing::storage_class::StorageClass;
 use crate::webcore::ResumableSinkBackpressure;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
-    execute_simple_s3_request,
+    self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
+    S3UploadResult, execute_simple_s3_request,
 };
 
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
@@ -775,7 +775,7 @@ impl MultiPartUpload {
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub fn on_rollback_multi_part_request(
-        result: S3UploadResult,
+        result: S3DeleteResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
@@ -787,7 +787,7 @@ impl MultiPartUpload {
             BStr::new(&this_ref.upload_id)
         );
         match result {
-            S3UploadResult::Failure(_err) => {
+            S3DeleteResult::Failure(_err) => {
                 if this_ref.options.retry > 0 {
                     this_ref.options.retry -= 1;
                     // retry rollback
@@ -798,7 +798,9 @@ impl MultiPartUpload {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
-            S3UploadResult::Success => {
+            // AbortMultipartUpload answers 204; a 404 means the uploadId is
+            // already gone. Either way the rollback is complete.
+            S3DeleteResult::Success | S3DeleteResult::NotFound(_) => {
                 // SAFETY: `this` is live (final-step ref held until this deref).
                 MultiPartUpload::deref_(this);
                 Ok(())
@@ -863,7 +865,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
+            s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             callback_context,
         )
     }

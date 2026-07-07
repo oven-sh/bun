@@ -1620,6 +1620,28 @@ describe("HTTP Server Security Tests - Advanced", () => {
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
+
+    test("rejects requests with DEL (0x7F) in header field value", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      // RFC 9110 5.5: field-vchar is VCHAR / obs-text (0x21-0x7E / 0x80-0xFF); DEL (0x7F) is a CTL.
+      const msg = ["GET / HTTP/1.1", "Host: localhost", "X-Custom: a\x7Fb", "", ""].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
   });
 
   describe("Transfer-Encoding Attacks", () => {

@@ -1392,6 +1392,54 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   expect(seen).not.toContain("GET /admin");
 });
 
+test("header field value byte validation per RFC 9110 5.5", async () => {
+  // field-content = field-vchar [ 1*( SP / HTAB / field-vchar ) field-vchar ]
+  // field-vchar   = VCHAR / obs-text = %x21-7E / %x80-FF
+  // Every CTL (0x00-0x1F and 0x7F) is invalid inside a field value. SP and HTAB are the
+  // only sub-VCHAR bytes permitted. obs-text (0x80-0xFF) is accepted.
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("x-a") ?? "");
+      return new Response("ok");
+    },
+  });
+
+  async function probe(byte: number) {
+    const header = `X-A: a${String.fromCharCode(byte)}b`;
+    const raw = `GET / HTTP/1.1\r\nHost: x\r\n${header}\r\nConnection: close\r\n\r\n`;
+    const response = await new Promise<string>((resolve, reject) => {
+      const client = net.connect(server.port, "127.0.0.1");
+      const chunks: Buffer[] = [];
+      client.on("error", reject);
+      client.on("data", chunk => chunks.push(chunk));
+      client.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+      client.write(Buffer.from(raw, "latin1"));
+    });
+    const match = response.match(/^HTTP\/1\.[01] (\d{3})/);
+    return { byte, status: match ? match[1] : "none" };
+  }
+
+  const bytes = Array.from({ length: 256 }, (_, i) => i).filter(b => b !== 0x0d && b !== 0x0a);
+  const results: Awaited<ReturnType<typeof probe>>[] = [];
+  // Small batches so the listen backlog never overflows on Windows.
+  const batchSize = 8;
+  for (let i = 0; i < bytes.length; i += batchSize) {
+    results.push(...(await Promise.all(bytes.slice(i, i + batchSize).map(probe))));
+  }
+
+  const isValidFieldValueByte = (b: number) => b === 0x09 || b === 0x20 || (b >= 0x21 && b <= 0x7e) || b >= 0x80;
+  expect(results).toEqual(
+    bytes.map(byte => ({
+      byte,
+      status: isValidFieldValueByte(byte) ? "200" : "400",
+    })),
+  );
+  // No rejected byte ever reaches the application.
+  expect(seen.every(value => !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value))).toBe(true);
+});
+
 describe("Host header field values in request.url", () => {
   // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
   // server is listening, so a refused connect (before anything was read) is retried.
@@ -1504,7 +1552,7 @@ describe("Host header field values in request.url", () => {
     [0x21, 0x40],
     [0x41, 0x60],
     [0x61, 0x7e],
-    [0x7f, 0xff],
+    [0x80, 0xff],
   ])(
     "HTTP/1.1 and HTTP/1.0 requests synthesize request.url from the same Host bytes (%i-%i)",
     async (firstByte, lastByte) => {
@@ -1516,7 +1564,8 @@ describe("Host header field values in request.url", () => {
       });
 
       // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]".
-      // Every byte in [0x7f, 0xff] is outside that set, so neither URL uses any of them.
+      // Every byte in [0x80, 0xff] is outside that set, so neither URL uses any of them.
+      // 0x7F (DEL) is rejected at parse time, so it is not part of any batch.
       const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
 
       async function checkByte(byte: number) {

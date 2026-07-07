@@ -2421,9 +2421,12 @@ impl<'a> Resolver<'a> {
                         {
                             if remap.is_empty() {
                                 // "browser": {"./some/path.js": false}
-                                // Keep the resolved path as the module's identity;
-                                // only mark it disabled.
+                                // Mark the resolved path disabled. Also disable the
+                                // auto_main fallback so Result::path() returns None.
                                 result.path_pair.primary.is_disabled = true;
+                                if let Some(sec) = result.path_pair.secondary.as_mut() {
+                                    sec.is_disabled = true;
+                                }
                             } else {
                                 let mut remapped = MatchResult::default();
                                 if self

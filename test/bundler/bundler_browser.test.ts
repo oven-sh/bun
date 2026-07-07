@@ -180,6 +180,46 @@ describe("bundler", () => {
       stdout: `["object","{}",0]`,
     },
   });
+  // Dual-entry package ("main" + "module") where the file pointed to by
+  // "module" is browser-disabled. The import of the bare specifier must yield
+  // {} (matching esbuild's import-only output), and require() must still pick
+  // up the "main" entry. Previously this panicked; after fixing the panic it
+  // must also not fall through to the auto_main secondary and emit a reference
+  // to an undefined namespace variable.
+  itBundled("browser/BrowserFieldDisabledDualEntryModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import v from "demo-pkg";
+        console.log(JSON.stringify([typeof v, v]));
+      `,
+      "/node_modules/demo-pkg/package.json": /* json */ `
+        { "name": "demo-pkg", "main": "./main.js", "module": "./module.js", "browser": { "./module.js": false } }
+      `,
+      "/node_modules/demo-pkg/main.js": /* js */ `module.exports = "main";`,
+      "/node_modules/demo-pkg/module.js": /* js */ `export default "module";`,
+    },
+    target: "browser",
+    run: {
+      stdout: `["undefined",null]`,
+    },
+  });
+  itBundled("browser/BrowserFieldDisabledDualEntryRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const v = require("demo-pkg");
+        console.log(JSON.stringify([typeof v, v]));
+      `,
+      "/node_modules/demo-pkg/package.json": /* json */ `
+        { "name": "demo-pkg", "main": "./main.js", "module": "./module.js", "browser": { "./module.js": false } }
+      `,
+      "/node_modules/demo-pkg/main.js": /* js */ `module.exports = "main";`,
+      "/node_modules/demo-pkg/module.js": /* js */ `export default "module";`,
+    },
+    target: "browser",
+    run: {
+      stdout: `["string","main"]`,
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// require() of an ES module that is currently on the import evaluation stack
-// (ESM → ESM → createRequire back to an ancestor) must throw
+// require() of an ESM that is mid-evaluation (ancestor or self) must throw
 // ERR_REQUIRE_CYCLE_MODULE like Node, not abort in CyclicModuleRecord::link
 // and not silently return an empty namespace.
 describe.concurrent("require(esm) while the target is mid-evaluation", () => {
@@ -15,8 +14,8 @@ console.log("a done");
       "b.mjs": `import { createRequire } from "node:module";
 let got;
 try { got = createRequire(import.meta.url)("./a.mjs"); }
-catch (e) { got = "!" + (e.code || e.name); }
-console.log("b required a:", typeof got === "object" ? JSON.stringify(got) : got);
+catch (e) { got = { code: e.code, name: e.name, message: e.message }; }
+console.log("b required a:", JSON.stringify(got));
 `,
       "entry.mjs": `import { pathToFileURL } from "node:url";
 await import(pathToFileURL("./a.mjs").href);
@@ -32,11 +31,20 @@ console.log("alive");
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "b required a: !ERR_REQUIRE_CYCLE_MODULE\na done\nalive\n",
-      stderr: expect.not.stringContaining("ASSERTION FAILED"),
+    const lines = stdout.split("\n");
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: [expect.stringMatching(/^b required a: /), "a done", "alive", ""],
+      stderr: "",
       exitCode: 0,
     });
+    const got = JSON.parse(lines[0].slice("b required a: ".length));
+    expect(got).toEqual({
+      code: "ERR_REQUIRE_CYCLE_MODULE",
+      name: "Error",
+      message: expect.stringContaining("Cannot require() ES Module"),
+    });
+    expect(got.message).toContain("a.mjs");
+    expect(got.message).toContain("in a cycle");
   });
 
   test("self-require from an ESM throws ERR_REQUIRE_CYCLE_MODULE", async () => {
@@ -64,7 +72,7 @@ console.log("alive");
 
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "self required: !ERR_REQUIRE_CYCLE_MODULE\nalive\n",
-      stderr: expect.not.stringContaining("ASSERTION FAILED"),
+      stderr: "",
       exitCode: 0,
     });
   });
@@ -98,7 +106,7 @@ console.log("alive");
 
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "caught: ERR_REQUIRE_CYCLE_MODULE\nalive\n",
-      stderr: expect.not.stringContaining("ASSERTION FAILED"),
+      stderr: "",
       exitCode: 0,
     });
   });

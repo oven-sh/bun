@@ -785,11 +785,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
-        // The entry exists but is currently on the link/evaluate stack
-        // (an ancestor in the import graph, or a self-require). Re-entering
-        // loadModuleSync would call CyclicModuleRecord::link() on a record
-        // whose status is Linking/Evaluating, which the spec forbids and
-        // JSC asserts against. Surface Node's ERR_REQUIRE_CYCLE_MODULE.
+        // The entry is on the link/evaluate stack (ancestor or self-require).
+        // loadModuleSync would re-enter link() on a Linking/Evaluating record,
+        // which the spec forbids and JSC asserts; throw Node's cycle error.
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record())) {
             auto status = cyclic->status();
             if (status == JSC::CyclicModuleRecord::Status::Linking || status == JSC::CyclicModuleRecord::Status::Evaluating) {

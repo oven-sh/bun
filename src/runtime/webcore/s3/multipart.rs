@@ -662,15 +662,34 @@ impl MultiPartUpload {
         result: S3DownloadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
-        let this = this.cast::<Self>();
-        // `adopt` consumes the prior +1 on Drop.
-        // SAFETY: callback context — a ref was taken before the request was queued.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        let this_ptr = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         if this.state == State::Finished {
+            // The upload was failed while CreateMultipartUpload was in flight.
+            // If the server already created an upload id, abort it so the
+            // server-side upload and its parts are not orphaned. The rollback
+            // chain consumes the in-flight ref; otherwise release it here.
+            if let S3DownloadResult::Success(response) = result {
+                let slice = response.body.list.as_slice();
+                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
+                    let value_start = start + b"<UploadId>".len();
+                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
+                        if end >= value_start {
+                            this.upload_id = Box::<[u8]>::from(&slice[value_start..end]);
+                        }
+                    }
+                }
+                if !this.upload_id.is_empty() && this.upload_id.len() <= Self::MAX_UPLOAD_ID_LEN {
+                    return this.rollback_multi_part_request();
+                }
+            }
+            MultiPartUpload::deref_(this_ptr);
             return Ok(());
         }
+        // `adopt` consumes the prior +1 on Drop.
+        // SAFETY: callback context — a ref was taken before the request was queued.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this_ptr) };
         match result {
             S3DownloadResult::Failure(err) => {
                 scoped_log!(
@@ -755,12 +774,14 @@ impl MultiPartUpload {
                     return Ok(());
                 }
                 this_ref.state = State::Finished;
-                // The deref must run after the callback:
-                let r =
-                    (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
-                // SAFETY: `this` is live (final-step ref held until this deref).
-                MultiPartUpload::deref_(this);
-                r
+                (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context)?;
+                // Launder `self` after the callback (see `fail()`); it may have
+                // re-entered via the JS wrapper. Then issue a best-effort
+                // AbortMultipartUpload so the uploaded parts are not orphaned.
+                // The rollback chain consumes the final-step ref.
+                let this: *mut Self = core::hint::black_box(this);
+                // SAFETY: `this` is live (final-step ref still held).
+                unsafe { (*this).rollback_multi_part_request() }
             }
             S3CommitResult::Success => {
                 this_ref.state = State::Finished;

@@ -1155,11 +1155,15 @@ test("response + corrupt TLS record in one packet via pooled HTTPS proxy tunnel 
 // on_writable returns), so this test verifies the fetch rejects cleanly
 // with a connection error rather than asserting or hanging.
 for (const scheme of ["http", "https"] as const) {
-  test.concurrent(
+  // 5 iterations (was 10): two concurrent ASAN-debug subprocesses took
+  // 4.7-4.9s of the default 5s budget after sustained runs. Fixture startup
+  // dominates; 5 iterations still covers "rejects cleanly, doesn't hang".
+  const iterations = 5;
+  test(
     `outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`,
     async () => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, "10"],
+        cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, String(iterations)],
         env: {
           ...bunEnv,
           // The explicit per-request proxy must not be bypassed or rerouted
@@ -1180,13 +1184,14 @@ for (const scheme of ["http", "https"] as const) {
       // Every iteration must reject with a connection-flavored error, not
       // TimeoutError (which would mean the request stalled on a dead socket
       // and only the AbortSignal freed it) and not "resolved".
-      expect(lines).toHaveLength(10);
+      expect(lines).toHaveLength(iterations);
       for (const line of lines) {
         expect(line).toMatch(/^rejected: (ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused)$/);
       }
       expect(stderr).not.toContain("hung");
       expect(exitCode).toBe(0);
     },
+    15000,
   );
 }
 

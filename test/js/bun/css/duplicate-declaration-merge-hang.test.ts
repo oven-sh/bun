@@ -49,6 +49,10 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a{--x\${i}:\${i}}\`).join(""),
       undefined,
     ],
+    "scattered-custom-props": [
+      Array.from({ length: n }, (_, i) => \`:root{--x\${i}:\${i}}.q\${i}{z-index:9}\`).join(""),
+      undefined,
+    ],
     "distinct-selectors": [
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
@@ -84,6 +88,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:webkit-gradient",
       "OK:clamp",
       "OK:distinct-custom-props",
+      "OK:scattered-custom-props",
       "OK:distinct-selectors",
       "",
     ].join("\n"),

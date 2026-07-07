@@ -36,18 +36,17 @@ impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
+        use core::hash::Hash;
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
-        // property-id tag bytes.
+        // Hash the full `PropertyId` (tag + prefix + custom-name bytes) so
+        // distinct custom properties don't collide into one dedup bucket.
         for decl in self.declarations.declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         for decl in self.declarations.important_declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         hasher.final_()
     }

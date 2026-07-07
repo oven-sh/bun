@@ -116,6 +116,20 @@ const results: Record<string, unknown> = {};
 }
 
 {
+  // DOMException (the default AbortSignal.reason type) must abort like any Error.
+  reqs.length = 0;
+  const w = s3.file("domex.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
+  w.write(new Uint8Array(PART));
+  await w.flush();
+  w.write(new Uint8Array(100));
+  const ac = new AbortController();
+  ac.abort(new DOMException("source failed mid-stream", "AbortError"));
+  const outcome = await settle(w.end(ac.signal.reason));
+  await waitFor(() => reqs.some(r => r.startsWith("ABORT ") || r.startsWith("COMMIT ")));
+  results.domex = { outcome, ...summary("domex.bin") };
+}
+
+{
   // Buffered data below partSize; multipart never started.
   reqs.length = 0;
   const w = s3.file("single.bin").writer({ partSize: PART, queueSize: 1, retry: 0 });
@@ -196,6 +210,16 @@ test("S3File.writer().end(error) aborts the upload and rejects", async () => {
   // end(error) in the same turn as the write that dispatched the init request
   // must still roll back the UploadId once it arrives.
   expect(result.race).toEqual({
+    outcome: "rejected:source failed mid-stream",
+    committed: false,
+    commits: 0,
+    puts: 0,
+    aborts: 1,
+    inits: 1,
+  });
+
+  // DOMException (AbortSignal.reason) must abort like any Error.
+  expect(result.domex).toEqual({
     outcome: "rejected:source failed mid-stream",
     committed: false,
     commits: 0,

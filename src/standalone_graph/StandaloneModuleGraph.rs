@@ -1067,7 +1067,10 @@ impl CompileResult {
 /// occupying anonymous heap. A mapping failure falls back to `read_to_end`.
 enum SourceBytes {
     #[cfg(not(windows))]
-    Mapped { ptr: *mut u8, len: usize },
+    Mapped {
+        ptr: *mut u8,
+        len: usize,
+    },
     #[cfg(windows)]
     Mapped {
         ptr: *mut u8,

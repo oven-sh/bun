@@ -785,6 +785,19 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
+        // The entry exists but is currently on the link/evaluate stack
+        // (an ancestor in the import graph, or a self-require). Re-entering
+        // loadModuleSync would call CyclicModuleRecord::link() on a record
+        // whose status is Linking/Evaluating, which the spec forbids and
+        // JSC asserts against. Surface Node's ERR_REQUIRE_CYCLE_MODULE.
+        if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record())) {
+            auto status = cyclic->status();
+            if (status == JSC::CyclicModuleRecord::Status::Linking || status == JSC::CyclicModuleRecord::Status::Evaluating) {
+                auto message = makeString("Cannot require() ES Module "_s, keyString, " in a cycle. A cycle involving require(esm) is not allowed to maintain invariants mandated by the ECMAScript specification. Try making at least part of the dependency in the graph lazily loaded."_s);
+                scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_REQUIRE_CYCLE_MODULE, message));
+                return {};
+            }
+        }
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);

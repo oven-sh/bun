@@ -1896,9 +1896,27 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 } as unknown as typeof import("node:net").Socket;
 
+// Node validates the `Trailer` header inside _storeHeader, after the body framing has
+// been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
+// and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
+function willBeChunked(response) {
+  if (response.hasHeader("transfer-encoding")) {
+    return chunkExpression.test(String(response.getHeader("transfer-encoding")));
+  }
+  if (response.hasHeader("content-length")) return false;
+  if (response._hasBody === false) return false;
+  if (response._removedTE) return false;
+  return response.useChunkedEncodingByDefault === true;
+}
+
+// A non-chunked message is terminated by the first empty line after the header
+// fields, so it can carry neither a body nor trailers.
+function hasInvalidTrailer(response) {
+  return !willBeChunked(response) && (response._trailer || response.hasHeader("trailer"));
+}
+
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
-  let hasContentLength = response.hasHeader("content-length");
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
@@ -1915,6 +1933,9 @@ function _writeHead(statusCode, reason, obj, response) {
   if (checkInvalidHeaderChar(response.statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
 
   response.statusCode = statusCode;
+  // Before the Trailer checks below, like Node's writeHead: a 204/304/1xx status
+  // clears _hasBody, and a body-less message can never carry trailers.
+  updateHasBody(response, statusCode);
 
   {
     // Slow-case: when progressive API and header fields are passed.
@@ -1936,10 +1957,7 @@ function _writeHead(statusCode, reason, obj, response) {
         // message will be terminated by the first empty line after the
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
-        if (
-          (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-          (response._trailer || response.hasHeader("trailer"))
-        ) {
+        if (hasInvalidTrailer(response)) {
           throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
         }
         // Headers in obj should override previous headers but still
@@ -1966,21 +1984,13 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
-    if (
-      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-      (response._trailer || response.hasHeader("trailer"))
-    ) {
-      // remove the invalid content-length or trailer header
-      if (hasContentLength) {
-        response.removeHeader("trailer");
-      } else {
-        response.removeHeader("content-length");
-      }
+    if (hasInvalidTrailer(response)) {
+      // The message is not chunk-framed, so `Trailer` is the offending header; drop it
+      // so a caller that swallows the throw cannot put it on the wire.
+      response.removeHeader("trailer");
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
-
-  updateHasBody(response, statusCode);
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

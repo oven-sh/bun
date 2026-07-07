@@ -264,3 +264,82 @@ test("pipelined non-chunked request does not read prior request's trailers", asy
     { url: "/b", trailers: {}, raw: [] },
   ]);
 });
+
+// Node validates the `Trailer` response header in _storeHeader, after it has decided the
+// body framing. Bun's server frames the body natively and never sets
+// `res.chunkedEncoding`, so the check has to recompute that decision instead of reading
+// it, or it rejects every `Trailer` header.
+function collectResponse(handler: (req: any, res: any) => void) {
+  const done = Promise.withResolvers<{ raw: Buffer; thrown: string | null }>();
+  let thrown: string | null = null;
+  const server = createServer((req, res) => {
+    try {
+      handler(req, res);
+    } catch (err: any) {
+      thrown = err.code ?? err.message;
+      res.end();
+    }
+  });
+  once(server.listen(0, "127.0.0.1"), "listening").then(() => {
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    });
+    const chunks: Buffer[] = [];
+    socket.on("data", c => chunks.push(c));
+    socket.on("error", done.reject);
+    socket.on("end", () => {
+      server.close();
+      done.resolve({ raw: Buffer.concat(chunks), thrown });
+    });
+  }, done.reject);
+  return done.promise;
+}
+
+test("Trailer response header is allowed on a chunked response", async () => {
+  const { raw, thrown } = await collectResponse((req, res) => {
+    res.writeHead(200, { Trailer: "X-Foo" });
+    res.write("hi");
+    res.addTrailers({ "X-Foo": String.fromCharCode(0xe9) });
+    res.end();
+  });
+  expect(thrown).toBeNull();
+  const text = raw.toString("latin1");
+  expect(text).toMatch(/^trailer: X-Foo$/im);
+  expect(text).toMatch(/transfer-encoding: chunked/i);
+  expect(text).toMatch(/^X-Foo: \xe9$/im);
+  // obs-text goes on the wire as Latin-1 (0xE9), never UTF-8 (0xC3 0xA9).
+  expect(raw.includes(0xe9)).toBe(true);
+  expect(raw.includes(Buffer.from([0xc3, 0xa9]))).toBe(false);
+});
+
+test("Trailer response header is allowed with an explicit Transfer-Encoding: chunked", async () => {
+  const { raw, thrown } = await collectResponse((req, res) => {
+    res.writeHead(200, { Trailer: "X-Foo", "Transfer-Encoding": "chunked" });
+    res.write("hi");
+    res.addTrailers({ "X-Foo": "bar" });
+    res.end();
+  });
+  expect(thrown).toBeNull();
+  expect(raw.toString("latin1")).toMatch(/^x-foo: bar$/im);
+});
+
+test("Trailer response header with Content-Length throws ERR_HTTP_TRAILER_INVALID", async () => {
+  const { raw, thrown } = await collectResponse((req, res) => {
+    res.writeHead(200, { "Content-Length": "2", Trailer: "X-Foo" });
+    res.end("hi");
+  });
+  expect(thrown).toBe("ERR_HTTP_TRAILER_INVALID");
+  expect(raw.toString("latin1")).not.toMatch(/^trailer:/im);
+});
+
+test("Trailer response header on a body-less status throws ERR_HTTP_TRAILER_INVALID", async () => {
+  for (const status of [204, 304]) {
+    const { raw, thrown } = await collectResponse((req, res) => {
+      res.writeHead(status, { Trailer: "X-Foo" });
+      res.end();
+    });
+    expect(thrown).toBe("ERR_HTTP_TRAILER_INVALID");
+    expect(raw.toString("latin1")).not.toMatch(/^trailer:/im);
+  }
+});

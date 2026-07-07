@@ -94,10 +94,14 @@ function install_gh_linux() {
     aarch64 | arm64) arch="arm64" ;;
     *) echo "error: Unsupported architecture: $(uname -m)"; exit 1 ;;
   esac
-  local version
-  version="$(curl -fsSL "https://api.github.com/repos/cli/cli/releases/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([0-9.]+)".*/\1/')"
-  if [ -z "$version" ]; then
-    echo "error: Cannot determine latest gh release version"
+  # Resolve the version from the releases/latest redirect, not the REST API: the API is rate
+  # limited to 60 req/hour per IP (GITHUB_TOKEN is not exported yet), and piping curl into a
+  # short-circuiting reader such as `grep -m1` makes curl exit 23 (EPIPE) under pipefail.
+  local url version
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/cli/cli/releases/latest")"
+  version="${url##*/tag/v}"
+  if [ -z "$version" ] || [ "$version" == "$url" ]; then
+    echo "error: Cannot determine latest gh release version from: $url"
     exit 1
   fi
   local dir

@@ -2098,7 +2098,6 @@ describe("bundler", () => {
     format: "cjs",
     capture: ["false", "false", "require.main === module", "require.main === module"],
     onAfterBundle(api) {
-      console.log(api.readFile("/out.js"));
       // This should be marked as a CommonJS module
       api.expectFile("/out.js").toMatch(/\brequire\b/); // __require is not ok
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.

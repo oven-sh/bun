@@ -142,7 +142,10 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
         } while (ret == -EINTR);
 
-        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES && ret != -EFAULT)) {
+        // OHOS kernel returns -ESPIPE for epoll_pwait2 (syscall 353).
+        // Treat any non-negative return as success; anything else is an
+        // unrecoverable syscall failure → fall back to epoll_pwait.
+        if (LIKELY(ret >= 0)) {
             return ret;
         }
 

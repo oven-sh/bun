@@ -223,7 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `uses_*_ref` flags. `eval` is also routed through so that
             // `is_direct_eval` and the printer's `(0, eval)` indirect-eval
             // re-wrap see a resolved Unbound symbol. `AllocatedName` refs
-            // (escaped identifiers, e.g. `abc`) always fall through —
+            // (escaped identifiers, e.g. `\u0061bc`) always fall through —
             // `NoOpRenamer` only special-cases `SourceContentsSlice`.
             let r = expr.data.e_identifier().expect("infallible: variant").ref_;
             if r.is_source_contents_slice() {

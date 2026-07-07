@@ -3692,7 +3692,7 @@ fn eq_w_ordinal_ignore_case(a: &[u16], b: &[u16]) -> bool {
 
 /// Record `\Device\X → L:` when `dos` (`L:\a\b`) provably names its own handle's
 /// NT path (`VOLUME_NAME_NONE` tail == `dos` minus drive). Junction/8.3/subst
-/// spellings fail that test on purpose: the pairing could name another volume.
+/// spellings usually fail that test — a case-insensitive alias can still pass.
 fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     if dos.len() < 3
         || dos[0] >= 128

@@ -432,14 +432,11 @@ static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
         Locker locker { socket->m_pipelinedResponsesLock };
         for (auto& entry : socket->m_pipelinedResponses) {
             if (auto* res = entry.get()) {
-                roots.append(res);
+                roots.appendWithCrashOnOverflow(res);
                 pipelined.append(res);
             }
         }
         socket->m_pipelinedResponses.clear();
-    }
-    if (roots.hasOverflowed()) [[unlikely]] {
-        return;
     }
     for (auto* res : pipelined) {
         if (res->m_ctx != nullptr) {

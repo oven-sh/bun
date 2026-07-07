@@ -1144,6 +1144,14 @@ namespace uWS
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }
 
+            /* node:http compat: request-trailer state is per-request. Clear it for
+             * every dispatched request (not only chunked ones) so a pipelined GET
+             * cannot read the previous chunked request's trailers via
+             * takeRequestTrailers() on this same connection. */
+            if (usingNodeHttpCompat) {
+                nodeHttpRequestTrailers.clear();
+            }
+
             /* The rules at play here according to RFC 9112 for requests are essentially:
              * If both content-length and transfer-encoding then invalid message; must break.
              * If has transfer-encoding then must be chunked regardless of value.
@@ -1164,17 +1172,14 @@ namespace uWS
             } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
-                /* node:http compat: trailer fields of this new chunked body replace
-                 * whatever a previous request on this connection left behind. */
                 if (usingNodeHttpCompat) {
-                    nodeHttpRequestTrailers.clear();
                     chunkedExtensionsByteCount = 0;
                 }
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
-                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE)) {
+                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
                         if (usingNodeHttpCompat && chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1245,7 +1250,7 @@ public:
             } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
-                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE)) {
+                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxFallbackSize)) {
                     if (usingNodeHttpCompat && chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
@@ -1317,7 +1322,7 @@ public:
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
-                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE)) {
+                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, usingNodeHttpCompat ? &chunkedExtensionsByteCount : nullptr, usingNodeHttpCompat ? &nodeHttpRequestTrailers : nullptr, maxFallbackSize)) {
                             if (usingNodeHttpCompat && chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }

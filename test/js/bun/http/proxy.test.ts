@@ -1807,6 +1807,7 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   let originA: Server;
   let originB: Server;
   let proxyLog: string[];
+  let proxyAuth: (string | null)[];
   let proxy: ReturnType<typeof Bun.listen>;
 
   beforeAll(() => {
@@ -1818,13 +1819,13 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
     originA = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: () =>
-        new Response(null, {
-          status: 302,
-          headers: { Location: `http://127.0.0.1:${originB.port}/final`, Connection: "close" },
-        }),
+      fetch: req => {
+        const to = new URL(req.url).searchParams.get("to") ?? `http://127.0.0.1:${originB.port}/final`;
+        return new Response(null, { status: 302, headers: { Location: to, Connection: "close" } });
+      },
     });
     proxyLog = [];
+    proxyAuth = [];
     // Recording forward proxy: serves absolute-form requests itself so the
     // assertions can tell which hops went through it.
     proxy = Bun.listen({
@@ -1838,13 +1839,19 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
           let buf = ((s as any).buf += new TextDecoder("latin1").decode(raw));
           const i = buf.indexOf("\r\n\r\n");
           if (i < 0) return;
-          const line = buf.slice(0, i).split("\r\n")[0]!;
+          const head = buf.slice(0, i).split("\r\n");
+          const line = head[0]!;
           proxyLog.push(line);
+          proxyAuth.push(
+            head.find(h => h.toLowerCase().startsWith("proxy-authorization:"))?.slice("proxy-authorization:".length).trim() ??
+              null,
+          );
           (s as any).buf = "";
-          const m = /^GET http:\/\/[^/]+\/r302 /.exec(line);
+          const m = /^GET http:\/\/[^/]+\/r302(?:\?to=([^ ]+))? /.exec(line);
+          const loc = m ? (m[1] ? decodeURIComponent(m[1]) : `http://127.0.0.1:${originB.port}/final`) : null;
           s.write(
-            m
-              ? `HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:${originB.port}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
+            loc
+              ? `HTTP/1.1 302 Found\r\nLocation: ${loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
               : `HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nFINAL-PROXY`,
           );
           s.flush();
@@ -1864,6 +1871,7 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
 
   async function runFetch(env: Record<string, string | undefined>, url: string, useProxyOption = false) {
     proxyLog.length = 0;
+    proxyAuth.length = 0;
     const script = useProxyOption
       ? `console.log(await (await fetch(process.env.U, { proxy: process.env.P })).text())`
       : `console.log(await (await fetch(process.env.U)).text())`;
@@ -1885,7 +1893,7 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr, exitCode, proxyLog: [...proxyLog] };
+    return { stdout: stdout.trim(), stderr, exitCode, proxyLog: [...proxyLog], proxyAuth: [...proxyAuth] };
   }
 
   test("redirect into NO_PROXY-exempt host goes direct (env http_proxy)", async () => {
@@ -1932,13 +1940,38 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   test("redirect into NO_PROXY-exempt host with credentialed http_proxy", async () => {
     // Covers the proxy_authorization lifecycle: the Basic auth Vec must be
     // clone-owned so dropping it on redirect is not a double-free under ASAN.
-    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+    const { stdout, stderr, exitCode, proxyLog, proxyAuth } = await runFetch(
       { http_proxy: `http://user:pass@127.0.0.1:${proxy.port}`, no_proxy: `127.0.0.1:${originB.port}` },
       `http://127.0.0.1:${originA.port}/r302`,
     );
-    expect({ stdout, proxyLog }).toEqual({
+    expect({ stdout, proxyLog, proxyAuth }).toEqual({
       stdout: "FINAL-ORIGIN-B",
       proxyLog: [`GET http://127.0.0.1:${originA.port}/r302 HTTP/1.1`],
+      proxyAuth: ["Basic dXNlcjpwYXNz"],
+    });
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("http->https redirect drops http_proxy when https_proxy is unset", async () => {
+    // ProxySettings::resolve() picks by scheme: hop 2 (https) must not inherit
+    // the http_proxy hop 1 used.
+    await using originTls = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: tlsCert,
+      fetch: () => new Response("FINAL-ORIGIN-TLS"),
+    });
+    const to = encodeURIComponent(`https://127.0.0.1:${originTls.port}/final`);
+    const { stdout, stderr, exitCode, proxyLog } = await runFetch(
+      { http_proxy: `http://127.0.0.1:${proxy.port}`, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      `http://127.0.0.1:${originA.port}/r302?to=${to}`,
+    );
+    // Hop 1 via proxy (absolute-form GET with ?to=); hop 2 is https so http_proxy
+    // does not apply and https_proxy is unset: no CONNECT should reach the proxy.
+    expect({ stdout, proxyLog }).toEqual({
+      stdout: "FINAL-ORIGIN-TLS",
+      proxyLog: [`GET http://127.0.0.1:${originA.port}/r302?to=${to} HTTP/1.1`],
     });
     if (exitCode !== 0) console.error("stderr:", stderr);
     expect(exitCode).toBe(0);

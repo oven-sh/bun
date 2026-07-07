@@ -1113,7 +1113,13 @@ impl EventLoop {
 
         self.process_gc_timer();
         self.process_gc_timer();
-        loop_.tick();
+        // The trailing `tick()` can start work — a `--hot` reload kicks off a
+        // transpile on a worker thread and waits for the result — whose only
+        // wake source is a cross-thread `wakeup()`. Parking forever on that one
+        // source is brittle; `main` never did: a 1s GC `timerfd` woke this loop
+        // periodically. Keep the bound, lose the file descriptor. libuv never
+        // blocked here (`tick_with_timeout` ignores its argument).
+        loop_.tick_with_timeout(Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

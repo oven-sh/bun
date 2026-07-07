@@ -653,7 +653,10 @@ function normalizePemKeyOption(key, ctxPassphrase) {
   });
 }
 
-function newNativeSecureContext(options, cached = true) {
+// The digest cache is opt-in: the internal connect/listen paths pass
+// `cached = true` explicitly. A forgotten opt-in on a future entry point is a
+// perf regression, not a shared trust store.
+function newNativeSecureContext(options, cached = false) {
   maybeWarnAboutExtraCACerts();
   // tls.createSecureContext() with no options still goes through the version
   // translation below so the module-level DEFAULT_MIN/MAX_VERSION apply.
@@ -737,7 +740,7 @@ var InternalSecureContext = class SecureContext {
   context;
   servername;
 
-  constructor(options, cached = true) {
+  constructor(options, cached = false) {
     // When tls.setDefaultCACertificates() has installed an override and no
     // explicit `ca` was given, use the override as the default CA set so the
     // process-wide default applies on every construction path (the public
@@ -803,7 +806,7 @@ function createSecureContext(options) {
   // is built fresh because it carries the per-call `servername`.
   // The user-facing constructor owns its SSL_CTX exclusively so addCACert
   // cannot leak across contexts; internal connect/listen paths stay cached.
-  return new InternalSecureContext(options, false);
+  return new InternalSecureContext(options);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -918,7 +921,7 @@ function TLSSocket(socket?, options?) {
   }
   // Internal path: keep the per-digest cache (the user-facing constructors,
   // createSecureContext() and new tls.SecureContext(), own theirs exclusively).
-  this[ksecureContext] = options.secureContext || new InternalSecureContext(options);
+  this[ksecureContext] = options.secureContext || new InternalSecureContext(options, true);
   this.authorized = false;
   this.secureConnecting = true;
   this._secureEstablished = false;
@@ -1108,7 +1111,7 @@ TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   // Serve this connection's identity from the given context (Node calls this
   // from ALPNCallback/SNICallback before the certificate is sent). Accepts a
   // SecureContext or the same options object createSecureContext takes.
-  const ctx = context?.context ? context : new InternalSecureContext(context);
+  const ctx = context?.context ? context : new InternalSecureContext(context, true);
   this._handle?.setKeyCert?.(ctx.context);
 };
 
@@ -1296,7 +1299,7 @@ function Server(options, secureConnectionListener): void {
       throw new TypeError("hostname must be a string");
     }
     if (!(context instanceof InternalSecureContext)) {
-      context = new InternalSecureContext(context);
+      context = new InternalSecureContext(context, true);
     }
     const handle = this._handle;
     if (handle) {

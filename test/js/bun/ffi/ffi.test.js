@@ -666,6 +666,44 @@ it("dlopen throws an error instead of returning it", () => {
   expect(err).toBeTruthy();
 });
 
+// Windows: dlopen must accept paths with non-ASCII characters. Previously the
+// path was handed to LoadLibraryA as UTF-8, which the OS decodes as the system
+// ANSI codepage, so any non-ASCII byte mangled the path.
+it.skipIf(!isWindows)("dlopen accepts non-ASCII library paths on Windows", async () => {
+  const fixture = `
+    const { dlopen, FFIType } = require("bun:ffi");
+    const { mkdirSync, copyFileSync } = require("node:fs");
+    const { join } = require("node:path");
+
+    const src = join(process.env.SystemRoot || "C:\\\\Windows", "System32", "version.dll");
+    const results = {};
+    for (const name of ["caf\\u00e9", "\\u65e5\\u672c\\u8a9e"]) {
+      const dir = join(process.argv[2], "bun-ffi-" + name);
+      mkdirSync(dir, { recursive: true });
+      const dll = join(dir, "version.dll");
+      copyFileSync(src, dll);
+      const lib = dlopen(dll, {
+        GetFileVersionInfoSizeW: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+      });
+      results[name] = typeof lib.symbols.GetFileVersionInfoSizeW;
+      lib.close();
+    }
+    console.log(JSON.stringify(results));
+  `;
+  using dir = tempDir("ffi-dlopen-unicode", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture, String(dir)],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ results, stderr, exitCode }).toMatchObject({
+    results: { "caf\u00e9": "function", "\u65e5\u672c\u8a9e": "function" },
+    exitCode: 0,
+  });
+});
+
 it('suffix does not start with a "."', () => {
   expect(suffix).not.toMatch(/^\./);
 });

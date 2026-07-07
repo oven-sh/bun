@@ -1863,12 +1863,12 @@ impl BlobExt for Blob {
                 s3.get_credentials().dupe(),
                 path,
                 global_this,
-                Default::default(),
+                s3.options,
                 self.content_type_or_mime_type(),
                 None,
                 None,
                 proxy,
-                None,
+                s3.storage_class,
                 s3.request_payer,
             );
         }

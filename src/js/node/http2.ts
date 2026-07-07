@@ -2083,6 +2083,15 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
+// Wraps the Writable onwrite callback handed to native writeStream: when native settles it for
+// a frame that was dropped during stream teardown, the stream has already been destroyed (by
+// close()/destroy() or the session.destroy() forEachStream pass), so report the drop as an
+// error to the user's write callback. errorOrDestroy is a no-op on a destroyed stream, and the
+// onwriteError path never emits 'drain'. A still-live stream means the frame actually flushed.
+function onWriteStreamDone(this: Http2Stream, callback, err) {
+  if (err == null && this.destroyed) return callback($ERR_HTTP2_INVALID_STREAM());
+  callback(err);
+}
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
@@ -2523,7 +2532,7 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, undefined, false, callback);
+        native.writeStream(this.#id, chunk, undefined, false, onWriteStreamDone.bind(this, callback));
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: true, data, encoding: "" });
         }
@@ -2554,7 +2563,7 @@ class Http2Stream extends Duplex {
           wireChunk = Buffer.from(chunk, encoding);
           wireEncoding = undefined;
         }
-        native.writeStream(this.#id, wireChunk, wireEncoding, false, callback);
+        native.writeStream(this.#id, wireChunk, wireEncoding, false, onWriteStreamDone.bind(this, callback));
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: false, data: chunk, encoding });
         }
@@ -4070,7 +4079,13 @@ class ServerHttp2Session extends Http2Session {
     if (parser) {
       // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
       // precedence over the destroy code when streams are torn down.
-      parser.emitErrorToAllStreams(this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR);
+      const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
+      // A non-numeric code is rejected by emitErrorToAllStreams below; only run the synchronous
+      // per-stream destroy when the code is valid so that rejection is still observable.
+      if (typeof streamRstCode === "number") {
+        parser.forEachStream(sessionDestroyStream.bind(this, streamRstCode));
+      }
+      parser.emitErrorToAllStreams(streamRstCode);
       parser.detach();
       this.#parser = null;
     }
@@ -4092,6 +4107,17 @@ function destroySelfOnEnd(this: Http2Stream) {
 }
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
+}
+// session.destroy(): destroy each still-open stream before native drops its queued DATA frames
+// so the dropped-frame Writable callback sees kDestroyed (afterWrite then skips 'drain';
+// otherwise a backpressured producer is woken and every later write() returns true). Matches
+// node, which destroys each Http2Stream before ClearOutgoing(UV_ECANCELED) settles the write
+// callbacks. Streams already marked closed completed normally (native emitErrorToAllStreams
+// skips CLOSED streams) and must not be surfaced as errored here. Runs the same error/rstCode
+// plumbing as the deferred emitStreamErrorNT so the stream observes the session error and rst
+// code at 'close' time.
+function sessionDestroyStream(this: Http2Session, rstCode: number, stream: Http2Stream) {
+  if (stream && !stream.destroyed && !stream.closed) emitStreamErrorNT(this, stream, rstCode, true, false);
 }
 
 // After the socket is gone a graceful close can never complete — the parser
@@ -4885,7 +4911,13 @@ class ClientHttp2Session extends Http2Session {
       }
       // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
       // precedence over the destroy code when streams are torn down.
-      parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+      const streamRstCode = this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL);
+      // A non-numeric code is rejected by emitErrorToAllStreams below; only run the synchronous
+      // per-stream destroy when the code is valid so that rejection is still observable.
+      if (typeof streamRstCode === "number") {
+        parser.forEachStream(sessionDestroyStream.bind(this, streamRstCode));
+      }
+      parser.emitErrorToAllStreams(streamRstCode);
       parser.detach();
     }
     this.#parser = null;

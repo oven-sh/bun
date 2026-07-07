@@ -104,12 +104,14 @@ test("http2 client session.destroy() with a flow-control-blocked write does not 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const result = JSON.parse(stdout.trim());
-  expect(result).toEqual({
-    backpressured: true,
-    drainsAfterDestroy: 0,
-    writeOkAfterDestroy: 0,
-    writeCbErrorCode: expect.stringMatching(/^(ERR_HTTP2_INVALID_STREAM|ECANCELED|ERR_STREAM_DESTROYED)$/),
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: {
+      backpressured: true,
+      drainsAfterDestroy: 0,
+      writeOkAfterDestroy: 0,
+      writeCbErrorCode: expect.stringMatching(/^(ERR_HTTP2_INVALID_STREAM|ECANCELED|ERR_STREAM_DESTROYED)$/),
+    },
+    stderr: expect.anything(),
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });

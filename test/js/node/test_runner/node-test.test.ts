@@ -137,6 +137,43 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should expose the body outcome to afterEach and workerId to the context", async () => {
+    const { exitCode, stderr } = await runTests(["15-outcome-in-hooks.js"]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should capture plan at first t.assert access and reject subtests started after their parent finished", async () => {
+    const { exitCode, stderr } = await runTests(["16-plan-and-late-subtest.js"]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should bound plan({wait:true}) by the test's own timeout instead of hanging", async () => {
+    const { exitCode, stderr } = await runTests(["16b-plan-wait-timeout.js"]);
+    expect(stderr).toContain("test timed out after 100ms");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should reset the module-level mock tracker between --rerun-each iterations", async () => {
+    // ESM entry: --rerun-each currently only re-evaluates ESM entry files.
+    const { exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs"], {}, ["--rerun-each=3"]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
@@ -310,4 +347,28 @@ test("the call record is pushed after the implementation runs, like node", () =>
   expect(inside).toBe(0);
   expect(f.mock.callCount()).toBe(1);
   mock.reset();
+});
+
+test("mock.property/mock.method survive a polluted Object.prototype", async () => {
+  // The defineProperty descriptors must carry __proto__:null so an inherited
+  // `value` on Object.prototype does not turn the accessor descriptor into a
+  // TypeError (nodejs/node lib/internal/test_runner/mock/mock.js does this).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Object.prototype.value = 1;
+        const { mock } = require("node:test");
+        const obj = { x: 1, get p() { return 5; } };
+        mock.property(obj, "x");
+        mock.getter(obj, "p");
+        console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });

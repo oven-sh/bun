@@ -184,6 +184,8 @@ class MockPropertyContext {
 
     const { configurable, enumerable } = descriptor;
     Object.defineProperty(object, propertyName, {
+      // @ts-ignore
+      __proto__: null,
       configurable,
       enumerable,
       get: () => {
@@ -243,6 +245,8 @@ class MockPropertyContext {
 
   restore() {
     Object.defineProperty(this.#object, this.#propertyName, {
+      // @ts-ignore
+      __proto__: null,
       ...this.#descriptor,
       value: this.#originalValue,
     });
@@ -294,15 +298,21 @@ class MockTracker {
       return trackMockCall(context, this, args, new.target);
     }
     Object.defineProperty(mockFunction, "mock", {
+      // @ts-ignore
+      __proto__: null,
       value: context,
       writable: false,
       enumerable: false,
     });
     Object.defineProperty(mockFunction, "length", {
+      // @ts-ignore
+      __proto__: null,
       value: original.length,
       configurable: true,
     });
     Object.defineProperty(mockFunction, "name", {
+      // @ts-ignore
+      __proto__: null,
       value: original.name,
       configurable: true,
     });
@@ -419,11 +429,14 @@ class MockTracker {
     }
 
     const restore = function restore() {
-      Object.defineProperty(objectOrFunction, methodName, descriptor!);
+      // @ts-ignore
+      Object.defineProperty(objectOrFunction, methodName, { __proto__: null, ...descriptor! });
     };
     const mocked = this.#createMockFunction(original, implementation as Function | undefined, restore, times);
 
     const mockDescriptor: PropertyDescriptor = {
+      // @ts-ignore
+      __proto__: null,
       configurable: descriptor.configurable,
       enumerable: descriptor.enumerable,
     };
@@ -593,12 +606,17 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
   // methods (minus the uncopied ones), snapshot/fileSnapshot, and custom
   // assertions; each call counts the plan and binds the TestContext.
   const result: Record<string, Function> = { __proto__: null } as unknown as Record<string, Function>;
+  // Node captures `plan` once at first `t.assert` access and closes over it,
+  // so `t.assert; t.plan(2); t.assert.ok(1)` counts 0 (nodejs/node
+  // lib/internal/test_runner/test.js:331). Match that.
+  const { plan } = node;
   const add = (name: string, method: Function) => {
     const wrapper = function (...args: unknown[]) {
-      planCount(node);
+      plan?.count();
       return method.$apply(ctx, args);
     };
-    Object.defineProperty(wrapper, "name", { value: name, configurable: true });
+    // @ts-ignore
+    Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
     result[name] = wrapper;
   };
   for (const key of Object.keys(nodeAssert)) {
@@ -621,9 +639,12 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
 // Test plan
 // -----------------------------------------------------------------------------
 
-function makeTestFailure(message: string) {
+function makeTestFailure(message: string, failureType?: string) {
   const error = new Error(message);
   (error as { code?: string }).code = "ERR_TEST_FAILURE";
+  if (failureType !== undefined) {
+    (error as { failureType?: string }).failureType = failureType;
+  }
   return error;
 }
 
@@ -683,6 +704,8 @@ class TestPlan {
   }
 }
 
+// t.test() counts against the parent's plan; only t.assert.* uses the
+// captured-at-first-access snapshot (Node reads this.#test.plan fresh here).
 function planCount(node: TestNode) {
   node.plan?.count();
 }
@@ -766,7 +789,9 @@ class TestNode {
   started = false;
   finished = false;
   passed = false;
-  // Inline subtests are serialized through this chain (Node's default subtest concurrency is 1).
+  error: unknown = null;
+  // Inline subtests are serialized through this chain. `concurrency` is
+  // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<void> = Promise.resolve();
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
@@ -842,13 +867,17 @@ class TestNode {
 }
 
 let rootNode: TestNode | undefined;
+let rootGeneration = -1;
+let fileGeneration: (() => number) | undefined;
 
 function getRootNode(): TestNode {
-  // bun test loads every file into one process: a new entry file gets a fresh
-  // root so file-level hooks and state never leak into later files (Node runs
-  // each test file in its own process).
-  if (rootNode === undefined || rootNode.filePath !== Bun.main) {
+  // Fresh root on each runner enter_file (per file AND per --rerun-each
+  // iteration) so file-level hooks/state never leak between them; Bun.main
+  // alone can't detect a rerun of the same file.
+  const generation = (fileGeneration ??= bunTest().fileGeneration)();
+  if (rootNode === undefined || rootGeneration !== generation) {
     const isNewFile = rootNode !== undefined;
+    rootGeneration = generation;
     // Publish the new root before resetting so re-entrant calls (user code run
     // by a mock's restore) see an up-to-date root and don't reset again.
     rootNode = new TestNode(kRootName, undefined, kDefaultOptions, true, false);
@@ -903,7 +932,7 @@ class TestContext {
   }
 
   get error(): unknown {
-    return undefined;
+    return this.#node.error;
   }
 
   get passed(): boolean {
@@ -912,6 +941,10 @@ class TestContext {
 
   get attempt(): number {
     return 0;
+  }
+
+  get workerId(): number | undefined {
+    return Number(process.env.NODE_TEST_WORKER_ID) || undefined;
   }
 
   get tags(): string[] {
@@ -1153,6 +1186,8 @@ function validateTimeoutAndSignal(options: TestOptions | HookOptions) {
 function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
   const { concurrency, tags, plan } = options;
 
+  // signal and concurrency are validated for Node's error contract but not yet
+  // enforced (t.signal never aborts; subtests always run serially).
   validateTimeoutAndSignal(options);
   if (concurrency != null && typeof concurrency !== "boolean") {
     if (typeof concurrency === "number") {
@@ -1264,6 +1299,23 @@ function invokeTestFn(fn: Function, arg: unknown) {
     return invokeWithDoneCallback(fn, arg);
   }
   return fn(arg);
+}
+
+// A single timeout armed once per test and raced against both the body and
+// plan.check(), matching Node's stopTest()/stopPromise. `promise` never
+// resolves; it only rejects with the timeout error. Callers must dispose().
+function createStopController(timeout: number | undefined) {
+  if (typeof timeout !== "number" || !Number.isFinite(timeout)) {
+    return undefined;
+  }
+  let timer: ReturnType<typeof setTimeout>;
+  const promise = new Promise<never>((_, reject) => {
+    timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+    timer.unref?.();
+  });
+  // Swallow the rejection when nothing is racing it anymore.
+  promise.catch(() => {});
+  return { promise, dispose: () => realClearTimeout(timer) };
 }
 
 // Runs `run` racing Node's test timeout; the timer starts before the body so a
@@ -1382,31 +1434,45 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       node.plan = new TestPlan(planOption);
     }
 
-    const runBody = async () => {
-      await runWithNode(node, () => invokeTestFn(fn, ctx));
-      // Wait for inline subtests created during the body (awaited or not),
-      // including ones scheduled while earlier subtests were running.
-      await drainSubtestChain(node);
-    };
-
+    // Node arms one stopPromise (timeout + signal) and races both the body
+    // AND the plan wait against it. Arm timeout once here so plan({wait:true})
+    // is bounded by the same test timeout, not left unbounded.
+    const stop = createStopController(node.options.timeout);
     try {
-      await awaitWithTimeout(runBody, node.options.timeout);
-    } catch (err) {
-      // A body that throws or rejects with a nullish value must still fail.
-      failure = err ?? makeTestFailure("test failed");
-    }
+      const runBody = async () => {
+        await runWithNode(node, () => invokeTestFn(fn, ctx));
+        // Wait for inline subtests created during the body (awaited or not),
+        // including ones scheduled while earlier subtests were running.
+        await drainSubtestChain(node);
+      };
 
-    // A before hook created while the test was running failed (Node fails the
-    // test with the hook's error).
-    failure ??= node.hookFailure;
-
-    const { plan } = node;
-    if (failure === undefined && plan !== null) {
       try {
-        await plan.check();
+        await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
       } catch (err) {
-        failure = err;
+        // A body that throws or rejects with a nullish value must still fail.
+        failure = err ?? makeTestFailure("test failed");
       }
+
+      // A before hook created while the test was running failed (Node fails the
+      // test with the hook's error).
+      failure ??= node.hookFailure;
+
+      const { plan } = node;
+      if (failure === undefined && plan !== null) {
+        try {
+          const pending = plan.check();
+          if (pending !== undefined) {
+            // Defuse: if stop wins the race, plan's own wait-timeout may still
+            // reject `pending` afterward with no one listening.
+            pending.catch(() => {});
+            await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
+          }
+        } catch (err) {
+          failure = err;
+        }
+      }
+    } finally {
+      stop?.dispose();
     }
 
     const { failedSubtests, firstSubtestError } = node;
@@ -1418,6 +1484,12 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       failure = error;
     }
   }
+
+  // Node sets passed/error before running afterEach/after so hooks can
+  // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
+  // pass()/fail() precede afterEach).
+  node.passed = failure === undefined;
+  node.error = failure ?? null;
 
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const ancestor = ancestors[i];
@@ -1446,6 +1518,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   node.finished = true;
   node.passed = failure === undefined;
+  node.error = failure ?? null;
   return failure;
 }
 
@@ -1601,15 +1674,25 @@ function addTest(
   const { ownTags } = validateTestOptions(options);
 
   const runningNode = executionParent ?? currentNode();
-  if (runningNode !== undefined && runningNode.isRunning()) {
-    // Subtest of a running test (or of an inline suite created inside one).
-    if (mode === "skip" || options.skip) {
-      return Promise.resolve(undefined);
+  if (runningNode !== undefined) {
+    if (runningNode.finished) {
+      // t.test() escaped its parent (e.g. via setImmediate). Node marks the
+      // late subtest failed with parentAlreadyFinished; do not fall through to
+      // bun:test, which would throw an internal-phase error.
+      return Promise.reject(
+        makeTestFailure("test could not be started because its parent finished", "parentAlreadyFinished"),
+      );
     }
-    const child = new TestNode(name, runningNode, options, false, true);
-    child.ownTags = ownTags;
-    if (mode === "todo") child.todoFlag = true;
-    return scheduleSubtest(runningNode, child, fn);
+    if (runningNode.isRunning()) {
+      // Subtest of a running test (or of an inline suite created inside one).
+      if (mode === "skip" || options.skip) {
+        return Promise.resolve(undefined);
+      }
+      const child = new TestNode(name, runningNode, options, false, true);
+      child.ownTags = ownTags;
+      if (mode === "todo") child.todoFlag = true;
+      return scheduleSubtest(runningNode, child, fn);
+    }
   }
 
   // Collection phase: register with bun:test.
@@ -1670,6 +1753,11 @@ function addSuite(
   const { ownTags } = validateTestOptions(options);
 
   const runningNode = executionParent ?? currentNode();
+  if (runningNode !== undefined && runningNode.finished) {
+    return Promise.reject(
+      makeTestFailure("test could not be started because its parent finished", "parentAlreadyFinished"),
+    );
+  }
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;

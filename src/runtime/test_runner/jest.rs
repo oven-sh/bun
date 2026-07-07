@@ -327,7 +327,7 @@ pub mod Jest {
     }
 
     pub(crate) fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let module = JSValue::create_empty_object(global_object, 23);
+        let module = JSValue::create_empty_object(global_object, 24);
 
         let test_scope_functions = create_bound(
             global_object,
@@ -398,6 +398,11 @@ pub mod Jest {
             global_object,
             b"setDefaultTimeout",
             jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
+        );
+        module.put(
+            global_object,
+            b"fileGeneration",
+            jsc::JSFunction::create(global_object, "fileGeneration", __jsc_host_js_file_generation, 0, Default::default()),
         );
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
         module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
@@ -508,6 +513,17 @@ pub mod Jest {
         }
 
         Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_file_generation(
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // node:test compares this to detect a fresh enter_file (across both
+        // multiple files and --rerun-each iterations); 0 outside `bun test`.
+        let generation = runner().map(|r| r.bun_test_root.file_generation).unwrap_or(0);
+        Ok(JSValue::from(generation))
     }
 }
 

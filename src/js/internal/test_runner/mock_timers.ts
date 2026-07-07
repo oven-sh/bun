@@ -514,9 +514,9 @@ class MockTimers {
 
   #assertTimeArg(time) {
     if (time < 0) {
-      // Node passes the reason and value swapped here; bun's ERR_INVALID_ARG_VALUE
-      // requires a string reason, so use the conventional argument order.
-      throw $ERR_INVALID_ARG_VALUE("time", time, "must be a positive integer");
+      // Node's swapped-arg bug reproduced verbatim (nodejs/node v26.3.0
+      // lib/internal/test_runner/mock/mock_timers.js:558).
+      throw $ERR_INVALID_ARG_VALUE("time", "positive integer", `${time}`);
     }
   }
 

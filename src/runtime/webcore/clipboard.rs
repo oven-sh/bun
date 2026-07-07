@@ -860,8 +860,11 @@ mod platform {
             command.extend_from_slice(b" < ");
             shell_quote_into(&mut command, path);
         }
+        // The watchdog group is fully redirected (so neither it nor its
+        // `sleep` holds the helper's captured stdout open) and reaps its
+        // `sleep` on TERM, so nothing outlives this invocation.
         command.extend_from_slice(
-            b" & c=$!; { sleep 10; kill \"$c\"; } 2>/dev/null & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
+            b" & c=$!; { sleep 10 & sp=$!; trap 'kill \"$sp\" 2>/dev/null' TERM; wait \"$sp\"; kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
         );
         let stdio = |capture: bool| {
             if capture {

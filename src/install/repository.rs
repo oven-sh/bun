@@ -373,7 +373,7 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     // `bun_spawn::run` does POSIX argv/envp marshalling
     // + `process::sync::spawn`. On Windows it supplies the thread's
     // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
-    // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
+    // already published) so `spawn_process_windows` has a real event loop.
     let result = bun_spawn::run(bun_spawn::RunOptions {
         argv,
         env_map: std_map.get(),

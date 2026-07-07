@@ -3772,6 +3772,7 @@ pub(super) fn server_set_app_flags_(
     require_host_header: bool,
     use_strict_method_validation: bool,
     use_insecure_http_parser: bool,
+    http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
         return Err(global.throw(format_args!(
@@ -3785,6 +3786,7 @@ pub(super) fn server_set_app_flags_(
             require_host_header,
             use_strict_method_validation,
             use_insecure_http_parser,
+            http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
@@ -3792,6 +3794,7 @@ pub(super) fn server_set_app_flags_(
             require_host_header,
             use_strict_method_validation,
             use_insecure_http_parser,
+            http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
@@ -3799,6 +3802,7 @@ pub(super) fn server_set_app_flags_(
             require_host_header,
             use_strict_method_validation,
             use_insecure_http_parser,
+            http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
@@ -3806,6 +3810,7 @@ pub(super) fn server_set_app_flags_(
             require_host_header,
             use_strict_method_validation,
             use_insecure_http_parser,
+            http_allow_half_open,
         );
     } else {
         return Err(global.throw(format_args!(
@@ -3863,6 +3868,7 @@ extern "C" fn server_set_app_flags_shim(
     require_host_header: bool,
     use_strict_method_validation: bool,
     use_insecure_http_parser: bool,
+    http_allow_half_open: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
@@ -3872,6 +3878,7 @@ extern "C" fn server_set_app_flags_shim(
             require_host_header,
             use_strict_method_validation,
             use_insecure_http_parser,
+            http_allow_half_open,
         ),
     )
 }

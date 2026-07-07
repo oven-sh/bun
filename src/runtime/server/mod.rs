@@ -1471,6 +1471,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         require_host_header: bool,
         use_strict_method_validation: bool,
         use_insecure_http_parser: bool,
+        http_allow_half_open: bool,
     ) {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -1478,6 +1479,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 require_host_header,
                 use_strict_method_validation,
                 use_insecure_http_parser,
+                http_allow_half_open,
             );
         }
     }

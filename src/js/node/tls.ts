@@ -10,6 +10,7 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
+  validateSecureProtocol,
 } = require("internal/tls");
 const {
   validateString,
@@ -311,52 +312,6 @@ const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
 // Subset of Node's configSecureContext() validations:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
-// Valid OpenSSL/BoringSSL secureProtocol method names (legacy API). Built lazily
-// so the Set is only allocated when a secureProtocol option is actually used.
-let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
-function getSecureProtocolMethods() {
-  if (!_SECURE_PROTOCOL_METHODS) {
-    _SECURE_PROTOCOL_METHODS = new Set([
-      "TLS_method",
-      "TLS_client_method",
-      "TLS_server_method",
-      "SSLv23_method",
-      "SSLv23_client_method",
-      "SSLv23_server_method",
-      "TLSv1_method",
-      "TLSv1_client_method",
-      "TLSv1_server_method",
-      "TLSv1_1_method",
-      "TLSv1_1_client_method",
-      "TLSv1_1_server_method",
-      "TLSv1_2_method",
-      "TLSv1_2_client_method",
-      "TLSv1_2_server_method",
-    ]);
-  }
-  return _SECURE_PROTOCOL_METHODS;
-}
-// Matches Node: SSLv2/SSLv3 methods are disabled, anything unrecognized is an
-// unknown method.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L100
-function invalidProtocolMethod(message) {
-  // Node throws all secureProtocol failures (SSLv2/SSLv3 disabled + unknown
-  // method) via THROW_ERR_TLS_INVALID_PROTOCOL_METHOD: a TypeError carrying the
-  // ERR_TLS_INVALID_PROTOCOL_METHOD code, varying only the message.
-  const error = new TypeError(message);
-  error.code = "ERR_TLS_INVALID_PROTOCOL_METHOD";
-  return error;
-}
-function validateSecureProtocol(secureProtocol) {
-  if (secureProtocol === undefined || secureProtocol === null) return;
-  validateString(secureProtocol, "options.secureProtocol");
-  if (secureProtocol.startsWith("SSLv2_")) throw invalidProtocolMethod("SSLv2 methods disabled");
-  if (secureProtocol.startsWith("SSLv3_")) throw invalidProtocolMethod("SSLv3 methods disabled");
-  if (!getSecureProtocolMethods().has(secureProtocol)) {
-    throw invalidProtocolMethod(`Unknown method: ${secureProtocol}`);
-  }
-}
-
 function validateSecureContextOptions(options) {
   const {
     ciphers,

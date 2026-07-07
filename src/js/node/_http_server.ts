@@ -16,6 +16,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  validateOneOf,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
@@ -26,6 +27,7 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
+  validateSecureProtocol,
 } = require("internal/tls");
 const {
   kInternalSocketData,
@@ -302,6 +304,7 @@ function Server(options, callback): void {
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
+  this.httpAllowHalfOpen = false;
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
   this[tlsSymbol] = null;
@@ -367,6 +370,7 @@ function Server(options, callback): void {
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.
+      validateSecureProtocol(options.secureProtocol);
       let minVersion, maxVersion;
       const range = secureProtocolToVersionRange(options.secureProtocol);
       if (range) {
@@ -1109,6 +1113,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
       onServerConnection.bind(this),
+      !!this.httpAllowHalfOpen,
     );
 
     if (this?._unref) {
@@ -1178,78 +1183,66 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
   HTTP_PARSER_ERROR_LF_EXPECTED = 11,
   HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW = 12,
+  HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE = 13,
+  HTTP_PARSER_ERROR_CLOSED_CONNECTION = 14,
+  HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
 // socketOnError, exactly like Node's onParserExecuteCommon: the server's
 // 'clientError' listener (or the default handler) decides what to write back
 // and when to destroy the connection.
-// "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-const kHttp2Preface = [
-  0x50, 0x52, 0x49, 0x20, 0x2a, 0x20, 0x48, 0x54, 0x54, 0x50, 0x2f, 0x32, 0x2e, 0x30, 0x0d, 0x0a, 0x0d, 0x0a, 0x53,
-  0x4d, 0x0d, 0x0a, 0x0d, 0x0a,
-];
-function isHttp2Preface(rawPacket: ArrayBuffer) {
-  if (rawPacket.byteLength < kHttp2Preface.length) return false;
-  const bytes = new Uint8Array(rawPacket, 0, kHttp2Preface.length);
-  for (let i = 0; i < kHttp2Preface.length; i++) {
-    if (bytes[i] !== kHttp2Preface[i]) return false;
-  }
-  return true;
-}
-
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   let err;
-  // The HTTP/2 connection preface ("PRI * HTTP/2.0\r\n...") reaching an HTTP/1
-  // server: llhttp pauses on it before any other parse error, and Node reports
-  // HPE_PAUSED_H2_UPGRADE with the 24-byte preface counted as parsed.
-  if (isHttp2Preface(rawPacket)) {
-    err = new Error("Parse Error: Pause on PRI/Upgrade");
-    err.code = "HPE_PAUSED_H2_UPGRADE";
-    err.bytesParsed = kHttp2Preface.length;
-  } else
-    switch (errorCode) {
-      case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
-        err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
-        err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Request has invalid `Transfer-Encoding`");
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
-        err = $HPE_INVALID_EOF_STATE("Parse Error: Invalid EOF state");
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
-        err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
-        err.bytesParsed = 1; // always 1 for now because is the first byte of the request line
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN:
-        err = $HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered");
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
-        err = $HPE_HEADER_OVERFLOW("Parse Error: Header overflow");
-        err.bytesParsed = rawPacket.byteLength;
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_INVALID_HTTP_VERSION:
-        // ErrorCode.ts has no HPE_INVALID_VERSION entry; match Node's plain
-        // Error + .code shape (Node attaches the llhttp code to a regular Error).
-        err = new Error("Parse Error: Invalid HTTP version");
-        err.code = "HPE_INVALID_VERSION";
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_LF_EXPECTED:
-        // ErrorCode.ts has no HPE_LF_EXPECTED entry either.
-        err = new Error("Parse Error: Missing expected LF after header value");
-        err.code = "HPE_LF_EXPECTED";
-        break;
-      case HttpParserError.HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW:
-        // ErrorCode.ts has no HPE_CHUNK_EXTENSIONS_OVERFLOW entry either.
-        err = new Error("Parse Error: Chunk extensions overflow");
-        err.code = "HPE_CHUNK_EXTENSIONS_OVERFLOW";
-        break;
-      default:
-        err = $HPE_INTERNAL("Parse Error");
-        break;
-    }
+  switch (errorCode) {
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING:
+      err = $HPE_INVALID_CHUNK_SIZE("Parse Error: Invalid character in chunk size");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
+      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Request has invalid `Transfer-Encoding`");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_REQUEST:
+      err = $HPE_INVALID_CONSTANT("Parse Error: Expected HTTP/");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
+      err = $HPE_INVALID_EOF_STATE("Parse Error: Invalid EOF state");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
+      err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
+      err.bytesParsed = 1; // always 1 for now because is the first byte of the request line
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN:
+      err = $HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
+    case HttpParserError.HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE:
+      err = $HPE_HEADER_OVERFLOW("Parse Error: Header overflow");
+      err.bytesParsed = rawPacket.byteLength;
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_HTTP_VERSION:
+      err = $HPE_INVALID_VERSION("Parse Error: Invalid HTTP version");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_LF_EXPECTED:
+      err = $HPE_LF_EXPECTED("Parse Error: Missing expected LF after header value");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW:
+      err = $HPE_CHUNK_EXTENSIONS_OVERFLOW("Parse Error: Chunk extensions overflow");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE:
+      err = $HPE_PAUSED_H2_UPGRADE("Parse Error: Pause on PRI/Upgrade");
+      err.bytesParsed = 24;
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_CLOSED_CONNECTION:
+      err = $HPE_CLOSED_CONNECTION("Parse Error: Data after `Connection: close`");
+      break;
+    default:
+      err = $HPE_INTERNAL("Parse Error");
+      break;
+  }
   err.rawPacket = Buffer.from(rawPacket);
   // A prior request on this keep-alive connection may already have wrapped
   // the native handle (the native side returns the existing handle); a second
@@ -1328,7 +1321,10 @@ function socketOnError(this: any, err) {
     // Reply an error segment if there is no in-flight `ServerResponse`,
     // or no data of the in-flight one has been written yet to this socket.
     const message = this._httpMessage;
-    if (this.writable && (!message || !message.headersSent)) {
+    // Node checks _headerSent (bytes reached the socket), not headersSent
+    // (writeHead called): after res.writeHead() but before write/end/flush,
+    // no bytes are on the wire yet so the raw error response is still safe.
+    if (this.writable && (!message || message[headerStateSymbol] !== NodeHTTPHeaderState.sent)) {
       let response;
       switch (err?.code) {
         case "HPE_HEADER_OVERFLOW":
@@ -3368,6 +3364,19 @@ function storeHTTPOptions(options) {
   const insecureHTTPParser = options.insecureHTTPParser;
   if (insecureHTTPParser !== undefined) validateBoolean(insecureHTTPParser, "options.insecureHTTPParser");
   this.insecureHTTPParser = insecureHTTPParser;
+
+  const httpValidation = options.httpValidation;
+  if (httpValidation !== undefined) {
+    validateOneOf(httpValidation, "options.httpValidation", ["default", "insecure", "relaxed"]);
+    if (insecureHTTPParser !== undefined) {
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.httpValidation",
+        httpValidation,
+        "cannot be used with options.insecureHTTPParser",
+      );
+    }
+    this.httpValidation = httpValidation;
+  }
 
   // Node passes options.highWaterMark through to net.Server, which applies it
   // to every accepted connection socket (and from there to req/res streams).

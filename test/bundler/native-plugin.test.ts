@@ -617,6 +617,60 @@ console.log(JSON.stringify(json))
     expect(compilationCtxFreedCount).toBe(2);
   });
 
+  it("frees the plugin-provided source exactly once when the replaced contents fail to parse", async () => {
+    await Bun.write(path.join(tempdir, "needs_foo.json"), `{ "a": foo }`);
+    await Bun.write(
+      path.join(tempdir, "json_entry.ts"),
+      `import json from "./needs_foo.json";\nconsole.log(JSON.stringify(json));\n`,
+    );
+    await Bun.write(path.join(tempdir, "after_json_entry.ts"), `export const ok = 1;\n`);
+
+    const buildScript = `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+      const external = napiModule.createExternal();
+      let failed = false;
+      try {
+        await Bun.build({
+          outdir: path.join(tempdir, "dist-json-entry"),
+          entrypoints: [path.join(tempdir, "json_entry.ts")],
+          plugins: [
+            {
+              name: "xXx123_foo_counter_321xXx",
+              setup(build) {
+                build.onBeforeParse({ filter: /\\.json$/ }, { napiModule, symbol: "plugin_impl", external });
+              },
+            },
+          ],
+        });
+      } catch (e) {
+        failed = true;
+      }
+      await Bun.build({
+        outdir: path.join(tempdir, "dist-after-json-entry"),
+        entrypoints: [path.join(tempdir, "after_json_entry.ts")],
+      });
+      console.log(JSON.stringify({ failed, freed: napiModule.getCompilationCtxFreedCount(external) }));
+    `;
+    await Bun.write(path.join(tempdir, "json_entry_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "json_entry_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("Freed compilation ctx!").length - 1).toBe(1);
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"failed"'));
+    expect(resultLine).toBe('{"failed":true,"freed":1}');
+    expect(exitCode).toBe(0);
+  });
+
   type AdditionalFile = {
     name: string;
     contents: BunFile | string;

@@ -970,7 +970,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         promise->reject(result.releaseException().code(), "Cannot get key length from derivedKeyType"_s);
         return;
     }
-    size_t length = result.releaseReturnValue();
+    std::optional<size_t> length = result.releaseReturnValue();
 
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
@@ -1005,7 +1005,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
-void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, unsigned length, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, std::optional<unsigned> length, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1197,6 +1197,14 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     CString jwkUTF8String = jwkString.utf8(StrictConversion);
                     bytes.append(jwkUTF8String.span());
+
+                    // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
+                    // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
+                    // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
+                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW) {
+                        while (bytes.size() % 8)
+                            bytes.append(' ');
+                    }
                 }
                 }
 

@@ -12,10 +12,6 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
 
-You will see `.zig` siblings next to many `.rs` files — those are the original
-implementation kept as a porting reference for _behavior_; they are not
-compiled and are not where new code goes.
-
 Conventions:
 
 - `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
@@ -66,10 +62,10 @@ Key types and functions:
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
 `bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert
-to a JS exception via `bun_jsc::ErrorJsc::to_js`:
+to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`:
 
 ```rust
-use bun_jsc::ErrorJsc;
+use bun_sys_jsc::ErrorJsc;
 match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
     Ok(f) => f,
     Err(err) => return Ok(err.to_js(global)?),

@@ -415,26 +415,26 @@ bitflags::bitflags! {
     /// Features to explicitly enable or disable.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Features: u32 {
-        const NESTING                        = 1 << 0;
-        const NOT_SELECTOR_LIST              = 1 << 1;
-        const DIR_SELECTOR                   = 1 << 2;
-        const LANG_SELECTOR_LIST             = 1 << 3;
-        const IS_SELECTOR                    = 1 << 4;
+        const NESTING                           = 1 << 0;
+        const NOT_SELECTOR_LIST                 = 1 << 1;
+        const DIR_SELECTOR                      = 1 << 2;
+        const LANG_SELECTOR_LIST                = 1 << 3;
+        const IS_SELECTOR                       = 1 << 4;
         const TEXT_DECORATION_THICKNESS_PERCENT = 1 << 5;
-        const MEDIA_INTERVAL_SYNTAX          = 1 << 6;
-        const MEDIA_RANGE_SYNTAX             = 1 << 7;
-        const CUSTOM_MEDIA_QUERIES           = 1 << 8;
-        const CLAMP_FUNCTION                 = 1 << 9;
-        const COLOR_FUNCTION                 = 1 << 10;
-        const OKLAB_COLORS                   = 1 << 11;
-        const LAB_COLORS                     = 1 << 12;
-        const P3_COLORS                      = 1 << 13;
-        const HEX_ALPHA_COLORS               = 1 << 14;
-        const SPACE_SEPARATED_COLOR_NOTATION = 1 << 15;
-        const FONT_FAMILY_SYSTEM_UI          = 1 << 16;
-        const DOUBLE_POSITION_GRADIENTS      = 1 << 17;
-        const VENDOR_PREFIXES                = 1 << 18;
-        const LOGICAL_PROPERTIES             = 1 << 19;
+        const MEDIA_INTERVAL_SYNTAX             = 1 << 6;
+        const MEDIA_RANGE_SYNTAX                = 1 << 7;
+        const CUSTOM_MEDIA_QUERIES              = 1 << 8;
+        const CLAMP_FUNCTION                    = 1 << 9;
+        const COLOR_FUNCTION                    = 1 << 10;
+        const OKLAB_COLORS                      = 1 << 11;
+        const LAB_COLORS                        = 1 << 12;
+        const P3_COLORS                         = 1 << 13;
+        const HEX_ALPHA_COLORS                  = 1 << 14;
+        const SPACE_SEPARATED_COLOR_NOTATION    = 1 << 15;
+        const FONT_FAMILY_SYSTEM_UI             = 1 << 16;
+        const DOUBLE_POSITION_GRADIENTS         = 1 << 17;
+        const VENDOR_PREFIXES                   = 1 << 18;
+        const LOGICAL_PROPERTIES                = 1 << 19;
 
         const SELECTORS = Self::NESTING.bits()
             | Self::NOT_SELECTOR_LIST.bits()

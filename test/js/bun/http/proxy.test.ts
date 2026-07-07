@@ -1036,6 +1036,113 @@ test.skipIf(!isASAN)(
   },
 );
 
+test("response + corrupt TLS record in one packet via pooled HTTPS proxy tunnel does not use-after-free the client", async () => {
+  const fixture = `
+      const net = require("node:net");
+      const tlsCert = ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })};
+
+      const body = Buffer.alloc(4096, 0x42);
+      const origin = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: tlsCert,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 4096\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+            socket.write(body);
+          },
+          error() {},
+        },
+      });
+
+      const poison = Buffer.alloc(64, 0x41);
+      const proxy = net.createServer(client => {
+        let upstream = null;
+        let clientFlights = 0;
+        let head = Buffer.alloc(0);
+        let held = Buffer.alloc(0);
+        let poisoned = false;
+        const tryFlush = () => {
+          let o = 0;
+          let hasResponseRecord = false;
+          while (o + 5 <= held.length) {
+            const len = held.readUInt16BE(o + 3);
+            if (o + 5 + len > held.length) return;
+            if (len >= 2048) hasResponseRecord = true;
+            o += 5 + len;
+          }
+          if (o !== held.length || !hasResponseRecord) return;
+          poisoned = true;
+          client.write(Buffer.concat([held, poison]));
+          held = Buffer.alloc(0);
+        };
+        client.on("error", () => {});
+        client.on("close", () => upstream?.destroy());
+        client.on("data", chunk => {
+          if (!upstream) {
+            head = Buffer.concat([head, chunk]);
+            const end = head.indexOf("\\r\\n\\r\\n");
+            if (end === -1) return;
+            const leftover = head.subarray(end + 4);
+            upstream = net.connect(origin.port, "127.0.0.1", () => {
+              client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+              if (leftover.length) upstream.write(leftover);
+            });
+            upstream.on("error", () => {});
+            upstream.on("data", data => {
+              if (poisoned) return;
+              if (clientFlights >= 2) {
+                held = Buffer.concat([held, data]);
+                tryFlush();
+              } else {
+                client.write(data);
+              }
+            });
+            return;
+          }
+          clientFlights++;
+          upstream.write(chunk);
+        });
+      });
+
+      proxy.listen(0, "127.0.0.1", async () => {
+        const res = await fetch("https://localhost:" + origin.port + "/", {
+          proxy: "http://127.0.0.1:" + proxy.address().port,
+          keepalive: true,
+          tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+        });
+        const text = await res.text();
+        // a second round-trip can only complete if the HTTP client thread
+        // survived the first one; without it, process.exit(0) wins the race
+        // against the ASAN abort on that thread and the bug goes unobserved
+        const probe = await fetch("https://localhost:" + origin.port + "/", {
+          tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+        });
+        await probe.bytes();
+        console.log(text.length, res.status, probe.status);
+        process.exit(0);
+      });
+    `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error("stderr:", stderr);
+  expect(stdout).toBe("4096 200 200\n");
+  expect(exitCode).toBe(0);
+});
+
 // Sentry BUN-2V7Z: debug_assert!(!socket.is_shutdown()/is_closed()) in the
 // ProxyHeaders arm of on_writable (and the matching assert in
 // send_initial_request_payload) fired when the outer proxy socket died

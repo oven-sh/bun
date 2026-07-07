@@ -421,6 +421,15 @@ pub struct HTTPClientResult<'a> {
     pub is_http2: bool,
 
     pub fail: Option<bun_core::Error>,
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
+    /// 0 otherwise. Lets the JS side report the resolver error (`ENOTFOUND`,
+    /// ...) with `syscall`/`hostname` instead of a generic connect failure.
+    pub dns_error: i32,
+    /// Owned copy of the hostname the failed lookup was for (the proxy's
+    /// when one is configured, else the post-redirect target). Owned so the
+    /// JS side never dereferences the client's borrowed URL buffers, which
+    /// the HTTP thread frees after the result callback returns.
+    pub dns_hostname: Option<Box<[u8]>>,
 
     /// Owns the response metadata aka headers, url and status code
     pub metadata: Option<HTTPResponseMetadata>,
@@ -478,6 +487,8 @@ impl<'a> HTTPClientResult<'a> {
             can_stream: self.can_stream,
             is_http2: self.is_http2,
             fail: self.fail,
+            dns_error: self.dns_error,
+            dns_hostname: self.dns_hostname,
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
@@ -783,7 +794,7 @@ use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
-use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
+use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -1000,6 +1011,29 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
     unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
+/// Remove every abort-tracker entry whose stored socket is `socket`.
+///
+/// Backstop for the per-client `unregister_abort_tracker()` calls: when
+/// `Handler::on_close` fires on a socket whose ext has already been retagged
+/// to `DeadSocket`/`PooledSocket`, the client/session dispatch is skipped and
+/// any stale entry would survive into `us_internal_free_closed_sockets`,
+/// leaving `drain_queued_shutdowns` to dereference freed memory on a later
+/// abort. O(n) over live abortable requests; no-op on a `Detached` socket.
+pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
+    if socket.is_detached() {
+        return;
+    }
+    let tracker = abort_tracker();
+    let mut i = 0usize;
+    while i < tracker.count() {
+        if *tracker.values()[i].socket() == socket {
+            let _ = tracker.swap_remove_at(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 /// Returns the hostname to use for TLS SNI and certificate verification.
 /// Priority: tls_props.server_name > client.hostname > client.url.hostname
 /// The Host header value (client.hostname) may contain a port suffix which
@@ -1090,7 +1124,15 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 }
 
+fn validate_request_target(target: &[u8]) -> Result<(), bun_core::Error> {
+    if target.iter().any(|&byte| byte <= 0x20 || byte == 0x7f) {
+        return Err(err!(InvalidURL));
+    }
+    Ok(())
+}
+
 fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), bun_core::Error> {
+    validate_request_target(client.url.href)?;
     let port: &[u8] = if client.url.get_port().is_some() {
         client.url.port
     } else if client.url.is_https() {
@@ -1122,6 +1164,7 @@ fn write_proxy_request(
     request: &picohttp::Request<'_>,
     client: &HTTPClient,
 ) -> Result<(), bun_core::Error> {
+    validate_request_target(client.url.href)?;
     writer.extend_from_slice(request.method);
     // will always be http:// here, https:// needs CONNECT tunnel
     writer.extend_from_slice(b" http://");
@@ -1155,6 +1198,7 @@ fn write_request(
     writer: &mut Vec<u8>,
     request: &picohttp::Request<'_>,
 ) -> Result<(), bun_core::Error> {
+    validate_request_target(request.path)?;
     writer.extend_from_slice(request.method);
     writer.extend_from_slice(b" ");
     writer.extend_from_slice(request.path);
@@ -1899,6 +1943,10 @@ impl<'a> HTTPClient<'a> {
 
         if self.allow_retry
             && self.method.is_idempotent()
+            // Only a Bytes body can be rebuilt from `original_request_body`.
+            // Stream/Sendfile bodies are consumed as they are written, so a
+            // retry would silently replay a truncated request.
+            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
@@ -1928,8 +1976,25 @@ impl<'a> HTTPClient<'a> {
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
     }
 
-    pub fn on_connect_error(&mut self) {
-        bun_core::scoped_log!(fetch, "onConnectError  {}\n", BStr::new(self.url.href));
+    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
+    /// lookup itself failed; 0 for a connect failure past name resolution.
+    pub fn on_connect_error(&mut self, dns_error: i32) {
+        bun_core::scoped_log!(
+            fetch,
+            "onConnectError  {} dns_error={}\n",
+            BStr::new(self.url.href),
+            dns_error
+        );
+        if dns_error != 0 {
+            self.state.dns_error = dns_error;
+            // `connected_url.hostname` is the exact name the connect resolved
+            // (the proxy's when one is set, else the post-redirect `url`), set
+            // by `HTTPContext::connect` and valid for the connect attempt.
+            // Copy it: the JS side outlives this client's borrowed URL buffers.
+            self.state.dns_hostname = Some(self.connected_url.hostname.into());
+            self.fail(err!(DNSResolveFailed));
+            return;
+        }
         self.fail(err!(ConnectionRefused));
     }
 
@@ -1958,6 +2023,11 @@ impl<'a> HTTPClient<'a> {
         if FeatureFlags::ENABLE_KEEPALIVE {
             // TODO keepalive for unix sockets
             if self.unix_socket_path.slice().len() > 0 {
+                return false;
+            }
+            // A peer accepted by a per-request JS `checkServerIdentity` callback must
+            // not enter or leave the shared pool (same exclusion as `can_offer_h2`).
+            if self.signals.get(signals::Field::CertErrors) {
                 return false;
             }
             // check state
@@ -2102,7 +2172,20 @@ impl<'a> HTTPClient<'a> {
     pub fn header_str(&self, ptr: StringPointer) -> &'a [u8] {
         // Reborrow at `'a` so the returned slice doesn't tie up `&self`.
         let buf: &'a [u8] = self.header_buf;
-        &buf[ptr.offset as usize..][..ptr.length as usize]
+        let end = (ptr.offset as usize).wrapping_add(ptr.length as usize);
+        // Match `Headers::as_str`: return empty on a desynced `header_entries`
+        // / `header_buf` rather than slice-panicking on the HTTP thread.
+        debug_assert!(
+            end <= buf.len() && ptr.offset as usize <= end,
+            "HTTPClient::header_str: StringPointer {{ offset: {}, length: {} }} out of range for header_buf of length {}",
+            ptr.offset,
+            ptr.length,
+            buf.len(),
+        );
+        if end > buf.len() || ptr.offset as usize > end {
+            return b"";
+        }
+        &buf[ptr.offset as usize..end]
     }
 
     pub fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
@@ -2725,6 +2808,7 @@ impl<'a> HTTPClient<'a> {
             }
         } else {
             bun_core::scoped_log!(fetch, "normal request");
+            validate_request_target(self.url.host)?;
             write_request(writer, &request)?;
         }
 
@@ -2882,6 +2966,15 @@ impl<'a> HTTPClient<'a> {
 
     pub fn write_to_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, data: &[u8]) {
         bun_core::scoped_log!(fetch, "flushStream");
+        // Never write body bytes before the request headers: drain_queued_writes can
+        // reach this via the not-yet-opened socket start_() puts in the abort tracker,
+        // and request_sent_len still indexes headers. on_writable's Body arm re-flushes.
+        if !matches!(
+            self.state.request_stage,
+            RequestStage::Body | RequestStage::ProxyBody
+        ) {
+            return;
+        }
         // reshaped for borrowck — copy out the Copy bits we need
         // (`upgrade_state`, the stream-buffer NonNull, `ended`) so the
         // `&mut self.state.original_request_body` borrow is dropped before any
@@ -2908,6 +3001,12 @@ impl<'a> HTTPClient<'a> {
         let was_empty = buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
+            //
+            // An earlier flush already drained the terminating 0\r\n\r\n, so
+            // the request message is complete. Mark the stage Done for the
+            // keep-alive / redirect pooling gates, matching the
+            // `ended && !has_backpressure` exit below.
+            self.state.request_stage = RequestStage::Done;
             stream_buffer.release();
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
@@ -3067,7 +3166,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
@@ -3177,8 +3278,8 @@ impl<'a> HTTPClient<'a> {
                     let writer = &mut temporary_send_buffer;
 
                     let request = self.build_request(self.body_len_for_send());
-                    if write_request(writer, &request).is_err() {
-                        self.close_and_fail::<IS_SSL>(err!(OutOfMemory), socket);
+                    if let Err(e) = write_request(writer, &request) {
+                        self.close_and_fail::<IS_SSL>(e, socket);
                         return;
                     }
 
@@ -3401,6 +3502,12 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    buffer.drain_front(buffer.len().saturating_sub(remaining));
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
@@ -3423,6 +3530,12 @@ impl<'a> HTTPClient<'a> {
                     if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
+                    }
+                    if !needs_move {
+                        let remaining = to_read!().len();
+                        let buffer = &mut self.state.response_message_buffer.list;
+                        buffer.drain_front(buffer.len().saturating_sub(remaining));
+                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
                     }
                     self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
@@ -3447,7 +3560,9 @@ impl<'a> HTTPClient<'a> {
             to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
 
             if response.status_code == 101 {
-                if self.flags.upgrade_state == HTTPUpgradeState::None {
+                if self.flags.upgrade_state == HTTPUpgradeState::None
+                    || (self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
+                {
                     // we cannot upgrade to websocket because the client did not request it!
                     self.close_and_fail::<IS_SSL>(err!(UnrequestedUpgrade), socket);
                     return;
@@ -3466,14 +3581,11 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
-                if !needs_move {
-                    let remaining = to_read!().len();
-                    let buffer = &mut self.state.response_message_buffer.list;
-                    let consumed = buffer.len().saturating_sub(remaining);
-                    buffer.drain_front(consumed);
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                }
                 if to_read!().is_empty() {
+                    if !needs_move {
+                        let buffer = &mut self.state.response_message_buffer.list;
+                        buffer.drain_front(buffer.len());
+                    }
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
                 }
@@ -3612,7 +3724,9 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
@@ -3628,7 +3742,9 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
@@ -3792,6 +3908,39 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(idle_timeout_seconds());
     }
 
+    fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if self.state.flags.receive_paused
+            || self.proxy_tunnel.is_some()
+            || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
+            || !self.signals.is_receive_paused()
+            || socket.is_closed_or_has_error()
+        {
+            return;
+        }
+        self.state.flags.receive_paused = true;
+        socket.set_timeout(0);
+        let _ = socket.pause_stream();
+        bun_core::scoped_log!(fetch, "pause receive {}", self.async_http_id);
+    }
+
+    pub fn resume_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.receive_paused || self.signals.is_receive_paused() {
+            return;
+        }
+        self.state.flags.receive_paused = false;
+        if socket.is_closed() {
+            return;
+        }
+        // A FIN/RST/error that landed while the read poll was paused is only
+        // observable through the poll. Re-arm even when the socket already has
+        // an error or shutdown latched so the regular readable/EOF/error
+        // dispatch surfaces it; bailing here would strand the request with its
+        // timeout disabled and the body promise pending forever.
+        let _ = socket.resume_stream();
+        bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
+        self.set_timeout(&socket);
+    }
+
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         // Find out if we should not send any update.
         match self.state.stage {
@@ -3852,6 +4001,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -3863,6 +4014,8 @@ impl<'a> HTTPClient<'a> {
                 r.can_stream,
                 r.is_http2,
                 r.fail,
+                r.dns_error,
+                r.dns_hostname,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -3891,7 +4044,9 @@ impl<'a> HTTPClient<'a> {
                     && t.write_buffer.is_empty()
                     && t.wrapper
                         .as_ref()
-                        .map(|w| !w.is_shutdown())
+                        .map(|w| {
+                            !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
+                        })
                         .unwrap_or(false)
             } else {
                 true
@@ -3906,15 +4061,30 @@ impl<'a> HTTPClient<'a> {
             // wire, which the server then mis-parses. The redirect path
             // (do_redirect) already gates on request_stage == Done for exactly
             // this reason; mirror that gate here for the non-redirect
-            // completion path. `request_stage` alone is insufficient because
-            // a fully-sent small request parks at `.body` (see on_writable),
-            // so for byte-buffer bodies check the unsent slice instead.
-            // Stream/Sendfile are left as-is (they don't track an
-            // unsent slice here).
+            // completion path. `request_stage` alone is insufficient for
+            // byte-buffer bodies because a fully-sent small request parks at
+            // `.body` (see on_writable), so check the unsent slice instead.
+            //
+            // For a Stream the socket carries an incomplete chunked message
+            // (no terminating 0\r\n\r\n), so a pooled reuse writes the next
+            // request's line and credential headers INTO that body (RFC 9112
+            // section 9.3: the client must close instead). Both of
+            // write_to_stream's stream-complete exits set request_stage =
+            // Done, so Done is the reliable signal for Stream and Sendfile.
             let request_side_drained = match &self.state.original_request_body {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
-                _ => true,
+                HTTPRequestBody::Stream(_) | HTTPRequestBody::Sendfile(_) => {
+                    self.state.request_stage == RequestStage::Done
+                }
             };
+
+            // The uSockets paused bit survives `state.reset()`; never hand a
+            // paused socket back to the pool.
+            if core::mem::take(&mut self.state.flags.receive_paused)
+                && !socket.is_closed_or_has_error()
+            {
+                let _ = socket.resume_stream();
+            }
 
             if self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()
@@ -3987,11 +4157,17 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
         };
         callback.run(async_http, result);
+
+        if has_more {
+            self.maybe_pause_receive(socket);
+        }
 
         if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
@@ -4026,6 +4202,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4037,6 +4215,8 @@ impl<'a> HTTPClient<'a> {
                 r.can_stream,
                 r.is_http2,
                 r.fail,
+                r.dns_error,
+                r.dns_hostname,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -4064,6 +4244,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4228,6 +4410,8 @@ impl<'a> HTTPClient<'a> {
                 body: body_out::opt_mut(self.state.body_out_str),
                 redirected: self.flags.redirected,
                 fail: self.state.fail,
+                dns_error: self.state.dns_error,
+                dns_hostname: self.state.dns_hostname.take(),
                 // check if we are reporting cert errors, do not have a fail state and we are not done
                 has_more: certificate_info.is_some()
                     || (self.state.fail.is_none() && !self.state.is_done()),
@@ -4244,6 +4428,8 @@ impl<'a> HTTPClient<'a> {
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
+            dns_error: self.state.dns_error,
+            dns_hostname: self.state.dns_hostname.take(),
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
                 || (self.state.fail.is_none() && !self.state.is_done()),
@@ -4365,6 +4551,7 @@ impl<'a> HTTPClient<'a> {
         if is_done
             || self.signals.get(signals::Field::ResponseBodyStreaming)
             || content_length.is_none()
+            || self.signals.body_receive_mode.is_some()
         {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
@@ -4449,7 +4636,9 @@ impl<'a> HTTPClient<'a> {
             -2 => {
                 self.report_progress(buffer_len);
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
                     // Move the
@@ -4535,7 +4724,9 @@ impl<'a> HTTPClient<'a> {
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
@@ -4543,7 +4734,7 @@ impl<'a> HTTPClient<'a> {
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, true);
+                    return self.state.process_body_buffer(buffer_snap, false);
                 }
 
                 Ok(false)
@@ -4958,9 +5149,13 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 let new_url = new_url_.to_owned_slice();
+                                let parsed_url = URL::parse(&new_url);
+                                if !parsed_url.has_http_like_protocol() {
+                                    return Err(err!(UnsupportedRedirectProtocol));
+                                }
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
+                                self.url = unsafe { parsed_url.erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(self.url.origin),
                                     strings::without_trailing_slash(original_url.origin),
@@ -5069,10 +5264,12 @@ impl<'a> HTTPClient<'a> {
             return Ok(ShouldContinue::ContinueStreaming);
         }
 
+        // RFC 9112 §6.3: framing comes from Transfer-Encoding and Content-Length
+        // alone. `Connection: close` only means the socket won't be reused, so a
+        // `Content-Length: 0` response is still complete.
         if self.method.has_body()
             && (content_length.is_none()
                 || content_length.unwrap() > 0
-                || !self.state.flags.allow_keepalive
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {

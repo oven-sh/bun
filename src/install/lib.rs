@@ -24,7 +24,7 @@ pub(crate) mod bun_schema {
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
+    pub(crate) use bun_ast::{Expr, ExprData, e as E};
     pub(crate) use bun_parsers::json::*;
 }
 
@@ -737,7 +737,7 @@ impl RunCommand {
                 // `PathAlreadyExists` after a sibling re-created it. Swallow
                 // the error — the `CreateHardLinkW` retry below already
                 // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::immutable::to_utf8_alloc_with_type(
+                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
                     &target_path_buffer[..dir_slice_len],
                 );
                 let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);

@@ -1143,7 +1143,7 @@ impl Bunfig {
                 }
             }
         } else {
-            match json_parser::parse_ts_config::<true>(source, log, &bump) {
+            match json_parser::parse_ts_config(source, log, &bump) {
                 Ok(e) => e,
                 Err(e) => {
                     if log.errors + log.warnings == log_count {

@@ -7,6 +7,7 @@
 
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/PropertySlot.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/SourceCode.h>
@@ -90,6 +91,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
+}
+
+// Evaluate `internal/process/pre_execution` before any user code runs.
+// Called from VirtualMachine::reload_entry_point when argv carries a
+// Node.js `--trace-*` flag. The registry caches the module, so repeat calls
+// (hot reload, workers) are cheap.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalProcessPreExecution);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSC::JSValue::encode(exception));
+    }
 }
 
 // Set up require(), module, __filename, __dirname on globalThis for the REPL.

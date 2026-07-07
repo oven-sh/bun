@@ -247,7 +247,7 @@ impl CronRegisterJob {
                     // borrows do not overlap (Windows only; POSIX ignores
                     // stderr here).
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -771,7 +771,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
     };
-    if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
+    if bun_core::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
         return Err(global.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
@@ -1048,7 +1048,7 @@ impl CronRemoveJob {
                     // Owned copy: `final_buffer()` is `&mut self` and would
                     // alias `s.set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )

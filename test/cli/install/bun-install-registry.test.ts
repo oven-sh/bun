@@ -787,9 +787,9 @@ describe("text lockfile", () => {
     }));
     err = await stderr.text();
     expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
-    expect(await exited).toBe(1);
     // bun.lock must not be rewritten on a failed frozen install
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
 
     // A plain install would rewrite the lock (proves the lock really was stale).
     ({ stderr, exited } = spawn({
@@ -801,8 +801,8 @@ describe("text lockfile", () => {
     }));
     err = await stderr.text();
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).not.toBe(firstLockfile);
+    expect(await exited).toBe(0);
 
     // And once bun.lock is in sync, --frozen-lockfile succeeds again.
     ({ stderr, exited } = spawn({
@@ -858,8 +858,8 @@ describe("text lockfile", () => {
     }));
     err = await stderr.text();
     expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
-    expect(await exited).toBe(1);
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
   });
 
   // https://github.com/oven-sh/bun/issues/24223
@@ -907,8 +907,8 @@ describe("text lockfile", () => {
     }));
     err = await stderr.text();
     expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
-    expect(await exited).toBe(1);
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
   });
 
   // https://github.com/oven-sh/bun/issues/22689
@@ -967,8 +967,8 @@ describe("text lockfile", () => {
     }));
     err = await stderr.text();
     expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
-    expect(await exited).toBe(1);
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
   });
 
   for (const omit of ["dev", "peer", "optional"]) {
@@ -1089,6 +1089,51 @@ describe("text lockfile", () => {
       firstLockfile,
     );
   });
+});
+
+// https://github.com/oven-sh/bun/issues/13823
+test("--frozen-lockfile fails when package.json gains a direct dependency already resolved transitively (bun.lockb)", async () => {
+  // bunfig has saveTextLockfile = false, so a plain install writes bun.lockb and
+  // the frozen check takes the has_meta_hash_changed branch.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "one-dep": "1.0.0" },
+    }),
+  );
+
+  let { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.1" },
+    }),
+  );
+
+  ({ stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  err = await stderr.text();
+  expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited).toBe(1);
 });
 
 test("--lockfile-only", async () => {

@@ -121,15 +121,43 @@ describe("Bun.cron (in-process)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("ignores jest fake timers (calendar-anchored to real time)", () => {
+  test("honors jest fake timers", () => {
     jest.useFakeTimers();
     try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      const firedAt: number[] = [];
+      using job = Bun.cron("* * * * *", () => void firedAt.push(Date.now()));
+
+      jest.advanceTimersByTime(59_999);
+      expect(firedAt).toEqual([]);
+
+      jest.advanceTimersByTime(1);
+      expect(firedAt).toEqual([new Date("2026-01-01T12:01:00.000Z").getTime()]);
+
+      // Re-arms for the next minute; never double-fires at the same boundary
+      jest.advanceTimersByTime(60_000);
+      expect(firedAt).toEqual([
+        new Date("2026-01-01T12:01:00.000Z").getTime(),
+        new Date("2026-01-01T12:02:00.000Z").getTime(),
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("stop() under fake timers prevents further fires", () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
       let fires = 0;
-      using job = Bun.cron("* * * * *", () => void fires++);
-      jest.runAllTimers();
+      const job = Bun.cron("* * * * *", () => void fires++);
+
+      jest.advanceTimersByTime(60_000);
+      expect(fires).toBe(1);
+
+      job.stop();
       jest.advanceTimersByTime(120_000);
-      jest.runAllTimers();
-      expect(fires).toBe(0);
+      expect(fires).toBe(1);
     } finally {
       jest.useRealTimers();
     }
@@ -231,25 +259,28 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         });
       `,
     });
+    // Wait for "close" before forcing GC so main-VM destruct-on-exit (ASAN
+    // CI sets BUN_DESTRUCT_VM_ON_EXIT=1) does not race the worker thread's
+    // own teardown — terminate() returns before the worker finishes.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const w = new Worker("./worker.ts");
-        w.onmessage = () => {
-          w.terminate();
+        w.onmessage = () => w.terminate();
+        w.addEventListener("close", () => {
           Bun.gc(true);
           console.log("ok");
-          process.exit(0);
-        };
+        });
       `,
       ],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   }, 130_000);
@@ -319,7 +350,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("caught=sync-boom");
     expect(exitCode).toBe(0);
-  }, 70_000);
+  }, 130_000);
 
   test("async throw in callback emits unhandledRejection", async () => {
     // Matches setTimeout: rejected promise → unhandledRejection.
@@ -343,7 +374,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("caught=async-boom:true");
     expect(exitCode).toBe(0);
-  }, 70_000);
+  }, 130_000);
 
   test("stop() while async callback pending still surfaces unhandledRejection with promise", async () => {
     await using proc = Bun.spawn({

@@ -67,7 +67,7 @@ async function run(script: string) {
   expect(exitCode).toBe(0);
 }
 
-describe("cork buffer: no cross-socket data bleed", () => {
+describe.concurrent("cork buffer: no cross-socket data bleed", () => {
   // Attack 1: write, yield, write — slot held with data across yield.
   // Another request resumes during the yield and tries to steal/use our slot.
   test("node:http — write then mixed yield then write (slot held with data)", async () => {

@@ -1,6 +1,6 @@
 export function initializeCompressionStream(this, format) {
   const zlib = require("node:zlib");
-  const stream = require("node:stream");
+  const { newBufferSourceTransformPairFromDuplex } = require("internal/webstreams_adapters");
 
   const builders = {
     "deflate": zlib.createDeflate,
@@ -13,9 +13,9 @@ export function initializeCompressionStream(this, format) {
   if (!(format in builders))
     throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(builders).join(", "));
 
-  const handle = builders[format]();
-  $putByIdDirectPrivate(this, "readable", stream.Readable.toWeb(handle));
-  $putByIdDirectPrivate(this, "writable", stream.Writable.toWeb(handle));
+  const transform = newBufferSourceTransformPairFromDuplex(builders[format]());
+  $putByIdDirectPrivate(this, "readable", transform.readable);
+  $putByIdDirectPrivate(this, "writable", transform.writable);
 
   return this;
 }

@@ -18,10 +18,25 @@ function stripAsanWarning(stderr: string): string[] {
 
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {
   using dir = tempDir("bun-main-dyn", {
+    // package.json disables auto-install so a regression in the bun:main alias
+    // cannot silently fall through to fetching the npm `main` package.
+    "package.json": "{}",
+    // bun:main statically imports entry.mjs, so awaiting import("bun:main")
+    // at the top level of entry.mjs is a TLA self-cycle that never resolves.
+    // Defer the import to a .then() so entry.mjs (and therefore bun:main)
+    // can finish evaluating first.
     "entry.mjs": `
-      const m = await import("bun:main");
-      if (typeof m !== "object" || m === null) throw new Error("expected module namespace");
-      console.log("OK");
+      import("bun:main").then(m => {
+        if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace, got " + Object.prototype.toString.call(m));
+        // The wrapper has no named exports. The npm \`main\` package (what this
+        // resolved to before the alias fix) exports {default,length,name,prototype}.
+        const keys = Object.keys(m);
+        if (keys.length !== 0) throw new Error("expected empty wrapper namespace, got keys: " + keys.join(","));
+        console.log("OK");
+      }).catch(e => {
+        console.error(String(e));
+        process.exit(1);
+      });
     `,
   });
   await using proc = Bun.spawn({
@@ -32,16 +47,20 @@ test.concurrent("dynamic import('bun:main') returns the wrapper module", async (
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("OK\n");
-  expect(stripAsanWarning(stderr)).toEqual([]);
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "OK\n",
+    stderr: [],
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 test.concurrent("import('bun:main') from a preload (before the module map is populated)", async () => {
   using dir = tempDir("bun-main-preload", {
+    "package.json": "{}",
     "preload.mjs": `
       const m = await import("bun:main");
-      if (typeof m !== "object" || m === null) throw new Error("expected module namespace");
+      if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace");
       console.log("PRELOAD_OK");
     `,
     "entry.mjs": `console.log("ENTRY_OK");`,
@@ -54,9 +73,14 @@ test.concurrent("import('bun:main') from a preload (before the module map is pop
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("PRELOAD_OK\nENTRY_OK\n");
-  expect(stripAsanWarning(stderr)).toEqual([]);
-  expect(exitCode).toBe(0);
+  // import("bun:main") evaluates the wrapper, which evaluates entry.mjs, so
+  // ENTRY_OK prints before the preload's await resumes.
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "ENTRY_OK\nPRELOAD_OK\n",
+    stderr: [],
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 test.concurrent(

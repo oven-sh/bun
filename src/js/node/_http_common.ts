@@ -1,3 +1,5 @@
+// This is a port of Node.js's lib/_http_common.js
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
@@ -42,6 +44,7 @@ const validateHeaderValue = (name, value) => {
 const insecureHTTPParser = false;
 
 const kIncomingMessage = Symbol("IncomingMessage");
+const kSkipPendingData = Symbol("SkipPendingData");
 const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
 const kOnHeaders = HTTPParser.kOnHeaders | 0;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
@@ -59,8 +62,11 @@ const MAX_HEADER_PAIRS = 2000;
 // called to process trailing HTTP headers.
 function parserOnHeaders(headers, url) {
   // Once we exceeded headers limit - stop collecting them
-  if (this.maxHeaderPairs <= 0 || this._headers.length < this.maxHeaderPairs) {
+  const capacity = this.maxHeaderPairs - this._headers.length;
+  if (this.maxHeaderPairs <= 0 || capacity >= headers.length) {
     this._headers.push(...headers);
+  } else if (capacity > 0) {
+    this._headers.push(...headers.slice(0, capacity));
   }
   this._url += url;
 }
@@ -107,7 +113,8 @@ function parserOnHeadersComplete(
   let n = headers.length;
 
   // If parser.maxHeaderPairs <= 0 assume that there's no limit.
-  if (parser.maxHeaderPairs > 0) n = Math.min(n, parser.maxHeaderPairs);
+  const maxHeaderPairs = parser.maxHeaderPairs;
+  if (maxHeaderPairs > 0) n = Math.min(n, maxHeaderPairs);
 
   incoming._addHeaderLines(headers, n);
 
@@ -127,7 +134,7 @@ function parserOnBody(b) {
   const stream = this.incoming;
 
   // If the stream has already been removed, then drop it.
-  if (stream === null) return;
+  if (stream === null || stream[kSkipPendingData]) return;
 
   // Pretend this was the result of a stream._read call.
   if (!stream._dumped) {
@@ -140,12 +147,13 @@ function parserOnMessageComplete() {
   const parser = this;
   const stream = parser.incoming;
 
-  if (stream !== null) {
+  if (stream !== null && !stream[kSkipPendingData]) {
     stream.complete = true;
     // Emit any trailing headers.
     const headers = parser._headers;
-    if (headers.length) {
-      stream._addHeaderLines(headers, headers.length);
+    const headersLength = headers.length;
+    if (headersLength) {
+      stream._addHeaderLines(headers, headersLength);
       parser._headers = [];
       parser._url = "";
     }
@@ -185,8 +193,8 @@ function closeParserInstance(parser) {
 function freeParser(parser, req, socket) {
   if (parser) {
     if (parser._consumed) parser.unconsume();
-    cleanParser(parser);
     parser.remove();
+    cleanParser(parser);
     if (parsers.free(parser) === false) {
       // Make sure the parser's stack has unwound before deleting the
       // corresponding C++ object through .close().
@@ -222,7 +230,8 @@ function cleanParser(parser) {
 
 function prepareError(err, parser, rawPacket) {
   err.rawPacket = rawPacket || parser.getCurrentBuffer();
-  if (typeof err.reason === "string") err.message = `Parse Error: ${err.reason}`;
+  const reason = err.reason;
+  if (typeof reason === "string") err.message = `Parse Error: ${reason}`;
 }
 
 let warnedLenient = false;
@@ -247,6 +256,7 @@ export default {
   methods,
   parsers,
   kIncomingMessage,
+  kSkipPendingData,
   HTTPParser,
   isLenient,
   prepareError,

@@ -84,6 +84,11 @@ export const TLS_REDIS_OPTIONS = {
     cert: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
     key: Bun.file(path.join(import.meta.dir, "docker-unified", "server.key")),
     ca: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
+    // This suite exercises Valkey commands over TLS, not certificate
+    // verification. The docker-unified cert only has SAN DNS:localhost while
+    // the docker helper connects to 127.0.0.1, so hostname verification (now
+    // enforced) would reject it. valkey-tls-verify.test.ts covers verification.
+    rejectUnauthorized: false,
   },
   tlsPaths: {
     cert: path.join(import.meta.dir, "docker-unified", "server.crt"),
@@ -431,7 +436,10 @@ if (isEnabled) {
     // if (!context.initialized) {
     //   console.warn("Test initialization failed - tests may be skipped");
     // }
-  });
+    // Cold container start is bounded by `compose up --wait-timeout 60` plus
+    // a `compose build` step; the default 5s hook timeout fires long before
+    // that on a cold cache.
+  }, 120_000);
 }
 
 if (isEnabled) {

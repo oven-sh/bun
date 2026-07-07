@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
@@ -331,6 +332,38 @@ describe("createHash", () => {
     });
   }
 
+  // https://github.com/oven-sh/bun/issues/18019
+  describe.each([
+    ["shake128", "7f9c2ba4e88f827d616045507605853e"],
+    ["shake-128", "7f9c2ba4e88f827d616045507605853e"],
+    ["SHAKE128", "7f9c2ba4e88f827d616045507605853e"],
+    ["SHAKE-128", "7f9c2ba4e88f827d616045507605853e"],
+    ["Shake-128", "7f9c2ba4e88f827d616045507605853e"],
+    ["shake256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["shake-256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["SHAKE256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["SHAKE-256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["Shake-256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["blake2s256", "69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9"],
+    ["BLAKE2s256", "69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9"],
+  ])("accepts alias %s", (alias, expected) => {
+    it("via createHash", () => {
+      expect(crypto.createHash(alias).update("").digest("hex")).toBe(expected);
+    });
+    it("via crypto.hash", () => {
+      expect(crypto.hash(alias, "", "hex")).toBe(expected);
+    });
+    it("via Bun.CryptoHasher", () => {
+      expect(new Bun.CryptoHasher(alias).update("").digest("hex")).toBe(expected);
+    });
+  });
+
+  it("Bun.CryptoHasher HMAC accepts mixed-case algorithm", () => {
+    const expected = new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    expect(new Bun.CryptoHasher("SHA-256", "key").update("data").digest("hex")).toBe(expected);
+    expect(new Bun.CryptoHasher("SHA256", "key").update("data").digest("hex")).toBe(expected);
+  });
+
   it("update & digest", () => {
     const hash = crypto.createHash("sha256");
     hash.update("some data to hash");
@@ -575,6 +608,33 @@ describe("DiffieHellman", () => {
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
+
+  // BN_get_word reports a BIGNUM too wide for a single BN_ULONG by returning
+  // the all-ones word. The generator-below-2 check must not misread that (or a
+  // truncation of a 33-to-64-bit value on LLP64, where unsigned long is 32
+  // bits) as a small value: any generator that wide is necessarily >= 2.
+  it.each([
+    ["33 bits (wider than a 32-bit unsigned long)", "0100000000"],
+    ["72 bits (wider than any BN_ULONG)", "020000000000000001"],
+  ])("accepts a buffer generator of %s", (_label, hex) => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    const g = Buffer.from(hex, "hex");
+
+    const alice = crypto.createDiffieHellman(p, g);
+    const bob = crypto.createDiffieHellman(p, g);
+    alice.generateKeys();
+    bob.generateKeys();
+
+    expect(alice.getGenerator()).toEqual(g);
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("rejects a buffer generator below 2 and accepts exactly 2", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x00]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
+  });
 });
 
 describe("ECDH", () => {
@@ -810,6 +870,40 @@ it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #
       plaintextLength: undefined,
     });
   }).not.toThrow();
+});
+
+// Non-AEAD modes must reject setAAD: the AAD pass hands EVP_CipherUpdate a NULL output
+// buffer, which only AEAD modes treat as "discard the output". Runs in a subprocess so
+// the segfault on an unfixed build doesn't take out the test runner.
+it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE", async () => {
+  const cases = [
+    ["createCipheriv", "aes-128-cbc", 16, 16],
+    ["createDecipheriv", "aes-128-cbc", 16, 16],
+    ["createCipheriv", "aes-256-ctr", 32, 16],
+    ["createDecipheriv", "aes-256-ctr", 32, 16],
+    ["createCipheriv", "aes-128-ecb", 16, 0],
+    ["createDecipheriv", "aes-128-ecb", 16, 0],
+  ];
+  const script = `
+    const crypto = require("node:crypto");
+    const aad = Buffer.alloc(64);
+    for (const [fn, algorithm, keyLen, ivLen] of ${JSON.stringify(cases)}) {
+      const cipher = crypto[fn](algorithm, Buffer.alloc(keyLen), ivLen ? Buffer.alloc(ivLen) : null);
+      try {
+        cipher.setAAD(aad);
+        console.log(fn + " " + algorithm + ": returned");
+      } catch (e) {
+        console.log(fn + " " + algorithm + ": " + e.code);
+      }
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: cases.map(([fn, algorithm]) => `${fn} ${algorithm}: ERR_CRYPTO_INVALID_STATE\n`).join(""),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {

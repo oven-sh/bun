@@ -342,7 +342,10 @@ describe("worker_threads", () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
-    await Bun.sleep(200);
+    // Wait for the worker to self-exit (its setTimeout fires process.exit(2)
+    // after 10 ms) — a fixed sleep races with worker startup, which under
+    // debug/ASAN can exceed 200 ms.
+    await once(worker, "exit");
     const code = await worker.terminate();
     expect(code).toBe(2);
   });

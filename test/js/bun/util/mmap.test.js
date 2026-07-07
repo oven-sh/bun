@@ -77,6 +77,14 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(() => Bun.mmap(path, { size: -1 })).toThrow("size must be a non-negative integer");
   });
 
+  it("mmap rejects non-object options", () => {
+    expect(() => Bun.mmap(path, 256)).toThrow("Expected options to be an object");
+    expect(() => Bun.mmap(path, "foo")).toThrow("Expected options to be an object");
+    expect(() => Bun.mmap(path, true)).toThrow("Expected options to be an object");
+    expect(() => Bun.mmap(path, undefined)).not.toThrow();
+    expect(() => Bun.mmap(path, null)).not.toThrow();
+  });
+
   it("mmap handles non-number offset/size without crashing", () => {
     // These should not crash - non-number values coerce to 0 per JavaScript semantics
     // Previously these caused assertion failures (issue ENG-22413)

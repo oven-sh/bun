@@ -17,7 +17,8 @@ declare module "bun" {
     // Extras that Bun supports:
     | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
     | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
-    | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);
+    | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>)
+    | import("bun").Image;
 
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
@@ -33,29 +34,29 @@ declare module "bun" {
 
     interface BunHeadersOverride extends LibOrFallbackHeaders {
       /**
-       * Convert {@link Headers} to a plain JavaScript object.
+       * Converts {@link Headers} to a plain JavaScript object.
        *
-       * About 10x faster than `Object.fromEntries(headers.entries())`
+       * About 10x faster than `Object.fromEntries(headers.entries())`.
        *
-       * Called when you run `JSON.stringify(headers)`
+       * Called when you run `JSON.stringify(headers)`.
        *
-       * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
+       * Does not preserve insertion order. Well-known header names are lowercased; other header names are left as-is.
        */
       toJSON(): Record<string, string> & { "set-cookie"?: string[] };
 
       /**
-       * Get the total number of headers
+       * The number of headers.
        */
       readonly count: number;
 
       /**
-       * Get all headers matching the name
+       * Gets all values for the given header name.
        *
-       * Only supports `"Set-Cookie"`. All other headers are empty arrays.
+       * Only `"Set-Cookie"` is supported. Any other header name returns an empty array.
        *
-       * @param name - The header name to get
+       * @param name The header name
        *
-       * @returns An array of header values
+       * @returns The header's values
        *
        * @example
        * ```ts

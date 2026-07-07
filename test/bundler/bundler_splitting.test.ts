@@ -113,7 +113,9 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       env,
-      stdout: "level1.js executed\nlevel1 loaded\nlevel2.js executed\nlevel2 loaded from level1",
+      // The spec-compliant module loader resolves the inner dynamic import's
+      // load before the outer .then callback runs (matches Node).
+      stdout: "level1.js executed\nlevel2.js executed\nlevel1 loaded\nlevel2 loaded from level1",
     },
   });
 

@@ -7,14 +7,14 @@ const abortingJsNativeApiTests = ["test_finalizer/test_fatal_finalize.js"];
 
 export async function build(dir: string) {
   const child = spawn({
-    cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max", "--verbose"],
+    cmd: [bunExe(), "--bun", "x", "node-gyp@11", "rebuild", "--debug", "-j", "max", "--verbose"],
     cwd: dir,
     stderr: "pipe",
     stdout: "ignore",
     stdin: "inherit",
     env: {
       ...bunEnv,
-      npm_config_target: "v24.3.0",
+      npm_config_target: "v26.3.0",
       CXXFLAGS: (bunEnv.CXXFLAGS ?? "") + (process.platform == "win32" ? " -std=c++20" : " -std=gnu++20"),
       // on linux CI, node-gyp will default to g++ and the version installed there is very old,
       // so we make it use clang instead

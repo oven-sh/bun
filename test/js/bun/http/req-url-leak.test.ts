@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import path from "path";
 test("req.url doesn't leak memory", async () => {
   const { promise, resolve } = Promise.withResolvers();
@@ -44,5 +44,6 @@ test("req.url doesn't leak memory", async () => {
 
   // 297 MB on Bun 1.2
   //  44 MB on Bun 1.3
-  expect(maxRSS).toBeLessThan(1024 * 1024 * 150);
+  // ASAN's quarantine + shadow memory raise the absolute RSS floor; widen there.
+  expect(maxRSS).toBeLessThan(1024 * 1024 * (isASAN ? 450 : 150));
 }, 10_000);

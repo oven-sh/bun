@@ -92,6 +92,42 @@ export class ClassDefinition {
    */
   name: string;
   /**
+   * Legacy. All classes emit implementer thunks into `generated_classes.rs`;
+   * this field is accepted for backward compatibility but has no effect.
+   *
+   * @default "rust"
+   */
+  lang?: "rust";
+  /**
+   * Fully-qualified Rust path of the native struct backing this class, e.g.
+   * `crate::webcore::request::Request`. The codegen emits
+   * `pub use <rustPath> as <name>;` so the `#[no_mangle]` thunks call
+   * inherent methods on the real type (compile error if a method is missing).
+   *
+   * If unset, the codegen scans `src/runtime/**\/*.rs` for
+   * `pub struct <name>` and resolves the module path from the `mod` tree
+   * rooted at `src/runtime/lib.rs`. Set this explicitly only when that
+   * heuristic picks the wrong file (or the struct lives in another crate).
+   */
+  rustPath?: string;
+  /**
+   * Host-fn receiver mutability for the generated Rust thunks.
+   *
+   * `true` emits `this: &T` and routes through the `host_fn::*_shared`
+   * helpers — required for any type whose methods may re-enter JS while
+   * `this` is live (R-2 noalias re-entrancy). The Rust impl must take
+   * `&self` and use `Cell`/`JsCell` for any field it mutates.
+   *
+   * `false` (the default, legacy) emits `this: &mut T`. UB if a method
+   * re-enters JS and another host-fn on the same instance runs — `&mut T`
+   * carries LLVM `noalias`, so the compiler may cache `*self` fields
+   * across the FFI call (proven miscompile: `NodeHTTPResponse::cork`,
+   * b818e70e1c57).
+   *
+   * @default false
+   */
+  sharedThis?: boolean;
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.
@@ -101,7 +137,7 @@ export class ClassDefinition {
   /**
    * Class constructor needs `this` value.
    *
-   * Makes the code generator call the Zig constructor function **after** the
+   * Makes the code generator call the native constructor function **after** the
    * JSValue is instantiated. Only use this if you must, as it probably isn't
    * good for GC since it means if the constructor throws the GC will have to
    * clean up the object that never reached JS.
@@ -121,43 +157,32 @@ export class ClassDefinition {
    * You _must_ free the pointer to your native class!
    *
    * Example for pointers only owned by JavaScript classes:
-   * ```zig
-   * pub const NativeClass = struct {
+   * ```rust
+   * impl NativeClass {
+   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+   *         // do stuff
+   *         Ok(Box::new(NativeClass {
+   *             // ...
+   *         }))
+   *     }
    *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn finalize(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   * };
+   *     pub fn finalize(self: Box<Self>) {
+   *         // free allocations owned by this class; Box drop frees the struct itself.
+   *     }
+   * }
    * ```
    * Example with ref counting:
-   * ```
-   * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-   *   pub const ref = RefCount.ref;
-   *   pub const deref = RefCount.deref;
+   * ```rust
+   * impl RefCountedNativeClass {
+   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<*mut Self> {
+   *         // do stuff; refcount starts at 1
+   *         Ok(Self::new(...).into_raw())
+   *     }
    *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn deinit(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   *
-   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
-   * };
+   *     pub fn finalize(&mut self) {
+   *         self.deref(); // GC drops its ref; frees when the count hits zero.
+   *     }
+   * }
    * ```
    * @todo remove this and require all classes to implement `finalize`.
    */
@@ -190,15 +215,15 @@ export class ClassDefinition {
   final?: boolean;
 
   /**
-   * Class has an `estimatedSize` function that reports external allocations to GC.
+   * Class has an `estimated_size` function that reports external allocations to GC.
    * Called from any thread.
    *
    * When `true`, classes should have a method with this signature:
-   * ```zig
-   * pub fn estimatedSize(this: *@This()) usize;
+   * ```rust
+   * pub fn estimated_size(&self) -> usize;
    * ```
    *
-   * Report `@sizeOf(@this())` as well as any external allocations.
+   * Report `size_of::<Self>()` as well as any external allocations.
    */
   estimatedSize?: boolean;
   /**

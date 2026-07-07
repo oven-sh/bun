@@ -2,20 +2,46 @@
 //
 // Documentation is in src/js/README.md
 //
-// Originally, the builtin bundler only supported function files, but then the module files were
-// added to this, which has made this entire setup extremely convoluted and a mess.
+// The brief summary of how this works is that I (@paperclover) wrote an insane
+// "JS lexer" using nothing but regular expressions. With lots of battle
+// testing, this works on basically all input. For all content not inside of a
+// string literal or comment, another set of regular expressions are performed
+// on the value to do a few magic things.
 //
-// One day, this entire setup should be rewritten, but also it would be cool if Bun natively
-// supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
-// library, instead of RegExp hacks.
+// - Access to JSC's intrinsic syntax (`@foo()`) is done by just replacing all
+//   $s with @s. This is great because in source code, TypeScript types can
+//   model these relationships well. `@` is also how you refer to private slots
+//   within objects. So you can do `{ $data: data }` to store what appears to
+//   be an empty object to JS.
+// - Auto-prefixing known global identifiers with `@`, `AbortSignal` -> `@AbortSignal`
+//   to refer to the private slot.
+// - Some magic macros (see replacements.ts) such as `$assert()` (which forcibly
+//   deletes the argument in a release build, unlike a define macro), and the
+//   magical `$cpp` and `$bindgenFn` bindgen stuff -- a story for another day.
 //
-// For explanation on this, please nag @paperclover to write documentation on how everything works.
+// Part of the transpilation process involves removing type annotations. And
+// that is done with Bun's bundler. But we need to construct an IIFE, and the
+// bundler did not have an IIFE mode. Let's wrap the input around markers:
 //
-// The output is intended to be similar to what WebCore does internally with a couple differences:
+//   $$capture_start$$(() => { YOUR IIFE }).$$capture_end$$
 //
-// - We concatenate all the sources into one big string, which then createsa
-// single JSC::SourceProvider and pass start/end positions to each function's
-// JSC::SourceCode. JSC does this, but WebCore does not seem to.
+// The bundler won't rename those unbound globals, and it can be nicely sliced
+// back out by another regular expression.
+//
+// For builtin modules, those are converted from ES statements into a `return`
+// statement, with a hoisted variable named `$`. The code is weirdly split in
+// bundle-module.ts, but ever since the bindgen system was thrown together, the
+// two processors had to share global compilation state.
+//
+// Since this experience in 2024, I've learned that some things that
+// technically CAN be done, SHOULD NOT be done. Someone please rewrite this
+// within Bun's bundler directly, or via a nice JS parse -> AST tool.
+//
+// The output is intended to be similar to what WebCore does, but they use a
+// python script, and they write all the `@` syntax by hand. When generating,
+// we concatenate all the sources into one big string, which then creates a
+// single JSC::SourceProvider. Passing start/end positions to each function's
+// JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
 import { readdirSync, rmSync } from "fs";
 import path from "path";
@@ -419,6 +445,7 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include "config.h"
     #include "JSDOMGlobalObject.h"
     #include "WebCoreJSClientData.h"
+    #include "WebCoreJSBuiltins.h"
     #include <JavaScriptCore/JSObjectInlines.h>
     #include "BunBuiltinNames.h"
 
@@ -518,7 +545,17 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
     template void JSBuiltinInternalFunctions::visit(AbstractSlotVisitor&);
     template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
+    `;
 
+  for (const { basename, internal } of files) {
+    if (internal) {
+      bundledCPP += `    template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+    template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
+`;
+    }
+  }
+
+  bundledCPP += `
     SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& globalObject)
     {
         UNUSED_PARAM(globalObject);
@@ -694,12 +731,13 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     #undef VISIT_FUNCTION
     }
 
-    template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
-    template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
+    extern template void ${basename}BuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+    extern template void ${basename}BuiltinFunctions::visit(JSC::SlotVisitor&);
         `;
     }
   }
   bundledHeader += `class JSBuiltinFunctions {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSBuiltinFunctions);
     public:
         explicit JSBuiltinFunctions(JSC::VM& vm, RefPtr<JSC::SourceProvider> provider, BunBuiltinNames &builtinNames);
         void exportNames();
@@ -725,6 +763,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     };
 
     class JSBuiltinInternalFunctions {
+        WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSBuiltinInternalFunctions);
     public:
         explicit JSBuiltinInternalFunctions(JSC::VM&);
 

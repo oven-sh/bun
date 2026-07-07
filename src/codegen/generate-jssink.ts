@@ -1,6 +1,13 @@
 import { join, resolve } from "path";
 
-const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink", "NetworkSink"];
+const classes = [
+  "ArrayBufferSink",
+  "FileSink",
+  "HTTPResponseSink",
+  "HTTPSResponseSink",
+  "H3ResponseSink",
+  "NetworkSink",
+];
 
 function names(name) {
   return {
@@ -110,12 +117,12 @@ function header() {
 
             uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                     
-            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
-                : Base(vm, structure)                                                                                                                                               
-            {                                                                                                                                                                       
+            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+                : Base(vm, structure)
+            {
                 m_sinkPtr = sinkPtr;
                 m_onDestroy = onDestroy;
-            }                                                                                                                                                                       
+            }
                                                                                                                                                                                     
             void finishCreation(JSC::VM&);
         };
@@ -168,12 +175,12 @@ function header() {
 
                 uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                         
-                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
-                    : Base(vm, structure)                                                                                                                                               
-                {                                                                                                                                                                       
+                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+                    : Base(vm, structure)
+                {
                     m_sinkPtr = sinkPtr;
                     m_onDestroy = onDestroy;
-                }                                                                                                                                                                       
+                }
                                                                                                                                                                                         
                 void finishCreation(JSC::VM&);
             };
@@ -201,7 +208,6 @@ extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 namespace WebCore {
 using namespace JSC;
 
-JSC_DECLARE_HOST_FUNCTION(functionStartDirectStream);
 `;
 
   const bottom = `
@@ -269,77 +275,18 @@ async function implementation() {
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
-#include "JSReadableStream.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" void Bun__onSinkDestroyed(uintptr_t destructor, void* sinkPtr);
-
 namespace WebCore {
 using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
-
-JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
-{
-    
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    JSC::JSValue readableStream = callFrame->argument(0);
-    JSC::JSValue onPull = callFrame->argument(1);
-    JSC::JSValue onClose = callFrame->argument(2);
-    JSC::JSValue asyncContext = callFrame->argument(3);
-
-    if (!readableStream.isObject()) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ReadableStream"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    if (!onPull.isObject() || !onPull.isCallable()) {
-        onPull = JSC::jsUndefined();
-    } else if (!asyncContext.isUndefined()) {
-        onPull = AsyncContextFrame::create(globalObject, onPull, asyncContext);
-    }
-
-    if (!onClose.isObject() || !onClose.isCallable()) {
-        onClose = JSC::jsUndefined();
-    } else if (!asyncContext.isUndefined()) {
-        onClose = AsyncContextFrame::create(globalObject, onClose, asyncContext);
-    }
-
+${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
 `;
   var templ = head;
-
-  var isFirst = true;
-  for (let name of classes) {
-    const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
-
-    templ += `
-
-    ${isFirst ? "" : "else"} if (WebCore::${controller}* ${name}Controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue())) {
-        if (${name}Controller->wrapped() == nullptr) {
-            scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-
-        ${name}Controller->start(globalObject, readableStream, onPull, onClose);
-    }
-`;
-    isFirst = false;
-  }
-
-  templ += `
-    else {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Unknown direct controller. This is a bug in Bun."_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-}
-`;
 
   for (let name of classes) {
     const {
@@ -379,7 +326,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    auto* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (sink) [[likely]] {
         sink->ref();
     }
@@ -390,7 +337,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
-    auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    auto* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (sink) [[likely]] {
         sink->unref();
     }
@@ -406,7 +353,7 @@ JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexical
 }
 
 size_t ${className}::estimatedSize(JSCell* cell, JSC::VM& vm) {
-    return Base::estimatedSize(cell, vm) + ${className}::memoryCost(jsCast<${className}*>(cell)->wrapped());
+    return Base::estimatedSize(cell, vm) + ${className}::memoryCost(uncheckedDowncast<${className}>(cell)->wrapped());
 }
 
 size_t ${className}::memoryCost(void* sinkPtr) {
@@ -424,7 +371,7 @@ size_t ${controller}::memoryCost(void* sinkPtr) {
 }
 
 size_t ${controller}::estimatedSize(JSCell* cell, JSC::VM& vm) {
-    return Base::estimatedSize(cell, vm) + ${controller}::memoryCost(jsCast<${controller}*>(cell)->wrapped());
+    return Base::estimatedSize(cell, vm) + ${controller}::memoryCost(uncheckedDowncast<${controller}>(cell)->wrapped());
 }
 
 JSC_DECLARE_HOST_FUNCTION(${controller}__close);
@@ -434,7 +381,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
+    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -445,9 +392,33 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native close first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    ${name}__close(lexicalGlobalObject, ptr);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native close threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -457,7 +428,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
+    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
         return {};
@@ -468,12 +439,37 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native end first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native end threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    return ${name}__endWithSink(ptr, lexicalGlobalObject);
+    return result;
 }
 
-extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::${className}*);
+extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
 
 // TODO: how to make this a property callback. then, we can expose this as a documented field
 // It should not be shipped as a function call.
@@ -482,7 +478,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -493,7 +489,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    return ${name}__getInternalFd(sink);
+    return ${name}__getInternalFd(ptr);
 }
 
 JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
@@ -503,7 +499,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -628,6 +624,7 @@ ${controller}::~${controller}()
     }
 
     if (m_sinkPtr) {
+        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
         ${name}__finalize(m_sinkPtr);
     }
 }
@@ -643,31 +640,34 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
 }
 
 void JS${controllerName}::detach() {
-    if (m_onDestroy) {
-        auto destroy = m_onDestroy;
-        m_onDestroy = 0;
-        Bun__onSinkDestroyed(destroy, m_sinkPtr);
-    }
+    // Prevent re-entrancy.
+    JSC::EnsureStillAliveScope readableStream(m_weakReadableStream.get());
+    JSC::EnsureStillAliveScope onClose(m_onClose.get());
 
-    m_sinkPtr = nullptr;
+    auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
+    auto destroy = std::exchange(m_onDestroy, 0);
+
     m_onPull.clear();
-
-    auto readableStream = m_weakReadableStream.get();
-    auto onClose = m_onClose.get();
-    
-    if (readableStream && onClose) {
-        auto callData = JSC::getCallData(onClose);
-        if(callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject *globalObject = this->globalObject();
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
-    }
-
     m_onClose.clear();
     m_weakReadableStream.clear();
+
+    if (destroy) {
+        Bun__onSinkDestroyed(destroy, sinkPtr);
+    }
+
+    if (sinkPtr) {
+        ${name}__controllerDetached(sinkPtr, JSC::JSValue::encode(this));
+    }
+
+    if (readableStream.value() && onClose.value()) {
+        JSC::JSGlobalObject *globalObject = this->globalObject();
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream.value());
+        arguments.append(jsUndefined());
+        AsyncContextFrame::call(globalObject, onClose.value(), JSC::jsUndefined(), arguments);
+        RELEASE_AND_RETURN(scope, void());
+    }
 }
 `;
 
@@ -745,9 +745,9 @@ void ${controller}::finishCreation(VM& vm)
 extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr_t callback)
 {
     JSValue value = JSValue::decode(encodedValue);
-    if (auto* sink = JSC::jsDynamicCast<WebCore::${className}*>(value)) {
+    if (auto* sink = dynamicDowncast<WebCore::${className}>(value)) {
         sink->m_onDestroy = callback;
-    } else if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(value)) {
+    } else if (auto* controller = dynamicDowncast<WebCore::${controller}>(value)) {
         controller->m_onDestroy = callback;
     }
 }
@@ -755,7 +755,7 @@ extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);    
-    auto* thisObject = jsCast<${className}*>(cell);
+    auto* thisObject = uncheckedDowncast<${className}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
@@ -767,7 +767,7 @@ void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     Base::analyzeHeap(cell, analyzer);
-    auto* thisObject = jsCast<${controller}*>(cell);
+    auto* thisObject = uncheckedDowncast<${controller}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
@@ -797,7 +797,7 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 template<typename Visitor>
 void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ${controller}* thisObject = jsCast<${controller}*>(cell);
+    ${controller}* thisObject = uncheckedDowncast<${controller}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     
@@ -815,7 +815,7 @@ DEFINE_VISIT_CHILDREN(${controller});
 template<typename Visitor>
 void ${className}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ${className}* thisObject = jsCast<${className}*>(cell);
+    ${className}* thisObject = uncheckedDowncast<${className}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     void* ptr = thisObject->m_sinkPtr;
@@ -929,10 +929,10 @@ extern "C" JSC::EncodedJSValue ${name}__createObject(JSC::JSGlobalObject* arg0, 
 
 extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(value)))
+    if (auto* sink = dynamicDowncast<WebCore::JS${name}>(JSC::JSValue::decode(value)))
         return sink->wrapped();
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(value)))
+    if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(value)))
         return controller->wrapped();
 
     return (void*)1;
@@ -940,13 +940,13 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 
 extern "C" void ${name}__detachPtr(JSC::EncodedJSValue JSValue0)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue0))) {
+    if (auto* sink = dynamicDowncast<WebCore::JS${name}>(JSC::JSValue::decode(JSValue0))) {
         sink->detach();
         return;
     }
         
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue0))) {
+    if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(JSValue0))) {
         controller->detach();
         return;
     }
@@ -965,7 +965,7 @@ extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0
 
 extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)
 {
-    WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
+    WebCore::${controller}* controller = uncheckedDowncast<WebCore::${controller}>(JSC::JSValue::decode(controllerValue).getObject());
 
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
@@ -988,7 +988,7 @@ extern "C" void ${name}__onStart(JSC::EncodedJSValue controllerValue)
 
 extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
 {
-    WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
+    WebCore::${controller}* controller = uncheckedDowncast<WebCore::${controller}>(JSC::JSValue::decode(controllerValue).getObject());
 
     JSC::JSValue function = controller->m_onClose.get();
     if (!function)
@@ -1009,6 +1009,161 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
 `;
   }
   return templ;
+}
+
+// ── Rust output ────────────────────────────────────────────────────────────
+// Emits `generated_jssink.rs`: `#[unsafe(no_mangle)] extern "C"` thunks for the
+// per-sink symbols the C++ side (JSSink.cpp / headers.h) declares as
+// `BUN_DECLARE_HOST_FUNCTION(${name}__{construct,write,end,flush,start})` plus
+// the two non-host-fn externs `${name}__getInternalFd` / `${name}__memoryCost`.
+// Each thunk calls an inherent method on the real sink struct in
+// `crate::webcore`; a missing method is a compile error.
+//
+// Calling convention: `BUN_DECLARE_HOST_FUNCTION` and `endWithSink` use
+// `SYSV_ABI` (= `extern "sysv64"` on win-x64, `"C"` elsewhere) — wrapped in
+// `bun_jsc::jsc_host_abi!`. The remaining `ZIG_DECL` / plain `extern "C"`
+// symbols (finalize/close/updateRef/getInternalFd/memoryCost) stay `extern "C"`.
+function rustSink() {
+  // All sink structs live (or will live) under `crate::webcore`.
+  const sinkPaths: Record<string, string> = {
+    ArrayBufferSink: "crate::webcore::array_buffer_sink::ArrayBufferSink",
+    FileSink: "crate::webcore::file_sink::FileSink",
+    HTTPResponseSink: "crate::webcore::streams::HTTPResponseSink",
+    HTTPSResponseSink: "crate::webcore::streams::HTTPSResponseSink",
+    H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
+    NetworkSink: "crate::webcore::streams::NetworkSink",
+  };
+
+  const symbols: string[] = [];
+  // Safe-body thunks: every body either routes through a safe `host_fn::*`
+  // helper (which centralises the raw-pointer deref + SAFETY contract for
+  // `JSGlobalObject` / `CallFrame`) or takes its `m_sinkPtr` param as
+  // `&`/`&mut ${name}` directly (ABI-identical to `void*` for non-null inputs;
+  // every JSSink.cpp call site null-checks `m_sinkPtr`/`wrapped()` before
+  // calling). The SYSV-ABI thunks are `unsafe fn` (mandated by `jsc_host_abi!`;
+  // bodies remain safe — only C++ calls these); the plain-C thunks stay safe.
+  let templ = `// Auto-generated by src/codegen/generate-jssink.ts — DO NOT EDIT.
+//
+// Per-sink \`#[unsafe(no_mangle)]\` thunks satisfying the externs declared by
+// JSSink.cpp / headers.h. Each thunk calls an inherent method on the real sink
+// struct (re-exported here as \`\${name}\`). No trait, no opaque placeholder —
+// a missing method is a hard compile error.
+//
+// Calling convention: \`BUN_DECLARE_HOST_FUNCTION\` and \`endWithSink\` use
+// SYSV ABI (\`jsc_host_abi!\`); the \`ZIG_DECL\` / plain \`extern "C"\` symbols
+// (finalize/close/updateRef/getInternalFd/memoryCost) stay \`extern "C"\`.
+//
+// Safe-body: \`m_sinkPtr\` params are typed \`&\`/\`&mut\` (every C++ caller
+// null-checks first); host fns route through \`bun_jsc::host_fn::host_fn_static\`.
+
+use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
+
+`;
+
+  for (const name of classes) {
+    const rustPath = sinkPaths[name] ?? `crate::webcore::streams::${name}`;
+    const JSSinkT = `crate::webcore::sink::JSSink::<${name}>`;
+    templ += `// ════════════════════════════════════════════════════════════════════════════
+// ${name}
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Native backing type for \`JS${name}.m_sinkPtr\`.
+pub use ${rustPath} as ${name};
+
+`;
+
+    const hostFns = ["construct", "write", "end", "flush", "start"] as const;
+    for (const fn of hostFns) {
+      const sym = `${name}__${fn}`;
+      symbols.push(sym);
+      // BUN_DECLARE_HOST_FUNCTION → JSC_HOST_CALL_ATTRIBUTES → SYSV ABI.
+      templ += `bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+        host_fn::host_fn_static(global, callframe, ${JSSinkT}::js_${fn})
+    }
+}
+
+`;
+    }
+
+    // extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr)
+    // C++ caller passes `sink->wrapped()` (null-checked before calling).
+    symbols.push(`${name}__getInternalFd`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
+    ${JSSinkT}::js_get_internal_fd(this)
+}
+
+`;
+
+    // extern "C" size_t ${name}__memoryCost(void* sinkPtr)
+    // C++ caller null-checks `sinkPtr` before calling.
+    symbols.push(`${name}__memoryCost`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
+    ${JSSinkT}::js_memory_cost(this)
+}
+
+`;
+
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__finalize`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
+    ${JSSinkT}::js_finalize(this)
+}
+
+`;
+
+    // extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue)
+    // — called from JSReadable${name}Controller::detach() and its destructor.
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__controllerDetached`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JSValue) {
+    ${JSSinkT}::js_controller_detached(this, controller)
+}
+
+`;
+
+    // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
+    // C++ caller null-checks `ptr` before calling.
+    symbols.push(`${name}__close`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) -> JSValue {
+    ${JSSinkT}::js_close(global, this)
+}
+
+`;
+
+    // ZIG_DECL JSC::EncodedJSValue SYSV_ABI ${name}__endWithSink(void* sinkPtr, JSC::JSGlobalObject*)
+    // headers.h declares this with `callconv(jsc.conv)` (SYSV_ABI) — sysv64 on
+    // win-x64, "C" elsewhere. C++ caller null-checks `ptr` before calling.
+    symbols.push(`${name}__endWithSink`);
+    templ += `bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn ${name}__endWithSink(this: &mut ${name}, global: &JSGlobalObject) -> JSValue {
+        ${JSSinkT}::js_end_with_sink(this, global)
+    }
+}
+
+`;
+
+    // ZIG_DECL void ${name}__updateRef(void* sinkPtr, bool)
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__updateRef`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__updateRef(this: &mut ${name}, value: bool) {
+    ${JSSinkT}::js_update_ref(this, value)
+}
+
+`;
+  }
+
+  templ += `// sinks: ${classes.length}, exported symbols: ${symbols.length}\n`;
+  return { src: templ, symbols };
 }
 
 function lutInput() {
@@ -1052,6 +1207,11 @@ const outDir = resolve(process.argv[2]);
 await Bun.write(resolve(outDir + "/JSSink.h"), header());
 await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
 await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
+{
+  const { src, symbols } = rustSink();
+  await Bun.write(resolve(outDir + "/generated_jssink.rs"), src);
+  console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
+}
 
 Bun.spawnSync(
   [

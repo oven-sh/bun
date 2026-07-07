@@ -1,12 +1,12 @@
 export {};
 
 /**
- * This is like a BodyMixin, but exists to more things
- * (e.g. Blob, ReadableStream, Response, etc.)
+ * Like a `BodyMixin`, but implemented by more types, such as
+ * `Blob`, `ReadableStream`, and `Response`.
  *
- * Notably, this doesn't have a `blob()` because it's the lowest
- * common denominator of these objects. A `Blob` in Bun does not
- * have a `.blob()` method.
+ * It has no `blob()` method because it's the lowest common
+ * denominator of these objects: a `Blob` in Bun does not have a
+ * `.blob()` method.
  */
 interface BunConsumerConvenienceMethods {
   /**
@@ -53,6 +53,12 @@ declare module "buffer" {
     arrayBuffer(): Promise<ArrayBuffer>;
 
     /**
+     * Wrap this blob in a {@link Bun.Image} pipeline.
+     * Equivalent to `new Bun.Image(this, options)`.
+     */
+    image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+    /**
      * Returns a readable stream of the blob's contents
      */
     stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
@@ -74,12 +80,12 @@ declare global {
       browser: boolean;
 
       /**
-       * Whether you are using Bun
+       * Always `true` in Bun. Use it to detect whether code is running in Bun.
        */
       isBun: true;
 
       /**
-       * The current git sha of Bun
+       * The git commit SHA that Bun was built from
        */
       revision: string;
 
@@ -87,6 +93,28 @@ declare global {
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
       _exiting: boolean;
       noDeprecation?: boolean | undefined;
+
+      /**
+       * Emitted when the operating system signals that available memory is
+       * running low. Use this to release caches or reap idle resources instead
+       * of polling.
+       *
+       * On macOS `level` distinguishes `"warning"` from `"critical"` based on
+       * the kernel's memorystatus thresholds. On Linux (PSI) and Windows the
+       * event is always emitted with `"critical"`. On Linux, the underlying
+       * PSI trigger requires `CAP_SYS_RESOURCE` on kernels before 6.6; when
+       * unavailable the event is never emitted.
+       *
+       * This listener does not keep the event loop alive.
+       */
+      on(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      once(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      off(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      addListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      removeListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      prependListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      prependOnceListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
 
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
@@ -315,21 +343,20 @@ declare module "node:fs/promises" {
 declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
-     * Optionally override the trusted CA certificates. Default is to trust
-     * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
-     * replaced when CAs are explicitly specified using this option.
+     * Override the trusted CA certificates. The default is the list of
+     * well-known CAs curated by Mozilla; setting this option replaces
+     * that list entirely.
      */
     ca?: string | Buffer | NodeJS.TypedArray | Bun.BunFile | Array<string | Buffer | Bun.BunFile> | undefined;
     /**
-     *  Cert chains in PEM format. One cert chain should be provided per
-     *  private key. Each cert chain should consist of the PEM formatted
-     *  certificate for a provided private key, followed by the PEM
-     *  formatted intermediate certificates (if any), in order, and not
-     *  including the root CA (the root CA must be pre-known to the peer,
-     *  see ca). When providing multiple cert chains, they do not have to
-     *  be in the same order as their private keys in key. If the
-     *  intermediate certificates are not provided, the peer will not be
-     *  able to validate the certificate, and the handshake will fail.
+     * Cert chains in PEM format. Provide one cert chain per private key.
+     * Each chain consists of the PEM certificate for its private key,
+     * followed by the PEM intermediate certificates (if any) in order,
+     * not including the root CA (the root CA must be pre-known to the
+     * peer, see `ca`). Multiple cert chains do not have to be in the
+     * same order as their private keys in `key`. Without the
+     * intermediate certificates, the peer cannot validate the
+     * certificate and the handshake fails.
      */
     cert?:
       | string
@@ -339,14 +366,13 @@ declare module "node:tls" {
       | Array<string | Buffer | NodeJS.TypedArray | Bun.BunFile>
       | undefined;
     /**
-     * Private keys in PEM format. PEM allows the option of private keys
-     * being encrypted. Encrypted keys will be decrypted with
-     * options.passphrase. Multiple keys using different algorithms can be
-     * provided either as an array of unencrypted key strings or buffers,
-     * or an array of objects in the form {pem: <string|buffer>[,
-     * passphrase: <string>]}. The object form can only occur in an array.
-     * object.passphrase is optional. Encrypted keys will be decrypted with
-     * object.passphrase if provided, or options.passphrase if it is not.
+     * Private keys in PEM format. PEM keys may be encrypted. Multiple
+     * keys using different algorithms can be provided either as an array
+     * of unencrypted key strings or buffers, or as an array of objects in
+     * the form `{pem: <string|buffer>[, passphrase: <string>]}`. The
+     * object form can only occur in an array, and `object.passphrase` is
+     * optional. Encrypted keys are decrypted with `object.passphrase` if
+     * provided, otherwise with `options.passphrase`.
      */
     key?:
       | string
@@ -363,8 +389,9 @@ declare module "node:tls" {
 declare module "console" {
   interface Console {
     /**
-     * Asynchronously read lines from standard input (fd 0)
+     * Asynchronously reads lines from standard input (fd 0)
      *
+     * @example
      * ```ts
      * for await (const line of console) {
      *   console.log(line);

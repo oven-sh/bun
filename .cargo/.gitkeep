@@ -1,0 +1,3 @@
+# This directory holds .cargo/config.toml, which is GENERATED at configure
+# time by scripts/build/cargo-config.ts (run `bun bd`). The generated file is
+# git-ignored; this placeholder keeps the directory in the tree.

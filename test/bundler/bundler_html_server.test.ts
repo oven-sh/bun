@@ -1,7 +1,7 @@
 import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
   for (const backend of ["api", "cli"] as const) {
     itBundled(`compile/${backend}/HTMLServerBasic`, {
       compile: true,

@@ -2,6 +2,7 @@
 // Expected values verified against json5@2.2.3 reference implementation.
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -1570,4 +1571,159 @@ describe("round-trip: stringify → parse → stringify", () => {
       expect(parsed).toEqual([1, null, 3]);
     });
   });
+});
+
+describe("deeply nested parse results", () => {
+  test("JSON5.parse and JSONC.parse near the nesting depth limit either return the value or throw a catchable error", async () => {
+    // Probes array nesting depths right at the boundary the parser still accepts.
+    // The deepest accepted AST must convert back to JS values either successfully
+    // or by throwing a catchable error, and shallow inputs must keep working.
+    // The sweep runs in a child process so the parent test can observe whether it
+    // ran to completion.
+    const script = `
+      function makeInput(depth) {
+        return Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+      }
+      function isExpectedNestedArray(value, depth) {
+        let d = 0;
+        let cur = value;
+        while (Array.isArray(cur)) {
+          if (cur.length !== 1) return false;
+          cur = cur[0];
+          d++;
+        }
+        return d === depth && cur === 1;
+      }
+      function probe(parse, depth) {
+        const input = makeInput(depth);
+        let value;
+        try {
+          value = parse(input);
+        } catch (err) {
+          if (!(err instanceof Error)) {
+            console.log("non-Error thrown at depth " + depth);
+            process.exit(1);
+          }
+          return "error";
+        }
+        if (!isExpectedNestedArray(value, depth)) {
+          console.log("wrong shape at depth " + depth);
+          process.exit(1);
+        }
+        return "ok";
+      }
+      const parsers = [
+        ["JSON5", input => Bun.JSON5.parse(input)],
+        ["JSONC", input => Bun.JSONC.parse(input)],
+      ];
+      for (const [name, parse] of parsers) {
+        // Legitimate shallow input must still parse to the right shape.
+        if (probe(parse, 64) !== "ok") {
+          console.log(name + " rejected shallow input");
+          process.exit(1);
+        }
+        // Find a depth the parser refuses, then binary-search the deepest depth it
+        // still accepts. Every accepted probe converts the full AST to JS values,
+        // so the probes converge on (and repeatedly exercise) the deepest AST the
+        // parser will ever hand to the converter.
+        let hi = 1024;
+        while (hi <= 4000000 && probe(parse, hi) === "ok") {
+          hi *= 2;
+        }
+        if (hi <= 4000000) {
+          let lo = hi >> 1;
+          while (lo + 1 < hi) {
+            const mid = (lo + hi) >> 1;
+            if (probe(parse, mid) === "ok") lo = mid;
+            else hi = mid;
+          }
+          for (let d = Math.max(64, lo - 2); d <= lo + 2; d++) {
+            probe(parse, d);
+          }
+        }
+        console.log(name + " probed");
+      }
+      console.log("done");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.replaceAll("\r\n", "\n").trim()).toBe("JSON5 probed\nJSONC probed\ndone");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("stringify memory", () => {
+  test("does not leak with a string space argument", async () => {
+    // Unique >10-char space string per call so each iteration allocates a
+    // fresh WTFStringImpl for the stored space and hits the clamp branch in
+    // newline(). Nested object/array so indent > 0.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        /* js */ `
+          const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
+          const pad = Buffer.alloc(1024 * 1024, " ").toString();
+          for (let i = 0; i < 20; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 200; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // Under ASAN every freed allocation parks in the allocator quarantine
+        // (default quarantine_size_mb=256) instead of being returned, so the
+        // RSS-delta heuristic over-reports even when nothing leaks. Disable
+        // the quarantine for this measurement process so the 64 MB threshold
+        // keeps separating "fixed" from "leaking ~200 MB". Harmless when the
+        // binary is not ASAN-built.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+// The JSON5 lexer records every source position as an i32, so an input of
+// 2**31 bytes or more used to abort the process with
+// `panic: int cast: TryFromIntError(PosOverflow)` instead of throwing. It is
+// rejected before parsing, so the Uint8Array below is virtual pages that are
+// never read. The runtime accepts a TypedArray here (the binding takes a
+// Blob, Buffer or string); the declared `string` type is narrower.
+test("parse rejects an input of 2**31 bytes or more instead of panicking", () => {
+  let input: Uint8Array;
+  try {
+    input = new Uint8Array(2 ** 31 + 2);
+  } catch {
+    // The 2 GiB reservation itself can fail on a memory-pressured runner;
+    // there is nothing to test then.
+    return;
+  }
+  let err: any;
+  try {
+    JSON5.parse(input as unknown as string);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.constructor?.name).toBe("RangeError");
+  expect(err?.code).toBe("ERR_OUT_OF_RANGE");
+  expect(err?.message).toBe(
+    'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
+  );
 });

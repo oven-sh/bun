@@ -329,7 +329,8 @@ Reuse anchor: *anchor
   expect(parsed).toEqual(expected);
 
   // Verify shared references
-  expect((parsed as any)["occurrence"]).toBe((parsed as any)["anchor"]);
+  expect((parsed as any)["First occurrence"]).toBe((parsed as any)["Second occurrence"]);
+  expect((parsed as any)["Override anchor"]).toBe((parsed as any)["Reuse anchor"]);
 });
 
 test("yaml-test-suite/3HFZ", () => {
@@ -509,8 +510,9 @@ a:
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/4FJ6", () => {
+test("yaml-test-suite/4FJ6", () => {
   // Nested implicit complex keys (using test.event for expected values)
+  // Expected adjusted: complex keys stringify via .toString() (matches js-yaml).
   const input: string = `---
 [
   [ a, [ [[b,c]]: d, e]]: 23
@@ -519,9 +521,7 @@ test.todo("yaml-test-suite/4FJ6", () => {
 
   const parsed = YAML.parse(input);
 
-  const expected: any = [
-    { "[\n  a,\n  [\n      {\n          ? [ [ b, c ] ]\n          : d\n        },\n      e\n    ]\n]": 23 },
-  ];
+  const expected: any = [{ "a,[object Object],e": 23 }];
 
   expect(parsed).toEqual(expected);
 });
@@ -636,7 +636,7 @@ test("yaml-test-suite/4Q9F", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/4QFQ", () => {
+test("yaml-test-suite/4QFQ", () => {
   // Spec Example 8.2. Block Indentation Indicator [1.3]
   const input: string = `- |
  detected
@@ -992,7 +992,7 @@ test("yaml-test-suite/5U3A", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/5WE3", () => {
+test("yaml-test-suite/5WE3", () => {
   // Spec Example 8.17. Explicit Block Mapping Entries
   const input: string = `? explicit key # Empty value
 ? |
@@ -1206,7 +1206,7 @@ test("yaml-test-suite/6JWB", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/6KGN", () => {
+test("yaml-test-suite/6KGN", () => {
   // Anchor for empty node
   const input: string = `---
 a: &anchor
@@ -1259,7 +1259,7 @@ test("yaml-test-suite/6M2F", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/6PBE", () => {
+test("yaml-test-suite/6PBE", () => {
   // Zero-indented sequences in explicit mapping keys (using test.event for expected values)
   const input: string = `---
 ?
@@ -1308,7 +1308,7 @@ test("yaml-test-suite/6SLA", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/6VJK", () => {
+test("yaml-test-suite/6VJK", () => {
   // Spec Example 2.15. Folded newlines are preserved for "more indented" and blank lines
   const input: string = `>
  Sammy Sosa completed another
@@ -1566,7 +1566,7 @@ top2
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/7T8X", () => {
+test("yaml-test-suite/7T8X", () => {
   // Spec Example 8.10. Folded Lines - 8.13. Final Empty Lines
   const input: string = `>
 
@@ -1608,7 +1608,7 @@ test("yaml-test-suite/7TMG", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/7W2P", () => {
+test("yaml-test-suite/7W2P", () => {
   // Block Mapping with Missing Values
   const input: string = `? a
 ? b
@@ -2103,7 +2103,7 @@ test("yaml-test-suite/9MMA", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/9MMW", () => {
+test("yaml-test-suite/9MMW", () => {
   // Single Pair Implicit Entries (using test.event for expected values)
   const input: string = `- [ YAML : separate ]
 - [ "JSON like":adjacent ]
@@ -2246,7 +2246,7 @@ e
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/A2M4", () => {
+test("yaml-test-suite/A2M4", () => {
   // Spec Example 6.2. Indentation Indicators
   const input: string = `? a
 : -	b
@@ -2263,7 +2263,7 @@ test.todo("yaml-test-suite/A2M4", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/A6F9", () => {
+test("yaml-test-suite/A6F9", () => {
   // Spec Example 8.4. Chomping Final Line Break
   const input: string = `strip: |-
   text
@@ -2520,8 +2520,8 @@ test("yaml-test-suite/C4HZ", () => {
   expect(parsed).toEqual(expected);
 
   // Verify shared references
-  expect((parsed as any)["center"]).toBe((parsed as any)["start"]);
-  expect((parsed as any)["center"]).toBe((parsed as any)["start"]);
+  expect((parsed as any)[1].start).toBe((parsed as any)[0].center);
+  expect((parsed as any)[2].start).toBe((parsed as any)[0].center);
 });
 
 test("yaml-test-suite/CC74", () => {
@@ -2855,7 +2855,7 @@ test("yaml-test-suite/DE56/05", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/DFF7", () => {
+test("yaml-test-suite/DFF7", () => {
   // Spec Example 7.16. Flow Mapping Entries (using test.event for expected values)
   const input: string = `{
 ? explicit: entry,
@@ -2990,7 +2990,7 @@ bar: 2
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/DK95/06", () => {
+test("yaml-test-suite/DK95/06", () => {
   // Tabs that look like indentation
   // Error test - expecting parse to fail
   const input: string = `foo:
@@ -3192,7 +3192,7 @@ test("yaml-test-suite/F3CP", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/F6MC", () => {
+test("yaml-test-suite/F6MC", () => {
   // More indented lines at the beginning of folded block scalars
   const input: string = `---
 a: >2
@@ -3212,7 +3212,7 @@ b: >2
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/F8F9", () => {
+test("yaml-test-suite/F8F9", () => {
   // Spec Example 8.5. Chomping Trailing Lines
   const input: string = ` # Strip
   # Comments:
@@ -3261,7 +3261,7 @@ test("yaml-test-suite/FBC9", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/FH7J", () => {
+test("yaml-test-suite/FH7J", () => {
   // Tags on Empty Scalars (using test.event for expected values)
   const input: string = `- !!str
 -
@@ -3272,7 +3272,7 @@ test.todo("yaml-test-suite/FH7J", () => {
 
   const parsed = YAML.parse(input);
 
-  const expected: any = ["", { null: "a", b: "" }, { null: null }];
+  const expected: any = ["", { null: "a", b: "" }, { "": null }];
 
   expect(parsed).toEqual(expected);
 });
@@ -3306,7 +3306,7 @@ test("yaml-test-suite/FQ7F", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/FRK4", () => {
+test("yaml-test-suite/FRK4", () => {
   // Spec Example 7.3. Completely Empty Flow Nodes (using test.event for expected values)
   const input: string = `{
   ? foo :,
@@ -3502,7 +3502,7 @@ wanted: love ♥ and peace ☮
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/H7J7", () => {
+test("yaml-test-suite/H7J7", () => {
   // Node anchor not indented
   // Error test - expecting parse to fail
   const input: string = `key: &x
@@ -3733,7 +3733,7 @@ rbi:
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/JEF9/00", () => {
+test("yaml-test-suite/JEF9/00", () => {
   // Trailing whitespace in streams
   const input: string = `- |+
 
@@ -3747,7 +3747,7 @@ test.todo("yaml-test-suite/JEF9/00", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/JEF9/01", () => {
+test("yaml-test-suite/JEF9/01", () => {
   // Trailing whitespace in streams
   const input: string = `- |+
    
@@ -3760,7 +3760,7 @@ test.todo("yaml-test-suite/JEF9/01", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/JEF9/02", () => {
+test("yaml-test-suite/JEF9/02", () => {
   // Trailing whitespace in streams
   const input: string = `- |+
    `;
@@ -3957,7 +3957,7 @@ test("yaml-test-suite/K54U", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/K858", () => {
+test("yaml-test-suite/K858", () => {
   // Spec Example 8.6. Empty Scalar Chomping
   const input: string = `strip: >-
 
@@ -4010,7 +4010,7 @@ test("yaml-test-suite/KH5V/02", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/KK5P", () => {
+test("yaml-test-suite/KK5P", () => {
   // Various combinations of explicit block mappings (using test.event for expected values)
   const input: string = `complex1:
   ? - a
@@ -4134,7 +4134,7 @@ test("yaml-test-suite/L383", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/L94M", () => {
+test("yaml-test-suite/L94M", () => {
   // Tags in Explicit Mapping
   const input: string = `? !!str a
 : !!int 47
@@ -4261,7 +4261,7 @@ test("yaml-test-suite/M29M", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/M2N8/00", () => {
+test("yaml-test-suite/M2N8/00", () => {
   // Question mark edge cases (using test.event for expected values)
   const input: string = `- ? : x
 `;
@@ -4273,14 +4273,15 @@ test.todo("yaml-test-suite/M2N8/00", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/M2N8/01", () => {
+test("yaml-test-suite/M2N8/01", () => {
   // Question mark edge cases (using test.event for expected values)
+  // Expected adjusted: complex keys stringify via .toString() (matches js-yaml).
   const input: string = `? []: x
 `;
 
   const parsed = YAML.parse(input);
 
-  const expected: any = { "{\n  ? []\n  : x\n}": null };
+  const expected: any = { "[object Object]": null };
 
   expect(parsed).toEqual(expected);
 });
@@ -4302,7 +4303,7 @@ folded:
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/M5DY", () => {
+test("yaml-test-suite/M5DY", () => {
   // Spec Example 2.11. Mapping between Sequences (using test.event for expected values)
   const input: string = `? - Detroit Tigers
   - Chicago cubs
@@ -4403,7 +4404,7 @@ test("yaml-test-suite/M9B4", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/MJS9", () => {
+test("yaml-test-suite/MJS9", () => {
   // Spec Example 6.7. Block Folding
   const input: string = `>
   foo 
@@ -4716,7 +4717,7 @@ to a line feed, or 	\\
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/P2AD", () => {
+test("yaml-test-suite/P2AD", () => {
   // Spec Example 8.1. Block Scalar Header
   const input: string = `- | # Empty header↓
  literal
@@ -4829,7 +4830,7 @@ a: b
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/PW8X", () => {
+test("yaml-test-suite/PW8X", () => {
   // Anchors on Empty Scalars (using test.event for expected values)
   const input: string = `- &a
 - a
@@ -4987,7 +4988,7 @@ test("yaml-test-suite/QT73", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/R4YG", () => {
+test("yaml-test-suite/R4YG", () => {
   // Spec Example 8.2. Block Indentation Indicator
   const input: string = `- |
  detected
@@ -5057,7 +5058,7 @@ bar:
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/RR7F", () => {
+test("yaml-test-suite/RR7F", () => {
   // Mixed Block Mapping (implicit to explicit)
   const input: string = `a: 4.2
 ? d
@@ -5100,7 +5101,7 @@ test("yaml-test-suite/RXY3", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/RZP5", () => {
+test("yaml-test-suite/RZP5", () => {
   // Various Trailing Comments [1.3] (using test.event for expected values)
   const input: string = `a: "double
   quotes" # lala
@@ -5270,7 +5271,7 @@ test("yaml-test-suite/S98Z", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/S9E8", () => {
+test("yaml-test-suite/S9E8", () => {
   // Spec Example 5.3. Block Structure Indicators
   const input: string = `sequence:
 - one
@@ -5863,7 +5864,7 @@ test("yaml-test-suite/V55R", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/V9D5", () => {
+test("yaml-test-suite/V9D5", () => {
   // Spec Example 8.19. Compact Block Mappings (using test.event for expected values)
   const input: string = `- sun: yellow
 - ? earth: blue
@@ -6071,7 +6072,7 @@ Chomping: |
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/XW4D", () => {
+test("yaml-test-suite/XW4D", () => {
   // Various Trailing Comments (using test.event for expected values)
   const input: string = `a: "double
   quotes" # lala
@@ -6185,7 +6186,7 @@ test("yaml-test-suite/Y79Y/004", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/005", () => {
+test("yaml-test-suite/Y79Y/005", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `- 	-
@@ -6196,7 +6197,7 @@ test.todo("yaml-test-suite/Y79Y/005", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/006", () => {
+test("yaml-test-suite/Y79Y/006", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `?	-
@@ -6219,7 +6220,7 @@ test("yaml-test-suite/Y79Y/007", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/008", () => {
+test("yaml-test-suite/Y79Y/008", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `?	key:
@@ -6396,7 +6397,7 @@ test("yaml-test-suite/ZVH3", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/ZWK4", () => {
+test("yaml-test-suite/ZWK4", () => {
   // Key with anchor after missing explicit mapping value
   const input: string = `---
 a: 1

@@ -17,7 +17,7 @@ const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 let node_modules_tempdir: string;
-let allNodeModuleFiles: string[] = [];
+let nodeModulesSetup: Promise<string[]>;
 
 let tempdir: string;
 let allFiles: string[] = [];
@@ -41,30 +41,36 @@ const sortedLsOutput = (s: string) =>
     )
     .sort();
 
-describe("bunshell ls", () => {
+describe.concurrent("bunshell ls", () => {
   beforeAll(async () => {
     node_modules_tempdir = tempDirWithFiles("ls-node_modules", {});
     tempdir = tempDirWithFiles("ls", {});
-    await $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`
+    // Kick off the expensive `bun install` without awaiting so the other 26 tests
+    // (which don't depend on it) can run concurrently while it completes.
+    nodeModulesSetup = $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`
       .quiet()
       .throws(true)
-      .cwd(node_modules_tempdir);
+      .cwd(node_modules_tempdir)
+      .then(() =>
+        isPosix
+          ? Bun.$`ls -RA .`
+              .quiet()
+              .throws(true)
+              .cwd(node_modules_tempdir)
+              .text()
+              .then(s => sortedLsOutput(s))
+          : [],
+      );
+    // Avoid an unhandled rejection if install fails before the node_modules test awaits it.
+    nodeModulesSetup.catch(() => {});
     await $`touch a b c; mkdir foo; touch foo/a foo/b foo/c`.quiet().throws(true).cwd(tempdir);
-
-    allNodeModuleFiles = isPosix
-      ? await Bun.$`ls -RA .`
-          .quiet()
-          .throws(true)
-          .cwd(node_modules_tempdir)
-          .text()
-          .then(s => sortedLsOutput(s))
-      : [];
 
     allFiles = ["./foo:", "a", "a", "b", "b", "c", "c", "foo"];
   });
 
   describe("recursive", () => {
     test.if(isPosix)("node_modules", async () => {
+      const allNodeModuleFiles = await nodeModulesSetup;
       const s = await Bun.$`ls -RA .`.quiet().throws(true).cwd(node_modules_tempdir).text();
       const lines = sortedLsOutput(s);
       expect(lines).toEqual(allNodeModuleFiles);

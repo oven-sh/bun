@@ -70,10 +70,10 @@ function computeVersions(cfg: Config): [string, string][] {
   // IS their version.
   versions.push(["UWS", cfg.revision]);
   versions.push(["USOCKETS", cfg.revision]);
-  // Zig: could run `zig version` but that's a subprocess per configure.
-  // Using zigCommit from config — less human-readable than "0.15.2" but
-  // more precise (the commit IS what we ship) and stays in sync.
-  versions.push(["ZIG", cfg.zigCommit]);
+  // The runtime was ported from Zig; `process.versions.zig` records the
+  // upstream Zig commit it derives from. The build no longer uses a Zig
+  // toolchain, so this is a fixed historical reference rather than a live pin.
+  versions.push(["ZIG", "04e7f6ac1e009525bc00934f20199c68f04e0a24"]);
 
   // NOTE: cmake's GenerateDependencyVersions.cmake also extracted semantic
   // versions (LIBDEFLATE_VERSION="1.19", ZLIB_VERSION="1.2.8") from vendor

@@ -8,31 +8,49 @@ const server = http2.createSecureServer({
 });
 const setCookie = ["a=b", "c=d; Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly", "e=f"];
 
+// This server is shared across many concurrent client tests, some of which
+// abort/reset/destroy mid-request. Swallow errors so one client cannot crash
+// the process for the others.
+process.on("uncaughtException", err => console.error("uncaughtException:", err.message));
+server.on("sessionError", () => {});
+server.on("error", () => {});
+
 server.on("stream", (stream, headers, flags) => {
   // errors here are not useful the test should handle on the client side
-  stream.on("error", err => console.error(err));
+  stream.on("error", () => {});
+
+  function safeRespond(headers) {
+    try {
+      stream.respond(headers);
+    } catch {}
+  }
+  function safeEnd(body) {
+    try {
+      stream.end(body);
+    } catch {}
+  }
 
   if (headers["x-wait-trailer"]) {
     const response = { headers, flags };
-    stream.respond({
+    safeRespond({
       "content-type": "text/html",
       ":status": 200,
       "set-cookie": setCookie,
     });
     stream.on("trailers", (headers, flags) => {
-      stream.end(JSON.stringify({ ...response, trailers: headers }));
+      safeEnd(JSON.stringify({ ...response, trailers: headers }));
     });
   } else if (headers["x-no-echo"]) {
     let byteLength = 0;
     stream.on("data", chunk => {
       byteLength += chunk.length;
     });
-    stream.respond({
+    safeRespond({
       "content-type": "application/json",
       ":status": 200,
     });
     stream.on("end", () => {
-      stream.end(JSON.stringify(byteLength));
+      safeEnd(JSON.stringify(byteLength));
     });
   } else {
     // Store the request information, excluding pseudo-headers in the header echo
@@ -57,7 +75,7 @@ server.on("stream", (stream, headers, flags) => {
           requestData.json = JSON.parse(requestData.data); // Convert buffer array to string
         } catch (e) {}
       }
-      stream.respond({
+      safeRespond({
         "content-type": "application/json",
         ":status": 200,
         // Set security and cache-control headers
@@ -65,7 +83,7 @@ server.on("stream", (stream, headers, flags) => {
         "x-content-type-options": "nosniff",
         "set-cookie": setCookie,
       });
-      stream.end(JSON.stringify(requestData));
+      safeEnd(JSON.stringify(requestData));
     });
   }
 });

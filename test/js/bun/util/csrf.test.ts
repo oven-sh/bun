@@ -131,6 +131,35 @@ describe("Bun.CSRF", () => {
     expect(CSRF.verify(token)).toBe(true);
   });
 
+  test("token bound to a sessionId verifies for the same sessionId", () => {
+    const token = CSRF.generate(secret, { sessionId: "user-session-1" });
+    expect(CSRF.verify(token, { secret, sessionId: "user-session-1" })).toBe(true);
+  });
+
+  test("token bound to a sessionId does not verify for a different sessionId", () => {
+    const token = CSRF.generate(secret, { sessionId: "attacker-session" });
+    expect(CSRF.verify(token, { secret, sessionId: "victim-session" })).toBe(false);
+  });
+
+  test("sessionId binding is fail-closed in both directions", () => {
+    // A token bound to a session does not verify without one.
+    const boundToken = CSRF.generate(secret, { sessionId: "user-session-1" });
+    expect(CSRF.verify(boundToken, { secret })).toBe(false);
+
+    // A token generated without a session does not verify with one.
+    const unboundToken = CSRF.generate(secret);
+    expect(CSRF.verify(unboundToken, { secret, sessionId: "user-session-1" })).toBe(false);
+  });
+
+  test("sessionId composes with encoding and algorithm options", () => {
+    const sessionId = "user-session-1";
+    const token = CSRF.generate(secret, { sessionId, encoding: "hex", algorithm: "sha512" });
+    expect(CSRF.verify(token, { secret, sessionId, encoding: "hex", algorithm: "sha512" })).toBe(true);
+    expect(CSRF.verify(token, { secret, sessionId: "other-session", encoding: "hex", algorithm: "sha512" })).toBe(
+      false,
+    );
+  });
+
   test("error handling", () => {
     // Empty token
     expect(() => CSRF.verify("", { secret })).toThrow();
@@ -140,6 +169,19 @@ describe("Bun.CSRF", () => {
 
     // Empty secret for verification
     expect(() => CSRF.verify("some-token", { secret: "" })).toThrow();
+
+    // Empty sessionId for generation
+    expect(() => CSRF.generate(secret, { sessionId: "" })).toThrow();
+
+    // Empty sessionId for verification
+    const token = CSRF.generate(secret);
+    expect(() => CSRF.verify(token, { secret, sessionId: "" })).toThrow();
+
+    // Non-string sessionId
+    // @ts-expect-error - testing invalid input
+    expect(() => CSRF.generate(secret, { sessionId: 123 })).toThrow();
+    // @ts-expect-error - testing invalid input
+    expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow();
   });
 
   test("handle bad decoding", () => {

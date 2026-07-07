@@ -1,5 +1,5 @@
 const { Duplex } = require("node:stream");
-const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
+const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 
 interface NativeHandle {
   resume(): void;
@@ -128,7 +128,7 @@ function tlsSocketFinal(this: TLSProxySocket, callback: () => void) {
 }
 
 // ---------------------------------------------------------------------------
-// Socket callbacks — called by Zig with `this` = native handle (not useful).
+// Socket callbacks — called natively with `this` = native handle (not useful).
 // All are bound to tlsSocket so `this` inside each = tlsSocket.
 // ---------------------------------------------------------------------------
 
@@ -216,21 +216,21 @@ function socketHandshake(
   tlsSocket.alpnProtocol = nativeHandle?.alpnProtocol ?? null;
 
   // Handle mutual TLS: if the server requested a client cert, check for errors
-  if (tlsSocket._requestCert || tlsSocket._rejectUnauthorized) {
+  const requestCert = tlsSocket._requestCert;
+  let rejectUnauthorized;
+  if (requestCert || (rejectUnauthorized = tlsSocket._rejectUnauthorized)) {
     if (verifyError) {
       tlsSocket.authorized = false;
       tlsSocket.authorizationError = verifyError.code || verifyError.message;
       ctx.server.emit("tlsClientError", verifyError, tlsSocket);
-      if (tlsSocket._rejectUnauthorized) {
+      if (rejectUnauthorized ?? tlsSocket._rejectUnauthorized) {
         tlsSocket.emit("secure", tlsSocket);
         tlsSocket.destroy(verifyError);
         return;
       }
-    } else {
+    } else if (requestCert) {
       tlsSocket.authorized = true;
     }
-  } else {
-    tlsSocket.authorized = true;
   }
 
   // Invoke the H2 connectionListener which creates a ServerHttp2Session.
@@ -283,14 +283,14 @@ function noop() {}
 // targets the H2 connectionListener instead of a generic secureConnection event.
 //
 // Data flow after upgrade:
-//   rawSocket (TCP) → upgradeDuplexToTLS (Zig TLS layer) → socket callbacks
+//   rawSocket (TCP) → upgradeDuplexToTLS (native TLS layer) → socket callbacks
 //     → tlsSocket.push() → H2 session reads
-//   H2 session writes → tlsSocket._write() → handle.$write() → Zig TLS layer → rawSocket
+//   H2 session writes → tlsSocket._write() → handle.$write() → native TLS layer → rawSocket
 //
 // CRITICAL: We do NOT set tlsSocket._handle to the native TLS handle.
 // If we did, the H2FrameParser constructor would detect it as a JSTLSSocket
 // and call attachNativeCallback(), which intercepts all decrypted data at the
-// Zig level, completely bypassing our JS data callback and Duplex.push() path.
+// native level, completely bypassing our JS data callback and Duplex.push() path.
 // Instead, we store the handle in _ctx.nativeHandle so _read/_write/_destroy
 // can use it, while the H2 session sees _handle as null and uses the JS-level
 // socket.on("data") → Duplex → parser.read() path for incoming frames.
@@ -328,17 +328,17 @@ function upgradeRawSocketToH2(
   tlsSocket._requestCert = server._requestCert || false;
   tlsSocket._rejectUnauthorized = server._requestCert ? server._rejectUnauthorized : false;
 
-  // socket: callbacks — bind to tlsSocket since Zig calls them with native handle as `this`
+  // socket: callbacks — bind to tlsSocket since they are invoked with the native handle as `this`
   let handle: NativeHandle, events: UpgradeContextType["events"];
   try {
     // upgradeDuplexToTLS wraps rawSocket with a TLS layer in server mode (isServer: true).
-    // The Zig side will:
+    // The native side will:
     //   1. Read encrypted data from rawSocket via events[0..3]
     //   2. Decrypt it through the TLS engine (with ALPN negotiation for "h2")
     //   3. Call our socket callbacks below with the decrypted plaintext
     //
     // ALPNProtocols: server.ALPNProtocols is a Buffer in wire format (e.g. <Buffer 02 68 32>
-    // for ["h2"]). The Zig SSLConfig expects an ArrayBuffer, so we slice the underlying buffer.
+    // for ["h2"]). The native SSLConfig expects an ArrayBuffer, so we slice the underlying buffer.
     [handle, events] = upgradeDuplexToTLS(rawSocket, {
       isServer: true,
       tls: {
@@ -346,6 +346,8 @@ function upgradeRawSocketToH2(
         cert: server.cert,
         ca: server.ca,
         passphrase: server.passphrase,
+        requestCert: server._requestCert,
+        rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols
           ? server.ALPNProtocols.buffer.slice(
               server.ALPNProtocols.byteOffset,
@@ -373,13 +375,13 @@ function upgradeRawSocketToH2(
 
   // Store handle in _ctx (NOT on tlsSocket._handle).
   // This prevents H2FrameParser from attaching as native callback which would
-  // intercept data at the Zig level and bypass our Duplex push path.
+  // intercept data at the native level and bypass our Duplex push path.
   tlsSocket._ctx.nativeHandle = handle;
   tlsSocket._ctx.events = events;
 
   // Wire up the raw TCP socket to feed encrypted data into the TLS layer.
   // events[0..3] are native event handlers returned by upgradeDuplexToTLS that
-  // the Zig TLS engine expects to receive data/end/drain/close through.
+  // the native TLS engine expects to receive data/end/drain/close through.
   rawSocket.on("data", events[0]);
   rawSocket.on("end", events[1]);
   rawSocket.on("drain", events[2]);

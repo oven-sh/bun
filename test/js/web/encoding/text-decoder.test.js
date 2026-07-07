@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc as gcTrace, isASAN, normalizeBunSnapshot, tempDir, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -34,7 +34,7 @@ describe("TextDecoder", () => {
     }
 
     gcTrace(true);
-  });
+  }, 30_000); // 90k decodes take ~2.5s under ASAN.
   it("should decode ascii text", () => {
     const decoder = new TextDecoder("latin1");
     gcTrace(true);
@@ -172,7 +172,7 @@ describe("TextDecoder", () => {
       expect(decoded).toBe(text);
       gcTrace(true);
     }
-  });
+  }, 30_000); // 99 Bun.gc(true) passes take ~3s under ASAN.
 
   describe("typedArrays", () => {
     var text = `ABC DEF GHI JKL MNO PQR STU VWX YZ ABC DEF GHI JKL MNO PQR STU V`;
@@ -206,7 +206,7 @@ describe("TextDecoder", () => {
           expect(decoded).toBe(text);
         }
       });
-    });
+    }, 120_000); // 100k iterations under ASAN instrumentation take ~21s.
   });
 
   it("should decode unicode text with multiple consecutive emoji", () => {
@@ -328,6 +328,156 @@ describe("TextDecoder ignoreBOM", () => {
 
     const decoder_not_ignore_bom_default = new TextDecoder(encoding);
     expect(decoder_not_ignore_bom_default.decode(array)).toStrictEqual(`abc`);
+  });
+});
+
+// https://encoding.spec.whatwg.org/#concept-td-serialize: per stream, only the
+// FIRST output code point is dropped if it is U+FEFF. Its bytes may be split
+// across `{stream: true}` chunks, and a later U+FEFF must NOT be dropped.
+describe("TextDecoder BOM across {stream: true} chunks", () => {
+  const decodeChunks = (encoding, chunks) => {
+    const d = new TextDecoder(encoding);
+    let out = "";
+    for (let i = 0; i < chunks.length; i++) {
+      out += d.decode(Uint8Array.from(chunks[i]), { stream: i + 1 < chunks.length });
+    }
+    return out;
+  };
+
+  it.each([
+    // A BOM split across chunks is still the stream's BOM.
+    ["utf-8", [[0xef], [0xbb, 0xbf, 0x41]], "A"],
+    [
+      "utf-8",
+      [
+        [0xef, 0xbb],
+        [0xbf, 0x41],
+      ],
+      "A",
+    ],
+    ["utf-8", [[0xef], [0xbb], [0xbf], [0x41]], "A"],
+    ["utf-16le", [[0xff], [0xfe, 0x41, 0x00]], "A"],
+    ["utf-16be", [[0xfe], [0xff, 0x00, 0x41]], "A"],
+    // A second U+FEFF, or one not at the start of the stream, is literal.
+    [
+      "utf-8",
+      [
+        [0xef, 0xbb, 0xbf],
+        [0xef, 0xbb, 0xbf, 0x41],
+      ],
+      "\uFEFFA",
+    ],
+    // Same, with both in ONE chunk: only the first may be stripped.
+    ["utf-8", [[0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, 0x41]], "\uFEFFA"],
+    ["utf-16le", [[0xff, 0xfe, 0xff, 0xfe, 0x42, 0x00]], "\uFEFFB"],
+    ["utf-16be", [[0xfe, 0xff, 0xfe, 0xff, 0x00, 0x42]], "\uFEFFB"],
+    ["utf-8", [[0x41], [0xef, 0xbb, 0xbf, 0x42]], "A\uFEFFB"],
+    [
+      "utf-16le",
+      [
+        [0x41, 0x00],
+        [0xff, 0xfe, 0x42, 0x00],
+      ],
+      "A\uFEFFB",
+    ],
+    [
+      "utf-16be",
+      [
+        [0x00, 0x41],
+        [0xfe, 0xff, 0x00, 0x42],
+      ],
+      "A\uFEFFB",
+    ],
+    // Bytes that only LOOK like a BOM prefix are not silently dropped.
+    ["utf-8", [[0xef], [0x41]], "\uFFFDA"],
+    ["utf-16be", [[0xfe], [0xff, 0x41]], "\uFFFD"],
+    // The UTF-16LE BOM is FF FE; FE FF decodes to U+FFFE and is kept.
+    ["utf-16le", [[0xfe, 0xff, 0x41, 0x00]], "\uFFFEA"],
+    // A carried unpaired high surrogate is the stream's FIRST output (as
+    // U+FFFD), so the following chunk's BOM bytes are a literal U+FEFF.
+    [
+      "utf-16le",
+      [
+        [0x00, 0xd8],
+        [0xff, 0xfe],
+      ],
+      "\uFFFD\uFEFF",
+    ],
+    [
+      "utf-16be",
+      [
+        [0xd8, 0x00],
+        [0xfe, 0xff],
+      ],
+      "\uFFFD\uFEFF",
+    ],
+    [
+      "utf-16le",
+      [
+        [0x00, 0xd8],
+        [0xff, 0xfe, 0x42, 0x00],
+      ],
+      "\uFFFD\uFEFFB",
+    ],
+  ])("%s %j -> %j", (encoding, chunks, expected) => {
+    expect(decodeChunks(encoding, chunks)).toBe(expected);
+  });
+
+  it.each(["utf-8", "utf-16le", "utf-16be"])("%s: ignoreBOM keeps a split BOM", encoding => {
+    const bom = { "utf-8": [0xef, 0xbb, 0xbf], "utf-16le": [0xff, 0xfe], "utf-16be": [0xfe, 0xff] }[encoding];
+    const a = { "utf-8": [0x41], "utf-16le": [0x41, 0x00], "utf-16be": [0x00, 0x41] }[encoding];
+    const d = new TextDecoder(encoding, { ignoreBOM: true });
+    let out = d.decode(Uint8Array.of(bom[0]), { stream: true });
+    out += d.decode(Uint8Array.from(bom.slice(1).concat(a)));
+    expect(out).toBe("\uFEFFA");
+  });
+
+  it("each new stream on the same decoder strips its own BOM", () => {
+    const d = new TextDecoder();
+    expect(d.decode(Uint8Array.of(0xef), { stream: true })).toBe("");
+    expect(d.decode(Uint8Array.of(0xbb, 0xbf, 0x41))).toBe("A");
+    // The flushing decode ended the stream, so the next decode starts a new
+    // one whose (again split) BOM must also be stripped.
+    expect(d.decode(Uint8Array.of(0xef, 0xbb), { stream: true })).toBe("");
+    expect(d.decode(Uint8Array.of(0xbf, 0x42))).toBe("B");
+  });
+
+  // https://github.com/oven-sh/bun/issues/25495
+  it("only the first U+FEFF of a stream is the BOM", () => {
+    // The BOM of the first chunk is consumed; the same three bytes in later
+    // chunks of the SAME stream are a literal U+FEFF.
+    const d = new TextDecoder();
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf), { stream: true })).toBe("");
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf), { stream: true })).toBe("\uFEFF");
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf))).toBe("\uFEFF");
+
+    // A BOM assembled from two chunks is still consumed, not emitted.
+    const n = new TextDecoder();
+    expect(n.decode(Uint8Array.of(0xef), { stream: true })).toBe("");
+    expect(n.decode(Uint8Array.of(0xbb, 0xbf), { stream: true })).toBe("");
+    expect(n.decode()).toBe("");
+  });
+
+  // A fatal decode() that throws never reaches the spec's "serialize I/O
+  // queue" step, so it must not spend the stream's one suppressible U+FEFF.
+  it.each([
+    ["utf-16le", [0x00, 0xdc], [0xff, 0xfe, 0x42, 0x00]],
+    ["utf-8", [0xff], [0xef, 0xbb, 0xbf, 0x42]],
+  ])("%s: a fatal chunk that throws does not consume the stream's BOM", (encoding, bad, next) => {
+    const d = new TextDecoder(encoding, { fatal: true });
+    expect(() => d.decode(Uint8Array.from(bad), { stream: true })).toThrow(TypeError);
+    expect(d.decode(Uint8Array.from(next))).toBe("B");
+  });
+
+  // https://encoding.spec.whatwg.org/#dom-textdecoder-decode: the `input`
+  // argument is converted before step 1, so a non-BufferSource input throws a
+  // TypeError without touching `do not flush` (and therefore `BOM seen`).
+  it("a decode() with an invalid input does not end the stream", () => {
+    const d = new TextDecoder();
+    expect(d.decode(Uint8Array.of(0x41), { stream: true })).toBe("A");
+    expect(() => d.decode(123)).toThrow(TypeError);
+    // Still the same stream: its suppressible U+FEFF was already spent on "A".
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x42))).toBe("\uFEFFB");
   });
 });
 
@@ -579,3 +729,158 @@ it("should not crash with a getter that throws", () => {
     }),
   ).toThrowErrorMatchingInlineSnapshot(`"stream get error"`);
 });
+
+it("reads the input after the options.stream getter runs", () => {
+  // The Encoding spec processes options before pushing a copy of the input to
+  // the I/O queue, and Node.js matches that: a `stream` getter that detaches
+  // the input buffer causes decode() to see an empty input. Previously Bun
+  // cached the byte pointer before evaluating the getter and then read through
+  // it afterwards — a stale pointer into memory that no longer belongs to the
+  // input buffer.
+  const buf = new Uint8Array(300);
+  for (let i = 0; i < buf.length; i += 3) {
+    buf[i] = 0xe2;
+    buf[i + 1] = 0x82;
+    buf[i + 2] = 0xac;
+  }
+  let ran = 0;
+  const result = new TextDecoder().decode(buf, {
+    get stream() {
+      ran++;
+      const transferred = buf.buffer.transfer();
+      // Overwrite the transferred backing store so that if decode() still
+      // reads through the old pointer it cannot coincidentally produce "".
+      new Uint8Array(transferred).fill(0x41);
+      return false;
+    },
+  });
+  expect(ran).toBe(1);
+  expect(buf.byteLength).toBe(0);
+  expect(result).toBe("");
+});
+
+it("sees writes made by the options.stream getter", () => {
+  // Conversely, mutations the getter makes to a still-attached buffer must be
+  // visible to the decoder — the bytes are read after the getter runs.
+  const buf = new Uint8Array(4).fill(0x41); // "AAAA"
+  const result = new TextDecoder().decode(buf, {
+    get stream() {
+      buf.set([0x42, 0x42, 0x42, 0x42]); // "BBBB"
+      return false;
+    },
+  });
+  expect(result).toBe("BBBB");
+});
+
+it("decodes a stable snapshot of a Uint8Array over a SharedArrayBuffer while another thread writes to it", async () => {
+  using dir = tempDir("text-decoder-shared", {
+    "index.js": `
+      const N = 4096;
+      const dataSab = new SharedArrayBuffer(N);
+      const flagSab = new SharedArrayBuffer(4);
+      const data = new Uint8Array(dataSab);
+      const flag = new Int32Array(flagSab);
+      data.fill(0x61);
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      const ready = new Promise((resolve, reject) => {
+        worker.onmessage = resolve;
+        worker.onerror = reject;
+      });
+      worker.postMessage({ dataSab, flagSab });
+      await ready;
+      const decoder = new TextDecoder();
+      const allowed = new Set([0x61, 0x3042, 0xfffd]);
+      let bad = -1;
+      for (let i = 0; i < 10000 && bad < 0; i++) {
+        const out = decoder.decode(data);
+        const limit = Math.min(4, out.length);
+        for (let j = 0; j < limit; j++) {
+          const code = out.charCodeAt(j);
+          if (!allowed.has(code)) {
+            bad = code;
+            break;
+          }
+        }
+      }
+      Atomics.store(flag, 0, 1);
+      worker.terminate();
+      console.log(bad < 0 ? "consistent" : "unexpected code unit 0x" + bad.toString(16));
+      if (bad >= 0) process.exitCode = 1;
+    `,
+    "worker.js": `
+      self.onmessage = function (event) {
+        const data = new Uint8Array(event.data.dataSab);
+        const flag = new Int32Array(event.data.flagSab);
+        postMessage("ready");
+        let phase = 0;
+        while (Atomics.load(flag, 0) === 0) {
+          if (phase === 0) {
+            data[0] = 0xe3;
+            data[1] = 0x81;
+            data[2] = 0x82;
+            phase = 1;
+          } else {
+            data[0] = 0x61;
+            data[1] = 0x61;
+            data[2] = 0x61;
+            phase = 0;
+          }
+        }
+      };
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toBe("consistent");
+  expect(exitCode).toBe(0);
+});
+
+it.each(["utf-16le", "utf-16be"])(
+  "TextDecoder(%s).decode() should not leak the output buffer",
+  encoding => {
+    const unit = encoding === "utf-16le" ? [0x61, 0x00] : [0x00, 0x61];
+    const CODE_UNITS = 16 * 1024;
+    const input = new Uint8Array(CODE_UNITS * 2);
+    for (let i = 0; i < CODE_UNITS; i++) {
+      input[i * 2] = unit[0];
+      input[i * 2 + 1] = unit[1];
+    }
+    const expected = Buffer.alloc(CODE_UNITS, "a").toString();
+    const decoder = new TextDecoder(encoding);
+
+    // Sanity check.
+    expect(decoder.decode(input)).toBe(expected);
+
+    const run = batches => {
+      for (let i = 0; i < batches; i++) {
+        for (let j = 0; j < 128; j++) decoder.decode(input);
+        Bun.gc();
+      }
+      Bun.gc(true);
+    };
+
+    // Warm up so allocator arenas / JIT reach steady state, then snapshot RSS.
+    run(2);
+    const before = process.memoryUsage.rss();
+
+    // Prior to the fix each call leaked ~CODE_UNITS * 2 bytes = 32 KiB, so 3072
+    // calls leaked ~96 MiB regardless of GC.
+    run(24);
+    const after = process.memoryUsage.rss();
+
+    const deltaMiB = (after - before) / 1024 / 1024;
+    // ASAN's quarantine retains freed allocations (default 256 MB) so the delta
+    // runs higher under bun-asan even with the fix; widen the threshold there.
+    expect(deltaMiB).toBeLessThan(isASAN ? 128 : 48);
+  },
+  30_000,
+); // 3072 decodes + repeated Bun.gc(true) take ~4s under ASAN.

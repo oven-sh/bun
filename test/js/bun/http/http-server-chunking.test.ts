@@ -1,10 +1,10 @@
 import type { Socket } from "bun";
 import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isASAN, isPosix } from "harness";
 
 describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
-  test("handles fragmented chunk terminators", async () => {
+  test.concurrentIf(!isASAN)("handles fragmented chunk terminators", async () => {
     const script = `
       const server = Bun.serve({
         port: 0,
@@ -56,7 +56,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects invalid terminator in fragmented reads", async () => {
+  test.concurrentIf(!isASAN)("rejects invalid terminator in fragmented reads", async () => {
     const script = `
       const server = Bun.serve({
         port: 0,
@@ -109,7 +109,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
 });
 
 describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
-  test("handles lone CR at end of chunk-size line across TCP segments", async () => {
+  test.concurrentIf(!isASAN)("handles lone CR at end of chunk-size line across TCP segments", async () => {
     // Regression test: when a TCP segment boundary falls between the \r and \n
     // of a chunk-size line (e.g. "5\r" in one segment, "\n..." in the next),
     // the server must buffer and resume correctly instead of spinning.
@@ -171,7 +171,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("handles lone CR in chunk-size with extensions", async () => {
+  test.concurrentIf(!isASAN)("handles lone CR in chunk-size with extensions", async () => {
     // Same split but with a chunk extension before the CRLF
     const script = `
       const server = Bun.serve({
@@ -229,7 +229,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
+  test.concurrentIf(!isASAN)("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
     // A byte <=32 that isn't \r in chunk-size position must error immediately.
     // Previously this could strand the byte in HttpParser's fallback buffer,
     // corrupting header parsing on the next request.
@@ -285,7 +285,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects Content-Length values that would alias chunked-encoding state bits", async () => {
+  test.concurrentIf(!isASAN)("rejects Content-Length values that would alias chunked-encoding state bits", async () => {
     // remainingStreamingBytes is shared between CL and chunked state. CL >= 2^59 would
     // set STATE_HAS_HEXDIG and route a fixed-length body into the chunked decoder.
     const script = `
@@ -333,7 +333,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     // RFC 7230 4.1: chunk-size = 1*HEXDIG. A chunk-size line with no hex digit
     // must be rejected. Previously this parsed as size 0 (last-chunk), allowing a
     // pipelined request after the bogus terminator to be smuggled.
-    test("rejects and does not process trailing pipelined request", async () => {
+    test.concurrentIf(!isASAN)("rejects and does not process trailing pipelined request", async () => {
       const script = `
         let requests = 0;
         const server = Bun.serve({
@@ -389,7 +389,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("rejects when chunk-size line is split across packets", async () => {
+    test.concurrentIf(!isASAN)("rejects when chunk-size line is split across packets", async () => {
       const script = `
         const server = Bun.serve({
           port: 0,
@@ -440,7 +440,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
 });
 
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
-  test("handles requests with tiny send buffer (regression test)", async () => {
+  test.concurrentIf(!isASAN)("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
       hostname: "localhost",
 

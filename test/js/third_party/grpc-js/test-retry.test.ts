@@ -138,8 +138,8 @@ describe("Retries", () => {
             ],
             retryPolicy: {
               maxAttempts: 3,
-              initialBackoff: "0.1s",
-              maxBackoff: "10s",
+              initialBackoff: "0.001s",
+              maxBackoff: "0.01s",
               backoffMultiplier: 1.2,
               retryableStatusCodes: [14, "RESOURCE_EXHAUSTED"],
             },
@@ -208,8 +208,8 @@ describe("Retries", () => {
             ],
             retryPolicy: {
               maxAttempts: 10,
-              initialBackoff: "0.1s",
-              maxBackoff: "10s",
+              initialBackoff: "0.001s",
+              maxBackoff: "0.01s",
               backoffMultiplier: 1.2,
               retryableStatusCodes: [14, "RESOURCE_EXHAUSTED"],
             },
@@ -241,8 +241,8 @@ describe("Retries", () => {
             ],
             retryPolicy: {
               maxAttempts: 10,
-              initialBackoff: "0.1s",
-              maxBackoff: "10s",
+              initialBackoff: "0.001s",
+              maxBackoff: "0.01s",
               backoffMultiplier: 1.2,
               retryableStatusCodes: [14, "RESOURCE_EXHAUSTED"],
             },

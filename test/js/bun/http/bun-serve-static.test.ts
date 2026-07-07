@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { fillRepeating, isBroken, isMacOS, isWindows } from "harness";
+import { fillRepeating, isASAN, isBroken, isMacOS, isWindows } from "harness";
 
 const routes = {
   "/foo": new Response("foo", {
@@ -158,7 +158,8 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
           Bun.gc(true);
 
           const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          expect(rss).toBeLessThan(4092);
+          // ASAN's shadow memory + quarantine raise the absolute RSS floor.
+          expect(rss).toBeLessThan(isASAN ? 6144 : 4092);
           const delta = rss - baseline;
           console.log("Final RSS", rss);
           console.log("Delta RSS", delta);
@@ -192,5 +193,80 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(`${server.url}foo/bar/fallback`);
     expect(handler.mock.calls.length, "Handler should be called").toBe(previousCallCount + 1);
+  });
+});
+
+describe("static route Content-Type", () => {
+  async function contentTypeOf(server: Server, path: string) {
+    const res = await fetch(new URL(path, server.url));
+    expect(res.status).toBe(200);
+    await res.arrayBuffer();
+    return res.headers.get("content-type");
+  }
+
+  // Registering a Response snapshots (and consumes) its body. Doing that must not
+  // change the Content-Type the next registration of the same Response produces.
+  test.each([
+    ["string body", () => new Response("hello"), "text/plain;charset=utf-8"],
+    [
+      "typed Blob body",
+      () => new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" })),
+      "text/html;charset=utf-8",
+    ],
+    ["explicit header", () => new Response("hello", { headers: { "Content-Type": "text/foo" } }), "text/foo"],
+    ["Response.json", () => Response.json({ a: 1 }), "application/json;charset=utf-8"],
+    ["Uint8Array body", () => new Response(new Uint8Array([1, 2, 3])), null],
+  ])("is stable across registrations: %s", async (_label, make, expected) => {
+    const response = make();
+
+    using server = Bun.serve({
+      port: 0,
+      static: { "/a": response, "/b": response },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect({
+      a: await contentTypeOf(server, "/a"),
+      b: await contentTypeOf(server, "/b"),
+    }).toEqual({ a: expected, b: expected });
+
+    // server.reload() re-registers the very same Response object.
+    server.reload({ static: { "/a": response }, fetch: () => new Response("fallback") });
+    expect(await contentTypeOf(server, "/a")).toBe(expected);
+  });
+
+  // Reading .headers materializes a Blob body's implicit Content-Type onto the
+  // Response, which used to be the only way a static route ever saw it.
+  test("does not depend on whether .headers was read first", async () => {
+    const untouched = new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" }));
+    const touched = new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" }));
+    touched.headers;
+
+    using server = Bun.serve({
+      port: 0,
+      static: { "/untouched": untouched, "/touched": touched },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect({
+      untouched: await contentTypeOf(server, "/untouched"),
+      touched: await contentTypeOf(server, "/touched"),
+    }).toEqual({
+      untouched: "text/html;charset=utf-8",
+      touched: "text/html;charset=utf-8",
+    });
+  });
+
+  test("a string body still serves its body bytes unchanged", async () => {
+    const response = new Response("▲");
+
+    using server = Bun.serve({
+      port: 0,
+      static: { "/a": response, "/b": response },
+      fetch: () => new Response("fallback"),
+    });
+
+    expect(await (await fetch(new URL("/a", server.url))).text()).toBe("▲");
+    expect(await (await fetch(new URL("/b", server.url))).text()).toBe("▲");
   });
 });

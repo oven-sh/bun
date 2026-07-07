@@ -556,6 +556,29 @@ static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// https://github.com/oven-sh/bun/issues/32624
+// info[0] is the GC callback; the values to classify start at info[1]. For each
+// one, print napi_is_arraybuffer and the raw napi_get_arraybuffer_info status so
+// the output can be diffed against Node (napi_ok is 0, napi_invalid_arg is 1).
+static napi_value test_is_arraybuffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value value = info[i];
+
+    bool is_ab = false;
+    NODE_API_CALL(env, napi_is_arraybuffer(env, value, &is_ab));
+
+    void *data = nullptr;
+    size_t length = 0;
+    napi_status info_status =
+        napi_get_arraybuffer_info(env, value, &data, &length);
+
+    printf("napi_is_arraybuffer=%s napi_get_arraybuffer_info=%d\n",
+           is_ab ? "true" : "false", static_cast<int>(info_status));
+  }
+  return ok(env);
+}
+
 static napi_value test_napi_get_default_values(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -1169,6 +1192,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   clear();
 
+  napi_ref object_ref;
   status = napi_wrap(
       env, object, nullptr,
       +[](napi_env env, void *data, void *finalize_hint) {
@@ -1176,10 +1200,23 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
         printf("napi_throw status: %d\n", napi_throw(env, ok(env)));
         puts("finalizer end");
       },
-      nullptr, nullptr);
+      nullptr, &object_ref);
 
   if (status != napi_ok) {
     printf("napi_wrap failed: %d\n", status);
+    return nullptr;
+  }
+
+  // Pin the wrapped object for the rest of the process. Under Node >= 26 a
+  // finalizer that calls napi_throw aborts if it runs from GC (it would need
+  // node_api_post_finalizer), but running it at env teardown is allowed and
+  // prints napi_cannot_run_js. Keeping the object strongly referenced makes
+  // the finalizer timing deterministic on both runtimes.
+  uint32_t refcount;
+  status = napi_reference_ref(env, object_ref, &refcount);
+
+  if (status != napi_ok) {
+    printf("napi_reference_ref failed: %d\n", status);
     return nullptr;
   }
 
@@ -1927,6 +1964,238 @@ static napi_value test_external_buffer_data_lifetime(const Napi::CallbackInfo &i
   return ok(env);
 }
 
+// Regression test: napi_create_external_arraybuffer uses the armable
+// NapiExternalBufferDestructor so that if the wrapping JSArrayBuffer fails
+// to be created, finalize_cb is not invoked (per the Node-API contract the
+// caller retains ownership on failure). The JSArrayBuffer::create(vm, ...)
+// path cannot currently fail without crashing, so the failure branch is not
+// directly reachable from a test; this covers the success path to guard
+// against the refactor breaking finalize_cb delivery (forgetting arm()) or
+// firing it prematurely.
+static int external_arraybuffer_finalize_count = 0;
+
+static napi_value
+test_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  external_arraybuffer_finalize_count = 0;
+
+  const size_t data_size = 16;
+  uint8_t *ext_data = (uint8_t *)malloc(data_size);
+  for (size_t i = 0; i < data_size; i++)
+    ext_data[i] = (uint8_t)(0xA0 + i);
+
+  napi_value arraybuffer;
+  NODE_API_CALL(
+      env, napi_create_external_arraybuffer(
+               env, ext_data, data_size,
+               +[](napi_env, void *data, void *) {
+                 external_arraybuffer_finalize_count++;
+                 free(data);
+               },
+               nullptr, &arraybuffer));
+
+  // The finalizer must not have run yet: the ArrayBuffer is still live.
+  if (external_arraybuffer_finalize_count != 0) {
+    printf("FAIL: napi_create_external_arraybuffer finalizer ran before "
+           "ArrayBuffer was collected\n");
+    return ok(env);
+  }
+
+  // Verify the backing store is the caller's pointer and the bytes match.
+  void *ab_data;
+  size_t ab_len;
+  NODE_API_CALL(
+      env, napi_get_arraybuffer_info(env, arraybuffer, &ab_data, &ab_len));
+
+  bool bytes_ok = ab_len == data_size;
+  for (size_t i = 0; bytes_ok && i < data_size; i++)
+    bytes_ok = ((uint8_t *)ab_data)[i] == (uint8_t)(0xA0 + i);
+
+  if (ab_data == ext_data && bytes_ok) {
+    printf("PASS: napi_create_external_arraybuffer wraps caller data "
+           "without copying\n");
+  } else {
+    printf("FAIL: napi_create_external_arraybuffer data mismatch\n");
+  }
+
+  // Pin the ArrayBuffer across several GC cycles and verify the finalizer
+  // does not fire while it is reachable.
+  napi_ref ab_ref;
+  NODE_API_CALL(env, napi_create_reference(env, arraybuffer, 1, &ab_ref));
+
+  run_gc(info);
+  run_gc(info);
+  run_gc(info);
+
+  if (external_arraybuffer_finalize_count == 0) {
+    printf("PASS: napi_create_external_arraybuffer finalizer not called "
+           "while ArrayBuffer is alive\n");
+  } else {
+    printf("FAIL: napi_create_external_arraybuffer finalizer called %d "
+           "time(s) while ArrayBuffer is alive\n",
+           external_arraybuffer_finalize_count);
+  }
+
+  // The data must still be intact.
+  napi_value ab_value;
+  NODE_API_CALL(env, napi_get_reference_value(env, ab_ref, &ab_value));
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, ab_value, &ab_data, &ab_len));
+  bytes_ok = ab_len == data_size;
+  for (size_t i = 0; bytes_ok && i < data_size; i++)
+    bytes_ok = ((uint8_t *)ab_data)[i] == (uint8_t)(0xA0 + i);
+  if (bytes_ok) {
+    printf("PASS: napi_create_external_arraybuffer data intact after GC\n");
+  } else {
+    printf("FAIL: napi_create_external_arraybuffer data corrupted after "
+           "GC\n");
+  }
+
+  NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
+
+  // Do not assert on post-release finalizer timing: both V8 and JSC may
+  // defer it past the synchronous GC calls above. Any double-invocation or
+  // use-after-free will be caught by ASAN when the process tears down.
+  return ok(env);
+}
+
+// Regression test: napi_create_external_arraybuffer while a napi exception
+// is pending (via napi_throw_error). Whatever status is returned, the
+// function must not adopt external_data and then leave the destructor
+// disarmed (which would leak the caller's buffer forever or leave a
+// dangling pointer in an orphaned JSArrayBuffer if the caller frees on
+// failure per the Node-API contract).
+static napi_value test_external_arraybuffer_with_pending_exception(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  external_arraybuffer_finalize_count = 0;
+
+  const size_t data_size = 8;
+  uint8_t *ext_data = (uint8_t *)malloc(data_size);
+  memset(ext_data, 0x5A, data_size);
+
+  // Stash a napi-level pending exception (no VM exception is raised yet).
+  NODE_API_CALL(env,
+                napi_throw_error(env, nullptr, "stashed before create"));
+
+  napi_value arraybuffer = nullptr;
+  napi_status status = napi_create_external_arraybuffer(
+      env, ext_data, data_size,
+      +[](napi_env, void *data, void *) {
+        external_arraybuffer_finalize_count++;
+        free(data);
+      },
+      nullptr, &arraybuffer);
+
+  // Clear the pending exception so the rest of the test can run cleanly.
+  napi_value exc;
+  napi_get_and_clear_last_exception(env, &exc);
+
+  printf("napi_create_external_arraybuffer with pending exception: "
+         "status=%d\n",
+         (int)status);
+
+  if (status == napi_ok) {
+    // Ownership transferred: the ArrayBuffer must wrap our pointer and the
+    // finalizer must eventually free ext_data. It must not have fired yet.
+    if (external_arraybuffer_finalize_count != 0) {
+      printf("FAIL: finalizer ran before ArrayBuffer was collected\n");
+      return ok(env);
+    }
+    void *ab_data;
+    size_t ab_len;
+    NODE_API_CALL(env, napi_get_arraybuffer_info(env, arraybuffer, &ab_data,
+                                                 &ab_len));
+    if (ab_data == ext_data && ab_len == data_size) {
+      printf("PASS: ownership transferred on napi_ok with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: napi_ok but arraybuffer does not wrap caller data\n");
+    }
+  } else {
+    // Caller retains ownership on failure. The finalizer must not have
+    // run (that would be the double-free the armable destructor guards
+    // against).
+    if (external_arraybuffer_finalize_count == 0) {
+      printf("PASS: caller retains ownership on failure with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: finalizer ran %d time(s) even though the call "
+             "failed\n",
+             external_arraybuffer_finalize_count);
+    }
+    free(ext_data);
+  }
+
+  return ok(env);
+}
+
+// Same as above, for napi_create_external_buffer: the post-create
+// NAPI_RETURN_IF_EXCEPTION check in that function also consults
+// hasPendingException(), so a stashed napi_throw* exception must be
+// rejected up front rather than after createFromBytes has adopted data.
+static int external_buffer_finalize_count = 0;
+
+static napi_value test_external_buffer_with_pending_exception(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  external_buffer_finalize_count = 0;
+
+  const size_t data_size = 8;
+  uint8_t *ext_data = (uint8_t *)malloc(data_size);
+  memset(ext_data, 0x5A, data_size);
+
+  NODE_API_CALL(env,
+                napi_throw_error(env, nullptr, "stashed before create"));
+
+  napi_value buffer = nullptr;
+  napi_status status = napi_create_external_buffer(
+      env, data_size, ext_data,
+      +[](napi_env, void *data, void *) {
+        external_buffer_finalize_count++;
+        free(data);
+      },
+      nullptr, &buffer);
+
+  napi_value exc;
+  napi_get_and_clear_last_exception(env, &exc);
+
+  printf("napi_create_external_buffer with pending exception: status=%d\n",
+         (int)status);
+
+  if (status == napi_ok) {
+    if (external_buffer_finalize_count != 0) {
+      printf("FAIL: finalizer ran before Buffer was collected\n");
+      return ok(env);
+    }
+    void *buf_data;
+    size_t buf_len;
+    NODE_API_CALL(env,
+                  napi_get_buffer_info(env, buffer, &buf_data, &buf_len));
+    if (buf_data == ext_data && buf_len == data_size) {
+      printf("PASS: ownership transferred on napi_ok with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: napi_ok but buffer does not wrap caller data\n");
+    }
+  } else {
+    if (external_buffer_finalize_count == 0) {
+      printf("PASS: caller retains ownership on failure with pending "
+             "exception\n");
+    } else {
+      printf("FAIL: finalizer ran %d time(s) even though the call "
+             "failed\n",
+             external_buffer_finalize_count);
+    }
+    free(ext_data);
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -2119,7 +2388,109 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
+static napi_value
+test_typedarray_info_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value typedarray = info[1];
+
+  napi_typedarray_type type;
+  size_t length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env,
+                napi_get_typedarray_info(env, typedarray, &type, &length, &data,
+                                         &arraybuffer, &byte_offset));
+
+  void *arraybuffer_data = nullptr;
+  size_t arraybuffer_byte_length = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                          &arraybuffer_byte_length));
+
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
+  printf("byte_offset=%zu length=%zu arraybuffer_byte_length=%zu "
+         "data_is_arraybuffer_data_plus_byte_offset=%s\n",
+         byte_offset, length, arraybuffer_byte_length,
+         data_at_offset ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value
+test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value dataview = info[1];
+
+  size_t byte_length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env, napi_get_dataview_info(env, dataview, &byte_length, &data,
+                                            &arraybuffer, &byte_offset));
+
+  void *arraybuffer_data = nullptr;
+  size_t arraybuffer_byte_length = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                          &arraybuffer_byte_length));
+
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
+  printf("byte_offset=%zu byte_length=%zu arraybuffer_byte_length=%zu "
+         "data_is_arraybuffer_data_plus_byte_offset=%s\n",
+         byte_offset, byte_length, arraybuffer_byte_length,
+         data_at_offset ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value
+test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  const size_t size = 1024;
+  const int rounds = 1024;
+  int buffers_with_nonzero_bytes = 0;
+
+  for (int i = 0; i < rounds; i++) {
+    napi_value scratch;
+    void *scratch_data = nullptr;
+    NODE_API_CALL(env,
+                  napi_create_arraybuffer(env, size, &scratch_data, &scratch));
+    memset(scratch_data, 0xEE, size);
+    NODE_API_CALL(env, napi_detach_arraybuffer(env, scratch));
+
+    napi_value probe;
+    void *probe_data = nullptr;
+    NODE_API_CALL(env, napi_create_arraybuffer(env, size, &probe_data, &probe));
+    const uint8_t *bytes = static_cast<const uint8_t *>(probe_data);
+    bool all_zero = true;
+    for (size_t j = 0; j < size; j++) {
+      if (bytes[j] != 0) {
+        all_zero = false;
+        break;
+      }
+    }
+    if (!all_zero) {
+      buffers_with_nonzero_bytes++;
+    }
+    NODE_API_CALL(env, napi_detach_arraybuffer(env, probe));
+  }
+
+  if (buffers_with_nonzero_bytes == 0) {
+    printf("PASS: napi_create_arraybuffer memory is zero-filled\n");
+  } else {
+    printf("FAIL: napi_create_arraybuffer returned memory with nonzero "
+           "bytes\n");
+  }
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);
@@ -2140,6 +2511,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, bigint_to_64_null);
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
+  REGISTER_FUNCTION(env, exports, test_is_arraybuffer);
   REGISTER_FUNCTION(env, exports, test_napi_get_default_values);
   REGISTER_FUNCTION(env, exports, test_napi_numeric_string_keys);
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);
@@ -2153,6 +2525,11 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
+  REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_arraybuffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);

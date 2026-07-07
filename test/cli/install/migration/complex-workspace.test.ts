@@ -3,6 +3,8 @@ import fs from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 
+setDefaultTimeout(1000 * 60 * 5);
+
 let cwd = tmpdirSync();
 
 function validate(packageName: string, version: string, realPackageName?: string) {
@@ -35,7 +37,6 @@ function mustNotExist(filePath: string) {
 }
 
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 });
 
@@ -51,7 +52,13 @@ test("the install succeeds", async () => {
     throw new Error("Failed to install");
   }
 
-  subprocess = Bun.spawn([bunExe(), "install"], {
+  // On Windows CI, sharp's install script falls back to a node-gyp source
+  // build (no win32-arm64 prebuilt), which the system clang-cl-built Node 26
+  // breaks (its process.config leaks thin-LTO flags that MSVC's link.exe
+  // rejects). This test exercises lockfile migration, not lifecycle scripts,
+  // so skip them there.
+  const installArgs = process.platform === "win32" ? [bunExe(), "install", "--ignore-scripts"] : [bunExe(), "install"];
+  subprocess = Bun.spawn(installArgs, {
     env: bunEnv,
     cwd,
     stdio: ["inherit", "inherit", "inherit"],

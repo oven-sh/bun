@@ -1,21 +1,21 @@
+#ifndef UWS_H3CONTEXTDATA_H
+#define UWS_H3CONTEXTDATA_H
+
 #include "HttpRouter.h"
+
+namespace uWS {
 
 struct Http3Response;
 struct Http3Request;
 
-namespace uWS {
-
-    struct Http3ContextData {
-        struct RouterData {
-            Http3Response *res;
-            Http3Request *req;
-        };
-
-        HttpRouter<RouterData> router;
-
-        Http3ContextData() {
-            //printf("Constructing http3contextdata: %p\n", this);
-        }
+struct Http3ContextData {
+    struct RouterData {
+        Http3Response *httpResponse;
+        Http3Request *httpRequest;
     };
+    HttpRouter<RouterData> router;
+};
 
 }
+
+#endif

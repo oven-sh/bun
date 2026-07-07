@@ -243,6 +243,24 @@ describe("Bun.serve development options", () => {
     expect(server.id).toBe("test-server");
     server.stop();
   });
+
+  // The `inspector` option was removed from Bun.serve(). It used to register a
+  // `/bun:inspect` WebSocket route and throw when combined with
+  // `development: false`. It is now ignored like any other unknown option.
+  test("inspector option is ignored", () => {
+    using server = serve({
+      port: 0,
+      development: false,
+      // @ts-expect-error removed option
+      inspector: true,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    expect(server.port).toBeGreaterThan(0);
+    expect(server.development).toBe(false);
+    server.stop();
+  });
 });
 
 describe("Bun.serve static routes", () => {

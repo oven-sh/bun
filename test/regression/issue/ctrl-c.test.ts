@@ -1,4 +1,4 @@
-import { expect, it, test } from "bun:test";
+import { beforeAll, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -77,6 +77,35 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
   expect(result.signalCode).toBe("SIGKILL");
 });
 
+// Share a single vite install across all of the parameterized SIGINT tests below.
+// Each test only spawns vite, waits for first stdout, sends SIGINT, and asserts on
+// exit state — none of them mutate the project directory, so reusing one install
+// avoids redundant `bun install` + tempdir setup work per iteration.
+let viteDir: string;
+let viteInstallExitCode: number | null;
+
+beforeAll(() => {
+  viteDir = tempDirWithFiles("ctrlc", {
+    "package.json": JSON.stringify({
+      name: "ctrlc",
+      scripts: {
+        "dev": "vite",
+      },
+      devDependencies: {
+        "vite": "^6.0.1",
+      },
+    }),
+  });
+  viteInstallExitCode = Bun.spawnSync({
+    cmd: [bunExe(), "install"],
+    cwd: viteDir,
+    env: bunEnv,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).exitCode;
+});
+
 for (const mode of [
   ["vite"],
   ["dev"],
@@ -86,29 +115,10 @@ for (const mode of [
   ...(isWindows ? [] : [["--bun", "./node_modules/.bin/vite"]]),
 ]) {
   it("kills on SIGINT in: 'bun " + mode.join(" ") + "'", async () => {
-    const dir = tempDirWithFiles("ctrlc", {
-      "package.json": JSON.stringify({
-        name: "ctrlc",
-        scripts: {
-          "dev": "vite",
-        },
-        devDependencies: {
-          "vite": "^6.0.1",
-        },
-      }),
-    });
-    expect(
-      Bun.spawnSync({
-        cmd: [bunExe(), "install"],
-        cwd: dir,
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      }).exitCode,
-    ).toBe(0);
+    expect(viteInstallExitCode).toBe(0);
     const proc = Bun.spawn({
       cmd: [bunExe(), ...mode],
-      cwd: dir,
+      cwd: viteDir,
       stdin: "inherit",
       stdout: "pipe",
       stderr: "inherit",
@@ -125,11 +135,9 @@ for (const mode of [
     // send sigint
     process.kill(proc.pid, "SIGINT");
 
-    // wait for exit or 200ms
-    await Promise.race([proc.exited, Bun.sleep(200)]);
+    // wait for exit (or 300ms max — same total grace period as before)
+    await Promise.race([proc.exited, Bun.sleep(300)]);
 
-    // wait to allow a moment to be killed
-    await Bun.sleep(100); // wait for kill
     expect({
       killed: proc.killed,
       exitCode: proc.exitCode,

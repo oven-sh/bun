@@ -35,14 +35,23 @@ private:
     typedef AsyncSocket<SSL> Super;
 
     void *init(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure, void *socketData, WebSocketData::OnSocketClosedCallback onSocketClosed) {
-        new (us_socket_ext(SSL, (us_socket_t *) this)) WebSocketData(perMessageDeflate, compressOptions, std::move(backpressure), socketData, onSocketClosed);
+        new (us_socket_ext((us_socket_t *) this)) WebSocketData(perMessageDeflate, compressOptions, std::move(backpressure), socketData, onSocketClosed);
         return this;
+    }
+
+    /* Recover the per-route context data from the socket's group. The group's
+     * ext is the embedding WebSocketContext*, whose layout is {group; data;}
+     * — so (group_t*)ext + 1 = &data. Mirrors the old us_socket_context_ext
+     * (which returned context + 1) without needing WebSocketContext.h. */
+    WebSocketContextData<SSL, USERDATA> *getContextData() {
+        return (WebSocketContextData<SSL, USERDATA> *)
+            ((us_socket_group_t *) us_socket_group_ext(us_socket_group((us_socket_t *) this)) + 1);
     }
 public:
 
     /* Returns pointer to the per socket user data */
     USERDATA *getUserData() {
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         /* We just have it overallocated by sizeof type */
         return (USERDATA *) (webSocketData + 1);
     }
@@ -56,7 +65,7 @@ public:
     /* WebSocket close cannot be an alias to AsyncSocket::close since
      * we need to check first if it was shut down by remote peer */
     us_socket_t *close() {
-        if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
+        if (us_socket_is_closed((us_socket_t *) this)) {
             return nullptr;
         }
         WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
@@ -64,7 +73,7 @@ public:
             return nullptr;
         }
 
-        return us_socket_close(SSL, (us_socket_t *) this, 0, nullptr);
+        return us_socket_close((us_socket_t *) this, 0, nullptr);
     }
 
     enum SendStatus : int {
@@ -72,6 +81,29 @@ public:
         SUCCESS,
         DROPPED
     };
+
+    /* Report what send() would return right now without sending: DROPPED over
+     * maxBackpressure, BACKPRESSURE if anything is buffered, else SUCCESS.
+     * publish() uses this to surface per-subscriber backpressure. */
+    SendStatus sendStatus() {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
+        size_t buffered = getBufferedAmount();
+        if (webSocketContextData->maxBackpressure && webSocketContextData->maxBackpressure < buffered) {
+            return DROPPED;
+        }
+        if (buffered > 0) {
+            return BACKPRESSURE;
+        }
+        return SUCCESS;
+    }
+
+    /* Fold a per-subscriber status into an aggregate: DROPPED beats
+     * BACKPRESSURE beats SUCCESS. */
+    static SendStatus worseStatus(SendStatus a, SendStatus b) {
+        if (a == DROPPED || b == DROPPED) return DROPPED;
+        if (a == BACKPRESSURE || b == BACKPRESSURE) return BACKPRESSURE;
+        return SUCCESS;
+    }
 
     size_t memoryCost() {
         return getBufferedAmount() + sizeof(WebSocket);
@@ -94,15 +126,13 @@ public:
     /* Send or buffer a WebSocket frame, compressed or not. Returns BACKPRESSURE on increased user space backpressure,
      * DROPPED on dropped message (due to backpressure) or SUCCCESS if you are free to send even more now. */
     SendStatus send(std::string_view message, OpCode opCode = OpCode::BINARY, bool compress = false, bool fin = true) {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
         /* Skip sending and report success if we are over the limit of maxBackpressure */
         if (webSocketContextData->maxBackpressure && webSocketContextData->maxBackpressure < getBufferedAmount()) {
             /* Also defer a close if we should */
             if (webSocketContextData->closeOnBackpressureLimit) {
-                us_socket_shutdown_read(SSL, (us_socket_t *) this);
+                us_socket_shutdown_read((us_socket_t *) this);
             }
             return DROPPED;
         }
@@ -116,7 +146,7 @@ public:
         if (message.length() >= 16 * 1024 && !compress && !SSL && !webSocketData->subscriber && getBufferedAmount() == 0 && corkBufferEmpty) {
             char header[10];
             int header_length = (int) protocol::formatMessage<isServer>(header, "", 0, opCode, message.length(), compress, fin);
-            int written = us_socket_write2(0, (struct us_socket_t *)this, header, header_length, message.data(), (int) message.length());
+            int written = us_socket_write2((struct us_socket_t *)this, header, header_length, message.data(), (int) message.length());
 
             if (written != header_length + (int) message.length()) {
                 /* Buffer up backpressure */
@@ -195,7 +225,7 @@ public:
      * Will not append a close reason if code is 0 or 1005. */
     void end(int code = 0, std::string_view message = {}) {
         /* Check if we already called this one */
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (webSocketData->isShuttingDown) {
             return;
         }
@@ -219,9 +249,7 @@ public:
             }
         }
 
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
         /* Set shorter timeout (use ping-timeout) to avoid long hanging sockets after end() on broken connections */
         Super::timeout(webSocketContextData->idleTimeoutComponents.second);
@@ -262,12 +290,10 @@ public:
 
     /* Subscribe to a topic according to MQTT rules and syntax. Returns success */
     bool subscribe(std::string_view topic, bool = false) {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
         /* Make us a subscriber if we aren't yet */
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (!webSocketData->subscriber) {
             webSocketData->subscriber = webSocketContextData->topicTree->createSubscriber();
             webSocketData->subscriber->user = this;
@@ -286,11 +312,9 @@ public:
 
     /* Unsubscribe from a topic, returns true if we were subscribed. */
     bool unsubscribe(std::string_view topic, bool = false) {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
 
         if (!webSocketData->subscriber) { return false; }
 
@@ -303,6 +327,10 @@ public:
 
         /* Free us as subscribers if we unsubscribed from our last topic */
         if (ok && last) {
+            /* Flush queued publish() messages before the Subscriber is freed.
+             * freeSubscriber unlinks without draining, which would otherwise
+             * drop messages that publish() already accepted this tick. */
+            webSocketContextData->topicTree->drain(webSocketData->subscriber);
             webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
             webSocketData->subscriber = nullptr;
         }
@@ -312,11 +340,9 @@ public:
 
     /* Returns whether this socket is subscribed to the specified topic */
     bool isSubscribed(std::string_view topic) {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (!webSocketData->subscriber) {
             return false;
         }
@@ -334,11 +360,9 @@ public:
      * inside the callback ONLY IF not modifying the topic passed to the callback.
      * Topic names are valid only for the duration of the callback. */
     void iterateTopics(MoveOnlyFunction<void(std::string_view)> cb) {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (webSocketData->subscriber) {
             /* Lock this subscriber for unsubscription / subscription */
             webSocketContextData->topicTree->iteratingSubscriber = webSocketData->subscriber;
@@ -352,30 +376,44 @@ public:
         }
     }
 
-    /* Publish a message to a topic according to MQTT rules and syntax. Returns success.
-     * We, the WebSocket, must be subscribed to the topic itself and if so - no message will be sent to ourselves.
-     * Use App::publish for an unconditional publish that simply publishes to whomever might be subscribed. */
-    bool publish(std::string_view topic, std::string_view message, OpCode opCode = OpCode::TEXT, bool compress = false) {
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL,
-            (us_socket_context_t *) us_socket_context(SSL, (us_socket_t *) this)
-        );
+    /* MQTT-style publish that never delivers to this WebSocket (the sender).
+     * Returns the worst receiver SendStatus; no receivers is DROPPED.
+     * Use App::publish for an unconditional broadcast. */
+    SendStatus publish(std::string_view topic, std::string_view message, OpCode opCode = OpCode::TEXT, bool compress = false) {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
-        /* We cannot be a subscriber of this topic if we are not a subscriber of anything */
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
-        if (!webSocketData->subscriber) {
-            /* Failure, but still do return the number of subscribers */
-            return false;
-        }
+        /* A sender with no Subscriber (never subscribed to anything) still publishes; nullptr
+         * is a valid "exclude nobody" sender for TopicTree (App::publish relies on this). */
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
+        Subscriber *sender = webSocketData->subscriber;
 
         /* Publish as sender, does not receive its own messages even if subscribed to relevant topics */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
-            return webSocketContextData->topicTree->publishBig(webSocketData->subscriber, topic, {message, opCode, compress}, [](Subscriber *s, TopicTreeBigMessage &message) {
+            SendStatus worst = SUCCESS;
+            bool hasReceivers = false;
+            webSocketContextData->topicTree->publishBig(sender, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
+                hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
-                ws->send(message.message, (OpCode)message.opCode, message.compress);
+                worst = worseStatus(worst, (SendStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
             });
+            return hasReceivers ? worst : DROPPED;
         } else {
-            return webSocketContextData->topicTree->publish(webSocketData->subscriber, topic, {std::string(message), opCode, compress});
+            Topic *t = webSocketContextData->topicTree->lookupTopic(topic);
+            if (!t) {
+                return DROPPED;
+            }
+            webSocketContextData->topicTree->publish(sender, topic, {std::string(message), opCode, compress});
+            /* publish() may have synchronously drained a subscriber; check backpressure after. */
+            SendStatus worst = SUCCESS;
+            bool hasReceivers = false;
+            for (Subscriber *s : *t) {
+                if (s == sender) continue;
+                hasReceivers = true;
+                auto *ws = (WebSocket<SSL, true, int> *) s->user;
+                worst = worseStatus(worst, (SendStatus) ws->sendStatus());
+            }
+            return hasReceivers ? worst : DROPPED;
         }
     }
 };

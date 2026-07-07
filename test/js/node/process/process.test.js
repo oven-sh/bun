@@ -1468,7 +1468,7 @@ it("process.memoryUsage.arrayBuffers counts Buffer and typed array allocations",
   // Run in a subprocess so GC activity in the test runner cannot disturb the
   // before/after deltas.
   const script = `
-    const MB = 1 << 20, N = 8, SZ = 8 * MB, TOTAL = N * SZ;
+    const MB = 1 << 20, N = 8, SZ = 8 * MB;
     const held = [];
 
     const a0 = process.memoryUsage().arrayBuffers;

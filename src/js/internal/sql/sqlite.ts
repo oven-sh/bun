@@ -213,13 +213,16 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
 
       if (stmt && stmt.native.columnsCount > 0) {
         let result: unknown[] | undefined;
-
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
-        } else {
-          result = stmt.all.$apply(stmt, values);
+        try {
+          if (mode === SQLQueryResultMode.values) {
+            result = stmt.values.$apply(stmt, values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = stmt.raw.$apply(stmt, values);
+          } else {
+            result = stmt.all.$apply(stmt, values);
+          }
+        } finally {
+          stmt.finalize();
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -227,7 +230,6 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
-        stmt.finalize();
         query.resolve(sqlResult);
       } else {
         // No result columns: writes/DDL. db.run() also executes every

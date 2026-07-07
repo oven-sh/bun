@@ -280,6 +280,15 @@ struct InflationStream {
             inflationStream.avail_out = LARGE_BUFFER_SIZE;
 
             err = ::inflate(&inflationStream, Z_SYNC_FLUSH);
+            if (err == Z_STREAM_END) {
+                /* RFC 7692 7.2.3.4: a sender may end a message with a BFINAL=1 block.
+                 * Reset so the next message starts a fresh DEFLATE stream. Remaining
+                 * input (the 00 00 ff ff tail we appended plus any sender padding)
+                 * decodes to nothing; drop it so it cannot poison the reset stream. */
+                inflateReset(&inflationStream);
+                inflationStream.avail_in = 0;
+                err = Z_OK;
+            }
             if (err == Z_OK && inflationStream.avail_out) {
                 break;
             }

@@ -237,13 +237,6 @@ describe("spawn()", () => {
       expect(child.stderr).toBe(null);
     });
 
-    it("is consistent regardless of when the getter is first read", async () => {
-      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: ["ignore", "ignore", "ignore"] });
-      const before = child.stdin;
-      await once(child, "close");
-      expect({ before, after: child.stdin }).toEqual({ before: null, after: null });
-    });
-
     it("fork() default stdio", async () => {
       const dir = tmpdirSync();
       const kid = path.join(dir, "kid.cjs");

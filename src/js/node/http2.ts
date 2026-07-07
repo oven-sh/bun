@@ -2083,11 +2083,9 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-// Wraps the Writable onwrite callback handed to native writeStream: when native settles it for
-// a frame that was dropped during stream teardown, the stream has already been destroyed (by
-// close()/destroy() or the session.destroy() forEachStream pass), so report the drop as an
-// error to the user's write callback. errorOrDestroy is a no-op on a destroyed stream, and the
-// onwriteError path never emits 'drain'. A still-live stream means the frame actually flushed.
+// writeStream callback: a frame that settles after the stream is destroyed was dropped during
+// teardown, so report an error to the user's write callback (onwriteError never emits 'drain',
+// and errorOrDestroy is a no-op on a destroyed stream).
 function onWriteStreamDone(this: Http2Stream, callback, err) {
   if (err == null && this.destroyed) return callback($ERR_HTTP2_INVALID_STREAM());
   callback(err);
@@ -4108,14 +4106,9 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
-// session.destroy(): destroy each still-open stream before native drops its queued DATA frames
-// so the dropped-frame Writable callback sees kDestroyed (afterWrite then skips 'drain';
-// otherwise a backpressured producer is woken and every later write() returns true). Matches
-// node, which destroys each Http2Stream before ClearOutgoing(UV_ECANCELED) settles the write
-// callbacks. Streams already marked closed completed normally (native emitErrorToAllStreams
-// skips CLOSED streams) and must not be surfaced as errored here. Runs the same error/rstCode
-// plumbing as the deferred emitStreamErrorNT so the stream observes the session error and rst
-// code at 'close' time.
+// session.destroy(): destroy still-open streams before native drops their queued DATA frames so
+// the dropped-frame Writable callback sees kDestroyed and afterWrite skips 'drain'. Streams
+// already marked closed completed normally and are not surfaced as errored here.
 function sessionDestroyStream(this: Http2Session, rstCode: number, stream: Http2Stream) {
   if (stream && !stream.destroyed && !stream.closed) emitStreamErrorNT(this, stream, rstCode, true, false);
 }

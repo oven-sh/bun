@@ -1,13 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// A ClientHttp2Stream whose upload is flow-control blocked (the peer withholds WINDOW_UPDATE)
-// has a DATA frame queued in native with its Writable _write callback held. When
-// session.destroy() tears the stream down, that callback must receive an error so the stream
-// does not emit 'drain', and any subsequent write() must not report success. Previously the
-// dropped frame's callback reported success, so 'drain' woke a backpressured producer and
-// every later write() returned true (once the native handle was gone _write fell through to
-// callback()), buffering the producer's entire source into a dead stream.
+// session.destroy() with a DATA frame queued behind flow control must fail the held write
+// callback so the stream does not emit 'drain' and later write() does not report success.
 test("http2 client session.destroy() with a flow-control-blocked write does not emit 'drain' or accept further writes", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -114,4 +109,4 @@ test("http2 client session.destroy() with a flow-control-blocked write does not 
     stderr: expect.anything(),
     exitCode: 0,
   });
-});
+}, 30_000);

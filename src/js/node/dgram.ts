@@ -826,10 +826,17 @@ function doConnect(ex, self, ip, address, port, callback) {
   }
 
   if (!ex) {
-    try {
-      connectFn.$call(state.handle.socket, ip, port);
-    } catch (e) {
-      ex = e;
+    // Node resolves the destination with uv_ip4_addr/uv_ip6_addr according to
+    // the socket type, so an address of the other family yields EINVAL before
+    // the kernel is ever reached.
+    if (isIP(ip) !== (self.type === "udp4" ? 4 : 6)) {
+      ex = new ExceptionWithHostPort(UV_EINVAL, "connect", address, port);
+    } else {
+      try {
+        connectFn.$call(state.handle.socket, ip, port);
+      } catch (e) {
+        ex = e;
+      }
     }
   }
 
@@ -1043,6 +1050,17 @@ function doSend(ex, self, ip, list, address, port, callback) {
   if (ip && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
     if (callback) {
       process.nextTick(callback, $ERR_IP_BLOCKED(ip));
+    }
+    return;
+  }
+
+  // Node resolves the destination with uv_ip4_addr/uv_ip6_addr according to
+  // the socket type; a literal of the other family fails EINVAL and nothing is
+  // sent. Without this guard a udp6 socket would deliver to an IPv4 literal via
+  // the dual-stack kernel path.
+  if (ip !== null && isIP(ip) !== (self.type === "udp4" ? 4 : 6)) {
+    if (callback) {
+      process.nextTick(callback, new ExceptionWithHostPort(UV_EINVAL, "send", address, port));
     }
     return;
   }

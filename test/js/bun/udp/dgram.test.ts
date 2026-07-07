@@ -1,8 +1,8 @@
 import { describe, expect, jest, test } from "bun:test";
-import { createSocket } from "dgram";
+import { createSocket, Socket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isIPv6, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -332,6 +332,101 @@ describe("after close()", () => {
   test("Symbol.asyncDispose resolves when the socket is already closed", async () => {
     const { socket } = await boundThenClosed();
     expect(await socket[Symbol.asyncDispose]()).toBeUndefined();
+  });
+});
+
+describe.skipIf(!isIPv6())("cross-family destination", () => {
+  // Node resolves send/connect destinations with uv_ip4_addr or uv_ip6_addr
+  // according to the socket type; a literal of the other family yields EINVAL
+  // and no datagram is emitted.
+  async function bound(type: "udp4" | "udp6", address: string) {
+    const socket = createSocket(type);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    socket.once("error", reject);
+    socket.bind(0, address, resolve);
+    await promise;
+    return socket;
+  }
+
+  function sendOnce(socket: Socket, payload: string, port: number, address: string) {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    socket.send(payload, port, address, resolve);
+    return promise;
+  }
+
+  test.each([
+    ["udp6", "127.0.0.1", "::1"],
+    ["udp4", "::1", "127.0.0.1"],
+  ] as const)("%s socket send() to %s fails with EINVAL", async (type, dest, bindAddr) => {
+    const receiver = await bound("udp4", "127.0.0.1");
+    const received: string[] = [];
+    receiver.on("message", msg => received.push(String(msg)));
+    const sender = await bound(type, bindAddr);
+    sender.on("error", () => {});
+    try {
+      const err: any = await sendOnce(sender, "x", receiver.address().port, dest);
+      expect({
+        code: err?.code,
+        syscall: err?.syscall,
+        address: err?.address,
+        port: err?.port,
+      }).toEqual({
+        code: "EINVAL",
+        syscall: "send",
+        address: dest,
+        port: receiver.address().port,
+      });
+      // A matching-family send afterwards must still work and nothing from the
+      // rejected cross-family attempt may have been delivered.
+      if (type === "udp4") {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        receiver.once("message", msg => (String(msg) === "ok" ? resolve() : reject(new Error(String(msg)))));
+        await sendOnce(sender, "ok", receiver.address().port, "127.0.0.1");
+        await promise;
+      }
+      expect(received).toEqual(type === "udp4" ? ["ok"] : []);
+    } finally {
+      sender.close();
+      receiver.close();
+    }
+  });
+
+  test("udp6 socket send() to ::ffff:127.0.0.1 succeeds", async () => {
+    const receiver = await bound("udp4", "127.0.0.1");
+    const sender = await bound("udp6", "::");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      sender.on("error", reject);
+      receiver.once("message", msg => (String(msg) === "x" ? resolve() : reject(new Error(String(msg)))));
+      const err = await sendOnce(sender, "x", receiver.address().port, "::ffff:127.0.0.1");
+      expect(err).toBeNull();
+      await promise;
+    } finally {
+      sender.close();
+      receiver.close();
+    }
+  });
+
+  test.each([
+    ["udp6", "127.0.0.1"],
+    ["udp4", "::1"],
+  ] as const)("%s socket connect() to %s fails with EINVAL", async (type, dest) => {
+    const receiver = await bound("udp4", "127.0.0.1");
+    const client = createSocket(type);
+    client.on("error", () => {});
+    try {
+      const err: any = await new Promise(resolve => client.connect(receiver.address().port, dest, resolve));
+      expect({ code: err?.code, syscall: err?.syscall, address: err?.address }).toEqual({
+        code: "EINVAL",
+        syscall: "connect",
+        address: dest,
+      });
+    } finally {
+      try {
+        client.close();
+      } catch {}
+      receiver.close();
+    }
   });
 });
 

@@ -2450,15 +2450,21 @@ impl VirtualMachine {
     /// rejections exactly as the wait loop would, so nothing about exception or
     /// unhandled-rejection handling changes. It does dispatch the task queue, so
     /// a port message or I/O completion the body queued still runs before the
-    /// timers phase (see the Known-exclusion note on the PR); `setImmediate`
-    /// callbacks wait in the immediate queue, which `auto_tick` drains, so the
-    /// timers phase runs ahead of them. `uv_run` opens with `uv__run_timers`.
+    /// timers phase; `setImmediate` callbacks wait in the immediate queue, which
+    /// `auto_tick` drains, so the timers phase runs ahead of them. `uv_run`
+    /// opens with `uv__run_timers`.
     fn run_entry_point_body(&mut self, evaluation: *mut JSInternalPromise) {
+        // `tick()`'s tail reports rejections and bumps `unhandled_error_counter`
+        // at exactly the pre-existing point, so reading it afterwards is a pure
+        // read. Snapshot: the test-runner call sites reuse the VM across files.
+        let unhandled_before = self.unhandled_error_counter;
         self.tick();
         // SAFETY: `evaluation` is a live JSC heap cell returned by
         // `reload_entry_point*` and kept alive by the module loader. A body that
-        // threw rejects it; Node reports the error and exits without a loop.
-        if crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected {
+        // threw rejects it, and a body that left an unhandled rejection bumped
+        // the counter; neither reaches a timers phase in Node.
+        let threw = crate::JSPromise::status_ptr(evaluation) == crate::js_promise::Status::Rejected;
+        if threw || self.unhandled_error_counter > unhandled_before {
             return;
         }
         self.event_loop_mut().drain_expired_timers();

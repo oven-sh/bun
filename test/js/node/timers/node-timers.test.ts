@@ -250,9 +250,8 @@ describe.concurrent("an already-expired timer runs before the first check phase"
   // Block well past the 1ms deadline so the timer is unambiguously expired by
   // the time the event loop is entered. libuv opens every `uv_run` iteration
   // with the timers phase, so the timer runs before the `setImmediate` queued
-  // next to it. (Task-queue work such as a MessagePort self-post or completed
-  // fs I/O is dispatched by the entry tick before the timers phase; see the
-  // PR's Known-exclusion note.)
+  // next to it. Task-queue work such as a MessagePort self-post or a completed
+  // fs read is dispatched by the entry tick before the timers phase.
   const blockPastTheDeadline = `const start = Date.now(); while (Date.now() - start < 10) {}`;
 
   test.concurrent("before setImmediate", async () => {
@@ -328,12 +327,15 @@ describe.concurrent("an already-expired timer runs before the first check phase"
 
   // An entry point that throws rejects the module promise and exits without
   // entering the loop, as Node does; the timer never fires.
-  test.concurrent("but not when the entry point throws", async () => {
-    using dir = tempDir("timers-phase-order-throw", {
+  test.concurrent.each([
+    ["throws", `throw new Error("boom");`],
+    ["leaves an unhandled rejection nobody reports", `Promise.reject(new Error("boom"));`],
+  ])("but not when the entry point %s", async (_name, failure) => {
+    using dir = tempDir("timers-phase-order-failure", {
       "index.js": `
         setTimeout(() => console.log("timer fired"), 1);
         ${blockPastTheDeadline}
-        throw new Error("boom");
+        ${failure}
       `,
     });
 

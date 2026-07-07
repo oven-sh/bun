@@ -902,14 +902,7 @@ pub(crate) unsafe fn __bun_run_wtf_timer(
 /// `drain_timers` fires.
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_drain_expired_timers(vm: *mut bun_jsc::virtual_machine::VirtualMachine) {
-    let all = crate::jsc_hooks::timer_all();
-    if all.is_null() {
-        return;
-    }
-    // SAFETY: `all` is the live per-thread `All`; `drain_timers` forms
-    // short-lived `&mut` only around heap pop/peek, so no `&mut All` is held
-    // across `fire()` (which re-enters `All` via `runtime_state()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
+    crate::timer::timer::drain_timers_export(vm)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

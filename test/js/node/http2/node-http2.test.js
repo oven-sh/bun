@@ -1579,7 +1579,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
   }
 }
 
-
 it("sensitive headers should work", async () => {
   const server = http2.createServer();
   let client;

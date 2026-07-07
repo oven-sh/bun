@@ -1198,6 +1198,15 @@ class ChildProcess extends EventEmitter {
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
+
+      // 'close' waits for each extra pipe (index >= 3) too. A socket that holds unread bytes never ends, so drain it.
+      const stdio = this.#stdioObject;
+      if (stdio) {
+        for (let i = 3; i < stdio.length; i++) {
+          const pipe = stdio[i];
+          if (pipe && !pipe.destroyed && pipe.readable) pipe.resume?.();
+        }
+      }
     }
 
     const spawnfile = this.spawnfile;
@@ -1319,14 +1328,18 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
-          case "socket-fd":
+          case "socket-fd": {
             if (!NetModule) NetModule = require("node:net");
             // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
-            return NetModule.connect({ fd });
+            const socket = NetModule.connect({ fd });
+            this.#closesNeeded++;
+            socket.once("close", () => this.#maybeClose());
+            return socket;
+          }
         }
         return null;
     }

@@ -74,6 +74,13 @@ pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     bun_core::output::panic(format_args!("{}", bstr::BStr::new(bytes)));
 }
 
+/// Out-of-memory entry point for C callers (bun-usockets) that cannot
+/// propagate an allocation failure. Same crash report as `handle_oom`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__outOfMemory() -> ! {
+    bun_core::out_of_memory()
+}
+
 // REAL: now provided by bun_jsc (src/jsc/array_buffer.rs).
 // MarkedArrayBuffer_deallocator
 

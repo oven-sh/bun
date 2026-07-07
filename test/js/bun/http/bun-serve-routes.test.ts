@@ -1,5 +1,6 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import net from "node:net";
 
 describe("path parameters", () => {
   let server: Server;
@@ -68,6 +69,27 @@ describe("path parameters", () => {
       id: "🦊",
       method: "GET",
     });
+  });
+
+  it.each([
+    ["valid UTF-8 bytes", [0xc3, 0xa9], "é"],
+    ["an invalid UTF-8 byte", [0xe9], "�"],
+  ])("decodes raw %s in a parameter segment", async (_label, bytes, expected) => {
+    const request = Buffer.concat([
+      Buffer.from("GET /users/"),
+      Buffer.from(bytes),
+      Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    ]);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(request));
+    const response = await promise;
+    expect(response).toContain("HTTP/1.1 200");
+    expect(JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4))).toEqual({ id: expected, method: "GET" });
   });
 });
 

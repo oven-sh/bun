@@ -157,8 +157,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
       // CI lanes with coredump-upload flag any new core file in coresDir as a
       // test failure — including the one the worker deliberately produces
       // here. ulimit -c 0 on the coordinator is inherited by the workers;
-      // the test is POSIX-only so /bin/sh is available. Same reasoning as
-      // the setrlimit(RLIMIT_CORE, {0,0}) in BunProcess.cpp's execve path.
+      // the test is POSIX-only so /bin/sh is available.
       await using proc = Bun.spawn({
         cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "test", "--parallel=2", "."],
         env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },

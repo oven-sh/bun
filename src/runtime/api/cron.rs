@@ -1632,9 +1632,10 @@ impl CronJob {
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
-        // Cron occurrences are calendar-based (real epoch); the timer heap is
-        // monotonic. Anchor both to real time so fake timers don't half-apply.
-        let now_ms: f64 = bun_core::time::milli_timestamp() as f64;
+        // Cron occurrences are calendar-based (epoch); the timer heap is
+        // monotonic. Anchor both to the same clock (mocked when fake timers
+        // are active) so they can never half-apply.
+        let now_ms: f64 = bun_core::time::milli_timestamp_allow_mocked_time();
         // The monotonic timer can fire fractionally before the wall-clock target
         // (clock skew / NTP step); floor next() at the prior target so it can't
         // recompute the same minute and double-fire.
@@ -1646,7 +1647,7 @@ impl CronJob {
         self.last_next_ms.set(next_ms);
         let delta: i64 = (next_ms - now_ms).max(1.0) as i64;
         Some(bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::ForceRealTime,
+            bun_core::TimespecMockMode::AllowMockedTime,
             delta,
         ))
     }

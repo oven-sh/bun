@@ -6,6 +6,7 @@ use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::size::Size2D;
 use crate::css_values::time::Time;
+use crate::generics::CssEql;
 use crate::{Parser, PrintErr, Printer, SmallList};
 use bun_core::strings;
 
@@ -16,6 +17,7 @@ pub type AnimationList = SmallList<Animation, 1>;
 pub type AnimationNameList = SmallList<AnimationName, 1>;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
+#[derive(CssEql)]
 pub struct Animation {
     /// The animation name.
     pub name: AnimationName,
@@ -38,9 +40,24 @@ pub struct Animation {
 }
 
 impl Animation {
-    // PropertyFieldMap omitted: `PropertyIdTag::Animation*` variants are not yet
-    // generated (animation longhands are unparsed-only for now). Re-add the
-    // field→PropertyIdTag table once the variants land.
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        Animation {
+            name: self.name.deep_clone(bump),
+            duration: self.duration,
+            timing_function: self.timing_function.clone(),
+            iteration_count: self.iteration_count,
+            direction: self.direction,
+            play_state: self.play_state,
+            delay: self.delay,
+            fill_mode: self.fill_mode,
+            timeline: self.timeline.deep_clone(bump),
+        }
+    }
+
+    // PropertyFieldMap omitted: the animation *longhands* (animation-duration,
+    // animation-delay, …) are still unparsed-only, so shorthand→longhand
+    // expansion has nothing to map to yet. Re-add the field→PropertyIdTag table
+    // once those longhand variants land.
 
     pub const VENDOR_PREFIX_MAP: &'static [(&'static str, bool)] = &[
         ("name", true),
@@ -145,68 +162,100 @@ impl Animation {
             AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
         };
 
-        if let Some(name_str) = name_str {
-            if !self.duration.is_zero() || !self.delay.is_zero() {
-                self.duration.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        // Unlike lightningcss — which only emits the components when a name is
+        // present and relies on its declaration handler to never serialize a
+        // name-less shorthand — Bun prints the `Animation` struct directly, so
+        // the components must be emitted even when the name is `none`; otherwise
+        // `animation: 2s` would collapse to `none` and lose its duration. The
+        // keyword-disambiguation checks (a name spelled like a component keyword
+        // forces that component to be shown) only apply when there is a name.
+        let mut wrote_any = false;
+        macro_rules! space {
+            () => {
+                if wrote_any {
+                    dest.write_char(b' ')?;
+                }
+            };
+        }
 
-            if !self.timing_function.is_ease() || EasingFunction::is_ident(name_str) {
-                self.timing_function.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        if !self.duration.is_zero() || !self.delay.is_zero() {
+            space!();
+            self.duration.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if !self.delay.is_zero() {
-                self.delay.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        if !self.timing_function.is_ease() || name_str.is_some_and(EasingFunction::is_ident) {
+            space!();
+            self.timing_function.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.iteration_count != AnimationIterationCount::default()
-                || strings::eql_case_insensitive_ascii(name_str, b"infinite", true)
-            {
-                self.iteration_count.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        if !self.delay.is_zero() {
+            space!();
+            self.delay.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.direction != AnimationDirection::default()
-                || css::parse_utility::parse_string::<AnimationDirection>(
+        if self.iteration_count != AnimationIterationCount::default()
+            || name_str.is_some_and(|n| strings::eql_case_insensitive_ascii(n, b"infinite", true))
+        {
+            space!();
+            self.iteration_count.to_css(dest)?;
+            wrote_any = true;
+        }
+
+        if self.direction != AnimationDirection::default()
+            || name_str.is_some_and(|n| {
+                css::parse_utility::parse_string::<AnimationDirection>(
                     dest.arena,
-                    name_str,
+                    n,
                     AnimationDirection::parse,
                 )
                 .is_ok()
-            {
-                self.direction.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+            })
+        {
+            space!();
+            self.direction.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.fill_mode != AnimationFillMode::default()
-                || (!strings::eql_case_insensitive_ascii(name_str, b"none", true)
+        if self.fill_mode != AnimationFillMode::default()
+            || name_str.is_some_and(|n| {
+                !strings::eql_case_insensitive_ascii(n, b"none", true)
                     && css::parse_utility::parse_string::<AnimationFillMode>(
                         dest.arena,
-                        name_str,
+                        n,
                         AnimationFillMode::parse,
                     )
-                    .is_ok())
-            {
-                self.fill_mode.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+                    .is_ok()
+            })
+        {
+            space!();
+            self.fill_mode.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.play_state != AnimationPlayState::default()
-                || css::parse_utility::parse_string::<AnimationPlayState>(
+        if self.play_state != AnimationPlayState::default()
+            || name_str.is_some_and(|n| {
+                css::parse_utility::parse_string::<AnimationPlayState>(
                     dest.arena,
-                    name_str,
+                    n,
                     AnimationPlayState::parse,
                 )
                 .is_ok()
-            {
-                self.play_state.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+            })
+        {
+            space!();
+            self.play_state.to_css(dest)?;
+            wrote_any = true;
         }
 
-        self.name.to_css(dest)?;
+        // A `none` name is redundant once other components were written, so only
+        // emit the name when it is a real name or nothing else was written.
+        if !matches!(self.name, AnimationName::None) || !wrote_any {
+            space!();
+            self.name.to_css(dest)?;
+        }
 
         if !matches!(self.name, AnimationName::None)
             && self.timeline != AnimationTimeline::default()
@@ -345,7 +394,7 @@ impl AnimationName {
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
     Number(CSSNumber),
@@ -365,9 +414,9 @@ impl AnimationIterationCount {
     }
 
     // Port of `css.DeriveToCss(@This()).toCss`.
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(*n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }
@@ -511,6 +560,18 @@ impl AnimationTimeline {
 
     pub fn is_default(&self) -> bool {
         matches!(self, AnimationTimeline::Auto)
+    }
+
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        match self {
+            AnimationTimeline::Auto => AnimationTimeline::Auto,
+            AnimationTimeline::None => AnimationTimeline::None,
+            // `DashedIdent` is a `Copy` arena-slice pointer.
+            AnimationTimeline::DashedIdent(d) => AnimationTimeline::DashedIdent(*d),
+            AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
+                unreachable!("ScrollTimeline / ViewTimeline are uninstantiated (no parse path)")
+            }
+        }
     }
 }
 

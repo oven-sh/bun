@@ -1446,6 +1446,12 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   return totalBytesWritten;
 }
 
+// The only flag spellings whose `open` truncates. `r+` & co. overwrite in place,
+// so resizing the file down to the bytes we wrote would destroy the rest of it.
+function flagTruncates(flag): boolean {
+  return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
+}
+
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
   let signal: AbortSignal | null = null;
@@ -1491,7 +1497,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   // Handle cleanup outside of try-catch
   if (mustClose) {
-    if (typeof flag === "string" && !flag.includes("a")) {
+    if (flagTruncates(flag)) {
       try {
         await fs.ftruncate(fdOrPath, totalBytesWritten);
       } catch {}

@@ -953,6 +953,11 @@ impl JSValue {
     }
     /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
     /// cannot be detached. The pin does not prevent collection.
+    ///
+    /// While pinned, a JS `transfer()`, `structuredClone(v, { transfer: [ab] })`
+    /// or `postMessage(v, [ab])` hands the destination a copy and leaves the
+    /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
+    /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         if !JSC__JSValue__pinArrayBuffer(self) {
             return None;
@@ -1047,7 +1052,7 @@ impl JSValue {
     /// promise's await-chain frames to this error's stack.
     ///
     /// `this` is the error value (must be a `JSError` or `Exception` cell);
-    /// no-op otherwise — see `bindings.cpp:Bun__attachAsyncStackFromPromise`.
+    /// no-op otherwise — see `AsyncStackTrace.cpp:Bun__attachAsyncStackFromPromise`.
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         Bun__attachAsyncStackFromPromise(global, self, promise)
     }
@@ -2557,6 +2562,21 @@ impl JSValue {
             ) -> JSValue;
         }
         JSC__JSValue__getDirectIndex(self, global, i)
+    }
+    /// Smallest own present index of a `JSArray` that is `>= start`, or
+    /// `None` when every index from `start` to the end of the array is a
+    /// hole. Walks the array's backing storage (and sparse map) so a run of
+    /// holes is skipped in one call instead of probing each index.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub fn next_present_index(self, start: u32) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
+        }
+        match Bun__JSArray__nextPresentIndex(self, start) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
     }
     /// `JSValue.getNameProperty` — write the value's
     /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.

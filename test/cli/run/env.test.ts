@@ -1,6 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  bunTest,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -327,13 +338,15 @@ test(".env doesnt crash with 159 bytes", () => {
   );
 });
 
-test(".env with 50000 entries", () => {
-  const dir = tempDirWithFiles("dotenv-many-entries", {
-    ".env": new Array(50000)
-      .fill(null)
-      .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
-      .join("\n"),
-    "index.ts": /* ts */ `
+test(
+  ".env with 50000 entries",
+  () => {
+    const dir = tempDirWithFiles("dotenv-many-entries", {
+      ".env": new Array(50000)
+        .fill(null)
+        .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
+        .join("\n"),
+      "index.ts": /* ts */ `
       for (let i = 0; i < 50000; i++) {
         if(process.env['TEST_VAR' + i] !== 'TEST_VAL' + i) {
           throw new Error('TEST_VAR' + i + ' !== TEST_VAL' + i);
@@ -341,10 +354,14 @@ test(".env with 50000 entries", () => {
       }
       console.log('OK');
     `,
-  });
-  const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("OK");
-});
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("OK");
+  },
+  // The spawned debug+ASAN child alone needs ~8s for this; the default 5s
+  // budget only fits release-ish builds.
+  isDebug ? 90_000 : 5_000,
+);
 
 test(".env space edgecase (issue #411)", () => {
   const dir = tempDirWithFiles("dotenv-issue-411", {
@@ -929,4 +946,35 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
     // Restore permissions so tempDir cleanup can remove the directory.
     fs.chmodSync(noreadDir, 0o755);
   }
+});
+
+// `st_size` is only a hint (sparse file, writer racing the loader): the env
+// loader's whole-file read used to `reserve_exact` it and abort the process in
+// `handle_alloc_error` before any user code ran. It must surface as a
+// recoverable error. ASAN-only: ASAN rejects the 1 TiB request deterministically.
+test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort the process", async () => {
+  const dir = tempDirWithFiles("dotenv-huge-sparse", {
+    ".env": "",
+    "app.js": `console.log("reached user code");`,
+  });
+  // 1 TiB sparse `.env`: fstat reports 2**40 bytes, nothing is actually stored.
+  fs.truncateSync(path.join(dir, ".env"), 2 ** 40);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "app.js"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      // Let ASAN return null for the oversized request (instead of hard-erroring
+      // itself) so Bun's own allocation-failure path is what gets exercised.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Unfixed, startup died in `handle_alloc_error` ("memory allocation of
+  // 1099511627792 bytes failed", SIGABRT) without ever reaching app.js.
+  expect({ stdout, exitCode }).toEqual({ stdout: "reached user code\n", exitCode: 0 });
 });

@@ -33,6 +33,8 @@
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
+#include "JavaScriptCore/ArrayStorage.h"
+#include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
@@ -151,6 +153,7 @@
 #include "JavaScriptCore/CustomGetterSetter.h"
 
 #include "ErrorStackFrame.h"
+#include "AsyncStackTrace.h"
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
 
@@ -1955,14 +1958,19 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
-            if (header.value.len == 0 || header.name.len == 0)
+            // picohttpparser reports obs-fold continuation lines with an empty
+            // name; skip those. Empty *values* must flow through so duplicate
+            // headers combine per the Fetch spec ("a, , c") and a lone empty
+            // header is still visible to JS, matching the uWS/H3 paths.
+            if (header.name.len == 0)
                 continue;
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
             std::span<Latin1Character> data;
             auto value = String::createUninitialized(header.value.len, data);
-            memcpy(data.data(), header.value.ptr, header.value.len);
+            if (header.value.len > 0)
+                memcpy(data.data(), header.value.ptr, header.value.len);
 
             HTTPHeaderName name;
 
@@ -1974,8 +1982,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             } else {
                 // the case where we do not need to clone the name
                 // when the header name is already present in the list
-                // we don't have that information here, so map.setUncommonHeaderCloneName exists
-                map.setUncommonHeaderCloneName(nameView, value);
+                // we don't have that information here, so map.addUncommonHeaderCloneName exists
+                map.addUncommonHeaderCloneName(nameView, value);
             }
         }
 
@@ -2004,7 +2012,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             map.add(name, WTF::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
     }
     headers->setInternalHeaders(WTF::move(map));
@@ -2029,7 +2037,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, hn)) {
             map.add(hn, WTF::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
     });
     headers->setInternalHeaders(WTF::move(map));
@@ -2242,164 +2250,6 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
 {
     JSObject* exception = createOutOfMemoryError(globalObject);
     return JSValue::encode(exception);
-}
-
-// Walk a promise's reaction chain to find the async generators awaiting it,
-// and collect them as async StackFrames. Used when an error is created from
-// native code at the top of the event loop (e.g. run_from_js_thread in node_fs.rs)
-// where there's no JS call stack, but the promise being rejected has an await
-// chain that tells us where the user's code is.
-//
-// This replicates the minimal chain-walking from JSC's private
-// Interpreter::getAsyncStackTrace for the common case (direct await). Promise
-// combinators (all/race/any) are not traced through — we stop at them.
-static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, WTF::Vector<JSC::StackFrame>& results, size_t maxStackSize)
-{
-    if (!JSC::Options::useAsyncStackTrace() || !promise)
-        return;
-
-    JSC::AssertNoGC assertNoGC;
-
-    auto dynamicCastValue = []<typename T>(JSC::JSValue v, T** out) -> bool {
-        if (!v || !v.isCell())
-            return false;
-        *out = dynamicDowncast<T>(v.asCell());
-        return *out != nullptr;
-    };
-
-    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
-        JSC::InternalFieldTuple* tuple = nullptr;
-        if (dynamicCastValue(context, &tuple))
-            context = tuple->getInternalField(0);
-        JSC::JSAsyncFunctionGenerator* generator = nullptr;
-        dynamicCastValue(context, &generator);
-        return generator;
-    };
-
-    // Walk reaction->context → generator. If context is not a generator (e.g.
-    // thenable-chain from `return promise` without await inside an async
-    // function), follow reaction->promise() to the next promise in the chain.
-    // Cap hops to avoid pathological chains.
-    //
-    // The pending reaction can be stored two ways:
-    //  - Inline in the JSPromise itself (the common single-await / single-then
-    //    fast path). InternalMicrotask carries the await generator context in
-    //    m_slot; FulfillHandler/RejectHandler carry the result promise in
-    //    payloadCell() and the handler in m_slot.
-    //  - As a heap-allocated JSPromiseReaction list once a second handler is
-    //    attached, headed at payloadCell().
-    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
-        for (unsigned hops = 0; p && hops < 32; hops++) {
-            if (p->status() != JSC::JSPromise::Status::Pending)
-                return nullptr;
-            switch (p->inlineReactionKind()) {
-            case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
-                if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
-                    return generator;
-                // No generator in the context. For the resolve-with-promise fast
-                // path (`return promise` without await inside an async function),
-                // the reaction's cell payload is the outer promise being resolved —
-                // follow it to the next promise in the chain. Combinator reactions
-                // store a JSPromiseCombinatorsGlobalContext there, so the downcast
-                // fails and we stop, as before.
-                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
-                    p = next;
-                    continue;
-                }
-                return nullptr;
-            }
-            case JSC::JSPromise::InlineReactionKind::FulfillHandler:
-            case JSC::JSPromise::InlineReactionKind::RejectHandler: {
-                p = p->inlineHandlerResultPromise();
-                continue;
-            }
-            case JSC::JSPromise::InlineReactionKind::None:
-                break;
-            }
-            auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
-            if (!reaction)
-                return nullptr;
-            if (auto* generator = unwrapGeneratorFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
-                return generator;
-            // No generator in context — follow the thenable chain to the
-            // promise this reaction resolves/rejects.
-            if (!dynamicCastValue(reaction->promise(), &p))
-                return nullptr;
-        }
-        return nullptr;
-    };
-
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
-        JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = JSC::BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
-
-    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
-        JSC::JSFunction* asyncFunction = nullptr;
-        if (!dynamicCastValue(generator->next(), &asyncFunction))
-            return;
-        if (asyncFunction->isHostOrPrivateBuiltinFunction())
-            return;
-        JSC::FunctionExecutable* executable = asyncFunction->jsExecutable();
-        if (!executable)
-            return;
-        if (JSC::CodeBlock* codeBlock = executable->codeBlockForCall()) {
-            JSC::BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, generator);
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
-        } else {
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
-        }
-    };
-
-    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
-    while (gen && results.size() < maxStackSize) {
-        appendFrame(gen);
-        JSC::JSPromise* returnPromise = nullptr;
-        if (!dynamicCastValue(gen->context(), &returnPromise))
-            break;
-        gen = getAwaitingGenerator(returnPromise);
-    }
-}
-
-extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
-    if (!instance || !promise)
-        return;
-
-    // Don't overwrite an existing stack trace. User-provided errors (e.g. via
-    // StreamError.JSValue or Body.ValueError.JSValue) may already have a
-    // meaningful synchronous stack from where they were created. Also skip if
-    // .stack was already accessed — setStackFrames after materialization
-    // would desync m_stackTrace from the cached property.
-    if (instance->hasMaterializedErrorInfo())
-        return;
-    if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
-        return;
-
-    size_t limit = globalObject->stackTraceLimit().value_or(10);
-    if (!limit)
-        return;
-
-    WTF::Vector<JSC::StackFrame> frames;
-    collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
-    if (frames.isEmpty())
-        return;
-
-    instance->setStackFrames(vm, WTF::move(frames));
 }
 
 JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
@@ -3168,42 +3018,6 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__empty(Bun::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
-    JSValue emptyStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(emptyStream);
-}
-
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__used(Bun::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
-    JSValue usedStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(usedStream);
-}
-
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__errored(Bun::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto clientData = WebCore::clientData(vm);
-    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createErroredReadableStreamPrivateName()).getObject();
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::JSValue::decode(encodedReason));
-    ASSERT(!arguments.hasOverflowed());
-    JSValue erroredStream = JSC::call(globalObject, function, arguments, "ReadableStream.create"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(erroredStream);
-}
-
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC::JSGlobalObject* globalObject)
 {
@@ -3367,10 +3181,24 @@ bool JSC__JSValue__asArrayBuffer(
 }
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// transfer()/detach() throw while a native borrower holds a slice into it.
-// SharedArrayBuffer is never detachable and never moves, so it is left
+// its storage cannot move or be freed while a native borrower holds a slice
+// into it. SharedArrayBuffer is never detachable and never moves, so it is left
 // unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
 // impl.
+//
+// A pin does not make detaching fail, it makes it copy. `pin()` clears
+// `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
+// undetachable buffer by copying the bytes into the destination and reporting
+// success (`if (!isDetachable()) m_contents.copyTo(result)`). So while a borrow
+// is live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
+// `port.postMessage(v, [ab])` each return normally, give the destination an
+// independent copy, and leave `ab` attached; the bytes being read never move.
+//
+// That departs from ES2024, where transfer() must detach or throw, and from
+// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
+// common case and memory-safe in every case, at the cost of a transfer that
+// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
+// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
@@ -6717,6 +6545,72 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     if (butterfly->publicLength() != expectedLength) [[unlikely]]
         return false;
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
+}
+
+// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
+// when every index from `start` to the end of the array is a hole. Mirrors the
+// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
+// a run of holes without probing each index of a huge sparse array.
+extern "C" uint64_t Bun__JSArray__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
+
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
+
+    switch (array->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+        return notFound;
+
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        unsigned usedLength = butterfly->publicLength();
+        for (unsigned i = start; i < usedLength; ++i) {
+            if (butterfly->contiguous().at(array, i))
+                return i;
+        }
+        return notFound;
+    }
+
+    case ALL_DOUBLE_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        unsigned usedLength = butterfly->publicLength();
+        for (unsigned i = start; i < usedLength; ++i) {
+            double value = butterfly->contiguousDouble().at(array, i);
+            // In DoubleShape storage the hole is NaN. A real NaN element can
+            // never be stored there: JSObject::putByIndex / putDirectIndex
+            // convert the array to ContiguousShape first.
+            if (value == value)
+                return i;
+        }
+        return notFound;
+    }
+
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
+        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
+        unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
+        for (unsigned i = start; i < usedVectorLength; ++i) {
+            if (storage->m_vector[i])
+                return i;
+        }
+
+        uint64_t result = notFound;
+        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            for (const auto& entry : *map) {
+                if (entry.key >= start && entry.key < result)
+                    result = entry.key;
+            }
+        }
+        return result;
+    }
+
+    default:
+        ASSERT_NOT_REACHED();
+        return start;
+    }
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

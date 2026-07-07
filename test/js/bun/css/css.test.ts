@@ -7632,6 +7632,16 @@ describe("css tests", () => {
     );
   });
 
+  describe("scope", () => {
+    minify_test("@scope(.a) to (.b){.foo{color:red}}", "@scope(.a) to (.b){.foo{color:red}}");
+    minify_test("@scope to (.limit){.a{color:red}}", "@scope to (.limit){.a{color:red}}");
+    minify_test(
+      "@scope to (.limit){.a{color:red}}.after{color:#00f}",
+      "@scope to (.limit){.a{color:red}}.after{color:#00f}",
+    );
+    minify_test("@scope{.a{color:red}}", "@scope{.a{color:red}}");
+  });
+
   describe("grid-template-areas", () => {
     // Not in the typed property table yet; `.` null-cell tokens (including
     // multi-dot runs) must survive the unparsed-token round-trip unchanged.

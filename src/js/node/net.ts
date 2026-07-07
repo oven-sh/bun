@@ -147,7 +147,9 @@ Object.defineProperty(BlockList.prototype, "fromJSON", {
           }
         }
       } catch {
-        // Malformed rule entries are skipped, matching Node.
+        // More lenient than Node for hand-authored input: Node lets a failing
+        // add* throw, but the toJSON->fromJSON round-trip never emits such an
+        // entry, so dropping it keeps the documented path working.
       }
     }
   },

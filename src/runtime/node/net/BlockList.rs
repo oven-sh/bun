@@ -359,10 +359,9 @@ impl BlockList {
         this.rules_array(global)
     }
 
-    /// `BlockList.prototype.toJSON()` returns the same rules array as the
-    /// `rules` getter so `JSON.stringify(blockList)` round-trips (Node v22+).
-    /// Defined natively (not patched in `node:net`) so a structured-clone
-    /// wrapper created in a realm that never imported `net` still has it.
+    /// Same array as the `rules` getter (Node v22+ `JSON.stringify` round-trip).
+    /// Native, not patched in `node:net`, so a structured-clone wrapper from a
+    /// realm that never imported `net` still has it.
     #[bun_jsc::host_fn(method)]
     pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.rules_array(global)

@@ -833,10 +833,7 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   if (chunk === null) {
     throw $ERR_STREAM_NULL_VALUES();
   } else if (typeof chunk !== "string" && !isUint8Array(chunk)) {
-    // node passes ['string', 'Buffer', 'Uint8Array'] and its formatter renders the class
-    // names as "an instance of Buffer or Uint8Array"; pass the pre-formatted text to match.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L939-L941
-    throw $ERR_INVALID_ARG_TYPE("chunk", "string or an instance of Buffer or Uint8Array", chunk);
+    throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
   }
 
   let err;

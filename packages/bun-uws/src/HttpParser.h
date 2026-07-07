@@ -482,8 +482,10 @@ namespace uWS
          * bare-CR/LF in a trailer line: any malformed line makes the call return 0
          * and no trailer is surfaced, where Node's llhttp rejects the message.
          * Consumes the section: it is post-padded in place and the returned
-         * string_views point into it, so it must outlive their use. */
-        static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, unsigned outCapacity = MAX_TRAILER_FIELDS) {
+         * string_views point into it, so it must outlive their use.
+         * KEEP IN LOCKSTEP with getHeaders' field-line loop below (same
+         * consumeFieldName → tryConsumeFieldValue → CRLF/OWS sequence). */
+        static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, bool useInsecureHTTPParser = false, unsigned outCapacity = MAX_TRAILER_FIELDS) {
             if (section.size() < 4) {
                 return 0;
             }
@@ -511,6 +513,8 @@ namespace uWS
                 while (true) {
                     p = tryConsumeFieldValue(p);
                     if (p[0] == '\t') { p++; continue; }
+                    /* Same lenient-header-value acceptance as getHeaders. */
+                    if (useInsecureHTTPParser && *(unsigned char *)p != '\0' && *(unsigned char *)p != '\r' && *(unsigned char *)p != '\n') { p++; continue; }
                     break;
                 }
                 if (p + 1 >= end || p[0] != '\r' || p[1] != '\n') {

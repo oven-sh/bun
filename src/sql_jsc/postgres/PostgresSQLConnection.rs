@@ -887,10 +887,10 @@ impl PostgresSQLConnection {
 
                         if self.ssl_mode == SSLMode::VerifyFull {
                             let servername = self.tls_config.server_name();
-                            // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
                             let hostname: &[u8] = if servername.is_null() {
                                 b""
                             } else {
+                                // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
                                 unsafe { bun_core::ffi::cstr(servername) }.to_bytes()
                             };
                             // SAFETY: native handle of a connected TLS socket is `SSL*`.

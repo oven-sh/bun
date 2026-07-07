@@ -1879,7 +1879,7 @@ it("#5859 json", async () => {
     body: new Uint8Array([0xfd]),
   });
 
-  expect(await response.text()).toBe("Failed to parse JSON");
+  expect(await response.text()).toStartWith("JSON Parse error:");
   expect(response.ok).toBeFalse();
 });
 

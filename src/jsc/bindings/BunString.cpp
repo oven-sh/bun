@@ -509,13 +509,17 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     BunString* bunString)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue result = JSC::JSONParse(globalObject, bunString->toWTFString());
-
-    if (!result && !scope.exception()) {
-        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
-    }
+    WTF::String string = bunString->toWTFString();
+    // JSONParseWithException returns null without throwing when the input
+    // string is null. Use emptyString() so it throws the parser diagnostic.
+    JSC::JSValue result = JSC::JSONParseWithException(globalObject, string.isNull() ? emptyString() : string);
 
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (!result) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
+        return {};
+    }
 
     return JSC::JSValue::encode(result);
 }

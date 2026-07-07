@@ -126,8 +126,14 @@ describe("ReadableStream conversion methods", () => {
     // Check it doesn't throw synchronously.
     expect(result).toBeInstanceOf(Promise);
 
-    // TODO: why is the error message different here??
-    expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"Failed to parse JSON"`);
+    let expected: string;
+    try {
+      JSON.parse(invalidJson + "\n");
+      expect.unreachable();
+    } catch (e: any) {
+      expected = e.message;
+    }
+    expect(async () => await result).toThrow(expected);
 
     expect(process.exitCode).toBe(0);
   });

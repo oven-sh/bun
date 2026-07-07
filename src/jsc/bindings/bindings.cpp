@@ -2218,11 +2218,13 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
             return {};
         }
+        // Empty input: let the parser produce its own diagnostic so .json()
+        // matches JSON.parse("").
+        str = emptyString();
     }
 
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-    // JSONParseWithException does not propagate exceptions as expected. See #5859
-    JSValue result = JSONParse(globalObject, str);
+    JSValue result = JSONParseWithException(globalObject, str);
 
     if (!result && !topExceptionScope.exception())
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));

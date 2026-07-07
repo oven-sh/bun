@@ -318,6 +318,8 @@ ResetScope::ResetScope(JSStringDecoder* decoder)
 
 ResetScope::~ResetScope()
 {
+    // Node's FlushData only clears MissingBytes/BufferedBytes; it leaves the
+    // incomplete-character buffer (lastChar) intact, so m_lastChar stays as-is.
     m_decoder->m_lastTotal = 0;
     m_decoder->m_lastNeed = 0;
 }

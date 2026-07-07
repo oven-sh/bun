@@ -15,6 +15,9 @@ pub mod socket_address;
 #[path = "Handlers.rs"]
 pub mod handlers;
 
+#[path = "JSSocketHandlers.rs"]
+pub mod js_socket_handlers;
+
 #[path = "Listener.rs"]
 pub mod listener;
 

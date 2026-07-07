@@ -4,6 +4,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
+use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
 use bun_io::KeepAlive;
@@ -11,7 +12,7 @@ use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -70,7 +71,7 @@ use crate::generated_classes::js_Listener;
 // so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
-    pub handlers: JsCell<Handlers>,
+    pub handlers: Rc<Handlers>,
     pub listener: Cell<ListenerType>,
 
     pub poll_ref: JsCell<KeepAlive>,
@@ -87,7 +88,9 @@ pub struct Listener {
     pub protos: Option<Box<[u8]>>,
 
     pub strong_data: JsCell<Strong>,
-    pub strong_self: JsCell<Strong>,
+    /// Reference to this listener's JS wrapper. Strong while it is listening or
+    /// has connections, downgraded to weak once idle so GC can reclaim it.
+    pub this_value: JsCell<JsRef>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -137,7 +140,7 @@ impl Listener {
 
         if args.len < 1
             || (matches!(this.listener.get(), ListenerType::None)
-                && this.handlers.get().active_connections.get() == 0)
+                && this.handlers.active_connections.get() == 0)
         {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
@@ -157,9 +160,7 @@ impl Listener {
         // listener and every live socket sharing it pick them up with no swap
         // of the `Handlers` itself.
         let reloaded = Handlers::prepare_reload(global, socket_obj)?;
-        this.handlers.get().apply_reload(global, &reloaded);
-        this.handlers
-            .with_mut(|h| h.binary_type = reloaded.binary_type);
+        this.handlers.apply_reload(global, &reloaded);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -175,18 +176,13 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let socket_config = SocketConfig::from_js(vm, opts, global, true)?;
-        #[cfg(windows)]
-        let mut socket_config = socket_config;
-        // Teardown handled by Drop on SocketConfig
-        // (excluding handlers, which are moved out below). Verified: on early-error
-        // paths the whole SocketConfig drops (Handlers::drop releases what it owns);
-        // on success both arms move `handlers` out via `ptr::read` and suppress
-        // the source's drop (`mem::forget` / `ManuallyDrop`) after extracting the
-        // other owned fields, so handlers are dropped exactly once.
-
-        // Only deinit handlers if there's an error; otherwise we put them in a `Listener` and
-        // need them to stay alive.
+        let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Server)?;
+        // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
+        // `Listener` clones out of it.
+        //
+        // The handlers cell has no JS wrapper holding it yet — root it until
+        // `js_Listener::handlers_set_cached` below.
+        let _cell_root = socket_config.handlers.root_cell(global);
 
         let port = socket_config.port;
         let ssl_enabled = socket_config.ssl.is_some();
@@ -215,17 +211,13 @@ impl Listener {
 
                 vm.event_loop_ref().ensure_waker();
 
-                // Note: by-value move of Handlers — see the non-pipe arm below
-                // for rationale on `ptr::read` + `mem::forget`.
-                // SAFETY: socket_config.handlers is valid; we forget socket_config to avoid double-drop.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let handlers = Rc::clone(&socket_config.handlers);
                 let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
                 let default_data = socket_config.default_data;
                 let ssl_cfg_taken = socket_config.ssl.take();
-                core::mem::forget(socket_config);
 
                 let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
-                    handlers: JsCell::new(handlers_moved),
+                    handlers,
                     connection,
                     ssl: ssl_enabled,
                     listener: Cell::new(ListenerType::None),
@@ -234,7 +226,7 @@ impl Listener {
                     group: JsCell::new(uws::SocketGroup::default()),
                     secure_ctx: None,
                     strong_data: JsCell::new(Strong::empty()),
-                    strong_self: JsCell::new(Strong::empty()),
+                    this_value: JsCell::new(JsRef::empty()),
                 }));
                 // SAFETY: just allocated, non-null, exclusive
                 let this_ref = unsafe { &mut *this };
@@ -262,14 +254,9 @@ impl Listener {
                         ));
                     }
                     Err(_) => {
-                        // On error, clean up everything `this` owns *except* `this.handlers`:
-                        // `handlers` was *moved* into the box, and the roots it owns (the
-                        // callback cell `Strong`, the promise slot) must drop exactly once,
-                        // so `this.deinit()` here would drop a second bitwise copy of them.
-                        // Recover the box and let the moved `Handlers` drop here instead.
                         this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
-                        // protos, and (the moved) handlers exactly once.
+                        // protos, and the handlers `Rc`.
                         drop(unsafe { bun_core::heap::take(this) });
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}",
@@ -283,12 +270,11 @@ impl Listener {
                 let this_value = js_Listener::to_js(this, global);
                 // The listener holds the handlers cell in a visited slot; every
                 // accepted socket shares the same cell.
-                js_Listener::handlers_set_cached(
-                    this_value,
-                    global,
-                    this_ref.handlers.get().cell(),
-                );
-                this_ref.strong_self.with_mut(|s| s.set(global, this_value));
+                js_Listener::handlers_set_cached(this_value, global, this_ref.handlers.cell());
+                this_ref.handlers.set_listener(NonNull::new(this));
+                this_ref
+                    .this_value
+                    .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 return Ok(this_value);
             }
@@ -299,17 +285,9 @@ impl Listener {
         // Allocate the Listener up front so the embedded `group` has its final
         // address before we hand it to listen() (it's linked into the loop's
         // intrusive list).
-        // Note: by-value move of Handlers. Read the handlers
-        // out by raw ptr and prevent double-drop by clearing the source via
-        // `deinit_excluding_handlers` + `mem::forget`.
-        let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
-        // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
-        let handlers_moved: Handlers =
-            unsafe { core::ptr::read(&raw const socket_config.handlers) };
+        let handlers = Rc::clone(&socket_config.handlers);
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
-        // Transfer the allocation out of `socket_config` so the `mem::forget`
-        // below doesn't leak it.
         let hostname_owned: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
             .into_vec()
             .into_boxed_slice();
@@ -317,7 +295,7 @@ impl Listener {
         let ssl_cfg_taken = socket_config.ssl.take();
 
         let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
-            handlers: JsCell::new(handlers_moved),
+            handlers,
             // Placeholder until `this_ref.connection = connection` below.
             // Cannot `mem::zeroed()` a Rust enum (UB).
             connection: UnixOrHost::Fd(Fd::invalid()),
@@ -328,7 +306,7 @@ impl Listener {
             group: JsCell::new(uws::SocketGroup::default()),
             secure_ctx: None,
             strong_data: JsCell::new(Strong::empty()),
-            strong_self: JsCell::new(Strong::empty()),
+            this_value: JsCell::new(JsRef::empty()),
         }));
         // SAFETY: just allocated, non-null, exclusive
         let this_ref = unsafe { &mut *this };
@@ -524,11 +502,7 @@ impl Listener {
             // null return falls back to the static tree (bind hostname +
             // addContext entries), then the default context; an asynchronous
             // resolution suspends the handshake until resumeSNI.
-            // SAFETY: `handlers` is embedded in the live Listener.
-            if !unsafe { &*this_ref.handlers.as_ptr() }
-                .on_server_name()
-                .is_empty()
-            {
+            if !this_ref.handlers.on_server_name().is_empty() {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
                 bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
             }
@@ -541,8 +515,11 @@ impl Listener {
         let this_value = js_Listener::to_js(this, global);
         // The listener holds the handlers cell in a visited slot; every
         // accepted socket shares the same cell.
-        js_Listener::handlers_set_cached(this_value, global, this_ref.handlers.get().cell());
-        this_ref.strong_self.with_mut(|s| s.set(global, this_value));
+        js_Listener::handlers_set_cached(this_value, global, this_ref.handlers.cell());
+        this_ref.handlers.set_listener(NonNull::new(this));
+        this_ref
+            .this_value
+            .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 
         Ok(this_value)
@@ -553,7 +530,7 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
+            handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
@@ -575,7 +552,7 @@ impl Listener {
         let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
         s.ref_();
         if let Some(default_data) = listener.strong_data.get().get() {
-            let global = listener.handlers.get().global_object;
+            let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
         this_socket
@@ -596,7 +573,7 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
+            handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
             socket: Cell::new(socket),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
@@ -620,7 +597,7 @@ impl Listener {
         s.ref_();
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
-            let global = listener.handlers.get().global_object;
+            let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
@@ -769,10 +746,9 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
-        if this.handlers.get().active_connections.get() == 0 {
+        if this.handlers.active_connections.get() == 0 {
             this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-            this.strong_self
-                .with_mut(|s| s.clear_without_deallocation());
+            this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
         } else if force_close {
@@ -840,17 +816,18 @@ impl Listener {
         log!("deinit");
         // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner here
         let this_ref = unsafe { &mut *this };
-        this_ref.strong_self.with_mut(|s| s.deinit());
+        this_ref.this_value.with_mut(|r| r.finalize());
         this_ref.strong_data.with_mut(|s| s.deinit());
         this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
 
-        // Any still-open accepted sockets hold a `&listener.handlers` pointer, so
-        // we cannot free `this` while they're alive. Force-close them; their
-        // onClose paths will markInactive against handlers we drop right after.
-        if this_ref.handlers.get().active_connections.get() > 0 {
+        // Accepted sockets reach back here through `Handlers::listener` while
+        // they are open. Force-close them, then clear the back-pointer before
+        // the free — their `Handlers` `Rc` can outlive this allocation.
+        if this_ref.handlers.active_connections.get() > 0 {
             this_ref.group.with_mut(|g| g.close_all());
         }
+        this_ref.handlers.set_listener(None);
         bun_core::asan::unregister_root_region(
             this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
@@ -862,15 +839,14 @@ impl Listener {
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
 
-        // connection / protos: dropped by heap::take below
-        // Drop on Handlers releases the roots it owns.
+        // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.get().active_connections.get() as f64)
+        JSValue::js_number(this.handlers.active_connections.get() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -921,7 +897,8 @@ impl Listener {
             return Ok(JSValue::UNDEFINED);
         }
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        this.strong_self.with_mut(|s| s.set(global, this_value));
+        this.this_value
+            .with_mut(|r| r.set_strong(this_value, global));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -936,9 +913,8 @@ impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.get().active_connections.get() == 0 {
-            this.strong_self
-                .with_mut(|s| s.clear_without_deallocation());
+        if this.handlers.active_connections.get() == 0 {
+            this.this_value.with_mut(|r| r.downgrade());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -960,13 +936,13 @@ impl Listener {
         }
         let vm = VirtualMachine::get().as_mut();
 
-        // is_server=false: this is the client connect path. Handlers.mode must be
-        // .client so markInactive() takes the destroy branch — the
-        // .server branch recovers the containing Listener from the handlers
-        // field pointer, but here handlers live in a standalone heap
-        // allocation (see below), so that would read past the allocation.
-        let mut socket_config = SocketConfig::from_js(vm, opts, global, false)?;
-        // Note: `socket_config` cleanup (excluding handlers) handled by Drop on SocketConfig
+        // Client mode: these handlers have no owning listener, so
+        // `mark_inactive` skips the listener-release branch.
+        let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Client)?;
+        // No JS wrapper holds the handlers cell until `connect_finish` creates
+        // the socket's; the option getters below run user JS that can GC.
+        let handlers = Rc::clone(&socket_config.handlers);
+        let _cell_root = handlers.root_cell(global);
 
         let port = socket_config.port;
         let ssl_enabled = socket_config.ssl.is_some();
@@ -1092,44 +1068,18 @@ impl Listener {
             if is_named_pipe {
                 default_data.ensure_still_alive();
 
-                // Note: by-value move of Handlers — see `listen()` for rationale.
-                // SAFETY: socket_config.handlers is valid; we forget socket_config below.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
-                core::mem::forget(socket_config);
-
-                let mut handlers_box = Box::new(handlers_moved);
-                handlers_box.mode = SocketMode::Client;
 
                 let promise = jsc::JSPromise::create(global);
                 let promise_value = promise.to_js();
-                // Set on the `Box` before `into_raw` so no raw-deref is needed.
-                handlers_box
-                    .promise
-                    .with_mut(|p| p.set(global, promise_value));
-                let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
+                handlers.set_promise(global, promise_value);
 
                 if ssl_enabled {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
-                        if let Some(prev_handlers) = prev.handlers.get() {
-                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
-                                // SAFETY: prev_handlers was heap-allocated; shared
-                                // reborrow is scoped to this expression.
-                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
-                                    == 0
-                            {
-                                // SAFETY: prev_handlers was heap-allocated and unreferenced.
-                                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
-                            }
-                        }
                         debug_assert!(!prev.this_value.get().is_empty());
-                        prev.set_handlers(global, handlers_ptr);
-                        // Same ownership rationale as `connect_finish`'s prev
-                        // branch — see the comment there.
-                        prev.flags
-                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
+                        prev.set_handlers(global, Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1149,7 +1099,7 @@ impl Listener {
                     } else {
                         TLSSocket::new(TLSSocket {
                             ref_count: bun_ptr::RefCount::init(),
-                            handlers: Cell::new(NonNull::new(handlers_ptr)),
+                            handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
                             local_binding: JsCell::new(local_binding.clone()),
@@ -1158,7 +1108,7 @@ impl Listener {
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
+                            flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1215,22 +1165,7 @@ impl Listener {
                         // SAFETY: caller passes a live TCPSocket
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
-                        if let Some(prev_handlers) = prev.handlers.get() {
-                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
-                                // SAFETY: prev_handlers was heap-allocated; shared
-                                // reborrow is scoped to this expression.
-                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
-                                    == 0
-                            {
-                                // SAFETY: prev_handlers was heap-allocated and unreferenced.
-                                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
-                            }
-                        }
-                        prev.set_handlers(global, handlers_ptr);
-                        // Same ownership rationale as `connect_finish`'s prev
-                        // branch — see the comment there.
-                        prev.flags
-                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
+                        prev.set_handlers(global, Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1247,14 +1182,14 @@ impl Listener {
                     } else {
                         TCPSocket::new(TCPSocket {
                             ref_count: bun_ptr::RefCount::init(),
-                            handlers: Cell::new(NonNull::new(handlers_ptr)),
+                            handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
                             connection: JsCell::new(Some(connection)),
                             local_binding: JsCell::new(local_binding.clone()),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
+                            flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1337,24 +1272,12 @@ impl Listener {
 
         default_data.ensure_still_alive();
 
-        // Note: by-value move of Handlers. See `listen()` for rationale.
-        let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
-        // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
-        let handlers_moved: Handlers =
-            unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let allow_half_open = socket_config.allow_half_open;
         let mut ssl_taken = socket_config.ssl.take();
 
-        let mut handlers_box = Box::new(handlers_moved);
-        handlers_box.mode = SocketMode::Client;
-
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
-        // Set on the `Box` before `into_raw` so no raw-deref is needed.
-        handlers_box
-            .promise
-            .with_mut(|p| p.set(global, promise_value));
-        let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
+        handlers.set_promise(global, promise_value);
 
         // Ownership of the SSL_CTX is about to move into the socket; disarm the guard.
         let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);
@@ -1365,7 +1288,7 @@ impl Listener {
             connect_finish::<true>(
                 global,
                 prev_maybe_tls,
-                handlers_ptr,
+                handlers,
                 connection,
                 local_binding,
                 ssl_taken.as_mut(),
@@ -1379,7 +1302,7 @@ impl Listener {
             connect_finish::<false>(
                 global,
                 prev_maybe_tcp,
-                handlers_ptr,
+                handlers,
                 connection,
                 local_binding,
                 ssl_taken.as_mut(),
@@ -1457,7 +1380,7 @@ impl Listener {
 fn connect_finish<const IS_SSL: bool>(
     global: &JSGlobalObject,
     maybe_previous: Option<*mut NewSocket<IS_SSL>>,
-    handlers_ptr: *mut Handlers,
+    handlers: Rc<Handlers>,
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
     mut ssl: Option<&mut SSLConfig>,
@@ -1476,28 +1399,10 @@ fn connect_finish<const IS_SSL: bool>(
         // reusing this wrapper so `do_connect` does not alias two native
         // sockets onto one ext slot.
         prev.detach_for_reconnect();
-        if let Some(prev_handlers) = prev.handlers.get() {
-            // Only free the previous Handlers when no callback scope is still
-            // holding it. If a `data`/`close` handler synchronously re-entered
-            // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
-            // once the in-flight callback unwinds; freeing here would be a UAF.
-            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
-                // SAFETY: prev_handlers was heap-allocated; shared reborrow is
-                // scoped to this expression.
-                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0
-            {
-                // SAFETY: prev_handlers was heap-allocated and unreferenced.
-                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
-            }
-        }
-        prev.set_handlers(global, handlers_ptr);
-        // `handlers_ptr` is a fresh `heap::alloc` box from `connect_inner`;
-        // this socket now owns it. Without the flag, `deinit_and_destroy` and
-        // `mark_inactive`'s shutdown gate skip the free and the box leaks
-        // (`node:net`'s `new_detached_socket` creates `prev` with default
-        // flags and no handlers).
-        prev.flags
-            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
+        // Dropping the previous `Rc` here is safe even mid-callback: a `Scope`
+        // from a `data`/`close` handler that synchronously re-entered `connect`
+        // still holds its own reference.
+        prev.set_handlers(global, Some(handlers));
         debug_assert!(prev.socket.get().is_detached());
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)
@@ -1518,14 +1423,14 @@ fn connect_finish<const IS_SSL: bool>(
     } else {
         NewSocket::<IS_SSL>::new(NewSocket::<IS_SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: Cell::new(NonNull::new(handlers_ptr)),
+            handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(uws::NewSocketHandler::<IS_SSL>::DETACHED),
             connection: JsCell::new(Some(connection)),
             local_binding: JsCell::new(local_binding),
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
-            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
+            flags: Cell::new(SocketFlags::default()),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -1892,8 +1797,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     }
     // SAFETY: see above.
     let listener: &Listener = unsafe { &*listener_ptr };
-    // SAFETY: `handlers` is embedded in the live Listener.
-    let handlers = unsafe { &*listener.handlers.as_ptr() };
+    let handlers = &listener.handlers;
     if handlers.vm.is_shutting_down() {
         return core::ptr::null_mut();
     }
@@ -1902,12 +1806,11 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         return core::ptr::null_mut();
     }
     // No `Handlers::enter`/`exit` scope here: that protocol tracks the
-    // accepted-socket callback lifecycle (an exit returning true means "the
-    // socket died during the callback, free the handlers"), and running it
-    // against the listener's own handlers from inside the handshake corrupts
-    // their refcount for every subsequent accept. The listener and its
-    // embedded handlers are structurally alive for the duration of this
-    // synchronous dispatch - the listen socket cannot be freed mid-handshake.
+    // accepted-socket callback lifecycle, and running it against the listener's
+    // own handlers from inside the handshake corrupts `active_connections` for
+    // every subsequent accept. The listener and its handlers are structurally
+    // alive for this synchronous dispatch - the listen socket cannot be freed
+    // mid-handshake.
     let global = handlers.global_object;
     // Pass the listener's `data` (the owning net.Server) rather than minting a
     // JS wrapper for the Listener itself - `to_js` here would create a second

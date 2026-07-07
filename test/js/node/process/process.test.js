@@ -1464,13 +1464,6 @@ it("process._exiting", () => {
   expect(process._exiting).toBe(false);
 });
 
-it("process.memoryUsage.arrayBuffers", () => {
-  const initial = process.memoryUsage().arrayBuffers;
-  const array = new ArrayBuffer(1024 * 1024 * 16);
-  array.buffer;
-  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
-});
-
 it("process.memoryUsage.arrayBuffers counts Buffer and typed array allocations", async () => {
   // Run in a subprocess so GC activity in the test runner cannot disturb the
   // before/after deltas.

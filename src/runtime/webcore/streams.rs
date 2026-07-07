@@ -2415,7 +2415,11 @@ impl NetworkSink {
     /// Abort the upload with a caller-supplied error: reject any pending
     /// promises with `err`, then drive the multipart task through `fail()`
     /// so it cancels in-flight parts and issues AbortMultipartUpload.
-    fn fail_from_js(&mut self, global_this: &JSGlobalObject, err: JSValue) -> bun_sys::Result<JSValue> {
+    fn fail_from_js(
+        &mut self,
+        global_this: &JSGlobalObject,
+        err: JSValue,
+    ) -> bun_sys::Result<JSValue> {
         if self.ended {
             if self.end_promise.has_value() {
                 return bun_sys::Result::Ok(self.end_promise.value());

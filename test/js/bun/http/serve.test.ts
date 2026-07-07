@@ -246,7 +246,6 @@ describe("HEAD request with a ReadableStream body", () => {
       expect(after).toBeLessThanOrEqual(before + 2);
     });
   }
-
 });
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {

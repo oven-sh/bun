@@ -1,15 +1,12 @@
 import { expect, test } from "bun:test";
 
-// A data: URL module specifier longer than the filesystem path limit must not
-// be rejected as an overlong file path: it is resolved by the data-URL
-// resolver, not on disk. The overlong-specifier guard trips at
-// MAX_PATH_BYTES * 1.5, which is ~147KB on Windows, so pad well past that to
-// exercise the limit on every platform.
-// https://github.com/oven-sh/bun/issues/33596
-// https://github.com/oven-sh/bun/issues/20374
+// A long data: URL must resolve via the data-URL resolver, not be rejected as
+// an overlong file path. The guard trips at MAX_PATH_BYTES * 1.5 (~147KB on
+// Windows), so pad past that to exercise the limit on every platform.
+// https://github.com/oven-sh/bun/issues/33596 https://github.com/oven-sh/bun/issues/20374
 const padding = Buffer.alloc(200_000, "x").toString();
 
-test("new Worker() runs a long base64 data: URL", async () => {
+test.concurrent("new Worker() runs a long base64 data: URL", async () => {
   const source = `/* ${padding} */\nself.onmessage = e => postMessage(e.data + 1);\n`;
   const url = `data:application/javascript;base64,${Buffer.from(source).toString("base64")}`;
   expect(url.length).toBeGreaterThan(150_000);
@@ -26,7 +23,7 @@ test("new Worker() runs a long base64 data: URL", async () => {
   }
 });
 
-test("import() loads a long base64 data: URL", async () => {
+test.concurrent("import() loads a long base64 data: URL", async () => {
   const source = `/* ${padding} */\nexport default 42;\n`;
   const url = `data:application/javascript;base64,${Buffer.from(source).toString("base64")}`;
   expect(url.length).toBeGreaterThan(150_000);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -229,5 +229,15 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     expect(await s.exists()).toBe(true);
     fs.appendFileSync(p, "0123456789");
     expect({ whole: f.size, slice: s.size }).toEqual({ whole: 20, slice: 5 });
+  });
+
+  test("slice() size is preserved for non-seekable and missing files", () => {
+    using dir = tempDir("bunfile-stat-slice-edge", {});
+    // A slice bound must survive a re-stat that cannot produce a regular-file
+    // size: a missing file has no stat, and a char device has no st_size.
+    expect(Bun.file(join(String(dir), "missing")).slice(0, 5).size).toBe(5);
+    if (isPosix) {
+      expect(Bun.file("/dev/null").slice(0, 5).size).toBe(5);
+    }
   });
 });

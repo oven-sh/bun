@@ -2353,24 +2353,22 @@ impl BlobExt for Blob {
                     let available = file.max_size - offset;
                     // A caller-supplied `slice()` bound is authoritative, but
                     // still cannot report past EOF.
-                    let size = if self.size_is_explicit.get() {
-                        available.min(self.size.get())
-                    } else {
-                        available
-                    };
-                    // Cache for `get_slice` (negative-index math reads it).
-                    if !self.size_is_explicit.get() {
-                        self.size.set(size);
+                    if self.size_is_explicit.get() {
+                        return JSValue::js_number(available.min(self.size.get()) as f64);
                     }
-                    return JSValue::js_number(size as f64);
+                    // Cache for `get_slice` (negative-index math reads it).
+                    self.size.set(available);
+                    return JSValue::js_number(available as f64);
+                }
+                // Non-seekable (pipe/FIFO/char device) or stat failed. A slice
+                // bound is the only size the caller has, so keep it.
+                if self.size_is_explicit.get() {
+                    return JSValue::js_number(self.size.get() as f64);
                 }
                 if file.seekable == Some(false) {
                     return JSValue::js_number(f64::INFINITY);
                 }
-                // stat failed: file missing or inaccessible
-                if !self.size_is_explicit.get() {
-                    self.size.set(0);
-                }
+                self.size.set(0);
                 return JSValue::js_number(0.0);
             }
         }

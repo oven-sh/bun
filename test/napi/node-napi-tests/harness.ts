@@ -131,9 +131,8 @@ async function tryBuildFast(dir: string): Promise<boolean> {
           stdin: "ignore",
           env: bunEnv,
         });
-        await child.exited;
-        if (child.exitCode !== 0) {
-          const stderr = await new Response(child.stderr).text();
+        const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+        if (exitCode !== 0) {
           console.warn(
             `direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp:\n${stderr}`,
           );
@@ -174,9 +173,8 @@ async function buildWithNodeGyp(dir: string) {
         : {}),
     },
   });
-  await child.exited;
-  if (child.exitCode !== 0) {
-    const stderr = await new Response(child.stderr).text();
+  const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+  if (exitCode !== 0) {
     console.error(`node-gyp build in ${dir} failed:\n${stderr}`);
     console.error("bailing out!");
     process.exit(1);

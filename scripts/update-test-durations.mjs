@@ -46,6 +46,7 @@ const lanes = {
 const api = path =>
   fetch(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(60_000),
   }).then(r => {
     if (!r.ok) throw new Error(`${path}: ${r.status} ${r.statusText}`);
     return r;
@@ -90,6 +91,9 @@ function median(arr) {
 // Find recent builds where both lanes finished every shard (so the set of
 // files is complete). We search passed-or-failed builds because a single
 // unrelated test failure still yields complete timing for everything else.
+// Note: `branch=main` is *not* applied because main builds on this pipeline
+// skip the test-bun steps entirely; PR builds run the full sharded suite, and
+// the median across N of them is robust to one branch's local timing changes.
 async function findSourceBuilds(want) {
   const candidates = await (await api(`builds?state[]=passed&state[]=failed&per_page=100`)).json();
   const picked = [];
@@ -114,7 +118,16 @@ async function collect(build, stepKey, into) {
     for (;;) {
       const j = jobs[idx++];
       if (!j) return;
-      const log = await (await api(`builds/${build}/jobs/${j.id}/log.txt`)).text();
+      let log;
+      try {
+        log = await (await api(`builds/${build}/jobs/${j.id}/log.txt`)).text();
+      } catch (e) {
+        // A transient 429/5xx on one shard's log should not discard every
+        // sample already collected; the median over the remaining builds
+        // still places the file in a reasonable bin.
+        console.error(`  skip job ${j.id}: ${e?.message || e}`);
+        continue;
+      }
       for (const [rawPath, ms] of parseLog(log)) {
         // The runner logs paths relative to the repo root; store them relative
         // to test/ to match what getRelevantTests() operates on. Vendor tests
@@ -148,6 +161,16 @@ for (const b of builds) {
 }
 
 const paths = new Set([...Object.keys(samples.default), ...Object.keys(samples.asan)]);
+// Guard the implicit contract with utils.mjs startGroup(): if the group-header
+// format ever changes, parseLog() quietly returns nothing. Fail loudly rather
+// than committing an empty table that would collapse every shard onto shard 0.
+if (paths.size < 1000) {
+  console.error(
+    `only parsed ${paths.size} test paths; expected >1000. ` +
+      `This usually means the '--- [N/M] <path>' log header format changed.`,
+  );
+  process.exit(1);
+}
 const out = {
   // Consumers should tolerate missing paths (new tests) and missing lanes.
   _meta: {

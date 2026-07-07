@@ -584,10 +584,11 @@ async function runTests() {
   // files with a ~50ms median that spend almost all their wall time in `bun`
   // startup; running a handful at once overlaps that startup without touching
   // the serial contract for every other test file. `--parallel` already widens
-  // `limit` above, so that flag supersedes this. Width is capped so CI shards
-  // (which already fan out across machines) do not oversubscribe a runner.
-  const parallelSafeWidth = Math.max(parallelism, Math.min(4, availableParallelism()));
-  const parallelSafeLimit = pLimit(parallelSafeWidth);
+  // `limit` above, so that flag supersedes this (everything goes through the
+  // single global limiter). Width is capped so CI shards, which already fan
+  // out across machines, do not oversubscribe a runner.
+  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(4, availableParallelism());
+  const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");
     return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");

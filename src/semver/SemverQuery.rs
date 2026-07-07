@@ -1010,6 +1010,22 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             i += (!hyphenate) as usize;
 
             if hyphenate {
+                // node-semver's hyphenReplace zeroes every component at and after
+                // the first wildcard in the left endpoint ("1.x.256" -> ">=1.0.0").
+                let version = match token.wildcard {
+                    Wildcard::Major => Version::default(),
+                    Wildcard::Minor => Version {
+                        major: version.major,
+                        ..Default::default()
+                    },
+                    Wildcard::Patch => Version {
+                        major: version.major,
+                        minor: version.minor,
+                        ..Default::default()
+                    },
+                    Wildcard::None => version,
+                };
+
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {

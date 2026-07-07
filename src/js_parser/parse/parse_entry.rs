@@ -2158,7 +2158,9 @@ impl<'a> Parser<'a> {
                 panic!("server components requires a framework configured, but none was set")
             });
             let sc = fw.server_components.as_ref().unwrap();
-            // server_components_wrap_ref is only declared for these two modes.
+            // Kept in sync with the wrap-symbol declaration in
+            // `prepare_for_visit_pass`: both handle exactly these two wrap modes,
+            // so a new wrap mode must map its import name here too.
             let import_name = match p.options.features.server_components {
                 options::ServerComponents::WrapExportsForClientReference => {
                     &sc.server_register_client_reference[..]
@@ -2166,7 +2168,7 @@ impl<'a> Parser<'a> {
                 options::ServerComponents::WrapExportsForServerReference => {
                     &sc.server_register_server_reference[..]
                 }
-                _ => unreachable!(),
+                _ => unreachable!("server_components_wrap_ref set for a mode with no import name"),
             };
             p.generate_react_refresh_import(
                 &mut before,

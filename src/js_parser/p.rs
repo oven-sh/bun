@@ -3194,6 +3194,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         {
+            // The runtime import for this wrap symbol is emitted by the parse
+            // entry prologue, which selects the import name by the same mode.
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
                 options::ServerComponents::WrapExportsForClientReference => {

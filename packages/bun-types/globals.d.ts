@@ -1965,6 +1965,7 @@ interface BunFetchRequestInit extends RequestInit {
    */
   proxy?:
     | string
+    | URL
     | {
         /**
          * The proxy URL, as a string or a `URL`.

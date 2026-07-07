@@ -176,6 +176,63 @@ describe("WebSocket proxy API", () => {
       });
     }).toThrow(SyntaxError);
   });
+
+  // https://github.com/oven-sh/bun/issues/33645
+  test("proxy as URL instance routes through the proxy", async () => {
+    // A URL instance has no own `.url` property, so it previously fell through the
+    // `{url, headers}` object branch and was silently ignored (connected DIRECT).
+    // Run in a subprocess with proxy env vars cleared so ambient NO_PROXY in CI
+    // cannot suppress the explicit proxy option.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          let proxyHit = false;
+          const proxySrv = net.createServer(sock => {
+            proxyHit = true;
+            sock.on("error", () => {});
+            sock.destroy();
+          });
+          await new Promise(r => proxySrv.listen(0, "127.0.0.1", r));
+          const proxyPort = proxySrv.address().port;
+          using wsServer = Bun.serve({
+            port: 0,
+            fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", { status: 400 }); },
+            websocket: { open(ws) { ws.send("FROM_ORIGIN"); }, message() {} },
+          });
+          const proxyUrl = new URL("http://127.0.0.1:" + proxyPort);
+          if (!(proxyUrl instanceof URL)) throw new Error("expected URL instance");
+          let via = "";
+          await new Promise(resolve => {
+            const ws = new WebSocket("ws://127.0.0.1:" + wsServer.port, { proxy: proxyUrl });
+            ws.onmessage = ev => { via ||= "origin:" + ev.data; ws.close(); };
+            ws.onerror = () => { via ||= "error"; };
+            ws.onclose = () => { via ||= "close"; resolve(); };
+          });
+          proxySrv.close();
+          console.log(JSON.stringify({ proxyHit, via }));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = JSON.parse(stdout.trim());
+    // The proxy destroys the socket immediately, so the WebSocket errors; what
+    // matters is that it hit the proxy instead of reaching the origin.
+    expect(out).toEqual({ proxyHit: true, via: "error" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("WebSocket through HTTP CONNECT proxy", () => {

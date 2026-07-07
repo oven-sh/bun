@@ -4275,6 +4275,7 @@ declare module "bun" {
      */
     proxy?:
       | string
+      | URL
       | {
           /**
            * The proxy URL (http:// or https://), as a string or a `URL`.

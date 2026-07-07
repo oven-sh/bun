@@ -1578,22 +1578,36 @@ describe.concurrent("proxy object format with headers", () => {
     }
   });
 
-  test("proxy as URL object should be ignored (no url property)", async () => {
-    // This tests the regression from #25413
-    // When a URL object is passed as proxy, it should be ignored (no error)
-    // because URL objects don't have a "url" property - they have "href"
-    const proxyUrl = new URL(httpProxyServer.url);
-
-    // Passing a URL object as proxy should NOT throw an error
-    // It should just be ignored since there's no "url" string property
-    const response = await fetch(httpServer.url, {
-      method: "GET",
-      proxy: proxyUrl as any,
-      keepalive: false,
+  // https://github.com/oven-sh/bun/issues/33645
+  test("proxy as URL instance routes through the proxy", async () => {
+    // A URL instance has no own `.url` property, so it previously fell through
+    // the `{url, headers}` object branch and was silently ignored (the request
+    // went DIRECT). Verify a URL instance is honored like the equivalent string.
+    let proxyHit = false;
+    const proxySrv = net.createServer(sock => {
+      proxyHit = true;
+      sock.on("error", () => {});
+      sock.on("data", () => {
+        sock.end("HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nFROM_PROXY");
+      });
     });
-    // The request should succeed (without proxy, since URL object is ignored)
-    expect(response.ok).toBe(true);
-    expect(response.status).toBe(200);
+    proxySrv.listen(0, "127.0.0.1");
+    await once(proxySrv, "listening");
+    try {
+      const proxyUrl = new URL(`http://127.0.0.1:${(proxySrv.address() as net.AddressInfo).port}`);
+      expect(proxyUrl).toBeInstanceOf(URL);
+      const response = await fetch(httpServer.url, {
+        method: "GET",
+        proxy: proxyUrl,
+        keepalive: false,
+      });
+      expect(await response.text()).toBe("FROM_PROXY");
+      expect(response.status).toBe(200);
+      expect(proxyHit).toBe(true);
+    } finally {
+      proxySrv.close();
+      await once(proxySrv, "close");
+    }
   });
 });
 

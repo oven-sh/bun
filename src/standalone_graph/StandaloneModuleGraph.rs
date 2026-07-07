@@ -865,8 +865,8 @@ pub(crate) fn to_bytes(
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
-                // leading `..` here so the on-disk dump can't escape `dump_code_dir`
-                // (the join normalizes `..` away, resolving above the dump dir).
+                // every `..` segment here so the on-disk dump can't escape
+                // `dump_code_dir` (the join would otherwise normalize `..` above it).
                 let mut dump_rel: Vec<u8> = Vec::new();
                 options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
                     .expect("write to Vec<u8>");

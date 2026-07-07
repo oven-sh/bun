@@ -79,3 +79,42 @@ test.skipIf(!isDebug)("compile code dump stays within BUN_FEATURE_FLAG_DUMP_CODE
   expect(existsSync(path.join(appDir, "worker.js"))).toBe(false);
   expect(existsSync(path.join(dumpDir, "_.._", "worker.js"))).toBe(true);
 });
+
+// A custom `--entry-naming` can place a literal prefix before `[dir]`, so the
+// rendered path carries a non-leading `..` (e.g. `out/../../worker.js`). The
+// dump sanitizer must neutralize every `..` segment, not just leading ones.
+test.skipIf(!isDebug)("compile code dump stays contained under a custom entry-naming prefix", async () => {
+  using dir = tempDir("compile-dump-escape-naming", {
+    "worker.js": `postMessage("worker started");`,
+    "app/nested/index.js": `console.log("main");`,
+  });
+
+  const rootDir = path.join(String(dir), "app", "nested");
+  const dumpDir = path.join(rootDir, "dump");
+
+  await using build = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--entry-naming",
+      "out/[dir]/[name].[ext]",
+      "./index.js",
+      "../../worker.js",
+      "--outfile",
+      "app",
+    ],
+    cwd: rootDir,
+    env: { ...bunEnv, BUN_FEATURE_FLAG_DUMP_CODE: dumpDir },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).not.toContain("error:");
+  expect(buildExit).toBe(0);
+
+  // `out/../../worker.js` would normalize to `<rootDir>/worker.js` (one level
+  // above the dump dir); sanitizing every `..` keeps it inside the dump dir.
+  expect(existsSync(path.join(rootDir, "worker.js"))).toBe(false);
+  expect(existsSync(path.join(dumpDir, "out", "_.._", "_.._", "worker.js"))).toBe(true);
+});

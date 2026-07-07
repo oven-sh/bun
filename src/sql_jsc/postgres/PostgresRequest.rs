@@ -157,10 +157,8 @@ pub fn write_bind<Context: WriterContext>(
         }
         bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
 
-        // Serialize JS arrays as postgres text array literals (`{1,2,3}`),
-        // matching what postgres.js sends. The format code for these parameters
-        // was declared as 0 (text) in the loop above. json/jsonb arrays are
-        // excluded: they must stay JSON text (`[1,2,3]`), handled below.
+        // Serialize JS arrays as text array literals (`{1,2,3}`); format code
+        // was declared 0 above. Scalar json/jsonb stays JSON text, handled below.
         if value.is_array() && !matches!(tag, types::Tag::json | types::Tag::jsonb) {
             let mut buf: Vec<u8> = Vec::new();
             write_array_literal(&mut buf, value, global, tag, 0)?;
@@ -271,15 +269,9 @@ pub fn write_bind<Context: WriterContext>(
     Ok(())
 }
 
-/// Serialize a JS array into a PostgreSQL text array literal (e.g. `{1,2,3}`,
-/// `{"a","b"}`, `{1,NULL,3}`). Nested arrays become nested braces. Scalar
-/// elements are double-quoted with `"` and `\` escaped, which postgres accepts
-/// for every element type; `null`/`undefined` become an unquoted `NULL`.
-/// Element text mirrors the JS-side `serializeArray`
-/// (`src/js/internal/sql/postgres.ts`): `json[]`/`jsonb[]` elements and plain
-/// objects -> JSON, `Date` -> ISO string, `Buffer` in `bytea[]` -> `\x<hex>`,
-/// everything else -> `toString`. `depth` guards against stack overflow from
-/// pathologically nested input; postgres itself rejects more than 6 dimensions.
+/// Serialize a JS array as a PostgreSQL text array literal (`{1,2,3}`).
+/// Element text mirrors the JS-side `serializeArray` in
+/// `src/js/internal/sql/postgres.ts`. `depth` guards recursion (pg max is 6).
 fn write_array_literal(
     out: &mut Vec<u8>,
     value: JSValue,

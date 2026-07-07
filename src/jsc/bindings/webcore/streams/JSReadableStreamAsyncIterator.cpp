@@ -121,10 +121,8 @@ GCClient::IsoSubspace* JSReadableStreamAsyncIterator::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableStreamAsyncIterator, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamAsyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamAsyncIterator = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamAsyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamAsyncIterator = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadableStreamAsyncIterator; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadableStreamAsyncIterator; });
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamAsyncIterator);

@@ -287,10 +287,8 @@ template<> GCClient::IsoSubspace* JSReadableStreamConstructor::subspaceForImpl(J
 {
     return WebCore::subspaceForImpl<JSReadableStreamConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamConstructor = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadableStreamConstructor; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadableStreamConstructor; });
 }
 
 template<> void JSReadableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -467,10 +465,8 @@ GCClient::IsoSubspace* JSReadableStream::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableStream, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStream = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadableStream; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadableStream; });
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStream);

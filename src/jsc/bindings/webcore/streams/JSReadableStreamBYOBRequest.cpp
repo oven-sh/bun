@@ -153,10 +153,8 @@ GCClient::IsoSubspace* JSReadableStreamBYOBRequest::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadableStreamBYOBRequest; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadableStreamBYOBRequest; });
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamBYOBRequest);

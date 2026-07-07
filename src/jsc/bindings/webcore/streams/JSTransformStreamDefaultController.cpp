@@ -229,10 +229,8 @@ GCClient::IsoSubspace* JSTransformStreamDefaultController::subspaceForImpl(VM& v
 {
     return WebCore::subspaceForImpl<JSTransformStreamDefaultController, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForTransformStreamDefaultController; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForTransformStreamDefaultController; });
 }
 
 template<typename Visitor>

@@ -564,9 +564,7 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
   "new %s([typedBlob], {type}) with a known mime type does not free a static pointer",
   async Ctor => {
     const make =
-      Ctor === "Blob"
-        ? `new Blob([inner], { type: "text/plain" })`
-        : `new File([inner], "f", { type: "text/plain" })`;
+      Ctor === "Blob" ? `new Blob([inner], { type: "text/plain" })` : `new File([inner], "f", { type: "text/plain" })`;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

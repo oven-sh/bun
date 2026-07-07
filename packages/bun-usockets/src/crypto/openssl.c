@@ -213,14 +213,17 @@ static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   us_free(st);
 }
 
-/* Get (creating if needed) the suspension state for this SSL. NULL only when
- * the ex_data index could not be allocated. */
+/* Get (creating if needed) the suspension state for this SSL. NULL when the
+ * state could not be attached. */
 static struct us_ssl_sni_pending_t *us_ssl_sni_pending_get(SSL *ssl) {
   if (us_ssl_sni_pending_idx < 0) return NULL;
   struct us_ssl_sni_pending_t *pending = SSL_get_ex_data(ssl, us_ssl_sni_pending_idx);
   if (!pending) {
     pending = us_calloc(1, sizeof(*pending));
-    SSL_set_ex_data(ssl, us_ssl_sni_pending_idx, pending);
+    if (!SSL_set_ex_data(ssl, us_ssl_sni_pending_idx, pending)) {
+      us_free(pending);
+      return NULL;
+    }
   }
   return pending;
 }

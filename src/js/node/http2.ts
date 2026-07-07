@@ -3597,9 +3597,6 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
-function settingsCallbackNT(self, callback, start) {
-  callback(null, self.localSettings, Date.now() - start);
-}
 function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
@@ -3889,6 +3886,9 @@ class ServerHttp2Session extends Http2Session {
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
+  // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
+  // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
+  #pendingSettingsCallbacks: Array<[Function, number] | null> = [null];
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   #strictFieldWhitespaceValidation: boolean = true;
@@ -4054,7 +4054,9 @@ class ServerHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      const queued = self.#pendingSettingsCallbacks.shift();
       self.emit("localSettings", settings);
+      if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
@@ -4468,10 +4470,9 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
-    if (typeof callback === "function") {
-      const start = Date.now();
-      this.once("localSettings", settingsCallbackNT.bind(null, this, callback, start));
-    }
+    // Queue the callback so this call's own ACK invokes it (after 'localSettings');
+    // the null seed absorbs the initial-preface ACK that has no user callback.
+    this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -4686,6 +4687,9 @@ class ClientHttp2Session extends Http2Session {
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
+  // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
+  // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
+  #pendingSettingsCallbacks: Array<[Function, number] | null> = [null];
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
@@ -4899,7 +4903,9 @@ class ClientHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      const queued = self.#pendingSettingsCallbacks.shift();
       self.emit("localSettings", settings);
+      if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
@@ -5240,10 +5246,9 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
-    if (typeof callback === "function") {
-      const start = Date.now();
-      this.once("localSettings", settingsCallbackNT.bind(null, this, callback, start));
-    }
+    // Queue the callback so this call's own ACK invokes it (after 'localSettings');
+    // the null seed absorbs the initial-preface ACK that has no user callback.
+    this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
   constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {

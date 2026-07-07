@@ -1175,6 +1175,9 @@ function onServerConnection(this: Server, socketHandle) {
   }
   const isTLS = !!this[tlsSymbol];
   const socket = new NodeHTTPServerSocket(this, socketHandle, isTLS);
+  // Node's connectionListener attaches the HTTPParser (socket.parser) before
+  // emitting 'connection'; expose the shim here so listeners see it populated.
+  socket.parser = createServerParserShim(socket);
   this.emit("connection", socket);
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
@@ -1289,6 +1292,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   const existingDuplex = (socket as any).duplex;
   const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
   if (!existingDuplex) {
+    nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
   }
   socketOnError.$call(nodeSocket, err);
@@ -2333,7 +2337,10 @@ function advanceResponsePipeline(server, socket) {
         const op = ops[i];
         const kind = op[0];
         if (kind === "raw") {
-          lastWriteResult = socket.write(op[1], op[2], op[3]);
+          // Buffered 1xx bytes: route through the same AsyncSocket buffer the
+          // response's own writeHead/end use so they precede the final response.
+          handle.writeInformational(op[1], op[2]);
+          if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
           lastWriteResult = res.write(op[1], op[2], op[3]);
         } else {
@@ -2609,7 +2616,12 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     this.outputSize += bytes;
     return queued.bytes < this.writableHighWaterMark;
   }
-  return this.socket.write(chunk, encoding, callback);
+  // Write through the response handle's AsyncSocket buffer (same path as
+  // writeHead/end) so 1xx lines share ordering with the final response bytes;
+  // socket.write() would land in the socket handle's separate stream buffer.
+  this[kHandle].writeInformational(chunk, encoding);
+  if (typeof callback === "function") process.nextTick(callback);
+  return true;
 };
 
 ServerResponse.prototype.writeEarlyHints = function (hints, cb) {

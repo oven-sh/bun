@@ -112,6 +112,10 @@ export default [
       writeContinue: {
         fn: "writeContinue",
       },
+      writeInformational: {
+        fn: "writeInformational",
+        length: 1,
+      },
       write: {
         fn: "write",
         length: 3,

@@ -278,6 +278,115 @@ impl SQLDataCell {
         }
     }
 
+    #[inline]
+    pub fn null() -> SQLDataCell {
+        SQLDataCell::default()
+    }
+
+    #[inline]
+    pub fn int4(value: i32) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Int4,
+            value: Value { int4: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn uint4(value: u32) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Uint4,
+            value: Value { uint4: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn int8(value: i64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Int8,
+            value: Value { int8: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn uint8(value: u64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Uint8,
+            value: Value { uint8: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn float8(value: f64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Float8,
+            value: Value { float8: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn bool_(value: bool) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Bool,
+            value: Value { bool_: value as u8 },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn date(value: f64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Date,
+            value: Value { date: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn date_with_tz(value: f64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::DateWithTimeZone,
+            value: Value {
+                date_with_time_zone: value,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Owned string cell: clones `bytes` into a WTFStringImpl, freed via
+    /// `free_value = 1`. Empty input becomes a null pointer, which the C++
+    /// side (SQLClient.cpp) renders as the empty string.
+    #[inline]
+    pub fn string(bytes: &[u8]) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::String,
+            value: Value {
+                string: clone_utf8_or_null(bytes),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Owned JSON cell: clones `bytes` into a WTFStringImpl, freed via
+    /// `free_value = 1`. Empty input becomes a null pointer, which the C++
+    /// side (SQLClient.cpp) renders as `null`.
+    #[inline]
+    pub fn json(bytes: &[u8]) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Json,
+            value: Value {
+                json: clone_utf8_or_null(bytes),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
     pub fn raw<'a>(optional_bytes: impl IntoOptionalData<'a>) -> SQLDataCell {
         if let Some(bytes) = optional_bytes.into_optional_data() {
             let bytes_slice = bytes.slice();
@@ -293,11 +402,37 @@ impl SQLDataCell {
             };
         }
         // TODO: check empty and null fields
-        SQLDataCell {
-            tag: Tag::Null,
-            value: Value { null: 0 },
-            ..Default::default()
-        }
+        SQLDataCell::null()
+    }
+
+    /// Shared wrapper around `construct_object_from_data_cell` used by the
+    /// per-row `to_js` paths (postgres `Putter`, mysql `Row`): extracts the
+    /// cached-structure column names and forwards the cells.
+    pub fn to_js_object(
+        global_object: &JSGlobalObject,
+        array: JSValue,
+        structure: JSValue,
+        cells: &mut [SQLDataCell],
+        flags: Flags,
+        result_mode: u8,
+        cached_structure: Option<&crate::shared::CachedStructure>,
+    ) -> JsResult<JSValue> {
+        let (names, names_count) = match cached_structure.and_then(|c| c.fields.as_deref()) {
+            Some(f) => (f.as_ptr().cast_mut(), f.len() as u32),
+            None => (ptr::null_mut(), 0),
+        };
+
+        SQLDataCell::construct_object_from_data_cell(
+            global_object,
+            array,
+            structure,
+            cells.as_mut_ptr(),
+            cells.len() as u32,
+            flags,
+            result_mode,
+            names,
+            names_count,
+        )
     }
 
     // TODO: cppbind isn't yet able to detect slice parameters when the next is uint32_t
@@ -369,6 +504,18 @@ impl<'a> IntoOptionalData<'a> for Option<&'a mut Data> {
     #[inline]
     fn into_optional_data(self) -> Option<&'a Data> {
         self.map(|d| &*d)
+    }
+}
+
+/// Clones the bytes into a fresh `WTFStringImpl` whose +1 ref is transferred
+/// to the cell (`free_value = 1`). Empty input maps to a null pointer instead
+/// of allocating an empty string.
+#[inline]
+fn clone_utf8_or_null(bytes: &[u8]) -> WTFStringImpl {
+    if !bytes.is_empty() {
+        bun_core::String::clone_utf8(bytes).leak_wtf_impl()
+    } else {
+        ptr::null_mut()
     }
 }
 

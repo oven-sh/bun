@@ -130,6 +130,9 @@ mod _impl {
                 )
                 .throw());
             }
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let window_bits =
                 validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
@@ -183,6 +186,18 @@ mod _impl {
                         ));
                     }
                 };
+                // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
+                // length; reject anything larger before `Context::init` copies it.
+                if dictionary_buf.byte_len > u32::MAX as usize {
+                    return Err(global.throw_range_error(
+                        dictionary_buf.byte_len as i64,
+                        bun_jsc::RangeErrorOptions {
+                            field_name: b"dictionary.byteLength",
+                            max: i64::from(u32::MAX),
+                            ..Default::default()
+                        },
+                    ));
+                }
                 Some(dictionary_buf.byte_slice())
             };
 
@@ -195,6 +210,12 @@ mod _impl {
 
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
+            // `Context::init` leaves `mode` at `NONE` when `deflateInit2_` /
+            // `inflateInit2_` rejects its arguments; mark the wrapper closed so
+            // the next operation is rejected instead of re-entering `NONE`.
+            if self.stream.with_mut(|s| s.mode == c::NodeMode::NONE) {
+                self.closed.set(true);
+            }
 
             Ok(JSValue::UNDEFINED)
         }
@@ -211,6 +232,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // `set_params` calls `deflateParams` on the same `z_stream` an
+            // in-flight async write's `deflate()` is using.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
             let strategy =
@@ -609,7 +633,14 @@ impl Context {
             BROTLI_ENCODE | BROTLI_DECODE => {}
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => {}
         }
-        debug_assert!(status == c::ReturnCode::Ok || status == c::ReturnCode::DataError);
+        // Ok: normal. DataError: pending output discarded by inflateEnd.
+        // StreamError: a handle whose init() threw before deflateInit2_/
+        // inflateInit2_ ran, so the zeroed z_stream has nothing to free.
+        debug_assert!(
+            status == c::ReturnCode::Ok
+                || status == c::ReturnCode::DataError
+                || status == c::ReturnCode::StreamError
+        );
         self.mode = NONE;
     }
 }

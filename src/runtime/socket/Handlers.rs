@@ -35,6 +35,10 @@ pub struct Handlers {
     pub on_end: JSValue,
     pub on_error: JSValue,
     pub on_handshake: JSValue,
+    pub on_session: JSValue,
+    pub on_keylog: JSValue,
+    pub on_server_name: JSValue,
+    pub on_alpn_callback: JSValue,
 
     pub binary_type: BinaryType,
 
@@ -96,6 +100,22 @@ macro_rules! for_each_callback_field {
         }
         {
             let $f = &mut $self.on_handshake;
+            $body
+        }
+        {
+            let $f = &mut $self.on_session;
+            $body
+        }
+        {
+            let $f = &mut $self.on_keylog;
+            $body
+        }
+        {
+            let $f = &mut $self.on_server_name;
+            $body
+        }
+        {
+            let $f = &mut $self.on_alpn_callback;
             $body
         }
     }};
@@ -292,6 +312,10 @@ impl Handlers {
             on_end: JSValue::ZERO,
             on_error: JSValue::ZERO,
             on_handshake: JSValue::ZERO,
+            on_session: JSValue::ZERO,
+            on_keylog: JSValue::ZERO,
+            on_server_name: JSValue::ZERO,
+            on_alpn_callback: JSValue::ZERO,
             binary_type: match generated.binary_type {
                 GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
                 GeneratedBinaryType::Buffer => BinaryType::Buffer,
@@ -336,6 +360,10 @@ impl Handlers {
         assign_callback!(on_end, "onEnd");
         assign_callback!(on_error, "onError");
         assign_callback!(on_handshake, "onHandshake");
+        assign_callback!(on_session, "onSession");
+        assign_callback!(on_keylog, "onKeylog");
+        assign_callback!(on_server_name, "onServerName");
+        assign_callback!(on_alpn_callback, "onALPNCallback");
 
         if result.on_data.is_empty() && result.on_writable.is_empty() {
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -366,6 +394,10 @@ impl Handlers {
         self.on_end.unprotect();
         self.on_error.unprotect();
         self.on_handshake.unprotect();
+        self.on_session.unprotect();
+        self.on_keylog.unprotect();
+        self.on_server_name.unprotect();
+        self.on_alpn_callback.unprotect();
     }
 
     fn with_async_context_if_needed(&mut self, global_object: &JSGlobalObject) {
@@ -392,6 +424,10 @@ impl Handlers {
         self.on_end.protect();
         self.on_error.protect();
         self.on_handshake.protect();
+        self.on_session.protect();
+        self.on_keylog.protect();
+        self.on_server_name.protect();
+        self.on_alpn_callback.protect();
     }
 }
 
@@ -415,22 +451,40 @@ pub struct Scope {
 }
 
 impl Scope {
-    /// Returns true if `handlers` was destroyed (client mode, last ref).
-    /// Callers that also hold the pointer in a socket field must null it.
-    ///
-    /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one `exit`),
-    /// and after a `true` return `self.handlers` is dangling, so no further
-    /// method may touch it.
-    pub fn exit(self) -> bool {
-        // SAFETY: `handlers` is live until `mark_inactive` below (caller
-        // contract of `Handlers::enter`). `event_loop()` returns a non-null
-        // self-pointer into the VM; single JS thread, no aliasing
-        // `&mut EventLoop` outlives this call.
+    /// The event-loop `exit()` half, balancing the `enter()` in
+    /// [`Handlers::enter`]. Split from the `active_connections` bookkeeping
+    /// because draining microtasks here can synchronously reconnect or
+    /// `upgradeTLS` the socket, so the caller must observe the resulting
+    /// `handlers` state before deciding whether to decrement/free. Must be
+    /// followed by exactly one [`mark_inactive`](Self::mark_inactive), or by
+    /// dropping the scope when a new owner took over the handlers.
+    pub fn exit_event_loop(&self) {
+        // SAFETY: no decrement has run yet, so `handlers` is still live (caller
+        // contract of `Handlers::enter`). `event_loop_ref()` returns a non-null
+        // self-pointer into the VM; single JS thread, no aliasing `&mut
+        // EventLoop` outlives this call.
         unsafe { (*self.handlers).vm }.event_loop_ref().exit();
+    }
+
+    /// The `active_connections` half: decrements and, on reaching zero, frees
+    /// the client-mode allocation (or releases the listener, server mode).
+    /// Returns true if the client-mode allocation was destroyed; callers that
+    /// also hold the pointer in a socket field must then null it.
+    ///
+    /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one exit), and
+    /// after a `true` return `self.handlers` is dangling.
+    pub fn mark_inactive(self) -> bool {
         // SAFETY: `handlers` satisfies `mark_inactive`'s contract by
         // construction in `Handlers::enter` (caller passed the
         // server-embedded / client-heap-root pointer).
         unsafe { Handlers::mark_inactive(self.handlers) }
+    }
+
+    /// Event-loop exit + `mark_inactive` in one step, for callers that cannot
+    /// observe an intervening handlers transfer. Returns true if destroyed.
+    pub fn exit(self) -> bool {
+        self.exit_event_loop();
+        self.mark_inactive()
     }
 }
 

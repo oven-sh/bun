@@ -132,7 +132,6 @@ describe.concurrent("fd leak", () => {
                 Bun.gc(true);
 
                 const objectTypeCounts = heapStats().objectTypeCounts;
-                heapStats().objectTypeCounts.ParsedShellScript
                 if (objectTypeCounts.ParsedShellScript > 3 || objectTypeCounts.ShellInterpreter > 3) {
                   console.error('TOO many ParsedShellScript or ShellInterpreter objects', objectTypeCounts.ParsedShellScript, objectTypeCounts.ShellInterpreter)
                   process.exit(1);

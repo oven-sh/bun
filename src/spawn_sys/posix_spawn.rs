@@ -218,6 +218,8 @@ pub mod bun_spawn {
         pub flags: u16,
         pub reset_signals: bool,
         pub linux_pdeathsig: i32,
+        pub uid: Option<u32>,
+        pub gid: Option<u32>,
     }
 
     impl Default for Attr {
@@ -232,6 +234,8 @@ pub mod bun_spawn {
                 flags: 0,
                 reset_signals: false,
                 linux_pdeathsig: 0,
+                uid: None,
+                gid: None,
             }
         }
     }
@@ -408,13 +412,6 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn close(&mut self, fd: Fd) -> sys::Result<()> {
-            // SAFETY: self.actions is live
-            spawn_errno(errno_from_posix_spawn(unsafe {
-                system::posix_spawn_file_actions_addclose(&raw mut self.actions, fd.native())
-            }))
-        }
-
         pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
             if fd == newfd {
                 return self.inherit(fd);
@@ -564,7 +561,10 @@ pub mod posix_spawn {
             for action in &act.actions {
                 match action.kind {
                     bun_spawn::FileActionType::Close => {
-                        posix_actions.close(Fd::from_native(action.fds[0]))?;
+                        // Redundant: POSIX_SPAWN_CLOEXEC_DEFAULT (always set on
+                        // this path) closes any fd without an open/dup2/inherit
+                        // action. Darwin also fails the whole spawn with EBADF
+                        // when an addclose fd is not open, so never register one.
                     }
                     bun_spawn::FileActionType::Dup2 => {
                         posix_actions.dup2(
@@ -605,16 +605,20 @@ pub mod posix_spawn {
     ) -> sys::Result<pid_t> {
         let pty_slave_fd = attr.map_or(-1, |a| a.pty_slave_fd);
         let detached = attr.is_some_and(|a| a.detached);
+        let uid = attr.and_then(|a| a.uid);
+        let gid = attr.and_then(|a| a.gid);
 
         // Use posix_spawn_bun when:
         // - Linux: always (uses vfork which is fast and safe)
-        // - macOS: only for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
-        //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
-        //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
+        // - macOS: for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
+        //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do,
+        //   and for uid/gid spawns because Darwin's posix_spawn cannot change ids
+        //   (libuv makes the same fork() fallback for UV_PROCESS_SETUID/SETGID).
+        //   For other spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
         let use_bun_spawn = cfg!(any(target_os = "linux", target_os = "android"))
             || cfg!(target_os = "freebsd")
-            || (cfg!(target_os = "macos") && pty_slave_fd >= 0);
+            || (cfg!(target_os = "macos") && (pty_slave_fd >= 0 || uid.is_some() || gid.is_some()));
 
         #[cfg(unix)]
         if use_bun_spawn {
@@ -638,6 +642,10 @@ pub mod posix_spawn {
                     new_process_group: attr.is_some_and(|a| a.new_process_group),
                     pty_slave_fd,
                     linux_pdeathsig: attr.map_or(0, |a| a.linux_pdeathsig),
+                    uid: uid.unwrap_or(0),
+                    gid: gid.unwrap_or(0),
+                    set_uid: uid.is_some(),
+                    set_gid: gid.is_some(),
                 },
                 argv,
                 envp,

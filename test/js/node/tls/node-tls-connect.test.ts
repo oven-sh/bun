@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
+import https from "https";
 import net from "net";
 import { join } from "path";
 import stream from "stream";
@@ -275,7 +276,10 @@ for (const { name, connect } of tests) {
         expect(cert.serialNumber).toBe("71A46AE89FD817EF81A34D5973E1DE42F09B9D63");
         expect(cert.raw).toBeInstanceOf(Buffer);
       } finally {
-        socket.end();
+        // Tear the socket down immediately: the local server is disposed right
+        // after this test, and a lingering half-closed connection would observe
+        // its hard close as ECONNRESET (Node surfaces the same error).
+        socket.destroy();
       }
     });
 
@@ -305,10 +309,11 @@ for (const { name, connect } of tests) {
         expect(cert.subject.CN).toBe("bun.sh");
         expect(cert.subjectaltname).toContain("DNS:bun.sh");
         expect(cert.infoAccess).toBeDefined();
-        // we just check the types this can change over time
+        // The live cert's AIA contents change on reissue (public CAs stopped
+        // including OCSP URIs in 2025), so only assert the stable CA Issuers
+        // entry here; exact parsing is covered by the fixed-fixture x509 tests.
         const infoAccess = cert.infoAccess as NodeJS.Dict<string[]>;
-        expect(infoAccess["OCSP - URI"]).toBeDefined();
-        expect(infoAccess["CA Issuers - URI"]).toBeDefined();
+        expect(infoAccess["CA Issuers - URI"]).toEqual(expect.arrayContaining([expect.stringMatching(/^https?:\/\//)]));
         expect(cert.ca).toBeFalse();
         expect(cert.bits).toBeInteger();
         // These can change:
@@ -544,7 +549,17 @@ it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", a
   // With it: ~5–10 MB (allocator noise, no per-call growth).
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-leak.fixture.ts"), "20000"],
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      // ASAN's default 256MB quarantine retains every freed allocation, so
+      // RSS growth would measure the total allocation churn instead of leaks
+      // on any ASAN-instrumented build (including a local `bun bd` debug
+      // build, which is ASAN but not named `bun-asan`). Cap the quarantine
+      // so the measurement reflects live memory.
+      // Preserve the harness ASAN options (bunEnv sets allow_user_segv_handler /
+      // disable_coredump) instead of rebuilding from process.env only.
+      ASAN_OPTIONS: ["quarantine_size_mb=8", bunEnv.ASAN_OPTIONS ?? process.env.ASAN_OPTIONS].filter(Boolean).join(":"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -554,8 +569,181 @@ it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", a
   expect(calls).toBe(20000);
   // Leave generous headroom above the fixed-build measurement so unrelated
   // allocator changes don't turn this into a flaky test, while still being
-  // far below the ~125 MB leak signature. ASAN's quarantine retains freed
-  // allocations so widen the threshold there.
-  expect(growthBytes).toBeLessThan((isASAN ? 200 : 40) * 1024 * 1024);
+  // far below the ~125 MB leak signature.
+  expect(growthBytes).toBeLessThan((isASAN ? 60 : 40) * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 60_000);
+
+it.each([["TLSv1.2"], ["TLSv1.3"]] as const)(
+  "%s: data written after secureConnect is delivered both ways even when the server ends first",
+  async version => {
+    // Under TLS 1.2 the server finishes its handshake one flight before the
+    // client, so a write()+end() server has already sent its FIN by the time
+    // the client's reply arrives - the half-closed socket must keep reading.
+    const serverReceived: string[] = [];
+    const serverGotData = Promise.withResolvers<void>();
+    const server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, socket => {
+      socket.on("data", d => {
+        serverReceived.push(d.toString());
+        serverGotData.resolve();
+      });
+      socket.write("hello");
+      socket.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    let clientReceived = "";
+    client.on("data", d => (clientReceived += d));
+    await once(client, "secureConnect");
+    expect(client.getProtocol()).toBe(version);
+    client.write("hello");
+    client.end();
+    await once(client, "close");
+    // The server's read of the client's last record happens on its own loop
+    // turn - wait for it instead of sleeping.
+    await serverGotData.promise;
+    expect(clientReceived).toBe("hello");
+    expect(serverReceived.join("")).toBe("hello");
+    server.close();
+    await once(server, "close");
+  },
+);
+
+it("tls.DEFAULT_MAX_VERSION is honored by contexts built without explicit versions", async () => {
+  const prev = tls.DEFAULT_MAX_VERSION;
+  try {
+    tls.DEFAULT_MAX_VERSION = "TLSv1.2";
+    const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+      socket.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    expect(client.getProtocol()).toBe("TLSv1.2");
+    client.end();
+    await once(client, "close");
+    server.close();
+    await once(server, "close");
+  } finally {
+    tls.DEFAULT_MAX_VERSION = prev;
+  }
+});
+
+it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls.connect({ socket }))", async () => {
+  // The TLS-over-duplex wrapper has no us_socket_t, so its parked
+  // new-session/keylog queues are drained by the Rust SSLWrapper instead of
+  // us_dispatch_session/us_dispatch_keylog - this covers that path end to end.
+  const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("data", () => socket.end());
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const raw = net.connect(port, "127.0.0.1");
+  await once(raw, "connect");
+  const duplex = new SocketProxy(raw);
+  const client = tls.connect({ socket: duplex, rejectUnauthorized: false });
+  const sessionPromise = once(client, "session");
+  const keylogPromise = once(client, "keylog");
+  await once(client, "secureConnect");
+  client.write("x");
+  const [session] = await sessionPromise;
+  const [keylogLine] = await keylogPromise;
+  expect(Buffer.isBuffer(session)).toBe(true);
+  expect(session.length).toBeGreaterThan(0);
+  expect(Buffer.isBuffer(keylogLine)).toBe(true);
+  expect(keylogLine.length).toBeGreaterThan(0);
+  client.end();
+  await once(client, "close");
+  server.close();
+  await once(server, "close");
+});
+
+it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
+  // The TLS1.3 NewSessionTickets ride in the same read pass as the response
+  // bytes. If the parked session were only flushed after the data dispatch,
+  // a consumer that tears the socket down inside 'data' (an https.Agent with
+  // keepAlive off destroys the tunneled socket as soon as the response
+  // completes) would silently lose the 'session' event - Node delivers the
+  // session before the data reaches JS.
+  const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  let session = false;
+  const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+    client.write("x");
+  });
+  client.on("session", () => (session = true));
+  client.on("data", () => {
+    // Mirrors the agent flow: socket destroyed during the data dispatch,
+    // before any later flush could run.
+    client.destroy();
+  });
+  await once(client, "close");
+  expect(session).toBe(true);
+  server.close();
+  await once(server, "close");
+});
+
+it("a write before 'secureConnect' still reports the handshake's own failure", async () => {
+  // An early write drives the handshake from inside SSL_write. The fatal
+  // reason that write hit used to be dropped, so the handshake dispatch had
+  // nothing to report and the dead session looked established: the only error
+  // left was checkServerIdentity's verdict on an empty peer certificate.
+  await using server = tls.createServer({ ...COMMON_CERT_ }, socket => socket.end());
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const client = tlsConnect({
+    port: (server.address() as AddressInfo).port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    ca: COMMON_CERT_.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.2",
+  });
+  let secureConnect = false;
+  client.on("secureConnect", () => (secureConnect = true));
+  client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  const [error] = await once(client, "error");
+  expect(error.code).toBe("ERR_SSL_NO_SUPPORTED_VERSIONS_ENABLED");
+  expect(secureConnect).toBe(false);
+});
+
+it("https.request reports an impossible version window as a TLS error, not a certificate error", async () => {
+  // The http client flushes the request headers as soon as the socket
+  // connects, so every https.request hits the early-write path above.
+  await using server = https.createServer({ ...COMMON_CERT_ }, (_req, res) => res.end("ok"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const options = {
+    host: "127.0.0.1",
+    port: (server.address() as AddressInfo).port,
+    servername: "localhost",
+    ca: COMMON_CERT_.cert,
+    agent: false as const,
+  };
+
+  const failing = https.request({ ...options, minVersion: "TLSv1.3", maxVersion: "TLSv1.2" });
+  failing.end();
+  const [error] = await once(failing, "error");
+  expect(error.code).toBe("ERR_SSL_NO_SUPPORTED_VERSIONS_ENABLED");
+
+  // A satisfiable window over the same cert/CA/servername still succeeds: the
+  // version range is the only thing that failed above.
+  const ok = https.request({ ...options, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" });
+  ok.end();
+  const [response] = await once(ok, "response");
+  let body = "";
+  response.on("data", (chunk: Buffer) => (body += chunk));
+  await once(response, "end");
+  expect(body).toBe("ok");
+});

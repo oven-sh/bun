@@ -185,6 +185,14 @@ impl HmrTopic {
         }
     }
 
+    /// uWS topic name for this HMR channel. The leading `0xFF` byte cannot
+    /// occur in WTF-8, so no topic string passed to `ServerWebSocket`
+    /// `subscribe()`/`publish()` or `Server.publish()` can ever name it.
+    #[inline]
+    pub fn uws_topic(self) -> [u8; 2] {
+        [0xFF, self as u8]
+    }
+
     /// Maps a topic to its packed `HmrTopicBits` flag.
     #[inline]
     pub fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
@@ -290,9 +298,6 @@ impl GraphTraceState {
 
 pub use super::dev_server_body::init;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Submodule types (struct shapes un-gated; method bodies stay in drafts)
-// ──────────────────────────────────────────────────────────────────────────
 pub mod assets;
 pub mod incremental_graph;
 pub mod inspector_agent;
@@ -537,7 +542,7 @@ impl HotReloadEvent {
         }
 
         let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::index_of_char(rest_extra, 0) {
+        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
             bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }

@@ -7,13 +7,6 @@
 // VerticalAlignKeyword / FontProperty / FontHandler) are real and referenced
 // by `properties_generated.rs`, `declaration.rs`, and
 // `rules/{font_face,font_palette_values}.rs`.
-//
-// Most `parse` / `to_css` *bodies* remain ``-gated below
-// because they bottom out on still-unported leaf surface (DeriveParse /
-// DeriveToCss proc-macros, EnumProperty derive over strum, Vec::parse,
-// parse_utility::parse_string, generics::is_compatible blanket). Each gate
-// carries a `blocked_on:` note so the next round can lift bodies as their
-// deps land.
 
 #![warn(unused_must_use)]
 
@@ -897,9 +890,6 @@ pub struct FontHandler {
 }
 
 impl FontHandler {
-    // blocked_on: generics::is_compatible/eql/deepClone blankets,
-    // PropertyHandlerContext::arena(), DeclarationList::push,
-    // Property::Font*/Unparsed payloads, FontFamilyHashMap.
     pub(crate) fn handle_property(
         &mut self,
         property: &crate::properties::Property,
@@ -988,8 +978,6 @@ impl FontHandler {
         self.flushed_properties = FontProperty::empty();
     }
 
-    // blocked_on: FontFamilyHashMap, PropertyHandlerContext::arena(),
-    // Vec::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
@@ -1135,7 +1123,6 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
-// blocked_on: Vec::insert arena threading + arena Bump param.
 #[inline]
 fn compatible_font_family(
     _family: Option<Vec<FontFamily>>,

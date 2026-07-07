@@ -4,6 +4,9 @@
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "JavaScriptCore/CyclicModuleRecord.h"
+#include "JavaScriptCore/Exception.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/Watchdog.h"
 
@@ -49,10 +52,34 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
 
+void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
+{
+    if (m_status != Status::Evaluating)
+        return;
+
+    auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
+    if (!sourceTextThis)
+        return;
+
+    // JSModuleRecord is a CyclicModuleRecord; no downcast machinery needed.
+    JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists();
+    if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated)
+        return;
+
+    if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
+        status(Status::Errored);
+        m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
+    } else {
+        status(Status::Evaluated);
+    }
+}
+
 JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    reconcileEvaluationState(vm);
 
     if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
@@ -60,19 +87,58 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     if (m_status == Status::Evaluated) {
+        // Node re-enters ModuleWrap::Evaluate even for already-evaluated
+        // modules; for microtaskMode "afterEvaluate" contexts that performs a
+        // microtask checkpoint on the context's own queue.
+        NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {
+            std::optional<double> oldLimit;
+            if (timeout != 0)
+                setupWatchdog(vm, timeout, &oldLimit.emplace(), nullptr);
+            nodeVmGlobalObject->drainOwnMicrotasks();
+            if (timeout != 0)
+                vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
+            // The drain may legitimately leave the termination exception
+            // pending (watchdog fired mid-checkpoint); observe it so the
+            // exception-check validator is satisfied before the TOP scope
+            // below, then convert it to ERR_SCRIPT_EXECUTION_*.
+            std::ignore = scope.exception();
+            if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+                vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
+                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+                vm.clearHasTerminationRequest();
+                if (getSigintReceived()) {
+                    setSigintReceived(false);
+                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+                } else {
+                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
+                }
+                return {};
+            }
+        }
         return m_evaluationResult.get();
     }
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
     auto* syntheticThis = dynamicDowncast<NodeVMSyntheticModule>(this);
 
-#define VM_RETURN_IF_EXCEPTION(scope__, value__)                                                \
-    do {                                                                                        \
-        if (JSC::Exception* exception = scope__.exception()) {                                  \
-            status(Status::Errored);                                                            \
-            if (sourceTextThis) sourceTextThis->m_evaluationException.set(vm, this, exception); \
-            return value__;                                                                     \
-        }                                                                                       \
+    // Evaluating an errored module must reject with the same error instance
+    // every time, not re-run the module body.
+    if (m_status == Status::Errored) {
+        if (JSC::Exception* exception = m_evaluationException.get()) {
+            scope.throwException(globalObject, exception);
+            return {};
+        }
+    }
+
+#define VM_RETURN_IF_EXCEPTION(scope__, value__)               \
+    do {                                                       \
+        if (JSC::Exception* exception = scope__.exception()) { \
+            status(Status::Errored);                           \
+            m_evaluationException.set(vm, this, exception);    \
+            return value__;                                    \
+        }                                                      \
     } while (false);
 
     AbstractModuleRecord* record {};
@@ -88,6 +154,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     JSValue result {};
 
+    JSGlobalObject* callerGlobalObject = globalObject;
     NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
     VM_RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject) globalObject = nodeVmGlobalObject;
@@ -99,12 +166,56 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             RETURN_IF_EXCEPTION(scope, );
             sourceTextThis->initializeImportMeta(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+            // Spec-style Evaluate(): returns the capability promise that
+            // settles when (possibly async, for top-level await) evaluation
+            // finishes. Errors are stored on the record, not thrown.
+            result = record->evaluate(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
         } else if (syntheticThis) {
+            // Mark Evaluating before running the user's evaluation steps so a
+            // re-entrant evaluate() from inside them rejects with
+            // ERR_VM_MODULE_STATUS instead of recursing forever.
+            status(Status::Evaluating);
             syntheticThis->evaluate(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+            result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
+            RETURN_IF_EXCEPTION(scope, );
         }
-        result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
-        RETURN_IF_EXCEPTION(scope, );
+    };
+
+    // Match Node's ModuleWrap::Evaluate for microtaskMode "afterEvaluate"
+    // contexts: never hand the caller a promise created inside the context
+    // (awaiting it from the outer context would enqueue the thenable job on
+    // the inner queue, which is not drained automatically). Wrap the result
+    // in an outer-context promise and checkpoint the inner queue — still
+    // inside the watchdog scope so `timeout` bounds the microtask drain too.
+    auto drainAfterEvaluate = [&] {
+        if (scope.exception() || vm.hasTerminationRequest())
+            return;
+        if (!nodeVmGlobalObject || !nodeVmGlobalObject->hasOwnMicrotaskQueue())
+            return;
+        nodeVmGlobalObject->drainOwnMicrotasks();
+        if (scope.exception() || vm.hasTerminationRequest())
+            return;
+        if (JSPromise* innerPromise = dynamicDowncast<JSPromise>(result)) {
+            // Chaining on the inner-context promise from the caller's realm
+            // would enqueue the hookup on the inner queue (not drained
+            // automatically), so copy the settled state into a caller-realm
+            // promise instead. For a non-TLA module the capability promise is
+            // settled by now; a still-pending one (top-level await) is handed
+            // out as-is.
+            switch (innerPromise->status()) {
+            case JSPromise::Status::Fulfilled:
+                result = JSPromise::resolvedPromise(callerGlobalObject, innerPromise->settlementValue());
+                break;
+            case JSPromise::Status::Rejected:
+                innerPromise->markAsHandled();
+                result = JSPromise::rejectedPromise(callerGlobalObject, innerPromise->settlementValue());
+                break;
+            case JSPromise::Status::Pending:
+                break;
+            }
+        }
     };
 
     setSigintReceived(false);
@@ -118,15 +229,22 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     if (breakOnSigint) {
         auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
         run();
+        drainAfterEvaluate();
     } else {
         run();
+        drainAfterEvaluate();
     }
 
     if (timeout != 0) {
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (vm.hasPendingTerminationException()) {
+    // Evaluation (or the afterEvaluate drain) may leave an exception pending
+    // — a regular one is rethrown by VM_RETURN_IF_EXCEPTION below, a
+    // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
+    // so the exception-check validator is satisfied before the TOP scope.
+    std::ignore = scope.exception();
+    if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
@@ -143,6 +261,31 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     VM_RETURN_IF_EXCEPTION(scope, {});
+
+    if (sourceTextThis) {
+        if (JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists()) {
+            if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
+                // The spec-style Evaluate() stores the error on the record
+                // and rejects the capability promise instead of throwing.
+                // Surface it as a synchronous throw (vm.ts maps that to a
+                // rejected promise) like the generator-based evaluation did.
+                if (auto* promise = dynamicDowncast<JSPromise>(result))
+                    promise->markAsHandled();
+                status(Status::Errored);
+                auto* exception = JSC::Exception::create(vm, error);
+                m_evaluationException.set(vm, this, exception);
+                scope.throwException(globalObject, exception);
+                return {};
+            }
+            if (cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync) {
+                // Top-level await: the capability promise settles when the
+                // async machinery finishes; the final status is pulled in
+                // lazily via reconcileEvaluationState().
+                m_evaluationResult.set(vm, this, result);
+                return result;
+            }
+        }
+    }
 
     status(Status::Evaluated);
     m_evaluationResult.set(vm, this, result);
@@ -178,7 +321,14 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
             if (dependency->status() == Status::Linked) {
                 JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
                 RETURN_IF_EXCEPTION(scope, );
-                RELEASE_ASSERT_WITH_MESSAGE(dynamicDowncast<JSC::JSPromise>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm module dependencies");
+                // Source text dependencies evaluate via the spec-style
+                // Evaluate() and return a capability promise. A still-pending
+                // promise means the dependency uses top-level await; the
+                // root record's evaluate() drives the async machinery to
+                // completion and the wrapper status reconciles lazily
+                // (reconcileEvaluationState), so a pending result is fine
+                // here.
+                UNUSED_PARAM(dependencyResult);
             }
         }
     }
@@ -259,6 +409,8 @@ JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleLink);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleSetExport);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleHasTopLevelAwait);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleHasAsyncGraph);
 
 static const HashTableValue NodeVMModulePrototypeTableValues[] = {
     { "identifier"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeVmModuleGetterIdentifier, nullptr } },
@@ -273,6 +425,8 @@ static const HashTableValue NodeVMModulePrototypeTableValues[] = {
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateCachedData, 0 } },
     { "setExport"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleSetExport, 2 } },
     { "createModuleRecord"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateModuleRecord, 0 } },
+    { "hasTopLevelAwait"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleHasTopLevelAwait, 0 } },
+    { "hasAsyncGraph"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleHasAsyncGraph, 0 } },
 };
 
 NodeVMModulePrototype* NodeVMModulePrototype::create(VM& vm, Structure* structure)
@@ -319,6 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode, (JSC::JSGlobalObject * glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        thisObject->reconcileEvaluationState(vm);
         return JSValue::encode(JSC::jsNumber(static_cast<uint32_t>(thisObject->status())));
     }
 
@@ -336,6 +491,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalO
         throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
         return {};
     }
+
+    thisObject->reconcileEvaluationState(vm);
 
     using enum NodeVMModule::Status;
     switch (thisObject->status()) {
@@ -374,7 +531,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        thisObject->reconcileEvaluationState(vm);
         if (JSC::Exception* exception = thisObject->evaluationException()) {
             return JSValue::encode(exception->value());
         }
@@ -516,6 +674,86 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
     return {};
 }
 
+// Walks this module and its linked dependencies (m_resolveCache is populated
+// during link) checking whether any reachable SourceTextModule uses top-level
+// await. Iterative so a deep linear import chain can't overflow the native
+// stack.
+bool NodeVMModule::hasAsyncGraph() const
+{
+    WTF::HashSet<const NodeVMModule*> visited;
+    WTF::Vector<const NodeVMModule*, 16> worklist;
+    worklist.append(this);
+
+    while (!worklist.isEmpty()) {
+        const NodeVMModule* module = worklist.takeLast();
+        if (!visited.add(module).isNewEntry)
+            continue;
+
+        if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+            if (sourceTextModule->hasTopLevelAwait())
+                return true;
+        }
+
+        for (const auto& dependency : module->m_resolveCache.values()) {
+            if (auto* dependencyModule = dynamicDowncast<NodeVMModule>(dependency.get()))
+                worklist.append(dependencyModule);
+        }
+    }
+
+    return false;
+}
+
+// After record->link() succeeds, every reachable record in the graph is
+// linked, but only the root wrapper's status was updated. Mirror the record
+// state onto the dependency wrappers (Node's module status reflects the V8
+// record status, so dependencies read "linked" after the root instantiates).
+void NodeVMModule::propagateLinked()
+{
+    WTF::HashSet<NodeVMModule*> visited;
+    WTF::Vector<NodeVMModule*, 16> worklist;
+    worklist.append(this);
+
+    while (!worklist.isEmpty()) {
+        NodeVMModule* module = worklist.takeLast();
+        if (!visited.add(module).isNewEntry)
+            continue;
+
+        if (module->status() == Status::Unlinked)
+            module->status(Status::Linked);
+
+        for (const auto& dependency : module->m_resolveCache.values()) {
+            if (auto* dependencyModule = dynamicDowncast<NodeVMModule>(dependency.get()))
+                worklist.append(dependencyModule);
+        }
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleHasTopLevelAwait, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
+        return JSValue::encode(JSC::jsBoolean(thisObject->hasTopLevelAwait()));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleHasAsyncGraph, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        return JSValue::encode(JSC::jsBoolean(thisObject->hasAsyncGraph()));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -540,6 +778,7 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_context);
     visitor.append(vmModule->m_evaluationResult);
     visitor.append(vmModule->m_moduleWrapper);
+    visitor.append(vmModule->m_evaluationException);
 
     // m_resolveCache is mutated on the mutator thread by
     // NodeVMSourceTextModule::link() via m_resolveCache.set(), which can

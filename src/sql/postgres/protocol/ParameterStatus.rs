@@ -14,8 +14,7 @@ impl ParameterStatus {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let length = reader.length()?;
-        debug_assert!(length >= 4);
+        reader.length()?;
 
         Ok(Self {
             name: reader.read_z()?,

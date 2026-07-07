@@ -39,8 +39,10 @@ impl Hash for KeyframesName {
 impl PartialEq for KeyframesName {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => bun_core::eql(a.v(), b.v()),
-            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::eql(a, b),
+            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
+                bun_core::strings::eql(a.v(), b.v())
+            }
+            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::strings::eql(a, b),
             _ => false,
         }
     }
@@ -172,7 +174,6 @@ impl KeyframeSelector {
 }
 
 // ─── KeyframeSelector parse ───────────────────────────────────────────────
-// blocked_on: css::derive_parse (DeriveParse).
 
 impl KeyframeSelector {
     // Try the tuple variant (`Percentage`) first, then fall back to keyword
@@ -315,11 +316,6 @@ impl KeyframesRule {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct KeyframesListParser;
-
-// blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
-// RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
-// Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
-// arena threading.
 
 const _: () = {
     use css::css_parser::{

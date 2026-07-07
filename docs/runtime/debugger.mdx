@@ -18,33 +18,32 @@ Bun.serve({
 
 ### `--inspect`
 
-To enable debugging when running code with Bun, use the `--inspect` flag. This automatically starts a WebSocket server on an available port that can be used to introspect the running Bun process.
+To enable debugging when running code with Bun, use the `--inspect` flag. This starts a WebSocket server on an available port for introspecting the running Bun process.
 
 ```sh icon="terminal" title="terminal"
 bun --inspect server.ts
 ```
 
 ```txt id="terminal"
------------------- Bun Inspector ------------------
-Listening at:
+--------------------- Bun Inspector ---------------------
+Listening:
   ws://localhost:6499/0tqxs9exrgrm
-
 Inspect in browser:
   https://debug.bun.sh/#localhost:6499/0tqxs9exrgrm
------------------- Bun Inspector ------------------
+--------------------- Bun Inspector ---------------------
 ```
 
 ### `--inspect-brk`
 
-The `--inspect-brk` flag behaves identically to `--inspect`, except it automatically injects a breakpoint at the first line of the executed script. This is useful for debugging scripts that run quickly and exit immediately.
+The `--inspect-brk` flag behaves identically to `--inspect`, except it injects a breakpoint at the first line of the executed script. Use it to debug scripts that run quickly and exit immediately.
 
 ### `--inspect-wait`
 
-The `--inspect-wait` flag behaves identically to `--inspect`, except the code will not execute until a debugger has attached to the running process.
+The `--inspect-wait` flag behaves identically to `--inspect`, except the code does not execute until a debugger attaches to the running process.
 
 ### Setting a port or URL for the debugger
 
-Regardless of which flag you use, you can optionally specify a port number, URL prefix, or both.
+Regardless of which flag you use, you can specify a port number, URL prefix, or both.
 
 ```sh icon="terminal" title="terminal"
 bun --inspect=4000 server.ts
@@ -56,26 +55,26 @@ bun --inspect=localhost:4000/prefix server.ts
 
 ## Debuggers
 
-Various debugging tools can connect to this server to provide an interactive debugging experience.
+Several debugging tools can connect to this server.
 
 ### `debug.bun.sh`
 
-Bun hosts a web-based debugger at [debug.bun.sh](https://debug.bun.sh). It is a modified version of WebKit's [Web Inspector Interface](https://webkit.org/web-inspector/web-inspector-interface/), which will look familiar to Safari users.
+Bun hosts a web-based debugger at [debug.bun.sh](https://debug.bun.sh). It is a modified version of WebKit's [Web Inspector Interface](https://webkit.org/web-inspector/web-inspector-interface/), which looks familiar to Safari users.
 
-Open the provided `debug.bun.sh` URL in your browser to start a debugging session. From this interface, you'll be able to view the source code of the running file, view and set breakpoints, and execute code with the built-in console.
+Open the provided `debug.bun.sh` URL in your browser to start a debugging session. From this interface, you can view the source code of the running file, view and set breakpoints, and execute code with the built-in console.
 
 <Frame>
   ![Screenshot of Bun debugger, Console
   tab](https://github.com/oven-sh/bun/assets/3084745/e6a976a8-80cc-4394-8925-539025cc025d)
 </Frame>
 
-Let's set a breakpoint. Navigate to the Sources tab; you should see the code from earlier. Click on the line number `3` to set a breakpoint on our `console.log(req.url)` statement.
+Open the Sources tab; you should see the code from earlier. Click line number `3` to set a breakpoint on the `console.log(req.url)` statement.
 
 <Frame>
   ![screenshot of Bun debugger](https://github.com/oven-sh/bun/assets/3084745/3b69c7e9-25ff-4f9d-acc4-caa736862935)
 </Frame>
 
-Then visit [`http://localhost:3000`](http://localhost:3000) in your web browser. This will send an HTTP request to our `localhost` web server. It will seem like the page isn't loading. Why? Because the program has paused execution at the breakpoint we set earlier.
+Then visit [`http://localhost:3000`](http://localhost:3000) in your web browser. The page never finishes loading because the program has paused at the breakpoint.
 
 Note how the UI has changed.
 
@@ -83,30 +82,30 @@ Note how the UI has changed.
   ![screenshot of Bun debugger](https://github.com/oven-sh/bun/assets/3084745/8b565e58-5445-4061-9bc4-f41090dfe769)
 </Frame>
 
-At this point there's a lot we can do to introspect the current execution environment. We can use the console at the bottom to run arbitrary code in the context of the program, with full access to the variables in scope at our breakpoint.
+While paused, use the console at the bottom to run arbitrary code in the context of the program, with full access to the variables in scope at the breakpoint.
 
 <Frame>
   ![Bun debugger console](https://github.com/oven-sh/bun/assets/3084745/f4312b76-48ba-4a7d-b3b6-6205968ac681)
 </Frame>
 
-On the right side of the Sources pane, we can see all local variables currently in scope, and drill down to see their properties and methods. Here, we're inspecting the `req` variable.
+The right side of the Sources pane lists all local variables currently in scope. Drill into one, like `req` here, to see its properties and methods.
 
 <Frame>
   ![Bun debugger variables](https://github.com/oven-sh/bun/assets/3084745/63d7f843-5180-489c-aa94-87c486e68646)
 </Frame>
 
-In the upper left of the Sources pane, we can control the execution of the program.
+The controls in the upper left of the Sources pane drive the program's execution.
 
 <Frame>
   ![Bun debugger controls](https://github.com/oven-sh/bun/assets/3084745/41b76deb-7371-4461-9d5d-81b5a6d2f7a4)
 </Frame>
 
-Here's a cheat sheet explaining the functions of the control flow buttons.
+What each button does:
 
-- _Continue script execution_ — continue running the program until the next breakpoint or exception.
-- _Step over_ — The program will continue to the next line.
-- _Step into_ — If the current statement contains a function call, the debugger will "step into" the called function.
-- _Step out_ — If the current statement is a function call, the debugger will finish executing the call, then "step out" of the function to the location where it was called.
+- _Continue script execution_ — run until the next breakpoint or exception.
+- _Step over_ — advance to the next line.
+- _Step into_ — if the current statement contains a function call, enter the called function.
+- _Step out_ — if the current statement is a function call, finish executing it, then return to the location where it was called.
 
 <Frame>
   ![Bun debugger execution
@@ -115,23 +114,23 @@ Here's a cheat sheet explaining the functions of the control flow buttons.
 
 ### Visual Studio Code Debugger
 
-Experimental support for debugging Bun scripts is available in Visual Studio Code. To use it, you'll need to install the [Bun VSCode extension](/guides/runtime/vscode-debugger).
+Visual Studio Code support for debugging Bun scripts is experimental. To use it, install the [Bun VSCode extension](/guides/runtime/vscode-debugger).
 
 ---
 
 ## Debugging Network Requests
 
-The `BUN_CONFIG_VERBOSE_FETCH` environment variable lets you log network requests made with `fetch()` or `node:http` automatically.
+Set the `BUN_CONFIG_VERBOSE_FETCH` environment variable to log network requests made with `fetch()` or `node:http`.
 
-| Value   | Description                        |
-| ------- | ---------------------------------- |
-| `curl`  | Print requests as `curl` commands. |
-| `true`  | Print request & response info      |
-| `false` | Don't print anything. Default      |
+| Value   | Description                       |
+| ------- | --------------------------------- |
+| `curl`  | Print requests as `curl` commands |
+| `true`  | Print request & response info     |
+| `false` | Don't print anything (default)    |
 
 ### Print fetch & node:http requests as curl commands
 
-Bun also supports printing `fetch()` and `node:http` network requests as `curl` commands by setting the environment variable `BUN_CONFIG_VERBOSE_FETCH` to `curl`. This prints the `fetch` request as a single-line `curl` command to let you copy-paste into your terminal to replicate the request.
+Set `BUN_CONFIG_VERBOSE_FETCH` to `curl` to print each `fetch()` and `node:http` request as a single-line `curl` command you can copy-paste into your terminal to replicate the request.
 
 ```ts index.ts icon="/icons/typescript.svg"
 process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
@@ -169,8 +168,6 @@ await fetch("https://example.com", {
 ```
 
 The lines with `[fetch] >` are the request from your local code, and the lines with `[fetch] <` are the response from the remote server.
-
-The `BUN_CONFIG_VERBOSE_FETCH` environment variable is supported in both `fetch()` and `node:http` requests, so it works in both cases.
 
 To print without the `curl` command, set `BUN_CONFIG_VERBOSE_FETCH` to `true`.
 
@@ -212,13 +209,13 @@ await fetch("https://example.com", {
 
 ## Stacktraces & sourcemaps
 
-Bun transpiles every file, which sounds like it would mean that the stack traces you see in the console would unhelpfully point to the transpiled output. To address this, Bun automatically generates and serves sourcemapped files for every file it transpiles. When you see a stack trace in the console, you can click on the file path and be taken to the original source code, even though it was written in TypeScript or JSX, or has some other transformation applied.
+Bun transpiles every file, which could leave stack traces pointing at the transpiled output. To avoid this, Bun generates and serves sourcemapped files for every file it transpiles. When you see a stack trace in the console, you can click on the file path and land in the original source code, even though it was written in TypeScript or JSX, or has some other transformation applied.
 
-Bun automatically loads sourcemaps both at runtime when transpiling files on-demand, and when using `bun build` to precompile files ahead of time.
+Bun loads sourcemaps both at runtime when transpiling files on-demand, and when using `bun build` to precompile files ahead of time.
 
 ### Syntax-highlighted source code preview
 
-To help with debugging, Bun automatically prints a small source-code preview when an unhandled exception or rejection occurs. You can simulate this behavior by calling `Bun.inspect(error)`:
+Bun prints a small source-code preview when an unhandled exception or rejection occurs. To produce the same output yourself, call `Bun.inspect(error)`:
 
 ```ts
 // Create an error
@@ -226,7 +223,7 @@ const err = new Error("Something went wrong");
 console.log(Bun.inspect(err, { colors: true }));
 ```
 
-This prints a syntax-highlighted preview of the source code where the error occurred, along with the error message and stack trace.
+The output is a syntax-highlighted preview of the source code where the error occurred, along with the error message and stack trace.
 
 ```ts icon="file-code"
 1 | // Create an error
@@ -238,17 +235,15 @@ error: Something went wrong
 
 ### V8 Stack Traces
 
-Bun uses JavaScriptCore as it's engine, but much of the Node.js ecosystem & npm expects V8. JavaScript engines differ in `error.stack` formatting. Bun intends to be a drop-in replacement for Node.js, and that means it's our job to make sure that even though the engine is different, the stack traces are as similar as possible.
-
-That's why when you log `error.stack` in Bun, the formatting of `error.stack` is the same as in Node.js's V8 engine. This is especially useful when you're using libraries that expect V8 stack traces.
+Bun uses JavaScriptCore as its engine, but much of the Node.js ecosystem and npm expects V8, and JavaScript engines differ in how they format `error.stack`. Because Bun aims to be a drop-in replacement for Node.js, it formats `error.stack` the same way V8 does. This matters most when you use libraries that expect V8 stack traces.
 
 #### V8 Stack Trace API
 
-Bun implements the [V8 Stack Trace API](https://v8.dev/docs/stack-trace-api), which is a set of functions that allow you to manipulate stack traces.
+Bun implements the [V8 Stack Trace API](https://v8.dev/docs/stack-trace-api), a set of functions for manipulating stack traces.
 
 ##### `Error.prepareStackTrace`
 
-The `Error.prepareStackTrace` function is a global function that lets you customize the stack trace output. This function is called with the error object and an array of `CallSite` objects and lets you return a custom stack trace.
+Define a global `Error.prepareStackTrace` function to customize the stack trace output. It receives the error object and an array of `CallSite` objects, and its return value becomes `error.stack`.
 
 ```ts
 Error.prepareStackTrace = (err, stack) => {
@@ -285,15 +280,15 @@ The `CallSite` object has the following methods:
 | `getPromiseIndex`          | Not implemented yet.                                  |
 | `toString`                 | returns a string representation of the call site      |
 
-In some cases, the `Function` object may have already been garbage collected, so some of these methods may return `undefined`.
+If the `Function` object has already been garbage collected, some of these methods return `undefined`.
 
 ##### `Error.captureStackTrace(error, startFn)`
 
-The `Error.captureStackTrace` function lets you capture a stack trace at a specific point in your code, rather than at the point where the error was thrown.
+`Error.captureStackTrace` captures a stack trace at a specific point in your code, rather than at the point where the error was thrown.
 
-This can be helpful when you have callbacks or asynchronous code that makes it difficult to determine where an error originated. The 2nd argument to `Error.captureStackTrace` is the function where you want the stack trace to start.
+This helps when callbacks or asynchronous code make it hard to tell where an error originated. The 2nd argument to `Error.captureStackTrace` is the function where you want the stack trace to start.
 
-For example, the below code will make `err.stack` point to the code calling `fn()`, even though the error was thrown at `myInner`.
+In the following example, `err.stack` points to the code calling `fn()`, even though the error was thrown at `myInner`.
 
 ```ts index.ts icon="/icons/typescript.svg"
 const fn = () => {

@@ -8,7 +8,6 @@ use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
-use bun_wyhash::hash;
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -479,15 +478,6 @@ impl PostgresSQLQuery {
         };
         let connection: &PostgresSQLConnection = &connection;
 
-        // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_io`), not a
-        // `*mut VirtualMachine`. `global_object.bun_vm()` and `get_vm_ctx(.Js)` both
-        // resolve to the same singleton JS VM, so route through the global hook —
-        // identical to `PostgresSQLConnection::vm_ctx`.
-        connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
         let query = arguments[1];
 
         if !query.is_object() {
@@ -501,6 +491,26 @@ impl PostgresSQLQuery {
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd
         this.ref_();
+        // Shared cleanup for every error-return path below: drop any statement
+        // ref this query took plus the speculative `ref_()` above.
+        let release_query_ref = || {
+            this.release_statement();
+            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+            unsafe { Self::deref(this_ptr) };
+        };
+        // Shared error tail: throw `err` as a postgres error unless an exception
+        // is already pending.
+        let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
+            if !global_object.has_exception() {
+                return global_object.throw_value(postgres_error_to_js(
+                    global_object,
+                    Some(msg),
+                    err,
+                ));
+            }
+            JsError::Thrown
+        };
+
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 
@@ -520,20 +530,8 @@ impl PostgresSQLQuery {
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
-                    // fail to run do cleanup — sole owner just created above
-                    // (rc=1); `release_statement` decrements → 0 frees.
-                    this.release_statement();
-                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                    unsafe { Self::deref(this_ptr) };
-
-                    if !global_object.has_exception() {
-                        return Err(global_object.throw_value(postgres_error_to_js(
-                            global_object,
-                            Some(b"failed to execute query"),
-                            err,
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+                    release_query_ref();
+                    return Err(throw_write_error(b"failed to execute query", err));
                 }
                 {
                     let mut f = connection.flags.get();
@@ -552,14 +550,19 @@ impl PostgresSQLQuery {
                 .with_mut(|q| q.write_item(this_ptr))
                 .is_err()
             {
-                // fail to run do cleanup — sole owner just created above
-                // (rc=1); `release_statement` decrements → 0 frees.
-                this.release_statement();
-                // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref(this_ptr) };
-
+                release_query_ref();
                 return Err(global_object.throw_out_of_memory());
             }
+
+            // Request is enqueued: keep the event loop alive until the server
+            // responds. KeepAlive is a flag (not a count), so taking this any
+            // earlier would leave it stuck Active on the synchronous-error
+            // returns above.
+            connection.poll_ref.with_mut(|r| {
+                r.ref_(bun_io::posix_event_loop::get_vm_ctx(
+                    bun_io::AllocatorType::Js,
+                ))
+            });
 
             this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
@@ -603,39 +606,19 @@ impl PostgresSQLQuery {
             // holding a `&mut` across other &mut connection borrows below trips borrowck, so
             // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
-            let signature_hash: u64 = hash(&signature.name);
             if !connection
                 .flags
                 .get()
                 .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
             {
-                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
-                // the `get_or_put` call (single-JS-thread; no re-entry into JS
-                // until after the raw value-slot ptr is captured). Extract the
-                // raw slot ptr + existing value while the borrow is live so the
-                // remainder of this block needs no further `&mut` to the map.
-                let (entry_value_ptr, existing_stmt) = match connection.statements.with_mut(|s| {
-                    s.get_or_put(signature_hash).map(|e| {
-                        let existing = if e.found_existing {
-                            Some(*e.value_ptr)
-                        } else {
-                            None
-                        };
-                        (
-                            std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr),
-                            existing,
-                        )
-                    })
-                }) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        drop(signature);
-                        return Err(
-                            global_object.throw_error(err.into(), "failed to allocate statement")
-                        );
-                    }
-                };
-                connection_entry_value = Some(entry_value_ptr);
+                // Zero-allocation hit probe: `get_or_put` below boxes the key
+                // bytes even when the entry already exists, and a hit (an
+                // already-prepared named statement) is the steady state.
+                let existing_stmt = connection
+                    .statements
+                    .get()
+                    .get(&signature.name[..])
+                    .copied();
                 if let Some(stmt_ptr) = existing_stmt {
                     this.statement.set(Some(stmt_ptr));
                     // Route the `&mut` through the audited `statement_mut()`
@@ -670,21 +653,11 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
-                                    // fail to run do cleanup — drop the ref we took above.
-                                    this.release_statement();
-                                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref(this_ptr) };
-
-                                    if !global_object.has_exception() {
-                                        return Err(global_object.throw_value(
-                                            postgres_error_to_js(
-                                                global_object,
-                                                Some(b"failed to bind and execute query"),
-                                                err,
-                                            ),
-                                        ));
-                                    }
-                                    return Err(JsError::Thrown);
+                                    release_query_ref();
+                                    return Err(throw_write_error(
+                                        b"failed to bind and execute query",
+                                        err,
+                                    ));
                                 }
                                 {
                                     let mut f = connection.flags.get();
@@ -705,6 +678,25 @@ impl PostgresSQLQuery {
 
                     break 'enqueue;
                 }
+                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
+                // the `get_or_put` call (single-JS-thread; no re-entry into JS
+                // until after the raw value-slot ptr is captured). Extract the
+                // raw slot ptr while the borrow is live so the remainder of
+                // this block needs no further `&mut` to the map.
+                let entry_value_ptr = match connection.statements.with_mut(|s| {
+                    s.get_or_put(&signature.name)
+                        .map(|e| std::ptr::from_mut::<*mut PostgresSQLStatement>(e.value_ptr))
+                }) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        drop(signature);
+                        release_query_ref();
+                        return Err(
+                            global_object.throw_error(err.into(), "failed to allocate statement")
+                        );
+                    }
+                };
+                connection_entry_value = Some(entry_value_ptr);
             }
             let can_execute = !connection.has_query_running();
 
@@ -723,20 +715,11 @@ impl PostgresSQLQuery {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature_hash));
+                                .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
-                        this.release_statement();
-                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to prepare and query"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to prepare and query", err));
                     }
                     {
                         let mut f = connection.flags.get();
@@ -764,36 +747,21 @@ impl PostgresSQLQuery {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature_hash));
+                                .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
-                        this.release_statement();
-                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to write query"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to write query", err));
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature_hash));
+                                .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to flush"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to flush", err));
                     }
                     {
                         let mut f = connection.flags.get();
@@ -829,9 +797,9 @@ impl PostgresSQLQuery {
                     this.statement.set(Some(stmt));
 
                     // SAFETY: `entry_value` points into `connection.statements` and the map has
-                    // not been mutated since `get_or_put`. This arm is reached only when
-                    // `!entry.found_existing`; the slot was default-initialised to null by
-                    // `get_or_put`, so a plain store is fine.
+                    // not been mutated since `get_or_put`. `get_or_put` runs only after the
+                    // existing-entry probe missed, so the slot it hands back was
+                    // default-initialised to null and a plain store is fine.
                     unsafe { *entry_value = stmt };
                 } else {
                     let stmt = {
@@ -854,8 +822,18 @@ impl PostgresSQLQuery {
             .with_mut(|q| q.write_item(this_ptr))
             .is_err()
         {
+            release_query_ref();
             return Err(global_object.throw_out_of_memory());
         }
+        // Request is enqueued: keep the event loop alive until the server
+        // responds. See the matching call in the simple-query branch above
+        // for why this must come after every fallible step.
+        connection.poll_ref.with_mut(|r| {
+            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
+            ))
+        });
+
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);

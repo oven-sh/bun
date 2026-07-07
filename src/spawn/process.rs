@@ -206,10 +206,6 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 }
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
-// Un-gated: `super::bun_spawn::posix_spawn` (Actions/Attr/wait4) and the
-// `bun_io::FilePoll` method surface are stable. `EventLoopHandle` →
-// `EventLoopCtx` bridging is local (`event_loop_handle_to_ctx`) until a
-// JS-side ctx vtable lands.
 impl Process {
     #[cfg(windows)]
     /// SAFETY: `this` must be the live heap-allocated `Process` (the same
@@ -1570,6 +1566,12 @@ pub struct WindowsSpawnOptions {
     pub extra_fds: Box<[WindowsStdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
+    /// `uv_process_options_t.uid` + `UV_PROCESS_SETUID`; libuv returns
+    /// `UV_ENOTSUP` on Windows, exactly like Node.
+    pub uid: Option<u32>,
+    /// `uv_process_options_t.gid` + `UV_PROCESS_SETGID`; libuv returns
+    /// `UV_ENOTSUP` on Windows, exactly like Node.
+    pub gid: Option<u32>,
     pub windows: WindowsOptions,
     pub argv0: Option<*const c_char>,
     pub stream: bool,
@@ -1597,6 +1599,8 @@ impl Default for WindowsSpawnOptions {
             extra_fds: Box::new([]),
             cwd: Box::new([]),
             detached: false,
+            uid: None,
+            gid: None,
             windows: WindowsOptions::default(),
             argv0: None,
             stream: true,
@@ -1866,6 +1870,17 @@ mod spawn_process_body {
 
         if options.detached {
             uv_process_options.flags |= uv::UV_PROCESS_DETACHED;
+        }
+
+        // libuv's uv_spawn rejects UV_PROCESS_SETUID/SETGID with UV_ENOTSUP on
+        // Windows — the same error Node reports for uid/gid there.
+        if let Some(uid) = options.uid {
+            uv_process_options.uid = uid as uv::uv_uid_t;
+            uv_process_options.flags |= uv::UV_PROCESS_SETUID;
+        }
+        if let Some(gid) = options.gid {
+            uv_process_options.gid = gid as uv::uv_gid_t;
+            uv_process_options.flags |= uv::UV_PROCESS_SETGID;
         }
 
         let mut stdio_containers: Vec<uv::uv_stdio_container_t> =

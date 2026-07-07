@@ -6,12 +6,14 @@ import { cp, rm } from "fs/promises";
 import PQueue from "p-queue";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, getPuppeteerInstallEnv, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
 let root = tmpdirSync();
+
+const puppeteerInstallEnv = getPuppeteerInstallEnv();
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -93,7 +95,7 @@ async function startDevServer() {
 
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall"), ...puppeteerInstallEnv },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

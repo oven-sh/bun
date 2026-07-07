@@ -785,6 +785,33 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   expect(exitCode).toBe(0);
 });
 
+test("a version range made of hundreds of thousands of 'v' or '= ' prefix characters evaluates promptly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const n = 1000000;
+        const vRun = Buffer.alloc(n, "v").toString();
+        const eqRun = Buffer.alloc(n, "= ").toString();
+        process.stdout.write(
+          JSON.stringify([
+            Bun.semver.satisfies("1.0.0", vRun),
+            Bun.semver.satisfies("1.0.0", eqRun),
+          ]),
+        );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([true, true]);
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 test("a version range with hundreds of thousands of '||' or AND-ed comparators evaluates without crashing", async () => {
   // Ranges are stored as linked lists: one node per "||" alternative and one
   // node per space-separated AND comparator. Walking a very long chain must be

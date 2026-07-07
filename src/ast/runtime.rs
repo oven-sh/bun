@@ -93,6 +93,25 @@ impl ReplaceableExportMap {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReactCompilerMode {
+    #[default]
+    Disabled,
+    Client,
+    Ssr,
+}
+
+impl ReactCompilerMode {
+    #[inline]
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+    #[inline]
+    pub fn is_ssr(self) -> bool {
+        matches!(self, Self::Ssr)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServerComponentsMode {
     /// Server components is disabled, strings "use client" and "use server" mean nothing.
@@ -141,38 +160,40 @@ impl ServerComponentsMode {
 #[allow(non_snake_case)]
 #[derive(Default, Clone)]
 pub struct Imports {
-    pub __name: Option<Ref>,
-    pub __require: Option<Ref>,
-    pub __export: Option<Ref>,
-    pub __reExport: Option<Ref>,
-    pub __exportValue: Option<Ref>,
-    pub __exportDefault: Option<Ref>,
+    pub __name: Ref,
+    pub __require: Ref,
+    pub __export: Ref,
+    pub __reExport: Ref,
+    pub __exportValue: Ref,
+    pub __exportDefault: Ref,
     // __refreshRuntime: ?GeneratedSymbol = null,
     // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-    pub __merge: Option<Ref>,
-    pub __legacyDecorateClassTS: Option<Ref>,
-    pub __legacyDecorateParamTS: Option<Ref>,
-    pub __legacyMetadataTS: Option<Ref>,
-    pub __publicField: Option<Ref>,
-    pub __privateIn: Option<Ref>,
-    pub __privateGet: Option<Ref>,
-    pub __privateAdd: Option<Ref>,
-    pub __privateSet: Option<Ref>,
-    pub __privateMethod: Option<Ref>,
-    pub __decoratorStart: Option<Ref>,
-    pub __decoratorMetadata: Option<Ref>,
-    pub __runInitializers: Option<Ref>,
-    pub __decorateElement: Option<Ref>,
+    pub __merge: Ref,
+    pub __legacyDecorateClassTS: Ref,
+    pub __legacyDecorateParamTS: Ref,
+    pub __legacyMetadataTS: Ref,
+    pub __publicField: Ref,
+    pub __privateIn: Ref,
+    pub __privateGet: Ref,
+    pub __privateAdd: Ref,
+    pub __privateSet: Ref,
+    pub __privateMethod: Ref,
+    pub __decoratorStart: Ref,
+    pub __decoratorMetadata: Ref,
+    pub __runInitializers: Ref,
+    pub __decorateElement: Ref,
     /// The `$$typeof` runtime import (`$$typeof` is not a valid Rust identifier).
-    pub dollar_dollar_typeof: Option<Ref>,
-    pub __using: Option<Ref>,
-    pub __callDispose: Option<Ref>,
-    pub __jsonParse: Option<Ref>,
-    pub __promiseAll: Option<Ref>,
+    pub dollar_dollar_typeof: Ref,
+    pub __using: Ref,
+    pub __callDispose: Ref,
+    pub __jsonParse: Ref,
+    pub __promiseAll: Ref,
+    pub __MEMO_CACHE_SENTINEL: Ref,
+    pub __EARLY_RETURN_SENTINEL: Ref,
 }
 
 impl Imports {
-    pub const ALL: [&'static [u8]; 25] = [
+    pub const ALL: [&'static [u8]; 27] = [
         b"__name",
         b"__require",
         b"__export",
@@ -198,13 +219,17 @@ impl Imports {
         b"__callDispose",
         b"__jsonParse",
         b"__promiseAll",
+        b"__MEMO_CACHE_SENTINEL",
+        b"__EARLY_RETURN_SENTINEL",
     ];
 
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
     #[cfg_attr(not(test), allow(dead_code))]
-    const ALL_SORTED: [&'static [u8]; 25] = [
+    const ALL_SORTED: [&'static [u8]; 27] = [
         b"$$typeof",
+        b"__EARLY_RETURN_SENTINEL",
+        b"__MEMO_CACHE_SENTINEL",
         b"__callDispose",
         b"__decorateElement",
         b"__decoratorMetadata",
@@ -233,32 +258,34 @@ impl Imports {
 
     /// When generating the list of runtime imports, we sort it for determinism.
     /// This is a lookup table so we don't need to resort the strings each time
-    pub const ALL_SORTED_INDEX: [usize; 25] = [
-        13, // __name
-        22, // __require
-        5,  // __export
-        21, // __reExport
-        7,  // __exportValue
-        6,  // __exportDefault
-        12, // __merge
-        9,  // __legacyDecorateClassTS
-        10, // __legacyDecorateParamTS
-        11, // __legacyMetadataTS
-        20, // __publicField
-        16, // __privateIn
-        15, // __privateGet
-        14, // __privateAdd
-        18, // __privateSet
-        17, // __privateMethod
-        4,  // __decoratorStart
-        3,  // __decoratorMetadata
-        23, // __runInitializers
-        2,  // __decorateElement
+    pub const ALL_SORTED_INDEX: [usize; 27] = [
+        15, // __name
+        24, // __require
+        7,  // __export
+        23, // __reExport
+        9,  // __exportValue
+        8,  // __exportDefault
+        14, // __merge
+        11, // __legacyDecorateClassTS
+        12, // __legacyDecorateParamTS
+        13, // __legacyMetadataTS
+        22, // __publicField
+        18, // __privateIn
+        17, // __privateGet
+        16, // __privateAdd
+        20, // __privateSet
+        19, // __privateMethod
+        6,  // __decoratorStart
+        5,  // __decoratorMetadata
+        25, // __runInitializers
+        4,  // __decorateElement
         0,  // $$typeof
-        24, // __using
-        1,  // __callDispose
-        8,  // __jsonParse
-        19, // __promiseAll
+        26, // __using
+        3,  // __callDispose
+        10, // __jsonParse
+        21, // __promiseAll
+        2,  // __MEMO_CACHE_SENTINEL
+        1,  // __EARLY_RETURN_SENTINEL
     ];
 
     pub const NAME: &'static [u8] = b"bun:wrap";
@@ -266,7 +293,7 @@ impl Imports {
     /// Index → field.
     #[inline]
     fn field(&self, i: usize) -> Option<Ref> {
-        match i {
+        let r = match i {
             0 => self.__name,
             1 => self.__require,
             2 => self.__export,
@@ -292,12 +319,15 @@ impl Imports {
             22 => self.__callDispose,
             23 => self.__jsonParse,
             24 => self.__promiseAll,
-            _ => None,
-        }
+            25 => self.__MEMO_CACHE_SENTINEL,
+            26 => self.__EARLY_RETURN_SENTINEL,
+            _ => return None,
+        };
+        r.to_nullable()
     }
 
     #[inline]
-    fn field_mut(&mut self, i: usize) -> Option<&mut Option<Ref>> {
+    fn field_mut(&mut self, i: usize) -> Option<&mut Ref> {
         match i {
             0 => Some(&mut self.__name),
             1 => Some(&mut self.__require),
@@ -324,6 +354,8 @@ impl Imports {
             22 => Some(&mut self.__callDispose),
             23 => Some(&mut self.__jsonParse),
             24 => Some(&mut self.__promiseAll),
+            25 => Some(&mut self.__MEMO_CACHE_SENTINEL),
+            26 => Some(&mut self.__EARLY_RETURN_SENTINEL),
             _ => None,
         }
     }
@@ -336,7 +368,7 @@ impl Imports {
     }
 
     /// Callers that know the key statically can read the field directly
-    /// (`imports.__foo.is_some()`); this is the runtime-keyed equivalent.
+    /// (`!imports.__foo.is_empty()`); this is the runtime-keyed equivalent.
     pub fn contains(&self, key: &[u8]) -> bool {
         Self::ALL
             .iter()
@@ -359,7 +391,7 @@ impl Imports {
     pub fn put(&mut self, key: &[u8], ref_: Ref) {
         if let Some(i) = Self::ALL.iter().position(|&k| k == key) {
             if let Some(slot) = self.field_mut(i) {
-                *slot = Some(ref_);
+                *slot = ref_;
             }
         }
     }

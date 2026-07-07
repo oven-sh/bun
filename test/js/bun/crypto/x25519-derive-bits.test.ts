@@ -35,14 +35,25 @@ test("X25519 deriveBits with null length returns full output", async () => {
   expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
 });
 
-test("X25519 deriveBits with zero length returns full output", async () => {
+test("X25519 deriveBits with omitted length returns full output", async () => {
+  const { privateKey, publicKey } = await importX25519Keys();
+
+  const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey);
+
+  expect(bits).toBeInstanceOf(ArrayBuffer);
+  expect(bits.byteLength).toBe(32);
+  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+});
+
+// A zero length is distinct from a null length: it requests zero bits, not all of them.
+// https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits
+test("X25519 deriveBits with zero length returns zero bits", async () => {
   const { privateKey, publicKey } = await importX25519Keys();
 
   const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, 0);
 
   expect(bits).toBeInstanceOf(ArrayBuffer);
-  expect(bits.byteLength).toBe(32);
-  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+  expect(bits.byteLength).toBe(0);
 });
 
 test("X25519 deriveBits with shorter length", async () => {
@@ -53,6 +64,21 @@ test("X25519 deriveBits with shorter length", async () => {
   expect(bits).toBeInstanceOf(ArrayBuffer);
   expect(bits.byteLength).toBe(16);
   expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result.slice(0, 32));
+});
+
+// A non-multiple-of-8 length returns the first `length` bits: the unused trailing bits of
+// the final byte must be zeroed. 0x27 & 0b11100000 == 0x20; 0x08 & 0b11100000 == 0x00.
+test("X25519 deriveBits zeroes the unused trailing bits of the last byte", async () => {
+  const { privateKey, publicKey } = await importX25519Keys();
+
+  const alg = { name: "X25519", public: publicKey };
+  const [bits3, bits251] = await Promise.all([
+    crypto.subtle.deriveBits(alg, privateKey, 3),
+    crypto.subtle.deriveBits(alg, privateKey, 251),
+  ]);
+
+  expect(Buffer.from(bits3).toString("hex")).toBe("20");
+  expect(Buffer.from(bits251).toString("hex")).toBe(x25519Vector.result.slice(0, 62) + "00");
 });
 
 test("X25519 deriveBits with generated keys", async () => {

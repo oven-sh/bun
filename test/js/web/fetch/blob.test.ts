@@ -313,6 +313,14 @@ test("File.prototype.slice() returns a Blob, not a File", async () => {
     name: "secret-report.pdf",
     lastModified: 1234,
   });
+
+  // slicing a DOM File that wraps a Bun.file() must not unmask the disk path
+  using dir = tempDir("file-slice-bunfile", { "private-secrets.csv": "0123456789" });
+  const diskPath = path.join(String(dir), "private-secrets.csv");
+  const wrapped2 = new File([Bun.file(diskPath)], "public.csv");
+  const sliced2 = wrapped2.slice(0, 5);
+  expect(sliced2 instanceof File).toBe(false);
+  expect((sliced2 as any).name).not.toBe(diskPath);
 });
 
 test("new Blob('123') is NOT supported", async () => {

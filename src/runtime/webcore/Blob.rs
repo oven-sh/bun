@@ -2018,9 +2018,13 @@ impl BlobExt for Blob {
 
         // Per the File API, slice() returns a new plain Blob regardless of the
         // receiver's subclass, so drop the File brand and its identity fields.
+        // For File/S3-backed stores the DOM name lives only in `blob.name`;
+        // clearing it would unmask the on-disk path via get_file_name().
         blob.is_jsdom_file.set(false);
         blob.last_modified.set(0.0);
-        blob.name.set(BunString::dead());
+        if blob.hides_bytes_stored_name() {
+            blob.name.set(BunString::dead());
+        }
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -2456,9 +2460,13 @@ impl BlobExt for Blob {
 
                 // `new Blob(parts)` always yields a plain Blob even when `parts`
                 // contains a File, so drop any File identity propagated by dupe().
+                // For File/S3-backed stores the DOM name lives only in `blob.name`;
+                // clearing it would unmask the on-disk path via get_file_name().
                 blob.is_jsdom_file.set(false);
                 blob.last_modified.set(0.0);
-                blob.name.set(BunString::dead());
+                if blob.hides_bytes_stored_name() {
+                    blob.name.set(BunString::dead());
+                }
 
                 if args.len() > 1 {
                     let options = args[1];

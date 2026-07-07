@@ -281,6 +281,9 @@ pub mod fs {
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
                     let mut buf = bun_paths::PathBuffer::default();
+                    // Let getcwd failures (e.g. ENOENT on deleted cwd) propagate so
+                    // callers emit a clean error instead of running JS from an
+                    // indeterminate environment (BUG-01).
                     let n = bun_sys::getcwd(&mut buf[..])?;
                     DirnameStore::instance().append_slice(&buf[..n])?
                 }

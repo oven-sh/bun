@@ -192,8 +192,9 @@ pub fn write_bind<Context: WriterContext>(
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = BunString::empty();
-                // Use jsonStringifyFast for SIMD-optimized serialization
+                // json_stringify_fast writes a +1 WTFStringImpl ref into the
+                // out-param; OwnedString releases it on every exit path.
+                let mut str = bun_core::OwnedString::new(BunString::empty());
                 value
                     .json_stringify_fast(global, &mut str)
                     .map_err(js_error_to_postgres)?;
@@ -201,7 +202,6 @@ pub fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
             types::Tag::bool => {
                 let l = writer.length()?;
@@ -317,27 +317,24 @@ fn write_array_literal(
         } else if element.is_date() {
             // JSON.stringify of a Date is its ISO string already wrapped in
             // double quotes, which is a valid quoted array element as-is.
-            let mut str = BunString::empty();
+            let mut str = bun_core::OwnedString::new(BunString::empty());
             element
                 .json_stringify_fast(global, &mut str)
                 .map_err(js_error_to_postgres)?;
-            let slice = str.to_utf8_without_ref();
-            out.extend_from_slice(slice.slice());
+            out.extend_from_slice(str.to_utf8_without_ref().slice());
         } else if is_bytea && element.is_buffer(global) {
             let buf = element.as_array_buffer(global);
             let bytes: &[u8] = buf.as_ref().map(|b| b.byte_slice()).unwrap_or(b"");
             // `\x<hex>` is bytea's hex input format; write_quoted_element
             // escapes the backslash so array_in passes it through verbatim.
-            let mut text: Vec<u8> = Vec::with_capacity(2 + bytes.len() * 2);
-            text.extend_from_slice(b"\\x");
-            for &byte in bytes {
-                text.push(HEX[(byte >> 4) as usize]);
-                text.push(HEX[(byte & 0x0f) as usize]);
-            }
+            let mut text = vec![0u8; 2 + bytes.len() * 2];
+            text[0] = b'\\';
+            text[1] = b'x';
+            bun_fmt::bytes_to_hex_lower(bytes, &mut text[2..]);
             write_quoted_element(out, &text);
         } else if element.is_object() && !element.is_buffer(global) {
             // Plain objects (and jsonb[]/json[] elements) serialize as JSON.
-            let mut str = BunString::empty();
+            let mut str = bun_core::OwnedString::new(BunString::empty());
             element
                 .json_stringify_fast(global, &mut str)
                 .map_err(js_error_to_postgres)?;
@@ -355,8 +352,6 @@ fn write_array_literal(
     out.push(b'}');
     Ok(())
 }
-
-const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Append `text` as a double-quoted array element, escaping `"` and `\` the
 /// way PostgreSQL's `array_in` expects.

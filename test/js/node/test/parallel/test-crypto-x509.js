@@ -52,7 +52,7 @@ emailAddress=ry@tinyclouds.org`;
 
 let infoAccessCheck = `OCSP - URI:http://ocsp.nodejs.org/
 CA Issuers - URI:http://ca.nodejs.org/ca.cert`;
-if (!common.hasOpenSSL3)
+if (!common.hasOpenSSL3 && !process.features.openssl_is_boringssl)
   infoAccessCheck += '\n';
 
 const der = Buffer.from(

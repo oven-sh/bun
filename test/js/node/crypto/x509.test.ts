@@ -72,3 +72,17 @@ describe("X509Certificate.checkHost()", () => {
     expect(cnOnly.checkIP("127.0.0.1")).toBeUndefined();
   });
 });
+
+describe("X509Certificate.infoAccess", () => {
+  // Node on OpenSSL 3 produces no trailing newline; match that so split("\n") does not yield a
+  // trailing empty element and exact string comparisons against Node-persisted values hold.
+  test("has no trailing newline", () => {
+    const cert = new X509Certificate(cnOnlyCertPem);
+    expect(cert.infoAccess).toBe("OCSP - URI:http://ocsp.nodejs.org/\nCA Issuers - URI:http://ca.nodejs.org/ca.cert");
+  });
+
+  test("is undefined when the certificate has no AIA extension", () => {
+    const cert = new X509Certificate(wildcardSanCertPem);
+    expect(cert.infoAccess).toBeUndefined();
+  });
+});

@@ -538,6 +538,7 @@ export function windowsEnv(
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
+  const setRefCounted = $newRustFunction("node_cluster_binding.rs", "setRefCounted", 1);
   return new (class Control extends EventEmitter {
     #refs = 0;
     #refExplicitlySet = false;
@@ -548,13 +549,13 @@ export function getChannel() {
 
     refCounted() {
       if (++this.#refs === 1 && !this.#refExplicitlySet) {
-        setRef(true);
+        setRefCounted(true);
       }
     }
 
     unrefCounted() {
       if (--this.#refs === 0 && !this.#refExplicitlySet) {
-        setRef(false);
+        setRefCounted(false);
         this.emit("unref");
       }
     }

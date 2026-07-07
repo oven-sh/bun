@@ -1445,7 +1445,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control(this.#handle);
+        this.channel = new Control();
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1815,45 +1815,30 @@ function abortChildProcess(child, killSignal, reason) {
   }
 }
 
+// On the parent side there is no separate IPC-channel poll to toggle: the
+// subprocess handle's own poll keeps the event loop alive until the child
+// exits. These track reference state (and emit "unref") for Node parity
+// without unref'ing the whole subprocess out from under the caller.
 class Control extends EventEmitter {
-  #channel;
   #refs = 0;
-  #refExplicitlySet = false;
 
-  constructor(channel) {
+  constructor() {
     super();
-    this.#channel = channel;
-  }
-
-  #refControl(shouldRef) {
-    const channel = this.#channel;
-    if (!channel) return;
-    if (shouldRef) channel.ref();
-    else channel.unref();
   }
 
   refCounted() {
-    if (++this.#refs === 1 && !this.#refExplicitlySet) {
-      this.#refControl(true);
-    }
+    ++this.#refs;
   }
 
   unrefCounted() {
-    if (--this.#refs === 0 && !this.#refExplicitlySet) {
-      this.#refControl(false);
+    if (--this.#refs === 0) {
       this.emit("unref");
     }
   }
 
-  ref() {
-    this.#refExplicitlySet = true;
-    this.#refControl(true);
-  }
+  ref() {}
 
-  unref() {
-    this.#refExplicitlySet = true;
-    this.#refControl(false);
-  }
+  unref() {}
 }
 
 //------------------------------------------------------------------------------

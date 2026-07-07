@@ -327,20 +327,59 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::UNDEFINED)
 }
 
-// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
+/// Increment the shared channel keep-alive count; activate the poll on 0 -> 1.
+fn channel_ref_count_inc(vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    if vm.channel_ref_overridden {
+        return;
+    }
+    vm.channel_ref_count += 1;
+    if vm.channel_ref_count == 1 {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
     }
 }
 
-// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
+/// Decrement the shared channel keep-alive count; deactivate the poll on 1 -> 0.
+fn channel_ref_count_dec(vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    if vm.channel_ref_overridden || vm.channel_ref_count == 0 {
+        return;
+    }
+    vm.channel_ref_count -= 1;
+    if vm.channel_ref_count == 0 {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
+}
+
+// `channel.refCounted()` / `unrefCounted()`: cooperative ref counting that
+// shares the count with the listener hooks and does not set the override flag.
+#[bun_jsc::host_fn]
+pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments_old::<1>().ptr;
+
+    if arguments.len() == 0 {
+        return Err(global.throw_missing_arguments_value(&["enabled"]));
+    }
+    if !arguments[0].is_boolean() {
+        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
+    }
+
+    let enabled = arguments[0].to_boolean();
+    let vm = global.bun_vm().as_mut();
+    if enabled {
+        channel_ref_count_inc(vm);
+    } else {
+        channel_ref_count_dec(vm);
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
+pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
+    channel_ref_count_inc(global.bun_vm().as_mut());
+}
+
+// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
+pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+    channel_ref_count_dec(global.bun_vm().as_mut());
 }
 
 #[bun_jsc::host_fn]

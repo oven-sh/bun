@@ -566,6 +566,129 @@ describe("corrupt compressed responses", () => {
   });
 });
 
+// RFC 1952 §2.2: a gzip file is a sequence of members. Concatenated members
+// (cat a.gz b.gz, bgzf, pigz, pre-compressed segment stitching) must all be
+// decoded. Previously fetch() silently returned only the first member.
+describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
+  const P1 = Buffer.alloc(18000, "The quick brown fox jumps over the lazy dog. ");
+  const P2 = Buffer.alloc(14000, "SECOND-MEMBER-");
+  const M1 = gzipSync(P1);
+  const M2 = gzipSync(P2);
+  const BODY = Buffer.concat([M1, M2]);
+  const EXPECT = Buffer.concat([P1, P2]).toString("utf8");
+
+  type Case = [label: string, pieces: Buffer[], chunked: boolean];
+  const cases: Case[] = [
+    ["content-length, one write", [BODY], false],
+    ["content-length, split mid member #1 trailer", [BODY.subarray(0, M1.length - 5), BODY.subarray(M1.length - 5)], false],
+    ["content-length, split at member boundary", [M1, M2], false],
+    ["chunked, one chunk", [BODY], true],
+    ["chunked, one chunk per member", [M1, M2], true],
+    // gzip padding: trailing zeros after the last member must be tolerated.
+    ["content-length, trailing zero padding", [Buffer.concat([BODY, Buffer.alloc(8)])], false],
+  ];
+
+  describe.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", noLibdeflate => {
+    it.concurrent.each(cases)("%s", async (_label, pieces, chunked) => {
+      const total = pieces.reduce((n, p) => n + p.length, 0);
+      const server = createNetServer(socket => {
+        socket.on("error", () => {});
+        socket.setNoDelay(true);
+        const head = chunked
+          ? "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+          : `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${total}\r\nConnection: close\r\n\r\n`;
+        socket.write(head);
+        (async () => {
+          for (const p of pieces) {
+            if (chunked) {
+              socket.write(p.length.toString(16) + "\r\n");
+              socket.write(p);
+              socket.write("\r\n");
+            } else {
+              socket.write(p);
+            }
+            await new Promise(r => setImmediate(r));
+          }
+          socket.end(chunked ? "0\r\n\r\n" : undefined);
+        })().catch(() => socket.destroy());
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = server.address() as import("node:net").AddressInfo;
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const res = await fetch(process.argv[1]);
+             const buf = Buffer.from(await res.arrayBuffer());
+             process.stdout.write(buf);`,
+            `http://127.0.0.1:${port}/`,
+          ],
+          env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ len: stdout.length, stdout, stderr, exitCode }).toEqual({
+          len: EXPECT.length,
+          stdout: EXPECT,
+          stderr: expect.not.stringContaining("error"),
+          exitCode: 0,
+        });
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  // Streaming body path (ResponseBodyStreaming signal set): exercises the
+  // per-chunk Decompressor::decompress_chunk path with a member boundary
+  // between chunks.
+  it("streaming body, member boundary between chunks", async () => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.setNoDelay(true);
+      socket.write(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+      );
+      (async () => {
+        for (const p of [M1, M2]) {
+          socket.write(p.length.toString(16) + "\r\n");
+          socket.write(p);
+          socket.write("\r\n");
+          await new Promise(r => setImmediate(r));
+        }
+        socket.end("0\r\n\r\n");
+      })().catch(() => socket.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.argv[1]);
+           const chunks = [];
+           for await (const c of res.body) chunks.push(c);
+           process.stdout.write(Buffer.concat(chunks));`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ len: stdout.length, stdout, stderr, exitCode }).toEqual({
+        len: EXPECT.length,
+        stdout: EXPECT,
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.

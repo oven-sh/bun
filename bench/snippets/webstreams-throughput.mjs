@@ -79,7 +79,9 @@ const drain = async rs => {
 const SHARED_CHUNK_SCENARIOS = new Set([
   "reader.read() loop (shared chunk)",
   "for await (shared chunk)",
+  "readMany loop (shared chunk)",
   "pipeTo(WritableStream) (shared chunk)",
+  "pipeTo(WritableStream, HWM 16) (shared chunk)",
   "pipeThrough(TransformStream) (shared chunk)",
   "tee + drain both (shared chunk)",
 ]);
@@ -87,6 +89,16 @@ const SHARED_CHUNK_SCENARIOS = new Set([
 const scenarios = {
   "reader.read() loop (shared chunk)": () => drain(byteSource()),
   "reader.read() loop (fresh buffers)": () => drain(freshSource()),
+  // readMany drains whatever is queued per call: the batching consumer's machinery cost.
+  "readMany loop (shared chunk)": async () => {
+    const reader = byteSource().getReader();
+    let n = 0;
+    while (true) {
+      const r = await reader.readMany();
+      if (r.done) return n;
+      for (const v of r.value) n += v.byteLength;
+    }
+  },
   "for await (shared chunk)": async () => {
     let n = 0;
     for await (const c of byteSource()) n += c.length;
@@ -105,6 +117,22 @@ const scenarios = {
           n += c.length;
         },
       }),
+    );
+    return n;
+  },
+  // A destination with capacity: the pipe can move already-queued chunks without
+  // waiting out a writer-ready round trip per chunk.
+  "pipeTo(WritableStream, HWM 16) (shared chunk)": async () => {
+    let n = 0;
+    await byteSource().pipeTo(
+      new WritableStream(
+        {
+          write(c) {
+            n += c.length;
+          },
+        },
+        new CountQueuingStrategy({ highWaterMark: 16 }),
+      ),
     );
     return n;
   },

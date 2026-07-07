@@ -1866,13 +1866,18 @@ impl<'a> HTTPClient<'a> {
     pub fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
         self.unregister_abort_tracker();
+        // No owner buffer means the request is already terminal (see
+        // `InternalState::get_body_buffer`); there is nowhere to deliver a
+        // retried response.
+        let Some(body_out) = self.state.body_out_str else {
+            return;
+        };
         self.flags.protocol = Protocol::Http1_1;
         self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        let body_out = self.state.body_out_str.take().unwrap();
         self.state.reset();
         self.start(body, body_out::as_mut(body_out));
     }
@@ -1950,15 +1955,19 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
-            self.allow_retry = false;
-            // we need to retry the request, clean up the response message buffer and start again
-            self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
-            let body_out = self.state.body_out_str.take().unwrap();
-            self.start(body, body_out::as_mut(body_out));
+            // No owner buffer means the request is already terminal (see
+            // `InternalState::get_body_buffer`); there is nowhere to deliver
+            // a retried response.
+            if let Some(body_out) = self.state.body_out_str {
+                self.allow_retry = false;
+                // we need to retry the request, clean up the response message buffer and start again
+                self.state.response_message_buffer = MutableString::default();
+                let body = core::mem::replace(
+                    &mut self.state.original_request_body,
+                    HTTPRequestBody::Bytes(b""),
+                );
+                self.start(body, body_out::as_mut(body_out));
+            }
             return;
         }
 
@@ -2433,9 +2442,14 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            GenHttpContext::<IS_SSL>::close_socket(socket);
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -4286,9 +4300,13 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -4482,9 +4500,10 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                let body_out = self.state.body_out_str.unwrap();
-                self.state
-                    .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                if let Some(body_out) = self.state.body_out_str {
+                    self.state
+                        .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                }
             } else {
                 self.state
                     .get_body_buffer()

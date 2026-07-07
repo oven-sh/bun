@@ -1924,3 +1924,97 @@ describe("text consumers reject strings over the string allocation limit", () =>
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "Out of memory", exitCode: 0 });
   });
 });
+
+// A source pull() that runs inside the pipe's in-place drain and synchronously errors the
+// destination and aborts the pipe's signal must not touch the released writer afterwards.
+// https://github.com/oven-sh/bun/pull/33193
+it("pipeTo survives a pull() that errors the destination and aborts mid-drain", async () => {
+  const ac = new AbortController();
+  let sinkController;
+  let pulls = 0;
+  const readable = new ReadableStream({
+    start(c) {
+      c.enqueue("a");
+      c.enqueue("b");
+      c.enqueue("c");
+    },
+    pull(c) {
+      pulls++;
+      if (pulls === 1) {
+        sinkController.error(new Error("dest dead"));
+        ac.abort(new Error("stop"));
+        return;
+      }
+      c.enqueue("d");
+    },
+  });
+  const writable = new WritableStream(
+    {
+      start(c) {
+        sinkController = c;
+      },
+      write() {},
+    },
+    new CountQueuingStrategy({ highWaterMark: 16 }),
+  );
+  expect(
+    await readable.pipeTo(writable, { signal: ac.signal, preventAbort: true, preventCancel: true }).then(
+      () => "fulfilled",
+      e => `rejected:${e.constructor.name}`,
+    ),
+  ).toBe("rejected:Error");
+});
+
+// For a pull-driven source, readMany must return chunks the pull pipeline enqueued while the
+// previous wake settled (the drain runs after the controller's follow-up pull, not before).
+it("readMany batches the pipelined pull's chunk with the delivered one", async () => {
+  let pulls = 0;
+  const rs = new ReadableStream({
+    pull(c) {
+      pulls++;
+      if (pulls <= 6) c.enqueue("c" + pulls);
+      else c.close();
+    },
+  });
+  const reader = rs.getReader();
+  const wakes = [];
+  while (true) {
+    const r = await reader.readMany();
+    if (r.done) break;
+    wakes.push(r.value.join(","));
+  }
+  expect(wakes).toEqual(["c1", "c2", "c3,c4", "c5,c6"]);
+});
+
+// A chunk the pipe has already dequeued when a shutdown begins must still be written to the
+// destination (the shutdown waits for pending writes); it must not vanish.
+// https://github.com/oven-sh/bun/pull/33329
+it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", async () => {
+  const ac = new AbortController();
+  let pulls = 0;
+  const written = [];
+  const rs = new ReadableStream({
+    start(c) {
+      c.enqueue("a");
+      c.enqueue("b");
+      c.enqueue("c");
+    },
+    pull() {
+      if (++pulls === 1) ac.abort(new Error("stop"));
+    },
+  });
+  const ws = new WritableStream(
+    {
+      write(chunk) {
+        written.push(chunk);
+      },
+    },
+    new CountQueuingStrategy({ highWaterMark: 16 }),
+  );
+  const outcome = await rs.pipeTo(ws, { signal: ac.signal }).then(
+    () => "fulfilled",
+    e => "rejected:" + e.message,
+  );
+  // Node 26 agrees byte-for-byte: every dequeued chunk is written before the abort finishes.
+  expect({ outcome, written }).toEqual({ outcome: "rejected:stop", written: ["a", "b", "c"] });
+});

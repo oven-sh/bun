@@ -1081,6 +1081,31 @@ it("Missing DB throws SQLITE_CANTOPEN", () => {
   }
 });
 
+it.each([
+  ["query().get() with a syntax error", db => db.query("selecx 1").get()],
+  ["query().all() with an unknown table", db => db.query("SELECT * FROM not_a_table").all()],
+  ["query().all() with an unknown column", db => db.query("SELECT not_a_column FROM foo").all()],
+  ["run() with a syntax error", db => db.run("selecx 1")],
+  ["exec() with a syntax error", db => db.exec("selecx 1")],
+  ["prepare() with a syntax error", db => db.prepare("selecx 1")],
+])("generic errors set code to SQLITE_ERROR: %s", (label, fn) => {
+  using db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY)");
+
+  let error;
+  try {
+    fn(db);
+  } catch (e) {
+    error = e;
+  }
+
+  expect(error).toBeInstanceOf(SQLiteError);
+  expect({ code: error.code, errno: error.errno }).toEqual({
+    code: "SQLITE_ERROR",
+    errno: 1,
+  });
+});
+
 it("empty blob", () => {
   const db = new Database(":memory:");
   db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB)");

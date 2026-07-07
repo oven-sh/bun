@@ -245,6 +245,7 @@ void readableStreamClose(JSGlobalObject* globalObject, JSReadableStream* stream)
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_state == ReadableStreamState::Readable);
     stream->m_state = ReadableStreamState::Closed;
+    resolveStreamClosedPromise(vm, stream);
     auto* reader = stream->m_reader.get();
     if (!reader)
         return;
@@ -276,6 +277,7 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
     ASSERT(stream->m_state == ReadableStreamState::Readable);
     stream->m_state = ReadableStreamState::Errored;
     stream->m_storedError.set(vm, stream, error);
+    rejectStreamClosedPromise(vm, stream, error);
     auto* reader = stream->m_reader.get();
     if (!reader)
         return;

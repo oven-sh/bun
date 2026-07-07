@@ -4310,9 +4310,9 @@ declare module "bun" {
       | string
       | {
           /**
-           * The proxy URL (http:// or https://)
+           * The proxy URL (http:// or https://), as a string or a `URL`.
            */
-          url: string;
+          url: string | URL;
           /**
            * Custom headers to send to the proxy server.
            * Supports plain objects or Headers class instances.
@@ -4643,11 +4643,11 @@ declare module "bun" {
        */
       | "HEX"
       /**
-       * @example hsl(35.764706, 1, 0.5)
+       * @example hsl(35.764706, 100%, 50%)
        */
       | "hsl"
       /**
-       * @example lab(0.72732764, 33.938198, -25.311619)
+       * @example lab(72.732764% 33.938198 -25.311619)
        */
       | "lab"
       /**

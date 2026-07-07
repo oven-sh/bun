@@ -1958,14 +1958,19 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
-            if (header.value.len == 0 || header.name.len == 0)
+            // picohttpparser reports obs-fold continuation lines with an empty
+            // name; skip those. Empty *values* must flow through so duplicate
+            // headers combine per the Fetch spec ("a, , c") and a lone empty
+            // header is still visible to JS, matching the uWS/H3 paths.
+            if (header.name.len == 0)
                 continue;
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
             std::span<Latin1Character> data;
             auto value = String::createUninitialized(header.value.len, data);
-            memcpy(data.data(), header.value.ptr, header.value.len);
+            if (header.value.len > 0)
+                memcpy(data.data(), header.value.ptr, header.value.len);
 
             HTTPHeaderName name;
 
@@ -1977,8 +1982,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             } else {
                 // the case where we do not need to clone the name
                 // when the header name is already present in the list
-                // we don't have that information here, so map.setUncommonHeaderCloneName exists
-                map.setUncommonHeaderCloneName(nameView, value);
+                // we don't have that information here, so map.addUncommonHeaderCloneName exists
+                map.addUncommonHeaderCloneName(nameView, value);
             }
         }
 
@@ -2007,7 +2012,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             map.add(name, WTF::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
     }
     headers->setInternalHeaders(WTF::move(map));
@@ -2032,7 +2037,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, hn)) {
             map.add(hn, WTF::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
     });
     headers->setInternalHeaders(WTF::move(map));
@@ -3176,10 +3181,24 @@ bool JSC__JSValue__asArrayBuffer(
 }
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// transfer()/detach() throw while a native borrower holds a slice into it.
-// SharedArrayBuffer is never detachable and never moves, so it is left
+// its storage cannot move or be freed while a native borrower holds a slice
+// into it. SharedArrayBuffer is never detachable and never moves, so it is left
 // unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
 // impl.
+//
+// A pin does not make detaching fail, it makes it copy. `pin()` clears
+// `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
+// undetachable buffer by copying the bytes into the destination and reporting
+// success (`if (!isDetachable()) m_contents.copyTo(result)`). So while a borrow
+// is live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
+// `port.postMessage(v, [ab])` each return normally, give the destination an
+// independent copy, and leave `ab` attached; the bytes being read never move.
+//
+// That departs from ES2024, where transfer() must detach or throw, and from
+// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
+// common case and memory-safe in every case, at the cost of a transfer that
+// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
+// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))

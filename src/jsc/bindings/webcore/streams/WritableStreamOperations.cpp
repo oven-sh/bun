@@ -308,6 +308,7 @@ void writableStreamFinishErroring(JSGlobalObject* globalObject, JSWritableStream
     ASSERT(stream->m_state == WritableStreamState::Erroring);
     ASSERT(!writableStreamHasOperationMarkedInFlight(stream));
     stream->m_state = WritableStreamState::Errored;
+    rejectStreamClosedPromise(vm, stream, stream->m_storedError.get());
 
     auto* controller = stream->m_controller.get();
     controller->errorSteps();
@@ -387,6 +388,7 @@ void writableStreamFinishInFlightClose(JSGlobalObject* globalObject, JSWritableS
         }
     }
     stream->m_state = WritableStreamState::Closed;
+    resolveStreamClosedPromise(vm, stream);
     if (auto* writer = stream->m_writer.get()) {
         resolvePromise(globalObject, writer->m_closedPromise.get(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, );

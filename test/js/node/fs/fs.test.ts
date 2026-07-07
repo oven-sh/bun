@@ -503,6 +503,194 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
   }
 });
 
+describe("writeFile with a non-truncating flag", () => {
+  const flags = ["r+", "rs+", constants.O_RDWR];
+
+  it.each(flags)("writeFileSync with flag %p overwrites in place", flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(flags)("promises.writeFile with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(flags)("fs.writeFile with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place.txt");
+    writeFileSync(path, "0123456789");
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.writeFile(path, "ZZ", { flag }, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  // An iterable `data` takes a separate slow path in fs.promises, with its own
+  // truncate.
+  it.each(["r+", "rs+"])("promises.writeFile of an async iterable with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place-async-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (async function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["r+", "rs+"])("promises.writeFile of a sync iterable with flag %p overwrites in place", async flag => {
+    const path = join(tmpdirSync(), "in-place-sync-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["w", "w+"])("promises.writeFile of an async iterable with flag %p still truncates", async flag => {
+    const path = join(tmpdirSync(), "truncating-async-iter.txt");
+    writeFileSync(path, "0123456789");
+    await promises.writeFile(
+      path,
+      (async function* () {
+        yield "ZZ";
+      })(),
+      { flag },
+    );
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+
+  it("writeFileSync on a file descriptor does not truncate", () => {
+    const path = join(tmpdirSync(), "in-place-fd.txt");
+    writeFileSync(path, "0123456789");
+    const fd = openSync(path, "r+");
+    try {
+      writeFileSync(fd, "ZZ");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
+  });
+
+  it.each(["w", "w+"])("writeFileSync with flag %p still truncates", flag => {
+    const path = join(tmpdirSync(), "truncating.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", { flag });
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+
+  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
+  // open rather than afterwards. Skipped on Windows: openat() there picks its
+  // NtCreateFile disposition from O_WRONLY and ignores O_TRUNC, so this already
+  // yields "0123456789ZZ" on main. Separate bug, separate fix.
+  it.skipIf(isWindows)("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
+    const path = join(tmpdirSync(), "append-truncating.txt");
+    writeFileSync(path, "0123456789");
+    writeFileSync(path, "ZZ", {
+      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
+    });
+    expect(readFileSync(path, "utf8")).toBe("ZZ");
+  });
+});
+
+// A write that dies partway through must not leave the old tail sitting behind
+// the bytes that did land. `ulimit -f 1` gives the child a 512 byte RLIMIT_FSIZE,
+// and Linux's generic_write_checks() then clamps the write to the limit and fails
+// the next one with EFBIG. Linux-only: BSD kernels reject the whole write instead,
+// so the byte split is not portable.
+describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
+  const fixture = join(import.meta.dir, "fs-writeFile-write-error-fixture.js");
+
+  async function runUnderFileSizeLimit(path: string, flag: string) {
+    writeFileSync(path, Buffer.alloc(2000, "B"));
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -f 1; exec "$0" "$1" "$2" "$3"`, bunExe(), fixture, path, flag],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderrHasError: stderr.includes("error:"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it.each(["default", "w", "w+"])("with flag %p the file holds only what was written", async flag => {
+    const path = join(tmpdirSync(), "write-error.bin");
+    const { code, size, written, stale } = await runUnderFileSizeLimit(path, flag);
+    expect({ code, stale, sizeIsOnlyWrittenBytes: size === written }).toEqual({
+      code: "EFBIG",
+      stale: 0,
+      sizeIsOnlyWrittenBytes: true,
+    });
+  });
+
+  // 512 new bytes over the head, the other 1488 untouched, and no resize.
+  it("with flag 'r+' the rest of the file survives", async () => {
+    const path = join(tmpdirSync(), "write-error-in-place.bin");
+    const { code, size, written, stale } = await runUnderFileSizeLimit(path, "r+");
+    expect({ code, size, written, stale }).toEqual({ code: "EFBIG", size: 2000, written: 512, stale: 1488 });
+  });
+});
+
+// Writes at or above the preallocate threshold take the fallocate() path, which
+// grows the file before the data lands. O_APPEND then writes past the grown end,
+// leaving a hole of zeroes where the data belongs.
+describe("writeFile with a preallocate-sized buffer", () => {
+  const big = Buffer.alloc(3 * 1024 * 1024, "A");
+
+  it("appends with flag 'a'", () => {
+    const path = join(tmpdirSync(), "append-big.bin");
+    writeFileSync(path, "HEADER");
+    writeFileSync(path, big, { flag: "a" });
+    const out = readFileSync(path);
+    expect(out.subarray(0, 6).toString()).toBe("HEADER");
+    expect(out.indexOf(0)).toBe(-1);
+    expect(out.length).toBe(6 + big.length);
+  });
+
+  it("appends through a file descriptor opened with 'a'", () => {
+    const path = join(tmpdirSync(), "append-big-fd.bin");
+    writeFileSync(path, "HEADER");
+    const fd = openSync(path, "a");
+    try {
+      writeFileSync(fd, big);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(path);
+    expect(out.subarray(0, 6).toString()).toBe("HEADER");
+    expect(out.indexOf(0)).toBe(-1);
+    expect(out.length).toBe(6 + big.length);
+  });
+
+  it("keeps the tail of a larger file with flag 'r+'", () => {
+    const path = join(tmpdirSync(), "in-place-big.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    writeFileSync(path, big, { flag: "r+" });
+    const out = readFileSync(path);
+    expect(out.subarray(0, big.length).equals(big)).toBe(true);
+    expect(out.indexOf("B")).toBe(big.length);
+    expect(out.length).toBe(4 * 1024 * 1024);
+  });
+
+  it("truncates a larger file with the default flag", () => {
+    const path = join(tmpdirSync(), "truncating-big.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    writeFileSync(path, big);
+    const out = readFileSync(path);
+    expect(out.equals(big)).toBe(true);
+  });
+});
+
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = tmpdirTestMkdir();
@@ -4984,4 +5172,62 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 
   expect(detachedDuringOptions).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("hello world");
+});
+
+describe("fs.close on stdio descriptors", () => {
+  it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
+    using dir = tempDir("fs-close-stdio", {
+      "redirect-fixture.mjs": `
+        import fs from "node:fs";
+        fs.writeSync(2, "PRE.");
+        fs.closeSync(2);
+        const fd = fs.openSync(process.argv[2], "w");
+        // On POSIX, open() returns the lowest free descriptor. fd 2 was just
+        // closed, so reopening must hand it back.
+        process.stdout.write(String(fd));
+        fs.writeSync(2, "POST.");
+      `,
+    });
+    const redirected = path.join(String(dir), "redirected.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "redirect-fixture.mjs"), redirected],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("2");
+    // Writes after the reopen land in the new file; the original stderr pipe
+    // only keeps the byte written before the close.
+    expect(stderr).toBe("PRE.");
+    expect(readFileSync(redirected, "utf8")).toBe("POST.");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // descriptor is never really closed and the second close cannot raise EBADF.
+  it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
+    using dir = tempDir("fs-close-stdio-dbl", {
+      "double-close-fixture.mjs": `
+        import fs from "node:fs";
+        fs.closeSync(2);
+        try {
+          fs.closeSync(2);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "double-close-fixture.mjs")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("EBADF");
+    expect(exitCode).toBe(0);
+  });
 });

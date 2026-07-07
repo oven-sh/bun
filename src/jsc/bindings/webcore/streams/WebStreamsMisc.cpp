@@ -4,6 +4,7 @@
 #include "WebStreamsInternals.h"
 
 #include "JSReadableStream.h"
+#include "JSWritableStream.h"
 
 #include "BunClientData.h"
 #include "JSDOMConvertNumbers.h"
@@ -346,6 +347,101 @@ void rejectPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue rea
 void markPromiseAsHandled(VM&, JSPromise* promise)
 {
     promise->markAsHandled();
+}
+
+// The stream-level closed promise. The Pending guard makes every settle site unconditionally
+// safe: a terminal transition can only run once, but the promise may already have been created
+// in a terminal state by webStreamClosedPromise().
+template<typename Stream>
+static void resolveClosedPromise(VM& vm, Stream* stream)
+{
+    auto* promise = stream->m_closedPromise.get();
+    if (!promise || promise->status() != JSPromise::Status::Pending)
+        return;
+    // Always undefined: a primitive resolution skips the `then` lookup.
+    promise->fulfill(vm, jsUndefined());
+}
+
+template<typename Stream>
+static void rejectClosedPromise(VM& vm, Stream* stream, JSValue error)
+{
+    auto* promise = stream->m_closedPromise.get();
+    if (!promise || promise->status() != JSPromise::Status::Pending)
+        return;
+    // Nothing is obliged to observe this promise, so it must never report as unhandled.
+    promise->rejectAsHandled(vm, error);
+}
+
+void resolveStreamClosedPromise(VM& vm, JSReadableStream* stream)
+{
+    resolveClosedPromise(vm, stream);
+}
+
+void resolveStreamClosedPromise(VM& vm, JSWritableStream* stream)
+{
+    resolveClosedPromise(vm, stream);
+}
+
+void rejectStreamClosedPromise(VM& vm, JSReadableStream* stream, JSValue error)
+{
+    rejectClosedPromise(vm, stream, error);
+}
+
+void rejectStreamClosedPromise(VM& vm, JSWritableStream* stream, JSValue error)
+{
+    rejectClosedPromise(vm, stream, error);
+}
+
+JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSReadableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    if (auto* existing = stream->m_closedPromise.get())
+        return existing;
+
+    JSPromise* promise = nullptr;
+    switch (stream->m_state) {
+    case ReadableStreamState::Closed:
+        promise = promiseFulfilledWith(globalObject, jsUndefined());
+        break;
+    case ReadableStreamState::Errored: {
+        JSValue storedError = stream->m_storedError.get();
+        promise = promiseRejectedWith(globalObject, storedError ? storedError : jsUndefined());
+        promise->markAsHandled();
+        break;
+    }
+    case ReadableStreamState::Readable:
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        break;
+    }
+    stream->m_closedPromise.set(vm, stream, promise);
+    return promise;
+}
+
+JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    if (auto* existing = stream->m_closedPromise.get())
+        return existing;
+
+    JSPromise* promise = nullptr;
+    switch (stream->m_state) {
+    case WritableStreamState::Closed:
+        promise = promiseFulfilledWith(globalObject, jsUndefined());
+        break;
+    case WritableStreamState::Errored: {
+        JSValue storedError = stream->m_storedError.get();
+        promise = promiseRejectedWith(globalObject, storedError ? storedError : jsUndefined());
+        promise->markAsHandled();
+        break;
+    }
+    // Erroring is not terminal: writableStreamFinishErroring() rejects the pending promise.
+    case WritableStreamState::Writable:
+    case WritableStreamState::Erroring:
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        break;
+    }
+    stream->m_closedPromise.set(vm, stream, promise);
+    return promise;
 }
 
 // The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion

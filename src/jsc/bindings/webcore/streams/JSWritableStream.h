@@ -46,8 +46,9 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_controller, m_writer, m_storedError, m_closeRequest,
-    // m_inFlightWriteRequest, m_inFlightCloseRequest, m_pendingAbortRequest.{promise,reason},
-    // and m_writeRequests (a barrier container: UNDER cellLock()).
+    // m_inFlightWriteRequest, m_inFlightCloseRequest, m_closedPromise,
+    // m_pendingAbortRequest.{promise,reason}, and m_writeRequests (a barrier container: UNDER
+    // cellLock()).
     DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
@@ -76,6 +77,9 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_inFlightWriteRequest;
     // [[inFlightCloseRequest]]
     JSC::WriteBarrier<JSC::JSPromise> m_inFlightCloseRequest;
+    // Settles when the stream reaches a terminal state, for observers that must not lock it
+    // (node:stream's finished()). Created on first request; empty until then.
+    JSC::WriteBarrier<JSC::JSPromise> m_closedPromise;
     // [[pendingAbortRequest]] — "undefined" ⇔ !m_pendingAbortRequest.promise.
     Bun::WebStreams::PendingAbortRequest m_pendingAbortRequest;
     // [[state]]

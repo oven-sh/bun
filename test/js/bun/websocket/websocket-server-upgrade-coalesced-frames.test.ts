@@ -103,14 +103,14 @@ describe.each([{ useTls: false }, { useTls: true }])(
         notify();
       });
 
-      socket.setNoDelay(true);
-      await new Promise<void>((resolve, reject) => {
-        socket.once(useTls ? "secureConnect" : "connect", resolve);
-        socket.once("error", reject);
-      });
-      // One write: request head + any coalesced frames.
-      socket.write(Buffer.concat([Buffer.from(upgradeRequest), initialBytes]));
       try {
+        socket.setNoDelay(true);
+        await new Promise<void>((resolve, reject) => {
+          socket.once(useTls ? "secureConnect" : "connect", resolve);
+          socket.once("error", reject);
+        });
+        // One write: request head + any coalesced frames.
+        socket.write(Buffer.concat([Buffer.from(upgradeRequest), initialBytes]));
         await upgraded.promise;
         await opened.promise;
       } catch (error) {

@@ -46,6 +46,10 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/MarkedBlockInlines.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include <JavaScriptCore/StructureCache.h>
@@ -3671,6 +3675,40 @@ err:
 #endif
 }
 
+// Bytes of live OversizeTypedArray backing stores (Buffer.alloc / new Uint8Array
+// whose .buffer was never materialized). Off-heap but not registered via
+// heap.addReference(), so heap.arrayBufferSize() does not see them.
+static size_t oversizeTypedArrayBytes(JSC::VM& vm)
+{
+    using namespace JSC;
+
+    size_t total = 0;
+    auto accumulate = [&](IsoSubspace* space) {
+        if (!space)
+            return;
+        space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            auto* view = static_cast<JSArrayBufferView*>(static_cast<JSCell*>(cell));
+            if (view->mode() == OversizeTypedArray)
+                total += view->byteLengthRaw();
+        });
+    };
+
+    HeapIterationScope iterationScope(vm.heap);
+    accumulate(vm.heap.int8ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.int16ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.int32ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.uint8ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.uint8ClampedArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.uint16ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.uint32ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.float16ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.float32ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.float64ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.bigInt64ArraySpace<SubspaceAccess::Concurrently>());
+    accumulate(vm.heap.bigUint64ArraySpace<SubspaceAccess::Concurrently>());
+    return total;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3704,20 +3742,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     // TODO: add a binding for heap.sizeAfterLastCollection()
     result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
 
-    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
+    // arrayBufferSize() only counts buffers registered via addReference();
+    // add OversizeTypedArray backing stores so Buffer.alloc / new Uint8Array
+    // are reflected like Node.js documents.
+    size_t arrayBuffers = vm.heap.arrayBufferSize() + oversizeTypedArrayBytes(vm);
 
-    // JSC won't count this number until vm.heap.addReference() is called.
-    // That will only happen in cases like:
-    // - new ArrayBuffer()
-    // - new Uint8Array(42).buffer
-    // - fs.readFile(path, "utf-8") (sometimes)
-    // - ...
-    //
-    // But it won't happen in cases like:
-    // - new Uint8Array(42)
-    // - Buffer.alloc(42)
-    // - new Uint8Array(42).slice()
-    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.arrayBufferSize()));
+    // Node documents arrayBuffers as a subset of external. extraMemorySize()
+    // only re-accumulates OversizeTypedArray bytes during GC marking, so clamp
+    // external to be at least arrayBuffers to preserve that relationship.
+    size_t external = vm.heap.extraMemorySize() + vm.heap.externalMemorySize();
+    if (external < arrayBuffers)
+        external = arrayBuffers;
+
+    result->putDirectOffset(vm, 3, JSC::jsNumber(external));
+    result->putDirectOffset(vm, 4, JSC::jsNumber(arrayBuffers));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

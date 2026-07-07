@@ -1471,6 +1471,93 @@ it("process.memoryUsage.arrayBuffers", () => {
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });
 
+it("process.memoryUsage.arrayBuffers counts Buffer and typed array allocations", async () => {
+  // Run in a subprocess so GC activity in the test runner cannot disturb the
+  // before/after deltas.
+  const script = `
+    const MB = 1 << 20, N = 8, SZ = 8 * MB, TOTAL = N * SZ;
+    const held = [];
+
+    const a0 = process.memoryUsage().arrayBuffers;
+    for (let i = 0; i < N; i++) held.push(Buffer.alloc(SZ));
+    const a1 = process.memoryUsage().arrayBuffers;
+
+    for (let i = 0; i < N; i++) held.push(new Uint8Array(SZ));
+    const a2 = process.memoryUsage().arrayBuffers;
+
+    for (let i = 0; i < N; i++) held.push(new ArrayBuffer(SZ));
+    const a3 = process.memoryUsage().arrayBuffers;
+
+    // Touching .buffer promotes the backing store to a real ArrayBuffer;
+    // the reported total must not move by more than the promoted bytes.
+    const a4before = process.memoryUsage().arrayBuffers;
+    for (let i = 0; i < N; i++) held[i].buffer;
+    const a4after = process.memoryUsage().arrayBuffers;
+
+    const e = process.memoryUsage().external;
+
+    process.stdout.write(JSON.stringify({
+      bufferAlloc: a1 - a0,
+      uint8Array: a2 - a1,
+      arrayBuffer: a3 - a2,
+      promoteDelta: a4after - a4before,
+      external: e,
+      arrayBuffers: process.memoryUsage().arrayBuffers,
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout);
+
+  const TOTAL = 8 * 8 * (1 << 20);
+  // Every allocation path should move the counter by at least the bytes
+  // allocated (allowing a small amount of bookkeeping overhead on top).
+  expect(result.bufferAlloc).toBeGreaterThanOrEqual(TOTAL);
+  expect(result.bufferAlloc).toBeLessThan(TOTAL * 1.5);
+  expect(result.uint8Array).toBeGreaterThanOrEqual(TOTAL);
+  expect(result.uint8Array).toBeLessThan(TOTAL * 1.5);
+  expect(result.arrayBuffer).toBeGreaterThanOrEqual(TOTAL);
+  expect(result.arrayBuffer).toBeLessThan(TOTAL * 1.5);
+  // Promoting an already-counted backing store to an ArrayBuffer must not
+  // double-count it (allow some slack for JSArrayBuffer cell overhead).
+  expect(Math.abs(result.promoteDelta)).toBeLessThan(TOTAL * 0.25);
+  // Node documents arrayBuffers as a subset of external.
+  expect(result.external).toBeGreaterThanOrEqual(result.arrayBuffers);
+  expect(exitCode).toBe(0);
+});
+
+it("process.memoryUsage.arrayBuffers drops after Buffers are collected", async () => {
+  const script = `
+    const SZ = 8 << 20, N = 8;
+    let held = [];
+    for (let i = 0; i < N; i++) held.push(Buffer.alloc(SZ));
+    process.stdout.write(process.memoryUsage().arrayBuffers + " ");
+    held = null;
+    Bun.gc(true);
+    Bun.gc(true);
+    process.stdout.write(String(process.memoryUsage().arrayBuffers));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [during, after] = stdout.trim().split(" ").map(Number);
+  const TOTAL = 8 * (8 << 20);
+  expect(during).toBeGreaterThanOrEqual(TOTAL);
+  expect(after).toBeLessThan(TOTAL * 0.5);
+  expect(exitCode).toBe(0);
+});
+
 it("should handle user assigned `default` properties", async () => {
   process.default = 1;
   process.hello = 2;

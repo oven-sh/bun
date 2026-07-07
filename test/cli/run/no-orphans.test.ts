@@ -52,6 +52,20 @@ const fixture = tempDir("no-orphans", {
     console.log(process.pid, process.ppid, gc.pid);
     setInterval(()=>{}, 1000);
   `,
+  // Same as child-nonbun.js but the grandchild drops to nobody. On Linux the
+  // kernel clears PR_SET_PDEATHSIG when the child's effective ids change
+  // (prctl(2)), so the spawn must re-arm it after setgid/setuid.
+  "child-nonbun-uid.js": `
+    const gc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", "echo r; while :; do sleep 1; done"],
+      uid: 65534,
+      gid: 65534,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    await gc.stdout.getReader().read();
+    console.log(process.pid, process.ppid, gc.pid);
+    setInterval(()=>{}, 1000);
+  `,
 });
 
 async function spawnTree(noOrphans: string | undefined, childScript = "child.js") {
@@ -172,6 +186,24 @@ test.skipIf(!isSupported)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
+    expect(isAlive(grandchildPid)).toBe(true);
+    process.kill(sh.pid!, "SIGKILL");
+    await sh.exited;
+    const bunDied = await waitUntilDead(bunPid, 10000);
+    const grandchildDied = await waitUntilDead(grandchildPid, 10000);
+    reap(bunPid, grandchildPid);
+    expect(bunDied).toBe(true);
+    expect(grandchildDied).toBe(true);
+  },
+);
+
+// Same as above but the grandchild is spawned with uid/gid. The credential
+// change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
+// gets re-armed after setgid/setuid. Needs root to setuid.
+test.skipIf(!isSupported || process.getuid?.() !== 0)(
+  "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
+  async () => {
+    const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
     expect(isAlive(grandchildPid)).toBe(true);
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;

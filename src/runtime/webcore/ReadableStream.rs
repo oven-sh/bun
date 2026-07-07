@@ -98,6 +98,7 @@ unsafe extern "C" {
         possible_readable_stream: &mut JSValue,
         ptr: &mut *mut c_void,
     ) -> Tag;
+    safe fn ReadableStream__is(value: JSValue) -> bool;
     safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -108,6 +109,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__cancelWithReason(
         stream: JSValue,
@@ -262,6 +264,11 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
+    pub fn is_readable_stream(value: JSValue) -> bool {
+        ReadableStream__is(value)
     }
 
     pub fn from_js(
@@ -457,6 +464,15 @@ impl ReadableStream {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__used(global_this)
+        })
+    }
+
+    /// A stream already in the `errored` state, so every read rejects with
+    /// `reason` instead of closing cleanly.
+    pub fn errored(global_this: &JSGlobalObject, reason: JSValue) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || {
+            // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
+            ReadableStream__errored(global_this, reason)
         })
     }
 }

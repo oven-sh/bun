@@ -954,7 +954,9 @@ describe("Query Execution", () => {
     await sql.unsafe(`CREATE TABLE batch_params (v INTEGER)`);
     await sql`INSERT INTO batch_params VALUES (1), (2), (3)`;
 
-    const result = await sql.unsafe("SELECT v FROM batch_params WHERE v > ?; DELETE FROM batch_params WHERE v = 1", [1]);
+    const result = await sql.unsafe("SELECT v FROM batch_params WHERE v > ?; DELETE FROM batch_params WHERE v = 1", [
+      1,
+    ]);
     expect(result).toEqual([{ v: 2 }, { v: 3 }]);
 
     const left = await sql`SELECT count(*) AS n FROM batch_params`;

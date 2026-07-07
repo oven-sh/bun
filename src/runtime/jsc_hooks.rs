@@ -4728,9 +4728,8 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
-/// `LoaderHooks::resolve_embedded_node_file` body — port of
-/// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71) for the
-/// `process.dlopen()`-on-a-compiled-executable path. Delegates to
+/// `LoaderHooks::resolve_embedded_node_file` body — `ModuleLoader.resolveEmbeddedFile`
+/// for the `process.dlopen()`-on-a-compiled-executable path. Delegates to
 /// [`resolve_embedded_file_to_buf`] with `extname = "node"` and writes the
 /// resulting on-disk path back into `*in_out_str`
 /// (as an owned UTF-8 clone).

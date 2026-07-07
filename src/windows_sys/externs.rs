@@ -1718,6 +1718,25 @@ unsafe extern "system" {
 
     pub fn CloseHandle(hObject: HANDLE) -> BOOL;
 
+    pub fn CreateFileMappingW(
+        hFile: HANDLE,
+        lpFileMappingAttributes: *mut SECURITY_ATTRIBUTES,
+        flProtect: DWORD,
+        dwMaximumSizeHigh: DWORD,
+        dwMaximumSizeLow: DWORD,
+        lpName: LPCWSTR,
+    ) -> HANDLE;
+
+    pub fn MapViewOfFile(
+        hFileMappingObject: HANDLE,
+        dwDesiredAccess: DWORD,
+        dwFileOffsetHigh: DWORD,
+        dwFileOffsetLow: DWORD,
+        dwNumberOfBytesToMap: usize,
+    ) -> LPVOID;
+
+    pub fn UnmapViewOfFile(lpBaseAddress: LPCVOID) -> BOOL;
+
     pub fn GetFinalPathNameByHandleW(
         hFile: HANDLE,
         lpszFilePath: *mut u16,

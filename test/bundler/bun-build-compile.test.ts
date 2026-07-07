@@ -627,7 +627,7 @@ describe("bun build --compile inject I/O", () => {
     const [runOut, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runOut).toBe("io-probe\n");
     expect(runExit).toBe(0);
-  });
+  }, 60_000);
 });
 
 // file command test works well

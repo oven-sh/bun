@@ -4189,13 +4189,16 @@ pub mod rescle {
 
 pub use bun_windows_sys::externs::CloseHandle;
 pub use bun_windows_sys::externs::CreateDirectoryW;
+pub use bun_windows_sys::externs::CreateFileMappingW;
 pub use bun_windows_sys::externs::CreateSymbolicLinkW;
 pub use bun_windows_sys::externs::DeleteFileW;
 pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::GetCurrentThread;
 pub use bun_windows_sys::externs::GetFinalPathNameByHandleW;
 pub use bun_windows_sys::externs::GetProcessTimes;
+pub use bun_windows_sys::externs::MapViewOfFile;
 pub use bun_windows_sys::externs::SetEndOfFile;
+pub use bun_windows_sys::externs::UnmapViewOfFile;
 
 /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).
 #[repr(C)]

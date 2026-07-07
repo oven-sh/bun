@@ -28,9 +28,12 @@ describe("deep path routing at MAX_URL_SEGMENTS boundary", () => {
     expect(await hit(seg(n, `d${n}x`))).toBe(`exact-${n}`);
   });
 
-  it.each([99, 100])("does not match a %i-segment exact route when the request has extra trailing segments", async n => {
-    expect(await hit(seg(n, `d${n}x`) + "/EXTRA/SEGMENTS")).toBe("catchall");
-  });
+  it.each([99, 100])(
+    "does not match a %i-segment exact route when the request has extra trailing segments",
+    async n => {
+      expect(await hit(seg(n, `d${n}x`) + "/EXTRA/SEGMENTS")).toBe("catchall");
+    },
+  );
 
   it("matches a 100-segment :param route on its exact URL", async () => {
     expect(await hit(`${seg(99, "p")}/VALUE`)).toBe(`param {"last":"VALUE"}`);

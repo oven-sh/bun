@@ -374,8 +374,10 @@ private:
 
                 /* Todo: can this handle timeout for non-post as well? */
                 if (fin) {
-                    /* If we just got the last chunk (or empty chunk), disable timeout */
-                    us_socket_timeout((struct us_socket_t *) user, 0);
+                    /* Last body chunk received. Re-arm (not clear) the idle timeout so a
+                     * stalled handler is still reaped; clearing it here lost any timeout the
+                     * request handler set before the body bytes in the same segment were parsed. */
+                    ((HttpResponse<SSL> *) user)->resetTimeout();
                 } else {
                     /* We still have some more data coming in later, so reset timeout */
                     /* Only reset timeout if we got enough bytes (16kb/sec) since last time we reset here */

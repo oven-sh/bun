@@ -631,6 +631,10 @@ describe("Histogram", () => {
           `add(${inspect(other)}) should throw ERR_INVALID_ARG_TYPE`,
         );
       }
+      // revoked proxy: target/handler are detached, must not be accepted
+      const { proxy, revoke } = Proxy.revocable(createHistogram(), {});
+      revoke();
+      assert.throws(() => h.add(proxy as unknown), TypeError);
       // null/undefined throw in both runtimes (Node: property access on null; Bun: ERR_INVALID_ARG_TYPE)
       assert.throws(() => h.add(null as unknown), TypeError);
       assert.throws(() => h.add(undefined as unknown), TypeError);

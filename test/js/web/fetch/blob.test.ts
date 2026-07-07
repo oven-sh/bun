@@ -149,12 +149,8 @@ describe("Bun.file().slice with relative start/end", () => {
     const bad = path.join(String(dir), "does-not-exist");
     // Resolving the size for the clamp must not drop the File store; the
     // read still has to surface the open() error, same as the unsliced case.
-    expect(async () => await Bun.file(bad).slice(0, 5).text()).toThrow(
-      expect.objectContaining({ code: "ENOENT" }),
-    );
-    expect(async () => await Bun.file(bad).slice(1, -1).text()).toThrow(
-      expect.objectContaining({ code: "ENOENT" }),
-    );
+    expect(async () => await Bun.file(bad).slice(0, 5).text()).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(async () => await Bun.file(bad).slice(1, -1).text()).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
   test("slice preserves the contentType arg when the source is empty", async () => {

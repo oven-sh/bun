@@ -162,7 +162,7 @@ const malformed: { name: string; oid: number; col: Buffer; code: RegExp }[] = [
   },
 ];
 
-test.each(malformed)("binary $name is rejected", async ({ oid, col, code }) => {
+test.concurrent.each(malformed)("binary $name is rejected", async ({ oid, col, code }) => {
   let err: any;
   try {
     await runMockQuery(col, oid);
@@ -173,25 +173,25 @@ test.each(malformed)("binary $name is rejected", async ({ oid, col, code }) => {
   expect(err?.code ?? err?.message).toMatch(code);
 });
 
-test("well-formed binary bool still parses", async () => {
+test.concurrent("well-formed binary bool still parses", async () => {
   const result: any = await runMockQuery(Buffer.from([1]), BOOL);
   expect(result[0].c).toBe(true);
 });
 
-test("well-formed binary float8 still parses", async () => {
+test.concurrent("well-formed binary float8 still parses", async () => {
   const buf = Buffer.alloc(8);
   buf.writeDoubleBE(1.5, 0);
   const result: any = await runMockQuery(buf, FLOAT8);
   expect(result[0].c).toBe(1.5);
 });
 
-test("in-range binary time still parses", async () => {
+test.concurrent("in-range binary time still parses", async () => {
   // 01:02:03 = 3723 seconds = 3_723_000_000 microseconds.
   const result: any = await runMockQuery(i64(3_723_000_000n), TIME);
   expect(result[0].c).toBe("01:02:03");
 });
 
-test("well-formed binary numeric still parses", async () => {
+test.concurrent("well-formed binary numeric still parses", async () => {
   const col = Buffer.concat([numericHeader(1, 0, 0x0000, 0), i16(1)]);
   const result: any = await runMockQuery(col, NUMERIC);
   expect(result[0].c).toBe("1");

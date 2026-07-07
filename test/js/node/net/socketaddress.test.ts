@@ -1,6 +1,7 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
+import { isDebug } from "harness";
 import { BlockList, SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
@@ -204,7 +205,9 @@ describe("SocketAddress constructor", () => {
     if (debug) console.log("after", after);
 
     expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
-  });
+    // 100k allocations + two full GCs run 10-100x slower under debug+ASAN,
+    // overshooting the 5s default; give it room rather than shrink the sample.
+  }, isDebug ? 60_000 : 20_000);
 }); // </SocketAddress constructor>
 
 describe("SocketAddress.isSocketAddress", () => {

@@ -84,10 +84,8 @@ GCClient::IsoSubspace* JSBunStandaloneTextSink::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSBunStandaloneTextSink, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBunStandaloneTextSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunStandaloneTextSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBunStandaloneTextSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBunStandaloneTextSink = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForBunStandaloneTextSink; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForBunStandaloneTextSink; });
 }
 
 DEFINE_VISIT_CHILDREN(JSBunStandaloneTextSink);
@@ -141,10 +139,8 @@ GCClient::IsoSubspace* JSOneShotDirectSink::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSOneShotDirectSink, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForOneShotDirectSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForOneShotDirectSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForOneShotDirectSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForOneShotDirectSink = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForOneShotDirectSink; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForOneShotDirectSink; });
 }
 
 DEFINE_VISIT_CHILDREN(JSOneShotDirectSink);
@@ -206,10 +202,8 @@ GCClient::IsoSubspace* JSReadableStreamIntoArrayOperation::subspaceForImpl(VM& v
 {
     return WebCore::subspaceForImpl<JSReadableStreamIntoArrayOperation, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamIntoArrayOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamIntoArrayOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamIntoArrayOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamIntoArrayOperation = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadableStreamIntoArrayOperation; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadableStreamIntoArrayOperation; });
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamIntoArrayOperation);

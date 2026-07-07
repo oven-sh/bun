@@ -131,10 +131,8 @@ template<> GCClient::IsoSubspace* JSCompressionStreamConstructor::subspaceForImp
 {
     return WebCore::subspaceForImpl<JSCompressionStreamConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCompressionStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCompressionStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCompressionStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCompressionStreamConstructor = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForCompressionStreamConstructor; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForCompressionStreamConstructor; });
 }
 
 template<> void JSCompressionStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -225,10 +223,8 @@ GCClient::IsoSubspace* JSCompressionStream::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSCompressionStream, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCompressionStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCompressionStream = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForCompressionStream; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForCompressionStream; });
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

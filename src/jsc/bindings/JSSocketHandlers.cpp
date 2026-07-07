@@ -21,10 +21,8 @@ JSC::GCClient::IsoSubspace* JSSocketHandlers::subspaceFor(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSSocketHandlers, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSSocketHandlers.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSocketHandlers = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSSocketHandlers.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSocketHandlers = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSSocketHandlers; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForJSSocketHandlers; });
 }
 
 JSC::Structure* JSSocketHandlers::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

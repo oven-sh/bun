@@ -1199,10 +1199,8 @@ GCClient::IsoSubspace* JSDatabaseSync::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSDatabaseSync, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteDatabaseSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteDatabaseSync = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteDatabaseSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteDatabaseSync = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeSqliteDatabaseSync; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeSqliteDatabaseSync; });
 }
 
 // ─── DatabaseSync prototype functions ───────────────────────────────────────
@@ -2586,10 +2584,8 @@ GCClient::IsoSubspace* JSStatementSync::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSStatementSync, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteStatementSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteStatementSync = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteStatementSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteStatementSync = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeSqliteStatementSync; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeSqliteStatementSync; });
 }
 
 // ─── Parameter binding ──────────────────────────────────────────────────────
@@ -3071,10 +3067,8 @@ GCClient::IsoSubspace* JSStatementSyncIterator::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSStatementSyncIterator, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteStatementSyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteStatementSyncIterator = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeSqliteStatementSyncIterator; });
 }
 
 static inline JSObject* createIterResult(VM& vm, JSGlobalObject* globalObject, bool done, JSValue value)
@@ -3259,10 +3253,8 @@ GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSNodeSqliteSession, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteSession.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteSession = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteSession.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteSession = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeSqliteSession; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeSqliteSession; });
 }
 
 #define THIS_SESSION()                                                                                                 \
@@ -3428,10 +3420,8 @@ GCClient::IsoSubspace* JSNodeSqliteLimits::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSNodeSqliteLimits, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteLimits.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteLimits = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteLimits.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteLimits = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeSqliteLimits; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeSqliteLimits; });
 }
 
 bool JSNodeSqliteLimits::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -3580,10 +3570,8 @@ GCClient::IsoSubspace* JSNodeSqliteTagStore::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSNodeSqliteTagStore, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteTagStore.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteTagStore = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteTagStore.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteTagStore = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeSqliteTagStore; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeSqliteTagStore; });
 }
 
 JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame)

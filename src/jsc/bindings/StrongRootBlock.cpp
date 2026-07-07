@@ -22,10 +22,8 @@ JSC::GCClient::IsoSubspace* StrongRootBlock::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<StrongRootBlock, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStrongRootBlock.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStrongRootBlock = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStrongRootBlock.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStrongRootBlock = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForStrongRootBlock; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForStrongRootBlock; });
 }
 
 StrongRootBlock* StrongRootBlock::create(JSC::VM& vm, JSC::Structure* structure)

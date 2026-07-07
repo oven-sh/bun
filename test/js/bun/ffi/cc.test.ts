@@ -457,6 +457,189 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
   });
 });
 
+// va_arg on x86_64 SysV lowers to a call to __va_arg, which TinyCC expects
+// libtcc1 to provide; Bun replaces libtcc1 with src/runtime/ffi/libtcc1.c.
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN || isFFIUnavailable)("variadic functions inside cc()-compiled C", () => {
+  it("va_arg over ints, doubles, and the stack overflow area", async () => {
+    using dir = tempDir("bun-ffi-cc-varargs", {
+      "varargs.c": /* c */ `
+        #include <stdarg.h>
+
+        static long long sum_ints(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          long long total = 0;
+          for (int i = 0; i < count; i++) total += va_arg(ap, int);
+          va_end(ap);
+          return total;
+        }
+
+        static double sum_doubles(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          double total = 0;
+          for (int i = 0; i < count; i++) total += va_arg(ap, double);
+          va_end(ap);
+          return total;
+        }
+
+        /* alternating int/double reads from one va_list: gp_offset and
+           fp_offset must advance independently */
+        static double sum_pairs(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          double total = 0;
+          for (int i = 0; i < count; i++) {
+            total += va_arg(ap, int);
+            total += va_arg(ap, double);
+          }
+          va_end(ap);
+          return total;
+        }
+
+        /* a 16-byte all-double struct occupies two SSE register save slots */
+        struct dd { double a, b; };
+        static double sum_dd(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          double total = 0;
+          for (int i = 0; i < count; i++) {
+            struct dd v = va_arg(ap, struct dd);
+            total += v.a + v.b;
+          }
+          va_end(ap);
+          return total;
+        }
+
+        /* 10 ints: exhausts the 6 integer registers and spills to the stack. */
+        long long ten_ints(void) { return sum_ints(10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10); }
+        /* 10 doubles: exhausts the 8 SSE registers and spills to the stack. */
+        double ten_doubles(void) { return sum_doubles(10, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5); }
+        double interleaved(void) { return sum_pairs(9, 1,0.5, 2,0.5, 3,0.5, 4,0.5, 5,0.5, 6,0.5, 7,0.5, 8,0.5, 9,0.5); }
+        double double_pairs(void) {
+          struct dd x = { 1.5, 2.5 }, y = { 3.0, 4.0 };
+          return sum_dd(2, x, y);
+        }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "varargs.c"),
+          symbols: {
+            ten_ints: { args: [], returns: "i64" },
+            ten_doubles: { args: [], returns: "f64" },
+            interleaved: { args: [], returns: "f64" },
+            double_pairs: { args: [], returns: "f64" },
+          },
+        });
+        console.log(
+          JSON.stringify({
+            ten_ints: Number(symbols.ten_ints()),
+            ten_doubles: symbols.ten_doubles(),
+            interleaved: symbols.interleaved(),
+            double_pairs: symbols.double_pairs(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        ten_ints: 55,
+        ten_doubles: 50,
+        interleaved: 49.5,
+        double_pairs: 11,
+      },
+      exitCode: 0,
+    });
+  });
+});
+
+// long double is 16 bytes on x86_64 and always va_arg'd through the stack; on
+// aarch64 it is binary128 and its arithmetic needs soft-float helpers
+// (__addtf3, ...) that Bun's TCC states do not provide, so x64 only.
+describe.skipIf(isASAN || isFFIUnavailable || process.arch !== "x64")(
+  "long double varargs inside cc()-compiled C",
+  () => {
+    it("va_arg over long double", async () => {
+      using dir = tempDir("bun-ffi-cc-varargs-ld", {
+        "ld.c": /* c */ `
+        #include <stdarg.h>
+
+        static double sum_long_doubles(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          long double total = 0;
+          for (int i = 0; i < count; i++) total += va_arg(ap, long double);
+          va_end(ap);
+          return (double)total;
+        }
+
+        double long_doubles(void) { return sum_long_doubles(3, 1.5L, 2.25L, 3.25L); }
+      `,
+        "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "ld.c"),
+          symbols: { long_doubles: { args: [], returns: "f64" } },
+        });
+        console.log(JSON.stringify({ long_doubles: symbols.long_doubles() }));
+      `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+      expect({ results, stderr, exitCode }).toMatchObject({
+        results: { long_doubles: 7 },
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// TinyCC compiles thread-local variables to Local-Exec TLS, which has no
+// meaning inside an in-memory relocation (there is no PT_TLS segment): the
+// generated loads/stores alias the host process's own thread block. TinyCC
+// must reject it instead of silently corrupting Bun's thread-locals.
+describe.skipIf(isASAN || isFFIUnavailable)("thread-local storage inside cc()-compiled C", () => {
+  it.each(["_Thread_local", "__thread"])("%s is a compile error", keyword => {
+    const dir = tempDirWithFiles(`bun-ffi-cc-tls`, {
+      "tls.c": `${keyword} int bun_test_tls_counter = 0;\nint bump(void) { return ++bun_test_tls_counter; }\n`,
+    });
+    expect(() => {
+      cc({
+        source: path.join(dir, "tls.c"),
+        symbols: { bump: { args: [], returns: "int" } },
+      });
+    }).toThrow(/thread-local storage is not supported/);
+  });
+});
+
 describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
   // JSC NaN-boxes doubles, so a NaN whose payload collides with the tag space
   // ("impure NaN", see JSC's PureNaN.h) must never be encoded as-is: it would

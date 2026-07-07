@@ -1082,9 +1082,8 @@ enum SourceBytes {
 
 impl SourceBytes {
     fn open(path: &ZStr) -> bun_sys::Maybe<Self> {
-        let fd = Syscall::open(path, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0)?;
-        let _close = Syscall::CloseOnDrop::new(fd);
-        let stat = Syscall::fstat(fd)?;
+        let file = bun_sys::File::open(path, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0)?;
+        let stat = Syscall::fstat(file.handle())?;
         // `st_size` is `i64` (libc::stat) on POSIX and `u64` (uv_stat_t) on
         // Windows; `usize: TryFrom<_>` covers both.
         #[allow(clippy::unnecessary_fallible_conversions)]
@@ -1096,7 +1095,7 @@ impl SourceBytes {
                 len,
                 libc::PROT_READ,
                 libc::MAP_PRIVATE,
-                fd,
+                file.handle(),
                 0,
             ) {
                 return Ok(SourceBytes::Mapped { ptr, len });
@@ -1106,12 +1105,12 @@ impl SourceBytes {
                 use bun_sys::windows as w;
                 const PAGE_READONLY: u32 = 0x02;
                 const FILE_MAP_READ: u32 = 0x0004;
-                // SAFETY: `fd.native()` is a valid open file HANDLE; null
+                // SAFETY: `file.handle()` is a valid open file HANDLE; null
                 // attributes/name select the default unnamed mapping; a zero
                 // max-size maps the whole file.
                 let mapping = unsafe {
                     w::CreateFileMappingW(
-                        fd.native(),
+                        file.handle().native(),
                         core::ptr::null_mut(),
                         PAGE_READONLY,
                         0,
@@ -1135,9 +1134,7 @@ impl SourceBytes {
                 }
             }
         }
-        Ok(SourceBytes::Owned(
-            bun_sys::File::borrow(&fd).read_to_end()?,
-        ))
+        Ok(SourceBytes::Owned(file.read_to_end()?))
     }
 }
 

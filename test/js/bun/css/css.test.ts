@@ -6447,6 +6447,11 @@ describe("css tests", () => {
       "@supports (display: grid) { .a { color: red } } @supports (display: flex) { .b { color: blue } }",
       "@supports (display: grid){.a{color:red}}@supports (display: flex){.b{color:#00f}}",
     );
+    // https://github.com/oven-sh/bun/issues/24770
+    minify_test(
+      ".test { border-top: 1px solid red; @supports (color: blue) { border-top: 1px solid blue } @supports (color: blue) { border-left: 1px solid blue } @supports (color: blue) { border-bottom: 1px solid blue } }",
+      ".test{border-top:1px solid red;@supports (color: blue){&{border-top:1px solid #00f;border-bottom:1px solid #00f;border-left:1px solid #00f}}}",
+    );
   });
 
   describe("transition", () => {

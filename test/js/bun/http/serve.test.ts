@@ -2506,7 +2506,7 @@ it.concurrent(
     expect(server.timeout).toBeFunction();
     const res = await fetch(new URL("/long-timeout", server.url.origin));
     expect(res.status).toBe(200);
-    expect(res.text()).resolves.toBe("Hello, World!");
+    await expect(res.text()).resolves.toBe("Hello, World!");
   },
   20_000,
 );

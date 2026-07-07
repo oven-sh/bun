@@ -103,10 +103,11 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 
 /* The sweep advances timestamp on an absolute 4 s grid, so the first tick
  * after arming lands in (0, 4] s. +1 makes the timeout a floor (never fires
- * before `units`); clamp so values near the wheel max don't wrap to tick 1. */
+ * before `units`); cap below the 240-slot wheel so the stored slot can never
+ * equal the arm-time slot (the long wheel re-checks that slot next sweep). */
 static inline unsigned int us_internal_timeout_ticks(unsigned int units, unsigned int shift) {
     unsigned int ticks = ((units + ((1u << shift) - 1)) >> shift) + 1;
-    return ticks > 240 ? 240 : ticks;
+    return ticks > 239 ? 239 : ticks;
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {

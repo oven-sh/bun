@@ -548,23 +548,15 @@ function SocketEmitEndNT(self, _err?) {
     // flowing mode.
     self.read(0);
     // An allowHalfOpen=false socket tears down once 'end' fires, but bytes
-    // nobody is consuming keep 'end' from ever firing — and unlike Node, whose
-    // idle handles do not hold the event loop, an open native socket keeps the
-    // process alive. The kReaderInterest flag is set when the 'connection'
-    // callback engaged the readable side at all (a once('readable') counts);
-    // when it never did, the buffered bytes are abandoned and the FIN-driven
-    // teardown is finished now — the same outcome the previous always-flowing
-    // accept path produced after discarding the data.
-    if (
-      !self.allowHalfOpen &&
-      !self.destroyed &&
-      !self[kReaderInterest] &&
-      self.readableLength > 0 &&
-      self.readableFlowing === null &&
-      self.listenerCount("data") === 0 &&
-      self.listenerCount("readable") === 0
-    ) {
-      self.destroySoon();
+    // nobody consumes keep 'end' from firing. Node keeps such a socket (and
+    // the process) alive; Bun deliberately diverges and finishes the FIN
+    // teardown when the connection callback never engaged the readable side —
+    // a Bun native handle holds the loop the same way, and hanging on an
+    // abandoned socket is worse than dropping bytes nothing asked for. The
+    // check is deferred so a nextTick/microtask/setImmediate attach in the
+    // handler still counts as engaging the readable side.
+    if (!self.allowHalfOpen && !self[kReaderInterest]) {
+      setImmediate(destroyAbandonedNT, self);
     }
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
@@ -859,9 +851,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         }
       } else {
         self.authorized = true;
-        // Node reports a clean client-certificate verification as an explicit
-        // null, not an absent property.
-        self.authorizationError = null;
       }
     }
     // pauseOnConnect sockets must already be paused when the
@@ -1070,12 +1059,24 @@ function onconnection(err, clientHandle) {
   // Record whether the connection callback engaged the readable side at all
   // (a 'readable'/'data' listener — including a once() — or an explicit
   // pause()/resume() leaves readableFlowing non-null). If it did, the EOF
-  // path's no-consumer teardown must not run, since a delayed read may
-  // follow; if nothing engaged it here, the buffered bytes are abandoned and
-  // the teardown matches the previous always-flowing accept behavior.
+  // path's abandoned-socket teardown must not run: a delayed read may follow.
   if (_socket.readableFlowing !== null || _socket.listenerCount("data") > 0 || _socket.listenerCount("readable") > 0) {
     _socket[kReaderInterest] = true;
   }
+}
+
+function destroyAbandonedNT(self) {
+  if (
+    self.destroyed ||
+    self[kReaderInterest] ||
+    self.readableLength === 0 ||
+    self.readableFlowing !== null ||
+    self.listenerCount("data") > 0 ||
+    self.listenerCount("readable") > 0
+  ) {
+    return;
+  }
+  self.destroySoon();
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1552,7 +1553,10 @@ function Socket(options?) {
     }
     // Node's onread writes each chunk into the user-provided buffer (a static
     // Buffer or a function returning one) and invokes the callback with that
-    // exact buffer; chunks larger than the buffer are delivered in slices.
+    // exact buffer. uSockets shares one 512KB recv_buf across all sockets, so
+    // kernel reads cannot be sized to the user buffer the way libuv's
+    // UseUserBuffer does; larger native reads are delivered in slices, which
+    // means a factory sees more calls than Node's one-per-uv_read_cb.
     const onreadBuffer = onread.buffer;
     const onreadCallback = onread.callback;
     const self = this;
@@ -2034,10 +2038,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("close");
   if (this._handle) {
     $debug("close handle");
-    // hadError reflects whether the socket errored at any point, not just
-    // whether destroy() was called with an error: an explicit destroy()
-    // after an 'error' event still emits close(true) like Node.
-    const isException = !!(err || this._hadError);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L880
+    const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;
     this[kBytesWritten] = this._handle.bytesWritten;
@@ -2071,7 +2073,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this, !!(err || this._hadError));
+    process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
   const server = this.server;
@@ -2139,10 +2141,14 @@ function drainOnreadTail(self) {
       socket[kOnreadDraining] = false;
       const tail = socket[kOnreadTail];
       if (tail === undefined || socket.destroyed) return;
+      // A pause() between resume() and this tick (or from inside the callback)
+      // must win: Node's level-triggered _handle.reading leaves the handle
+      // stopped after resume()→pause() (lib/net.js:817-835).
+      if (socket.isPaused()) return;
       socket[kOnreadTail] = undefined;
       socket[kOnreadDeliver](tail);
       // Fully consumed without pausing again: let the kernel flow resume.
-      if (socket[kOnreadTail] === undefined) {
+      if (socket[kOnreadTail] === undefined && !socket.isPaused()) {
         socket._handle?.resume?.();
       }
     }, self);

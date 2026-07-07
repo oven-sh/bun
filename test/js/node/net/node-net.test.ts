@@ -1000,6 +1000,63 @@ describe("paused socket whose peer sends RST", () => {
   });
 });
 
+describe("net.Server accepted-socket buffering", () => {
+  it("delivers bytes buffered before a 'readable' listener attaches, past peer FIN", async () => {
+    // read(0) instead of resume(): bytes that arrive before the connection
+    // handler engages the readable side accumulate in the buffer like Node.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2352
+    const received = Promise.withResolvers<Buffer>();
+    let flowingAtConnection: boolean | null | undefined;
+    const server = createServer(sock => {
+      flowingAtConnection = sock.readableFlowing;
+      sock.once("readable", () => received.resolve(sock.read()));
+      sock.once("error", received.reject);
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port });
+      client.on("error", received.reject);
+      await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
+      const buf = await received.promise;
+      expect({ flowingAtConnection, data: buf?.toString() }).toEqual({ flowingAtConnection: null, data: "hello" });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("delivers bytes to a 'data' listener attached via setImmediate from the connection handler", async () => {
+    // The abandoned-socket teardown at EOF is deferred so a nextTick /
+    // microtask / setImmediate attach still counts as engaging the reader.
+    const received = Promise.withResolvers<string>();
+    const server = createServer(sock => {
+      setImmediate(() => {
+        sock.once("data", chunk => received.resolve(chunk.toString()));
+        sock.once("error", received.reject);
+      });
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port });
+      client.on("error", received.reject);
+      await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
+      const data = await received.promise;
+      expect(data).toBe("hello");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
 describe("net.Socket onread flow control", () => {
   it("redelivers the rest of a chunk after the callback returns false and the socket resumes", async () => {
     // Node never loses the bytes a pausing onread callback has not consumed
@@ -1122,6 +1179,52 @@ it("onread: nothing is delivered between a false return and resume()", async () 
     client.resume();
     await done.promise;
     expect(received.join("")).toBe("aaaabbbbcccc");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: resume() then pause() before the drain tick leaves the handle paused", async () => {
+  // Node's level-triggered _handle.reading (lib/net.js:817-835): resume()→pause()
+  // ends with the handle stopped; the drain tick must not undo the pause.
+  const serverSockets: Socket[] = [];
+  const server = createServer(c => {
+    serverSockets.push(c);
+    c.write("aaaa");
+  });
+  const received: string[] = [];
+  const firstDelivery = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => listening.resolve());
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(64),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) firstDelivery.resolve();
+          if (received.join("").length === 8) done.resolve();
+          return received.length === 1 ? false : true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await firstDelivery.promise;
+    // resume() schedules the drain tick; pause() before it fires must win.
+    client.resume();
+    client.pause();
+    await new Promise<void>(resolve => serverSockets[0].write("bbbb", () => resolve()));
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(received).toEqual(["aaaa"]);
+    client.resume();
+    await done.promise;
+    expect(received.join("")).toBe("aaaabbbb");
   } finally {
     client?.destroy();
     server.close();

@@ -47,9 +47,12 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/JSDataView.h>
 #include <JavaScriptCore/MarkedBlockInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/HashSet.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include <JavaScriptCore/StructureCache.h>
@@ -3675,37 +3678,64 @@ err:
 #endif
 }
 
-// Bytes of live OversizeTypedArray backing stores (Buffer.alloc / new Uint8Array
-// whose .buffer was never materialized). Off-heap but not registered via
-// heap.addReference(), so heap.arrayBufferSize() does not see them.
-static size_t oversizeTypedArrayBytes(JSC::VM& vm)
+// Sum the byteLength of every live ArrayBuffer / SharedArrayBuffer plus every
+// OversizeTypedArray backing store. heap.arrayBufferSize() adds
+// sizeof(ArrayBuffer) overhead per buffer and ignores OversizeTypedArray.
+static size_t computeArrayBuffersBytes(JSC::VM& vm)
 {
     using namespace JSC;
 
     size_t total = 0;
-    auto accumulate = [&](IsoSubspace* space) {
+    UncheckedKeyHashSet<ArrayBuffer*> buffers;
+
+    auto visitViews = [&](IsoSubspace* space) {
         if (!space)
             return;
         space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
             auto* view = static_cast<JSArrayBufferView*>(static_cast<JSCell*>(cell));
-            if (view->mode() == OversizeTypedArray)
+            TypedArrayMode mode = view->mode();
+            if (mode == OversizeTypedArray)
                 total += view->byteLengthRaw();
+            else if (isWastefulTypedArray(mode)) {
+                if (ArrayBuffer* buffer = view->butterfly()->indexingHeader()->arrayBuffer())
+                    buffers.add(buffer);
+            }
         });
     };
 
     HeapIterationScope iterationScope(vm.heap);
-    accumulate(vm.heap.int8ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.int16ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.int32ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.uint8ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.uint8ClampedArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.uint16ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.uint32ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.float16ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.float32ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.float64ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.bigInt64ArraySpace<SubspaceAccess::Concurrently>());
-    accumulate(vm.heap.bigUint64ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.int8ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.int16ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.int32ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint8ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint8ClampedArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint16ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint32ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.float16ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.float32ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.float64ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.bigInt64ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.bigUint64ArraySpace<SubspaceAccess::Concurrently>());
+
+    if (auto* space = vm.heap.dataViewSpace<SubspaceAccess::Concurrently>()) {
+        space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            auto* view = static_cast<JSDataView*>(static_cast<JSCell*>(cell));
+            if (ArrayBuffer* buffer = view->possiblySharedBuffer())
+                buffers.add(buffer);
+        });
+    }
+
+    if (auto* space = vm.heap.arrayBufferSpace<SubspaceAccess::Concurrently>()) {
+        space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            auto* wrapper = static_cast<JSArrayBuffer*>(static_cast<JSCell*>(cell));
+            if (ArrayBuffer* buffer = wrapper->impl())
+                buffers.add(buffer);
+        });
+    }
+
+    for (ArrayBuffer* buffer : buffers)
+        total += buffer->byteLength();
+
     return total;
 }
 
@@ -3742,10 +3772,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     // TODO: add a binding for heap.sizeAfterLastCollection()
     result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
 
-    // arrayBufferSize() only counts buffers registered via addReference();
-    // add OversizeTypedArray backing stores so Buffer.alloc / new Uint8Array
-    // are reflected like Node.js documents.
-    size_t arrayBuffers = vm.heap.arrayBufferSize() + oversizeTypedArrayBytes(vm);
+    // heap.arrayBufferSize() misses OversizeTypedArray backing stores and adds
+    // sizeof(ArrayBuffer) overhead per entry, so walk the relevant subspaces
+    // and report exact byteLength like Node.js does.
+    size_t arrayBuffers = computeArrayBuffersBytes(vm);
 
     // Node documents arrayBuffers as a subset of external. extraMemorySize()
     // only re-accumulates OversizeTypedArray bytes during GC marking, so clamp

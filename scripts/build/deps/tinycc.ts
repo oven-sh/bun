@@ -30,15 +30,9 @@ export const tinycc: Dependency = {
 
   patches: [
     "patches/tinycc/tcc.h.patch",
-    // Backport of upstream tinycc mob 6728a64f1b ("win32: use VirtualAlloc
-    // for run memory") and 601a088214 ("win32: improve tccrun protection
-    // diagnostics"). The pinned fork commit predates both. Without them,
-    // JIT run memory on Windows is malloc'd from the CRT heap, gets
-    // VirtualProtect'd RWX, and has SEH unwind tables registered inside it
-    // via RtlAddFunctionTable, whose failure was also silently ignored.
-    // Crashes in the field as an access violation inside ntdll during
-    // RtlAddFunctionTable on a later FFI compile. Drop when TINYCC_COMMIT
-    // advances past an oven-sh/tinycc merge of upstream mob >= 601a088214.
+    // Backport of upstream tinycc mob 6728a64f1b (win32: VirtualAlloc for run
+    // memory) and 601a088214 (win32 tccrun diagnostics); the pinned fork
+    // predates both. Drop once TINYCC_COMMIT advances past a merge of those.
     "patches/tinycc/tccrun.c.patch",
   ],
 

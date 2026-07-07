@@ -933,13 +933,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             .into()
     }
 
-    /// `scope.exit()` drains microtasks, during which a synchronous
-    /// reconnect may repoint `self.handlers` at a fresh allocation; only
-    /// null the cell when it still holds the `Handlers` that `exit` freed.
+    /// The event-loop exit drains microtasks, during which a synchronous
+    /// reconnect may repoint `self.handlers` at a fresh allocation (null the
+    /// cell only when it still holds the `Handlers` the scope freed) or
+    /// `upgradeTLS` may transfer the handlers to the raw TLS twin.
     #[inline]
     fn exit_scope(&self, scope: super::handlers::Scope, entered: bun_ptr::BackRef<Handlers>) {
         let captured = entered.as_ptr();
-        if scope.exit() && self.handlers.get().map(|n| n.as_ptr()) == Some(captured) {
+        scope.exit_event_loop();
+        // `upgradeTLS` can transfer client-mode handlers (and their
+        // `OWNS_HANDLERS` free) to the raw TLS twin from inside this callback,
+        // leaving `handlers` None; the twin frees them, so skip to avoid a double-free.
+        if self.handlers.get().is_none() && self.flags.get().contains(Flags::OWNS_HANDLERS) {
+            return;
+        }
+        if scope.mark_inactive() && self.handlers.get().map(|n| n.as_ptr()) == Some(captured) {
             self.handlers.set(None);
         }
     }
@@ -3334,9 +3342,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
-        let initial_data: StringOrBuffer = match opts.get_truthy(global, "initialData")? {
-            Some(v) => StringOrBuffer::from_js(global, v)?.unwrap_or(StringOrBuffer::EMPTY),
-            None => StringOrBuffer::EMPTY,
+        let initial_data: Vec<u8> = match opts.get_truthy(global, "initialData")? {
+            Some(v) => StringOrBuffer::from_js(global, v)?
+                .map(|data| data.slice().to_vec())
+                .unwrap_or_default(),
+            None => Vec::new(),
         };
         // Handlers lifecycle is always client-mode (heap-per-connection) here: a
         // standalone `new TLSSocket(socket, { isServer })` is NOT a SocketListener,
@@ -3702,11 +3712,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Feed bytes that arrived before the upgrade (already pulled off the fd
         // by the plain-TCP layer) into the TLS engine exactly as if they had
         // just been received — for a server-side wrap this is the ClientHello.
-        let initial_slice = initial_data.slice();
-        if !initial_slice.is_empty() {
-            // SAFETY: `new_raw` is live; the slice borrows a JS-owned buffer kept
-            // alive by the options object for the duration of this call.
-            unsafe { (*new_raw.as_ptr()).tls_feed(initial_slice) };
+        if !initial_data.is_empty() {
+            // SAFETY: `new_raw` is live; `initial_data` is an owned copy.
+            unsafe { (*new_raw.as_ptr()).tls_feed(initial_data.as_slice()) };
         }
 
         let array = JSValue::create_empty_array(global, 2)?;
@@ -4886,11 +4894,13 @@ pub mod testing_apis {
                 fi::CONNECT
             } else if syscall_str.eql_comptime(b"accept") {
                 fi::ACCEPT
+            } else if syscall_str.eql_comptime(b"ssl_loop_buffer") {
+                fi::SSL_LOOP_BUFFER
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer"
                 )));
             };
 
@@ -4975,13 +4985,23 @@ pub mod testing_apis {
                 )));
             }
 
+            // ssl_loop_buffer is an allocation, not a socket operation: its hook
+            // passes fd = -1, so a rule pinned to a descriptor would arm and then
+            // silently never fire.
+            let target_fd = get_i32("fd", -1)?;
+            if syscall == fi::SSL_LOOP_BUFFER && target_fd != -1 {
+                return Err(global.throw(format_args!(
+                    "rule.fd is not supported for syscall \"ssl_loop_buffer\""
+                )));
+            }
+
             let rule = fi::UsFaultRule {
                 action,
                 errno_value,
                 clamp_bytes,
                 after_n_calls: get_i32("after", 0)?,
                 repeat: get_i32("repeat", 1)?,
-                target_fd: get_i32("fd", -1)?,
+                target_fd,
             };
 
             // SAFETY: rule is a valid stack pointer for the duration of the call.

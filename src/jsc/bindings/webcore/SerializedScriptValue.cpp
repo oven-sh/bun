@@ -1832,8 +1832,12 @@ private:
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
+                // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+                // Step 2: "If memory[value] exists, then return memory[value]" must run before the
+                // IsDetachedBuffer check; a buffer detached after its first visit stays a back-reference.
+                if (checkForDuplicate(obj))
+                    return true;
                 if (arrayBuffer->isDetached()) {
-                    // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
                     // IsDetachedBuffer(value) => throw a "DataCloneError" DOMException (not a TypeError).
                     code = SerializationReturnCode::DataCloneError;
                     return true;
@@ -1844,8 +1848,7 @@ private:
                     write(index->value);
                     return true;
                 }
-                if (!startObjectInternal(obj)) // handle duplicates
-                    return true;
+                recordObject(obj);
 
                 if (arrayBuffer->isShared() && m_context == SerializationContext::WorkerPostMessage) {
                     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal

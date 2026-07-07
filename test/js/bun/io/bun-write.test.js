@@ -186,6 +186,31 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  it("Bun.write(dest, Bun.file(src)) resolves with the number of bytes copied", async () => {
+    using dir = tempDir("bun-write-copy-size", {});
+    const src = join(dir, "src.txt");
+    const dst = join(dir, "dst.txt");
+    await Bun.write(src, "hello world");
+
+    // path -> path
+    const n1 = await Bun.write(dst, Bun.file(src));
+    expect(await Bun.file(dst).text()).toBe("hello world");
+    expect(n1).toBe(11);
+
+    // Bun.file(path) -> Bun.file(path), overwriting existing destination
+    const n2 = await Bun.write(Bun.file(dst), Bun.file(src));
+    expect(await Bun.file(dst).text()).toBe("hello world");
+    expect(n2).toBe(11);
+
+    // empty source file
+    const srcEmpty = join(dir, "src-empty.txt");
+    const dstEmpty = join(dir, "dst-empty.txt");
+    await Bun.write(srcEmpty, "");
+    const n3 = await Bun.write(dstEmpty, Bun.file(srcEmpty));
+    expect(await Bun.file(dstEmpty).text()).toBe("");
+    expect(n3).toBe(0);
+  });
+
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();

@@ -1677,6 +1677,67 @@ impl<'a> CopyFileWindows<'a> {
         );
     }
 
+    /// libuv's `uv_fs_copyfile` does not populate `req->statbuf`, so after a
+    /// successful copy we issue an async stat on the destination to learn how
+    /// many bytes were written before resolving the promise.
+    fn stat_destination_after_copy(&mut self) {
+        let mut pathbuf = PathBuffer::uninit();
+        let path_ptr: *const core::ffi::c_char = match &self
+            .destination_file_store
+            .data
+            .as_file()
+            .pathlike
+        {
+            PathOrFileDescriptor::Path(_) => self
+                .destination_file_store
+                .data
+                .as_file()
+                .pathlike
+                .path()
+                .slice_z(&mut pathbuf)
+                .as_ptr(),
+            PathOrFileDescriptor::Fd(fd) => {
+                // copyfile() already resolved this fd to a path; re-derive it.
+                match bun_sys::get_fd_path(*fd, &mut pathbuf) {
+                    Ok(out) => {
+                        let len = out.len();
+                        pathbuf[len] = 0;
+                        // SAFETY: pathbuf[len] == 0 written above
+                        bun_core::ZStr::from_buf(&pathbuf[..], len).as_ptr()
+                    }
+                    Err(_) => {
+                        self.on_complete(0);
+                        return;
+                    }
+                }
+            }
+        };
+
+        let loop_ = self.event_loop.uv_loop();
+        self.io_request.deinit();
+        // SAFETY: all-zero is a valid libuv::fs_t
+        self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
+        self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
+        // `path_ptr` is NUL-terminated (from `slice_z`/`ZStr`) and live for this call
+        // (libuv `strdup`s it), and `on_stat_after_copy_file` is a valid `uv_fs_cb`.
+        let rc = unsafe {
+            libuv::uv_fs_stat(
+                loop_,
+                &mut self.io_request,
+                path_ptr,
+                Some(on_stat_after_copy_file),
+            )
+        };
+
+        if rc.errno().is_some() {
+            // The copy already succeeded; if stat fails to enqueue, still resolve.
+            self.on_complete(0);
+            return;
+        }
+        self.event_loop.ref_concurrently();
+    }
+
     /// SAFETY: `this` must have been produced by `heap::alloc` in `init()` and
     /// not yet destroyed. After this call `this` is dangling.
     pub unsafe fn destroy(this: *mut Self) {
@@ -1783,8 +1844,28 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    let size = this.io_request.statbuf.size();
-    this.on_complete(size as usize);
+    this.stat_destination_after_copy();
+}
+
+#[cfg(windows)]
+extern "C" fn on_stat_after_copy_file(req: *mut libuv::fs_t) {
+    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
+    // not `from_field_ptr!`; then access the request only via `this.io_request`.
+    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
+
+    let event_loop = this.event_loop;
+    event_loop.unref_concurrently();
+    let rc = this.io_request.result;
+
+    bun_sys::syslog!("uv_fs_stat() = {}", rc);
+    let size = if rc.err_enum_e().is_some() {
+        // The copy already succeeded; if the follow-up stat fails, still resolve.
+        0
+    } else {
+        this.io_request.statbuf.size() as usize
+    };
+    this.on_complete(size);
 }
 
 #[cfg(windows)]

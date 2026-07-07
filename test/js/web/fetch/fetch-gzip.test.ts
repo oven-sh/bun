@@ -478,9 +478,7 @@ describe("Content-Encoding: deflate zlib-header sniff", () => {
       }
     }
     expect(results).toEqual(
-      Object.fromEntries(
-        Object.keys(bodies).map(n => [n, { cmf: bodies[n][0], len: plain.length, ok: true }]),
-      ),
+      Object.fromEntries(Object.keys(bodies).map(n => [n, { cmf: bodies[n][0], len: plain.length, ok: true }])),
     );
   });
 

@@ -940,6 +940,7 @@ public:
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         Vector<void*>& serializedBlockListRefs,
+        Vector<RefPtr<Bun::HistogramData>>& serializedHistograms,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -960,6 +961,7 @@ public:
             out, context, sharedBuffers, forStorage, forTransfer);
         auto code = serializer.serialize(value);
         serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
+        serializedHistograms = WTF::move(serializer.m_serializedHistograms);
         return code;
     }
 
@@ -2124,26 +2126,27 @@ private:
             }
 
             if (auto* histogram = dynamicDowncast<Bun::JSNodePerformanceHooksHistogram>(obj)) {
-                if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage) {
-                    // Don't allow cloning of histograms if it's not a simple .postMessage().
+                // The clone carries a reference to the same HistogramData, which is only
+                // valid within this process, so reject storage and cross-process transfer.
+                if (m_forStorage == SerializationForStorage::Yes || m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
 
-                // Serialize histogram configuration
-                hdr_histogram* hdr = histogram->m_histogramData.histogram;
-                if (!hdr) {
-                    // Histogram is not initialized
+                auto& data = histogram->m_histogramData;
+                if (!data || !data->histogram) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
 
+                if (checkForDuplicate(histogram))
+                    return true;
+                recordObject(histogram);
+
+                uint32_t index = m_serializedHistograms.size();
+                m_serializedHistograms.append(data.get());
                 write(Bun__NodePerformanceHooksHistogramTag);
-                // TODO: write the index into the histograms vector on SerializedScriptValue
-                // make it ThreadSafeRefCounted
-                // and then we can just write the index
-                code = SerializationReturnCode::DataCloneError;
-
+                write(index);
                 return true;
             }
 
@@ -2667,6 +2670,7 @@ private:
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
     Vector<void*> m_serializedBlockListRefs;
+    Vector<RefPtr<Bun::HistogramData>> m_serializedHistograms;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -3031,6 +3035,8 @@ public:
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
+        ,
+        const Vector<RefPtr<Bun::HistogramData>>* serializedHistograms
 #if ENABLE(WEB_CODECS)
         ,
         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
@@ -3052,6 +3058,8 @@ public:
                 ,
             wasmModules, wasmMemoryHandles
 #endif
+                ,
+            serializedHistograms
 #if ENABLE(WEB_CODECS)
             ,
             WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrames)
@@ -3186,6 +3194,8 @@ private:
         ,
         WasmModuleArray* wasmModules = nullptr, WasmMemoryHandleArray* wasmMemoryHandles = nullptr
 #endif
+        ,
+        const Vector<RefPtr<Bun::HistogramData>>* serializedHistograms = nullptr
 #if ENABLE(WEB_CODECS)
         ,
         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks = {}, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames = {}
@@ -3213,6 +3223,7 @@ private:
         , m_wasmModules(wasmModules)
         , m_wasmMemoryHandles(wasmMemoryHandles)
 #endif
+        , m_serializedHistograms(serializedHistograms)
 #if ENABLE(WEB_CODECS)
         , m_serializedVideoChunks(WTF::move(serializedVideoChunks))
         , m_videoChunks(m_serializedVideoChunks.size())
@@ -3293,6 +3304,8 @@ private:
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
+        ,
+        const Vector<RefPtr<Bun::HistogramData>>* serializedHistograms
 #if ENABLE(WEB_CODECS)
         ,
         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks = {}, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames = {}
@@ -3323,6 +3336,7 @@ private:
         , m_wasmModules(wasmModules)
         , m_wasmMemoryHandles(wasmMemoryHandles)
 #endif
+        , m_serializedHistograms(serializedHistograms)
 #if ENABLE(WEB_CODECS)
         , m_serializedVideoChunks(WTF::move(serializedVideoChunks))
         , m_videoChunks(m_serializedVideoChunks.size())
@@ -4808,6 +4822,27 @@ private:
         }
     }
 
+    JSValue readHistogram()
+    {
+        uint32_t index;
+        bool indexSuccessfullyRead = read(index);
+        if (!indexSuccessfullyRead || !m_serializedHistograms || index >= m_serializedHistograms->size()) {
+            fail();
+            return JSValue();
+        }
+        RefPtr<Bun::HistogramData> data = m_serializedHistograms->at(index);
+        if (!data) {
+            fail();
+            return JSValue();
+        }
+        auto* domGlobalObject = defaultGlobalObject(m_globalObject);
+        Structure* structure = domGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(domGlobalObject);
+        auto* obj = Bun::JSNodePerformanceHooksHistogram::create(m_lexicalGlobalObject->vm(), structure, m_globalObject, data.releaseNonNull());
+        m_gcBuffer.appendWithCrashOnOverflow(obj);
+        addTerminalToObjectPool(obj);
+        return obj;
+    }
+
     JSValue readDOMException()
     {
         CachedStringRef message;
@@ -5389,8 +5424,8 @@ private:
         case Bun__KeyObjectTag:
             return readKeyObject();
 
-            // case Bun__NodePerformanceHooksHistogramTag:
-            // ?
+        case Bun__NodePerformanceHooksHistogramTag:
+            return readHistogram();
 
         default:
             m_ptr--; // Push the tag back
@@ -5439,6 +5474,7 @@ private:
     WasmModuleArray* const m_wasmModules;
     WasmMemoryHandleArray* const m_wasmMemoryHandles;
 #endif
+    const Vector<RefPtr<Bun::HistogramData>>* const m_serializedHistograms;
 #if ENABLE(WEB_CODECS)
     Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>> m_serializedVideoChunks;
     Vector<RefPtr<WebCodecsEncodedVideoChunk>> m_videoChunks;
@@ -6428,6 +6464,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
     Vector<void*> serializedBlockListRefs;
+    Vector<RefPtr<Bun::HistogramData>> serializedHistograms;
 #if ENABLE(WEB_CODECS)
     Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>> serializedVideoChunks;
     Vector<RefPtr<WebCodecsVideoFrame>> serializedVideoFrames;
@@ -6463,7 +6500,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistograms, forStorage, forTransfer);
 
     auto releaseSerializedBlockListRefs = [&] {
         for (auto* ptr : serializedBlockListRefs)
@@ -6550,6 +6587,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
             ));
     result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
+    result->m_serializedHistograms = WTF::move(serializedHistograms);
     return result;
 }
 
@@ -6659,6 +6697,8 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         ,
         nullptr, nullptr
 #endif
+        ,
+        nullptr
 #if ENABLE(WEB_CODECS)
         ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
@@ -6916,6 +6956,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                                                ,
         m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get()
 #endif
+                                      ,
+        &m_serializedHistograms
 #if ENABLE(WEB_CODECS)
                                       ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)

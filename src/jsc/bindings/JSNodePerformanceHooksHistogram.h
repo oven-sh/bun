@@ -52,7 +52,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_enableEventLoopDelay);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_disableEventLoopDelay);
 
-class HistogramData {
+class HistogramData : public ThreadSafeRefCounted<HistogramData> {
+    WTF_MAKE_NONCOPYABLE(HistogramData);
+
 public:
     hdr_histogram* histogram;
     uint64_t prevDeltaTime = 0;
@@ -61,9 +63,9 @@ public:
     int64_t manualMin = std::numeric_limits<int64_t>::max(); // Manual min tracking
     int64_t manualMax = 0; // Manual max tracking
 
-    HistogramData(hdr_histogram* histogram)
-        : histogram(histogram)
+    static Ref<HistogramData> create(hdr_histogram* histogram)
     {
+        return adoptRef(*new HistogramData(histogram));
     }
 
     ~HistogramData()
@@ -73,22 +75,10 @@ public:
         }
     }
 
-    // Move constructor (does not call destructor)
-    HistogramData(HistogramData&& other) noexcept
-        : histogram(other.histogram)
-        , prevDeltaTime(other.prevDeltaTime)
-        , exceedsCount(other.exceedsCount)
-        , totalCount(other.totalCount)
-        , manualMin(other.manualMin)
-        , manualMax(other.manualMax)
+private:
+    explicit HistogramData(hdr_histogram* histogram)
+        : histogram(histogram)
     {
-        // Invalidate other's histogram pointer to avoid double free
-        other.histogram = nullptr;
-        other.prevDeltaTime = 0;
-        other.exceedsCount = 0;
-        other.totalCount = 0;
-        other.manualMin = std::numeric_limits<int64_t>::max();
-        other.manualMax = 0;
     }
 };
 
@@ -98,7 +88,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
-    HistogramData m_histogramData;
+    RefPtr<HistogramData> m_histogramData;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -114,7 +104,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
-        HistogramData&& existingHistogramData);
+        Ref<HistogramData>&& existingHistogramData);
 
     void finishCreation(JSC::VM& vm);
     static void destroy(JSC::JSCell*);
@@ -141,15 +131,15 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); });
     }
 
-    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)
+    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, Ref<HistogramData>&& histogramData)
         : Base(vm, structure)
-        , m_histogramData(std::move(histogramData))
+        , m_histogramData(WTF::move(histogramData))
     {
     }
 
     ~JSNodePerformanceHooksHistogram();
 
-    hdr_histogram& histogram() { return *m_histogramData.histogram; }
+    hdr_histogram& histogram() { return *m_histogramData->histogram; }
 
     bool record(int64_t value);
     uint64_t recordDelta(JSGlobalObject* globalObject);
@@ -164,8 +154,6 @@ public:
     size_t getExceeds() const;
     uint64_t getCount() const;
     double add(JSNodePerformanceHooksHistogram* other);
-
-    // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
 private:
     uint16_t m_extraMemorySizeForGC = 0;

@@ -1,7 +1,9 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
-import { createHistogram } from "perf_hooks";
+import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
+import { MessageChannel } from "node:worker_threads";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("Histogram", () => {
   test("basic histogram creation and initial state", () => {
@@ -581,5 +583,114 @@ describe("Histogram", () => {
     const inspected = inspect(h);
 
     assert.ok(inspected.includes("Histogram"));
+  });
+
+  describe("structured clone", () => {
+    test("structuredClone on a recordable histogram shares state", () => {
+      const h = createHistogram();
+      for (const v of [3, 7, 7, 20]) h.record(v);
+
+      const clone = structuredClone(h);
+      assert.notStrictEqual(clone, h);
+      assert.strictEqual(clone.count, 4);
+      assert.strictEqual(clone.min, 3);
+      assert.strictEqual(clone.max, 20);
+      assert.strictEqual(clone.percentile(50), h.percentile(50));
+
+      h.record(100);
+      assert.strictEqual(clone.count, 5);
+      assert.strictEqual(clone.max, 100);
+
+      clone.record(1);
+      assert.strictEqual(h.count, 6);
+      assert.strictEqual(h.min, 1);
+
+      clone.reset();
+      assert.strictEqual(h.count, 0);
+    });
+
+    test("structuredClone on monitorEventLoopDelay histogram", () => {
+      const eld = monitorEventLoopDelay();
+      const clone = structuredClone(eld);
+      assert.notStrictEqual(clone, eld);
+      assert.strictEqual(clone.count, eld.count);
+      assert.strictEqual(typeof clone.percentile, "function");
+    });
+
+    test("structuredClone preserves identity within a graph", () => {
+      const h = createHistogram();
+      h.record(1);
+      const { a, b } = structuredClone({ a: h, b: h });
+      assert.strictEqual(a, b);
+      assert.strictEqual(a.count, 1);
+    });
+
+    test("MessageChannel postMessage delivers histogram", async () => {
+      const h = createHistogram();
+      h.record(5);
+      h.record(10);
+      const { port1, port2 } = new MessageChannel();
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      port2.on("message", resolve);
+      port2.on("messageerror", reject);
+      port1.postMessage(h);
+      const got = await promise;
+      port1.close();
+      port2.close();
+      assert.strictEqual(got.count, 2);
+      assert.strictEqual(got.max, 10);
+
+      const target = createHistogram();
+      target.add(got);
+      assert.strictEqual(target.count, 2);
+    });
+
+    test("Worker postMessage delivers histogram across threads", async () => {
+      using dir = tempDir("histogram-worker", {
+        "main.mjs": `
+          import { Worker } from "node:worker_threads";
+          import { createHistogram } from "node:perf_hooks";
+          const w = new Worker(new URL("./worker.mjs", import.meta.url));
+          const got = await new Promise((resolve, reject) => {
+            w.on("message", resolve);
+            w.on("error", reject);
+          });
+          const target = createHistogram();
+          target.add(got);
+          await w.terminate();
+          Bun.gc(true);
+          console.log(JSON.stringify({
+            count: got.count,
+            min: got.min,
+            max: got.max,
+            added: target.count,
+          }));
+        `,
+        "worker.mjs": `
+          import { parentPort } from "node:worker_threads";
+          import { createHistogram } from "node:perf_hooks";
+          const h = createHistogram();
+          h.record(5);
+          h.record(10);
+          h.record(100);
+          parentPort.postMessage(h);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      assert.strictEqual(stderr, "");
+      assert.deepStrictEqual(JSON.parse(stdout), { count: 3, min: 5, max: 100, added: 3 });
+      assert.strictEqual(exitCode, 0);
+    });
   });
 });

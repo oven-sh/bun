@@ -4854,8 +4854,6 @@ impl H2FrameParser {
                         self.remote_window_size.get()
                     );
 
-                    // First remote SETTINGS is empty: INITIAL_WINDOW_SIZE stays at the default, so
-                    // the §6.9.2 per-stream delta is zero and no adjustment is needed.
                     let global = self.handlers.get().global();
                     self.dispatch(
                         JSH2FrameParser::Gc::onRemoteSettings,
@@ -5604,10 +5602,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             ..Default::default()
         };
         self.remote_settings.set(Some(fp));
-        // §6.9.2: a change to INITIAL_WINDOW_SIZE shifts every stream's send window by
-        // (new - old); a decrease can drive the effective window negative. The legacy outbound
-        // tracks (remote_window_size, remote_used_window_size) as cumulative u64 with
-        // available = saturating_sub, so adjust the grant side by the delta.
+        // §6.9.2: a change to INITIAL_WINDOW_SIZE shifts every stream's send window by (new - old);
+        // a decrease can drive it negative. The legacy outbound tracks (grant, used) as u64 with
+        // available = saturating_sub, so shift the grant side by the delta.
         let delta = settings.initial_window_size as i64 - old_initial_window as i64;
         if delta != 0 {
             for (_, item) in self.streams.get().iter() {

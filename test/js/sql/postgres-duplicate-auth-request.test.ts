@@ -22,12 +22,12 @@ import {
 } from "./wire-frames";
 
 /**
- * Answer the startup packet with `request`, then answer every subsequent
- * client message (PasswordMessage / SASLInitialResponse, type 'p') with the
- * same `request` again, up to `limit` times. Resolves to the error the
- * client surfaced and the number of 'p' responses observed.
+ * Answer the startup packet with `first`, then answer every subsequent client
+ * message (PasswordMessage / SASLInitialResponse, type 'p') with `second`, up
+ * to `limit` times. Resolves to the error the client surfaced and the number
+ * of 'p' responses observed.
  */
-async function duplicateAuthRequest(request: Buffer, limit: number) {
+async function duplicateAuthRequest(first: Buffer, second: Buffer, limit: number) {
   let responses = 0;
   const { port, server } = await listeningServer(socket => {
     let buf = Buffer.alloc(0);
@@ -38,85 +38,6 @@ async function duplicateAuthRequest(request: Buffer, limit: number) {
       for (;;) {
         if (!sawStartup) {
           // StartupMessage: Int32(len) Int32(protocol) ...; no leading type byte.
-          if (buf.length < 4) return;
-          const len = buf.readInt32BE(0);
-          if (buf.length < len) return;
-          sawStartup = true;
-          buf = buf.subarray(len);
-          socket.write(request);
-          continue;
-        }
-        if (buf.length < 5) return;
-        const len = buf.readInt32BE(1);
-        if (buf.length < 1 + len) return;
-        const type = String.fromCharCode(buf[0]);
-        buf = buf.subarray(1 + len);
-        if (type !== "p") continue;
-        responses++;
-        if (responses >= limit) {
-          socket.destroy();
-          return;
-        }
-        socket.write(request);
-      }
-    });
-  });
-
-  const db = new SQL({
-    url: `postgres://u:pw@127.0.0.1:${port}/db?sslmode=disable`,
-    max: 1,
-    connectionTimeout: 2,
-  });
-  let err: any;
-  try {
-    await db.connect();
-    err = new Error("expected connect() to reject");
-  } catch (e) {
-    err = e;
-  } finally {
-    await db.close({ timeout: 0 });
-    await new Promise<void>(r => server.close(() => r()));
-  }
-  return { err, responses };
-}
-
-const methods = [
-  { name: "AuthenticationSASL", frame: pgAuthenticationSASL() },
-  { name: "AuthenticationCleartextPassword", frame: pgAuthenticationCleartextPassword() },
-  { name: "AuthenticationMD5Password", frame: pgAuthenticationMD5Password() },
-];
-
-test.each(methods)("postgres: duplicate $name is rejected, not answered again", async ({ frame }) => {
-  const limit = 50;
-  const { err, responses } = await duplicateAuthRequest(frame, limit);
-  // The client must answer the first request (responses == 1) and then error
-  // on the duplicate without answering it. Before the fix `responses` hit
-  // `limit` in a few milliseconds.
-  expect({ code: err.code, responses }).toEqual({
-    code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
-    responses: 1,
-  });
-});
-
-// Mixed sequences: a second authentication-start message of any kind after
-// a first of a different kind is equally a protocol violation.
-const mixed = [
-  { name: "SASL after CleartextPassword", first: pgAuthenticationCleartextPassword(), second: pgAuthenticationSASL() },
-  { name: "CleartextPassword after SASL", first: pgAuthenticationSASL(), second: pgAuthenticationCleartextPassword() },
-  { name: "MD5Password after SASL", first: pgAuthenticationSASL(), second: pgAuthenticationMD5Password() },
-];
-
-test.each(mixed)("postgres: $name is rejected", async ({ first, second }) => {
-  const limit = 50;
-  let responses = 0;
-  const { port, server } = await listeningServer(socket => {
-    let buf = Buffer.alloc(0);
-    let sawStartup = false;
-    socket.on("error", () => {});
-    socket.on("data", chunk => {
-      buf = Buffer.concat([buf, chunk]);
-      for (;;) {
-        if (!sawStartup) {
           if (buf.length < 4) return;
           const len = buf.readInt32BE(0);
           if (buf.length < len) return;
@@ -156,6 +77,36 @@ test.each(mixed)("postgres: $name is rejected", async ({ first, second }) => {
     await db.close({ timeout: 0 });
     await new Promise<void>(r => server.close(() => r()));
   }
+  return { err, responses };
+}
+
+const methods = [
+  { name: "AuthenticationSASL", frame: pgAuthenticationSASL() },
+  { name: "AuthenticationCleartextPassword", frame: pgAuthenticationCleartextPassword() },
+  { name: "AuthenticationMD5Password", frame: pgAuthenticationMD5Password() },
+];
+
+test.each(methods)("postgres: duplicate $name is rejected, not answered again", async ({ frame }) => {
+  const { err, responses } = await duplicateAuthRequest(frame, frame, 50);
+  // The client must answer the first request (responses == 1) and then error
+  // on the duplicate without answering it. Before the fix `responses` hit the
+  // limit in a few milliseconds.
+  expect({ code: err.code, responses }).toEqual({
+    code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
+    responses: 1,
+  });
+});
+
+// Mixed sequences: a second authentication-start message of any kind after
+// a first of a different kind is equally a protocol violation.
+const mixed = [
+  { name: "SASL after CleartextPassword", first: pgAuthenticationCleartextPassword(), second: pgAuthenticationSASL() },
+  { name: "CleartextPassword after SASL", first: pgAuthenticationSASL(), second: pgAuthenticationCleartextPassword() },
+  { name: "MD5Password after SASL", first: pgAuthenticationSASL(), second: pgAuthenticationMD5Password() },
+];
+
+test.each(mixed)("postgres: $name is rejected", async ({ first, second }) => {
+  const { err, responses } = await duplicateAuthRequest(first, second, 50);
   expect({ code: err.code, responses }).toEqual({
     code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
     responses: 1,

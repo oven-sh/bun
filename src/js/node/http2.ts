@@ -2102,6 +2102,7 @@ class Http2Stream extends Duplex {
   #sentTrailers: any;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  [kNeverAnnounced]: boolean = false;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,

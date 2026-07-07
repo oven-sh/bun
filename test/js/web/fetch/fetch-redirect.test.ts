@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 
 // WHATWG HTTP-redirect fetch runs on the response head (status line + Location);
 // the 3xx body is discarded, not awaited. A redirecting server that never finishes

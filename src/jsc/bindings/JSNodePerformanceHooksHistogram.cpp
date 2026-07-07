@@ -77,9 +77,7 @@ void JSNodePerformanceHooksHistogram::visitChildrenImpl(JSCell* cell, Visitor& v
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    if (!thisObject->m_histogramData || !thisObject->m_histogramData->histogram) {
-        visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
-    }
+    visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
 }
 
 DEFINE_VISIT_CHILDREN(JSNodePerformanceHooksHistogram);

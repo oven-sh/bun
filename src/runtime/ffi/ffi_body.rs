@@ -725,11 +725,10 @@ impl CompileC {
                           p.extend_from_slice($seg);)+
                         p.push(0);
                         let z = bun_core::ZStr::from_slice_with_nul(&p);
-                            if $is_lib {
-                                let _ = state.add_library_path(z);
-                            } else {
-                                let _ = state.add_sys_include_path(z);
-                            }
+                        if $is_lib {
+                            let _ = state.add_library_path(z);
+                        } else {
+                            let _ = state.add_sys_include_path(z);
                         }
                     }};
                 }

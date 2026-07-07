@@ -1,0 +1,134 @@
+// A raw JavaScript array passed as a query parameter (not via sql.array) must be
+// encoded in the Bind message as a PostgreSQL text array literal (`{1,2,3}`) with
+// format code 0 (text). Before the fix the Bind writer had no array value encoder:
+// int4[]/float4[] parameters were declared binary (format 1) yet carried a scalar
+// or ASCII payload, and other array OIDs were stringified with JS toString
+// ("1,2", no braces), so a real server rejected every array parameter with
+// `08P01 insufficient data left in message` / `malformed array literal`.
+//
+// This asserts the exact Bind frame bytes with a mock backend so it is
+// deterministic and needs no real PostgreSQL. Frame bytes come from
+// ./wire-frames.ts.
+import { SQL } from "bun";
+import { expect, test } from "bun:test";
+import {
+  listeningServer,
+  pgAuthenticationOk,
+  pgBindComplete,
+  pgCommandComplete,
+  pgDecodeBind,
+  pgNoData,
+  pgParameterDescription,
+  pgParseComplete,
+  pgReadyForQuery,
+  pgSplitFrontend,
+  type PgBindMessage,
+} from "./wire-frames";
+
+// Drive one prepared query whose single parameter the backend reports as
+// `paramOid`, and return the decoded Bind message the client sent.
+async function captureBind(paramOid: number, param: unknown): Promise<PgBindMessage> {
+  const { promise, resolve, reject } = Promise.withResolvers<PgBindMessage>();
+
+  const { port, server } = await listeningServer(socket => {
+    let startupDone = false;
+    let buffered = Buffer.alloc(0);
+    let batch: { type: string; body: Buffer }[] = [];
+
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      if (!startupDone) {
+        startupDone = true;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      buffered = Buffer.concat([buffered, chunk]);
+      // Extract complete frames; a Sync ('S') ends a request batch.
+      while (buffered.length >= 5) {
+        const len = buffered.readInt32BE(1);
+        if (buffered.length < 1 + len) break;
+        const frame = pgSplitFrontend(buffered.subarray(0, 1 + len))[0];
+        buffered = buffered.subarray(1 + len);
+        batch.push(frame);
+        if (frame.type !== "S") continue;
+
+        const current = batch;
+        batch = [];
+        const bind = current.find(f => f.type === "B");
+        if (bind) {
+          // Execute phase: capture the Bind and let the query complete empty.
+          socket.write(Buffer.concat([pgBindComplete(), pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+          resolve(pgDecodeBind(bind.body));
+        } else {
+          // Prepare phase (Parse + Describe): report the parameter type.
+          socket.write(
+            Buffer.concat([pgParseComplete(), pgParameterDescription([paramOid]), pgNoData(), pgReadyForQuery()]),
+          );
+        }
+      }
+    });
+  });
+
+  await using sql = new SQL({ hostname: "127.0.0.1", port, username: "x", database: "x", max: 1 });
+  try {
+    await sql.unsafe("select $1", [param]);
+  } catch (e) {
+    reject(e as Error);
+  }
+  const result = await promise;
+  server.close();
+  return result;
+}
+
+const text = (b: Buffer | null) => (b === null ? null : b.toString("latin1"));
+
+test("int4[] array parameter is sent as a text array literal, format 0", async () => {
+  const bind = await captureBind(1007 /* int4_array */, [1, 2, 3]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"1","2","3"}`);
+});
+
+test("float4[] array parameter is sent as a text array literal, format 0", async () => {
+  const bind = await captureBind(1021 /* float4_array */, [1.5, 2.5]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"1.5","2.5"}`);
+});
+
+test("text[] array parameter is wrapped in braces", async () => {
+  const bind = await captureBind(1009 /* text_array */, ["a", "b"]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"a","b"}`);
+});
+
+test("int8[] array parameter is wrapped in braces", async () => {
+  const bind = await captureBind(1016 /* int8_array */, [1, 2]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"1","2"}`);
+});
+
+test("null elements become NULL and quotes/backslashes are escaped", async () => {
+  const bind = await captureBind(1009 /* text_array */, ["a,b", `he"llo`, "back\\slash", null]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{"a,b","he\\"llo","back\\\\slash",NULL}`);
+});
+
+test("nested arrays produce nested braces", async () => {
+  const bind = await captureBind(1007 /* int4_array */, [
+    [1, 2],
+    [3, 4],
+  ]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{{"1","2"},{"3","4"}}`);
+});
+
+test("empty array becomes {}", async () => {
+  const bind = await captureBind(1007 /* int4_array */, []);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`{}`);
+});
+
+test("jsonb array parameter stays JSON, not a pg array literal", async () => {
+  const bind = await captureBind(3802 /* jsonb */, ["a", "b"]);
+  expect(bind.formatCodes).toEqual([0]);
+  expect(text(bind.values[0])).toBe(`["a","b"]`);
+});

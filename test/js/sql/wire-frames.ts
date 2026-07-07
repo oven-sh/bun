@@ -133,6 +133,88 @@ export function pgCommandComplete(tag: string): Buffer {
   return pgRaw("C", Buffer.concat([Buffer.from(tag), Buffer.from([0])]));
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 NoData: Byte1('n') Int32(4)
+export function pgNoData(): Buffer {
+  return pgRaw("n", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
+export function pgParameterDescription(oids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * oids.length);
+  body.writeInt16BE(oids.length, 0);
+  for (let i = 0; i < oids.length; i++) body.writeInt32BE(oids[i], 2 + 4 * i);
+  return pgRaw("t", body);
+}
+
+export type PgBindMessage = {
+  portal: string;
+  statement: string;
+  /** one entry per declared parameter format code (0 = text, 1 = binary) */
+  formatCodes: number[];
+  /** raw parameter value bytes, or null for a SQL NULL parameter */
+  values: (Buffer | null)[];
+};
+
+// Decode a frontend Bind message body (everything after Byte1('B') Int32(len)) —
+// §55.7: String(portal) String(statement) Int16(C) Int16[C](format) Int16(V)
+// per value Int32(len | -1) Byte[len], then the result-format codes (ignored here).
+export function pgDecodeBind(body: Buffer): PgBindMessage {
+  let o = 0;
+  const readCString = (): string => {
+    const end = body.indexOf(0, o);
+    const s = body.subarray(o, end).toString("latin1");
+    o = end + 1;
+    return s;
+  };
+  const portal = readCString();
+  const statement = readCString();
+  const formatCount = body.readInt16BE(o);
+  o += 2;
+  const formatCodes: number[] = [];
+  for (let i = 0; i < formatCount; i++) {
+    formatCodes.push(body.readInt16BE(o));
+    o += 2;
+  }
+  const valueCount = body.readInt16BE(o);
+  o += 2;
+  const values: (Buffer | null)[] = [];
+  for (let i = 0; i < valueCount; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    if (len === -1) {
+      values.push(null);
+    } else {
+      values.push(body.subarray(o, o + len));
+      o += len;
+    }
+  }
+  return { portal, statement, formatCodes, values };
+}
+
+// Split a frontend protocol buffer into [Byte1(type), body] frames.
+// Startup packets (no type byte) are not handled here; use only post-startup.
+export function pgSplitFrontend(buf: Buffer): { type: string; body: Buffer }[] {
+  const out: { type: string; body: Buffer }[] = [];
+  let o = 0;
+  while (o + 5 <= buf.length) {
+    const type = String.fromCharCode(buf[o]);
+    const len = buf.readInt32BE(o + 1);
+    out.push({ type, body: buf.subarray(o + 5, o + 1 + len) });
+    o += 1 + len;
+  }
+  return out;
+}
+
 export type PgRowDescriptionColumn = {
   name: string;
   tableOid?: number;

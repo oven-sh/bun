@@ -84,7 +84,7 @@ describe("response Connection: close closes the socket", () => {
 
       const responses = (result.raw.match(/HTTP\/1\.1 200/g) ?? []).length;
       const head = result.raw.split("\r\n\r\n")[0];
-      expect(head.toLowerCase()).toContain("connection: close");
+      expect(head).toMatch(/\r\nconnection:[^\r\n]*\bclose\b/i);
       expect({ responses, handled, closedByServer: result.closedByServer }).toEqual({
         responses: 1,
         handled: 1,
@@ -101,6 +101,12 @@ describe("response Connection: close closes the socket", () => {
 
   test("case-insensitive value", async () => {
     await check(() => new Response("bye", { headers: { connection: "Close" } }));
+  });
+
+  test("token list", async () => {
+    // Connection is 1#connection-option: "close" as one of several tokens must
+    // still trigger closure.
+    await check(() => new Response("bye", { headers: { Connection: "TE, close" } }));
   });
 
   test("streaming body", async () => {

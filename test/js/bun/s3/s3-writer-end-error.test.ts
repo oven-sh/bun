@@ -141,6 +141,9 @@ test("S3File.writer().end(error) aborts the upload and rejects", async () => {
       HTTPS_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
+      // LSan flags pre-existing transpiler/sourcemap leaks from the -e fixture
+      // itself; unrelated to S3, so don't let it abort the child.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",

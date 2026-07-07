@@ -32,6 +32,7 @@ pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 pub mod bun_s3 {
     pub use crate::webcore::s3::MultiPartUpload;
     pub use crate::webcore::s3::multipart::State as MultiPartUploadState;
+    pub use crate::webcore::s3::simple_request::S3UploadResult;
     pub use bun_s3_signing::error::S3Error;
 }
 
@@ -2443,18 +2444,32 @@ impl NetworkSink {
         }
         let value = self.end_promise.value();
         let _keep_value = bun_jsc::EnsureStillAlive(value);
-        // Reject with the caller's error before `fail()` reaches the wrapper
-        // callback; `reject()` swaps the Strong to empty so the callback's
-        // Failure branch is a no-op and only `finalize()` runs.
         let _ = self.end_promise.reject(global_this, Ok(err));
-        if self
-            .task_mut()
-            .is_some_and(|t| t.state != bun_s3::MultiPartUploadState::Finished)
-        {
-            let _ = self.task_mut().unwrap().fail(bun_s3::S3Error {
-                code: b"UnknownError",
-                message: b"The upload was aborted by the writer",
-            });
+        // Detach the task before driving `fail()`: the wrapper callback would
+        // form a second `&mut NetworkSink` while `&mut self` is live. Swap in
+        // a no-op callback so `fail()` cannot re-enter this sink at all.
+        if let Some(task) = self.task.take() {
+            fn noop(
+                _: bun_s3::S3UploadResult,
+                _: *mut c_void,
+            ) -> core::result::Result<(), jsc::JsTerminated> {
+                core::result::Result::Ok(())
+            }
+            let task_ptr = task.as_ptr();
+            // SAFETY: `task` was the sink's counted ref; it stays live until
+            // `deref_` below. Single JS thread, no other borrow at this site.
+            unsafe {
+                (*task_ptr).callback = noop;
+                (*task_ptr).callback_context = core::ptr::null_mut();
+                (*task_ptr).on_writable = None;
+                if (*task_ptr).state != bun_s3::MultiPartUploadState::Finished {
+                    let _ = (*task_ptr).fail(bun_s3::S3Error {
+                        code: b"UnknownError",
+                        message: b"The upload was aborted by the writer",
+                    });
+                }
+            }
+            bun_s3::MultiPartUpload::deref_(task_ptr);
         }
         bun_sys::Result::Ok(value)
     }

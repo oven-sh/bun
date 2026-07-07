@@ -43,6 +43,10 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
           console.error("expected syscall listen, got", e.syscall);
           process.exit(1);
         }
+        if (e.path !== pipe) {
+          console.error("expected path", pipe, "got", e.path);
+          process.exit(1);
+        }
       }
 
       first.stop(true);

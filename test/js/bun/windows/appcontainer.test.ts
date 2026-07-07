@@ -265,6 +265,57 @@ async function main() {
     });
   });
 
+  r.realpathVariants = await (async () => {
+    const { promisify } = require("util");
+    const vals = [
+      fs.realpathSync("."),
+      fs.realpathSync.native("."),
+      await fs.promises.realpath("."),
+      await promisify(fs.realpath)("."),
+      await promisify(fs.realpath.native)("."),
+    ];
+    return vals.every(v => v === vals[0]) ? "OK" : JSON.stringify(vals);
+  })();
+
+  r.forkIpc = await (async () => {
+    fs.writeFileSync("fork-child.js", 'process.send("ping"); process.on("message", () => process.exit(0));');
+    const cp = require("child_process");
+    return await new Promise(resolve => {
+      const child = cp.fork("fork-child.js", [], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+      const timer = setTimeout(() => {
+        try { child.kill(); } catch {}
+        resolve("timeout waiting for ipc");
+      }, 15000);
+      let got = null;
+      child.once("error", e => { clearTimeout(timer); resolve("error:" + (e.code || e)); });
+      // Registered up front: a child that dies before sending "ping" resolves
+      // immediately (classified below) instead of burning the 15s backstop.
+      child.once("exit", code => {
+        clearTimeout(timer);
+        resolve(got === "ping" && code === 0 ? "OK" : got === null ? "ipc-exit:" + code : "bad:" + got + ":" + code);
+      });
+      child.once("message", m => { got = m; child.send("bye"); });
+    });
+  })();
+
+  r.serveFetch = await (async () => {
+    let srv;
+    try {
+      srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("AC_SERVE_OK") });
+    } catch (e) {
+      return "listen:" + (e.code || e);
+    }
+    try {
+      const res = await fetch("http://127.0.0.1:" + srv.port + "/", { signal: AbortSignal.timeout(5000) });
+      const text = await res.text();
+      return text === "AC_SERVE_OK" ? "OK" : "mismatch:" + text;
+    } catch (e) {
+      return "fetch:" + (e.code || e.name || e);
+    } finally {
+      srv.stop(true);
+    }
+  })();
+
   fs.writeFileSync("results.json", JSON.stringify(r));
 }
 main().then(
@@ -290,6 +341,12 @@ main().then(
       expect(r.realpath).toBe(true);
       expect(r.pipeNonLocal).toBe("EACCES");
       expect(r.pipeLocal).toBe("LISTENED");
+      expect(r.realpathVariants).toBe("OK");
+      expect(r.forkIpc).toBe("OK");
+      // No network capability + no loopback exemption: the probe records a
+      // classified outcome; this guards only an unset key, an unclassified
+      // crash, or a served wrong body. Pin the value once container CI reports it.
+      expect(String(r.serveFetch)).toMatch(/^(OK$|listen:|fetch:)/);
     },
     90_000,
   );

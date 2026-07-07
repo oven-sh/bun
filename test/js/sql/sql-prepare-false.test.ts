@@ -171,4 +171,18 @@ describe("PostgreSQL prepare: false", async () => {
     const [{ v }] = await db`SELECT ${obj}::text AS v`;
     expect(v).toBe(JSON.stringify(obj));
   });
+
+  // Guard: sql.array nested inside an UPDATE helper reaches native as its
+  // pre-serialized string, not the SQLArrayParameter wrapper object, so the
+  // JSON path above never applies to it.
+  test("sql.array inside an UPDATE helper still binds as an array literal", async () => {
+    await using db = new SQL(options);
+    const t = "prepare_false_arr_" + Date.now();
+    await db`CREATE TEMPORARY TABLE ${db(t)} (id SERIAL PRIMARY KEY, name VARCHAR NOT NULL, roles TEXT[])`;
+    const [{ id }] =
+      await db`INSERT INTO ${db(t)} (name, roles) VALUES (${"a"}, ${db.array(["a", "b"], "TEXT")}) RETURNING *`;
+    const [{ roles }] =
+      await db`UPDATE ${db(t)} SET ${db({ name: "b", roles: db.array(["c", "d"], "TEXT") })} WHERE id = ${id} RETURNING *`;
+    expect(roles).toEqual(["c", "d"]);
+  });
 });

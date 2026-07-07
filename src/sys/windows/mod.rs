@@ -111,6 +111,7 @@ pub use bun_windows_sys::FALSE;
 pub use bun_windows_sys::FILE_BEGIN;
 pub use bun_windows_sys::FILE_CURRENT;
 pub use bun_windows_sys::FILE_END;
+pub use bun_windows_sys::FILE_CREATE;
 pub use bun_windows_sys::FILE_OPEN;
 pub use bun_windows_sys::INVALID_HANDLE_VALUE;
 pub use bun_windows_sys::LARGE_INTEGER;

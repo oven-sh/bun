@@ -779,6 +779,70 @@ describe.concurrent(() => {
     it("process.getuid", () => {
       expect(typeof process.getuid()).toBe("number");
     });
+
+    // Regression: on Linux, glibc/musl implement the set*id() family by broadcasting a
+    // realtime signal to every thread and blocking on a barrier. If JSC's GC (or the
+    // bmalloc scavenger) had signal-suspended a thread, it could never ack the barrier
+    // and the whole process wedged at 0% CPU. The race is probabilistic, so hammer
+    // seteuid under GC pressure from many processes at once and require each to exit.
+    it.skipIf(process.platform !== "linux" || process.getuid() !== 0)(
+      "seteuid under GC pressure does not deadlock",
+      async () => {
+        using dir = tempDir("seteuid-deadlock", {
+          "hammer.js": `
+            const dec = new TextDecoder();
+            const buf = new Uint8Array(60000).fill(65);
+            let n = 0;
+            const t0 = Date.now();
+            const runMs = Number(process.env.HAMMER_MS);
+            function chunk() {
+              for (let j = 0; j < 400; j++) {
+                process.seteuid(65534);
+                let s = "";
+                for (let i = 0; i < 20; i++) s += dec.decode(buf).slice(0, 1000 + (n % 7));
+                process.seteuid(0);
+                if (s.length < 0) console.log(s.length);
+                n++;
+              }
+              if (Date.now() - t0 < runMs) setImmediate(chunk);
+              else process.exit(0);
+            }
+            chunk();
+          `,
+        });
+        const hammerPath = join(String(dir), "hammer.js");
+        const CONCURRENCY = 12;
+        const ROUNDS = 3;
+        const HAMMER_MS = 8_000;
+        const DEADLINE_MS = 30_000;
+
+        const runOne = async () => {
+          const proc = Bun.spawn({
+            cmd: [bunExe(), hammerPath],
+            env: { ...bunEnv, HAMMER_MS: String(HAMMER_MS) },
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          const { promise, resolve } = Promise.withResolvers();
+          const timer = setTimeout(() => resolve("deadlocked"), DEADLINE_MS);
+          const outcome = await Promise.race([proc.exited.then(() => "exited"), promise]);
+          clearTimeout(timer);
+          // A wedged process sits at 0% CPU forever; a healthy one exits on its own.
+          if (outcome === "deadlocked") {
+            proc.kill("SIGKILL");
+            return { deadlocked: true, exitCode: null };
+          }
+          return { deadlocked: false, exitCode: proc.exitCode };
+        };
+
+        const expected = Array.from({ length: CONCURRENCY }, () => ({ deadlocked: false, exitCode: 0 }));
+        for (let round = 0; round < ROUNDS; round++) {
+          const results = await Promise.all(Array.from({ length: CONCURRENCY }, runOne));
+          expect(results).toEqual(expected);
+        }
+      },
+      120_000,
+    );
   } else {
     it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
       expect(process.getegid).toBeUndefined();

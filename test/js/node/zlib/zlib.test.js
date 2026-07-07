@@ -326,92 +326,47 @@ describe("zlib.brotli", () => {
   // Passing a zlib-only flush constant (Z_FINISH=4, Z_BLOCK=5) to .flush() used
   // to abort the whole process — the shared write path validated against the
   // zlib flush range (0..=6) and brotli's set_flush trapped on anything above 3.
-  // They are now rejected at the write boundary with an ERR_INVALID_ARG_TYPE
-  // TypeError (the code Node throws for an out-of-range flush), surfaced as a
-  // stream 'error' event and an errored flush callback. (Node silently accepts
-  // these particular values and hangs forever instead — nodejs/node#63701.)
+  // Match Node's nodejs/node#63746 fix for nodejs/node#63701: .flush(kind)
+  // validates kind against the codec's FLUSH_BOUND before queuing the fake
+  // flush chunk, so an out-of-range kind throws ERR_OUT_OF_RANGE synchronously.
   describe.each([
     ["Z_FINISH", zlib.constants.Z_FINISH],
     ["Z_BLOCK", zlib.constants.Z_BLOCK],
-  ])("brotli flush(%s) is rejected with ERR_INVALID_ARG_TYPE", (_, kind) => {
+  ])("brotli flush(%s) throws ERR_OUT_OF_RANGE synchronously", (_, kind) => {
     // Run in a subprocess: a regression here either aborts the process (panic)
     // or never settles the stream (hang) — both must show up as a failed or
     // timed-out subprocess instead of a pass (or a dead test runner).
-    it("createBrotliCompress", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            const z = require("zlib");
-            const s = z.createBrotliCompress();
-            let cbErr = null, evtErr = null;
-            function report(err) {
-              return { code: err.code, isTypeError: err instanceof TypeError };
-            }
-            function check() {
-              if (cbErr && evtErr) {
-                console.log(JSON.stringify({ flushCb: report(cbErr), errorEvent: report(evtErr) }));
-                process.exit(0);
+    for (const factory of ["createBrotliCompress", "createBrotliDecompress"]) {
+      it(factory, async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const z = require("zlib");
+              const s = z.${factory}();
+              s.on("error", err => { throw new Error("unexpected stream error: " + err); });
+              s.write(Buffer.alloc(128, 0x61));
+              try {
+                s.flush(${kind});
+                console.log(JSON.stringify({ threw: false }));
+              } catch (err) {
+                console.log(JSON.stringify({ threw: true, code: err.code, isRangeError: err instanceof RangeError }));
               }
-            }
-            s.on("error", err => { evtErr = err; check(); });
-            s.write(Buffer.alloc(128, 0x61));
-            s.flush(${kind}, err => { cbErr = err; check(); });
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+              s.destroy();
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+        expect(stderrLines).toEqual([]);
+        expect(JSON.parse(stdout)).toEqual({ threw: true, code: "ERR_OUT_OF_RANGE", isRangeError: true });
+        expect(exitCode).toBe(0);
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
-      expect(stderrLines).toEqual([]);
-      expect(JSON.parse(stdout)).toEqual({
-        flushCb: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
-        errorEvent: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
-      });
-      expect(exitCode).toBe(0);
-    });
-
-    it("createBrotliDecompress", async () => {
-      const compressed = zlib.brotliCompressSync(Buffer.alloc(128, 0x62));
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            const z = require("zlib");
-            const s = z.createBrotliDecompress();
-            let cbErr = null, evtErr = null;
-            function report(err) {
-              return { code: err.code, isTypeError: err instanceof TypeError };
-            }
-            function check() {
-              if (cbErr && evtErr) {
-                console.log(JSON.stringify({ flushCb: report(cbErr), errorEvent: report(evtErr) }));
-                process.exit(0);
-              }
-            }
-            s.on("error", err => { evtErr = err; check(); });
-            s.on("data", () => {});
-            s.write(Buffer.from(${JSON.stringify([...compressed])}));
-            s.flush(${kind}, err => { cbErr = err; check(); });
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
-      expect(stderrLines).toEqual([]);
-      expect(JSON.parse(stdout)).toEqual({
-        flushCb: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
-        errorEvent: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
-      });
-      expect(exitCode).toBe(0);
-    });
+    }
   });
 
   // Valid brotli flush values are unaffected by the narrowed validation.

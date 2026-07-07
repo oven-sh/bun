@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import * as http from "node:http";
 import { once } from "node:events";
+import * as http from "node:http";
 
 // https://fetch.spec.whatwg.org/#dom-request step 6:
 //   "If parsedURL includes credentials, then throw a TypeError."

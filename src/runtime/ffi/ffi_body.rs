@@ -712,44 +712,30 @@ impl CompileC {
         #[cfg(target_env = "ohos")]
         {
             // OHOS: add sysroot include/lib paths from $OHOS_SDK env var.
-            // The SDK layout is: $OHOS_SDK/sysroot/usr/include/{,aarch64-linux-ohos/}
-            // for headers and $OHOS_SDK/sysroot/usr/lib/aarch64-linux-ohos/ for libs.
-            if let Some(ohos_sdk) = std::env::var_os("OHOS_SDK") {
-                if let Some(sdk_str) = ohos_sdk.to_str() {
-                    let sdk_bytes = sdk_str.as_bytes();
-                    // sysroot path
-                    let sysroot = {
-                        let mut buf = PathBuffer::uninit();
-                        let z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                            sdk_bytes, buf.as_mut_slice(), &[b"sysroot"]
-                        );
-                        bun_core::ZBox::from_bytes(z.as_bytes())
-                    };
-                    // usr/include
-                    {
-                        let mut buf = PathBuffer::uninit();
-                        let z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                            sysroot.as_slice(), buf.as_mut_slice(), &[b"usr", b"include"]
-                        );
-                        let _ = state.add_sys_include_path(z);
-                    }
-                    // usr/include/aarch64-linux-ohos (bits/alltypes.h)
-                    {
-                        let mut buf = PathBuffer::uninit();
-                        let z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                            sysroot.as_slice(), buf.as_mut_slice(), &[b"usr", b"include", b"aarch64-linux-ohos"]
-                        );
-                        let _ = state.add_sys_include_path(z);
-                    }
-                    // usr/lib/aarch64-linux-ohos (libc)
-                    {
-                        let mut buf = PathBuffer::uninit();
-                        let z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                            sysroot.as_slice(), buf.as_mut_slice(), &[b"usr", b"lib", b"aarch64-linux-ohos"]
-                        );
-                        let _ = state.add_library_path(z);
-                    }
+            let ohos_sdk_path: Option<&[u8]> = std::env::var_os("OHOS_SDK")
+                .and_then(|os| os.to_str())
+                .map(|s| s.as_bytes());
+            if let Some(sdk) = ohos_sdk_path {
+                // Helper: build path from components and add to TCC
+                macro_rules! add_ohos_path {
+                    ($is_lib:expr, $($seg:expr),+) => {{
+                        let mut p: Vec<u8> = Vec::new();
+                        p.extend_from_slice(sdk);
+                        $(p.push(b'/');
+                          p.extend_from_slice($seg);)+
+                        p.push(0);
+                        if let Ok(z) = bun_core::ZStr::from_bytes_with_nul(&p) {
+                            if $is_lib {
+                                let _ = state.add_library_path(z);
+                            } else {
+                                let _ = state.add_sys_include_path(z);
+                            }
+                        }
+                    }};
                 }
+                add_ohos_path!(false, b"sysroot", b"usr", b"include");
+                add_ohos_path!(false, b"sysroot", b"usr", b"include", b"aarch64-linux-ohos");
+                add_ohos_path!(true,  b"sysroot", b"usr", b"lib", b"aarch64-linux-ohos");
             }
         }
         #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]

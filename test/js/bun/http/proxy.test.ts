@@ -1662,6 +1662,7 @@ test("WebSocket proxy as URL instance routes through the proxy", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error("stderr:", stderr);
   const out = JSON.parse(stdout.trim());
   // The proxy destroys the socket immediately, so the WebSocket errors; what
   // matters is that it hit the proxy instead of reaching the origin.

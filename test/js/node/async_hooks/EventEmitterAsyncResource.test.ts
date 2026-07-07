@@ -26,4 +26,19 @@ describe("EventEmitterAsyncResource", () => {
 
     expect(val).toBe(123);
   });
+  test("emit() returns a boolean like EventEmitter#emit", () => {
+    const ee = new EventEmitterAsyncResource({ name: "R" });
+    ee.on("e", () => {});
+    ee.on("error", () => {});
+
+    expect({
+      withListener: ee.emit("e"),
+      withoutListener: ee.emit("none"),
+      errorWithListener: ee.emit("error", new Error("x")),
+    }).toEqual({
+      withListener: true,
+      withoutListener: false,
+      errorWithListener: true,
+    });
+  });
 });

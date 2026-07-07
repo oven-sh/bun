@@ -870,7 +870,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
                                     as core::ffi::c_uint);
                         }
-                        break 'extract_disable_timeout timeout_value.to_int32() == 0;
+                        // `to_int32()` saturates ±Infinity (JSC's
+                        // `coerceJSValueDoubleTruncatingT`, not spec ToInt32),
+                        // so gate on `is_finite()` too so `{timeout: Infinity}`
+                        // disables the timer instead of silently falling back
+                        // to the global default.
+                        break 'extract_disable_timeout !ms.is_finite()
+                            || timeout_value.to_int32() == 0;
                     }
                 }
 

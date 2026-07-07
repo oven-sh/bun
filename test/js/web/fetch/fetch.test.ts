@@ -2913,12 +2913,13 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
       },
     });
     const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
-    const [withTimeout, withZero, withDefault] = await Promise.all([
+    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
       get({ timeout: 60_000 }),
       get({ timeout: 0 }),
+      get({ timeout: Infinity }),
       get(undefined),
     ]);
-    console.log(JSON.stringify({ withTimeout, withZero, withDefault }));
+    console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -2928,9 +2929,10 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
-  expect({ withTimeout: out.withTimeout, withZero: out.withZero }).toEqual({
+  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
     withTimeout: "hello",
     withZero: "hello",
+    withInfinity: "hello",
   });
   // Control: without an explicit `timeout`, the 1s idle default still aborts
   // the stalled request.

@@ -1301,10 +1301,14 @@ impl<'a> Putter<'a> {
                 // construct directly, no transmute needed.
                 types::Tag(oid as types::short)
             };
-            // A RowDescription format code of 1 (binary) on a type we have no
-            // binary decoder for must be rejected, not silently reinterpreted
-            // as text: the raw datum bytes would otherwise surface as a value.
-            if field.binary && !tag.is_binary_format_supported() {
+            // Reject a binary format code on a type we have no binary decoder
+            // for so raw datum bytes cannot surface as a value. Text-family
+            // types are exempt: their `*send()` output is byte-identical to
+            // text (and a BINARY CURSOR FETCH sets format=1 on every column).
+            if field.binary
+                && !tag.is_binary_format_supported()
+                && !tag.is_binary_format_textlike()
+            {
                 return Err(AnyPostgresError::UnknownFormatCode);
             }
             *cell = if let Some(data) = optional_bytes {

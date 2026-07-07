@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDirWithFiles } from "harness";
 import path from "path";
@@ -9,6 +9,24 @@ import path from "path";
 const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
 (isWindows ? describe : describe.concurrent)("bun init", () => {
+  // Every test's `bun init` runs a real `bun install`. bun dedupes downloads
+  // within a process but not across them, so on a cold CI cache the concurrent
+  // inits each re-fetch the same tarballs. Prime the shared install cache once,
+  // serially: `--react=shadcn`'s lockfile is a superset of the other react
+  // templates', and `-y` covers the blank template (typescript + @types/bun).
+  beforeAll(async () => {
+    for (const flag of ["-y", "--react=shadcn"]) {
+      const temp = tempDirWithFiles("bun-init-cache-prime", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", flag],
+        cwd: temp,
+        stdio: ["ignore", "ignore", "ignore"],
+        env: initEnv,
+      });
+      await proc.exited;
+    }
+  }, 240_000);
+
   test("bun init works", async () => {
     const temp = tempDirWithFiles("bun-init-works", {});
 

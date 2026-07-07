@@ -920,29 +920,22 @@ bool PrintGeneralName(const BIOPointer& out, const GENERAL_NAME* gen)
         // awkward, especially when passed to translatePeerCertificate.
         bool unicode = true;
         const char* prefix = nullptr;
-        // OpenSSL 1.1.1 does not support othername in GENERAL_NAME_print and may
-        // not define these NIDs.
-#if OPENSSL_VERSION_MAJOR >= 3
-        int nid = OBJ_obj2nid(gen->d.otherName->type_id);
-        switch (nid) {
-        case NID_id_on_SmtpUTF8Mailbox:
+        // BoringSSL does not register NIDs for most of these otherName types, so
+        // match on the numeric OID text instead of relying on OBJ_obj2nid.
+        char oid[128];
+        OBJ_obj2txt(oid, sizeof(oid), gen->d.otherName->type_id, true);
+        if (strcmp(oid, "1.3.6.1.5.5.7.8.9") == 0) {
             prefix = "SmtpUTF8Mailbox";
-            break;
-        case NID_XmppAddr:
+        } else if (strcmp(oid, "1.3.6.1.5.5.7.8.5") == 0) {
             prefix = "XmppAddr";
-            break;
-        case NID_SRVName:
+        } else if (strcmp(oid, "1.3.6.1.5.5.7.8.7") == 0) {
             prefix = "SRVName";
             unicode = false;
-            break;
-        case NID_ms_upn:
+        } else if (strcmp(oid, "1.3.6.1.4.1.311.20.2.3") == 0) {
             prefix = "UPN";
-            break;
-        case NID_NAIRealm:
+        } else if (strcmp(oid, "1.3.6.1.5.5.7.8.8") == 0) {
             prefix = "NAIRealm";
-            break;
         }
-#endif // OPENSSL_VERSION_MAJOR >= 3
         int val_type = gen->d.otherName->value->type;
         if (prefix == nullptr || (unicode && val_type != V_ASN1_UTF8STRING) || (!unicode && val_type != V_ASN1_IA5STRING)) {
             BIO_printf(out.get(), "othername:<unsupported>");

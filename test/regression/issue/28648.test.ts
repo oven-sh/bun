@@ -1,12 +1,5 @@
 // https://github.com/oven-sh/bun/issues/28648
 // https://github.com/oven-sh/bun/issues/24069
-//
-// A nested uncaught exception inside a worker (while the first is still being
-// reported to the parent) used to abort the whole process with
-// `panic: Uncaught exception while handling uncaught exception` because the
-// re-entry guard in `VirtualMachine::uncaught_exception` assumed `process_exit`
-// never returns, which is only true on the main thread. On a worker it returns
-// after arming termination, so the guard must return instead of panicking.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 

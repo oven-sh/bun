@@ -191,8 +191,12 @@ JSC_DEFINE_HOST_FUNCTION(clipboardItemConstructorConstruct, (JSC::JSGlobalObject
             return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, makeString("\""_s, type, "\" is not a valid MIME type"_s)));
         JSC::JSValue value = itemsObject->get(lexicalGlobalObject, name);
         RETURN_IF_EXCEPTION(scope, {});
-        // Spec: `types` holds the serialization of the parsed MIME type.
-        types.append(type.convertToASCIILowercase());
+        // Spec: `types` holds the serialization of the parsed MIME type, and
+        // two keys with the same serialization are one representation twice.
+        WTF::String normalized = type.convertToASCIILowercase();
+        if (types.contains(normalized)) [[unlikely]]
+            return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, makeString("Duplicate MIME type \""_s, normalized, "\""_s)));
+        types.append(WTF::move(normalized));
         values.append(value);
     }
     if (values.hasOverflowed()) [[unlikely]]
@@ -433,7 +437,8 @@ JSC_DEFINE_HOST_FUNCTION(jsClipboardItemProtoFuncGetType, (JSC::JSGlobalObject *
     auto type = callFrame->uncheckedArgument(0).toWTFString(globalObject);
     if (scope.exception()) [[unlikely]]
         return JSC::JSValue::encode(JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(item->getTypePromise(globalObject, type)));
+    // `types` holds lowercased serializations; match the argument the same way.
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(item->getTypePromise(globalObject, type.convertToASCIILowercase())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsClipboardItemConstructorFuncSupports, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

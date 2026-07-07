@@ -153,7 +153,10 @@ describe("ClipboardItem", () => {
     const item = new ClipboardItem({ "TeXt/PlAiN": "upper" });
     expect(item.types).toEqual(["text/plain"]);
     expect(await (await item.getType("text/plain")).text()).toBe("upper");
+    expect(await (await item.getType("TEXT/PLAIN")).text()).toBe("upper");
     expect(ClipboardItem.supports("TEXT/PLAIN")).toBe(true);
+    // Two spellings of one type are one representation, not two.
+    expect(() => new ClipboardItem({ "text/plain": "a", "TEXT/PLAIN": "b" })).toThrow(TypeError);
   });
 
   test("types is frozen and preserves insertion order; presentationStyle defaults", () => {

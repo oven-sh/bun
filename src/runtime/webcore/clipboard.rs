@@ -926,10 +926,10 @@ mod platform {
             shell_quote_into(&mut command, path);
         }
         // The watchdog group is fully redirected (so neither it nor its
-        // `sleep` holds the helper's captured stdout open) and reaps its
-        // `sleep` on TERM, so nothing outlives this invocation.
+        // `sleep` holds the helper's captured stdout open); its TERM trap is
+        // installed before `sleep` starts and exits, so nothing outlives it.
         command.extend_from_slice(
-            b" & c=$!; { sleep 10 & sp=$!; trap 'kill \"$sp\" 2>/dev/null' TERM; wait \"$sp\"; kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
+            b" & c=$!; { trap 'kill \"$sp\" 2>/dev/null; exit 0' TERM; sleep 10 & sp=$!; wait \"$sp\"; kill \"$c\" 2>/dev/null; } >/dev/null 2>&1 & w=$!; wait \"$c\"; s=$?; kill \"$w\" 2>/dev/null; [ \"$s\" -ge 128 ] && s=124; exit \"$s\"",
         );
         let stdio = |capture: bool| {
             if capture {

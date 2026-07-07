@@ -6439,8 +6439,7 @@ impl NodeFS {
                 Ok(0) => break,
                 Ok(amt) => {
                     total += amt as u64;
-                    let chunk_capacity: usize =
-                        chunk.iter().map(|b| sys::platform_iovec_len(b)).sum();
+                    let chunk_capacity: usize = chunk.iter().map(sys::platform_iovec_len).sum();
                     if amt < chunk_capacity {
                         break;
                     }

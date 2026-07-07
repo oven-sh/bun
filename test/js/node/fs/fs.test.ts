@@ -1680,7 +1680,7 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
-describe("writev/readv with more than IOV_MAX buffers", () => {
+describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
   // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
   // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed
   // the whole array to one syscall and got EINVAL for any count > 1024.

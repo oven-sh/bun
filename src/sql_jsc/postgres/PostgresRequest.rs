@@ -164,7 +164,11 @@ pub fn write_bind<Context: WriterContext>(
         if value.is_array() && !matches!(tag, types::Tag::json | types::Tag::jsonb) {
             // `box` is the one built-in type whose array literal uses `;` as the
             // element delimiter (its scalar text already contains commas).
-            let delimiter = if tag == types::Tag::box_array { b';' } else { b',' };
+            let delimiter = if tag == types::Tag::box_array {
+                b';'
+            } else {
+                b','
+            };
             let mut buf: Vec<u8> = Vec::new();
             write_array_literal(&mut buf, value, global, delimiter, 0)?;
             let l = writer.length()?;

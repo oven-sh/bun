@@ -29,6 +29,29 @@ test("we can go back in time", () => {
   expect(now.toISOString()).toBe(orig.toISOString());
 });
 
+test("advanceTimersByTime ticks from the setSystemTime value", () => {
+  jest.useFakeTimers();
+  try {
+    const base = new Date("2026-01-01T12:00:00.000Z").getTime();
+    jest.setSystemTime(new Date(base));
+    expect(Date.now()).toBe(base);
+
+    jest.advanceTimersByTime(1000);
+    expect(Date.now()).toBe(base + 1000);
+    expect(new Date().toISOString()).toBe("2026-01-01T12:00:01.000Z");
+
+    jest.advanceTimersByTime(500);
+    expect(Date.now()).toBe(base + 1500);
+
+    // setSystemTime with a number argument rebases again
+    jest.setSystemTime(base);
+    jest.advanceTimersByTime(2000);
+    expect(Date.now()).toBe(base + 2000);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 test("setSystemTime accepts pre-epoch and epoch times and resets with no argument", () => {
   const realBefore = Date.now();
   jest.useFakeTimers();

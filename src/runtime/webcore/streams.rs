@@ -498,6 +498,9 @@ impl WritablePending {
             return;
         }
         self.state = PendingState::Used;
+        // `consumed` belongs to the operation being settled here; the next one
+        // starts from zero.
+        self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
             WritableFuture::Promise { mut strong, global } => {

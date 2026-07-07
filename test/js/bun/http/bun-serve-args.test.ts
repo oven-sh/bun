@@ -66,7 +66,13 @@ describe("unix socket", () => {
         },
       });
       // @ts-expect-error - Testing invalid property
-      expect(server.address + "").toBe(unix + "");
+      const addr = server.address + "";
+      // On OHOS, relative unix socket paths are prefixed with TMPDIR.
+      if (process.platform === "ohos") {
+        expect(addr).toEndWith(unix + "");
+      } else {
+        expect(addr).toBe(unix + "");
+      }
       expect(server.port).toBeUndefined();
       expect(server.hostname).toBeUndefined();
       server.stop();

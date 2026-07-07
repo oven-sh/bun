@@ -756,36 +756,46 @@ describe.concurrent("tarball integrity metadata forms", () => {
   // only the first digest of the strongest algorithm, so a tarball matching a
   // later same-algorithm digest hard-failed. A multi-digest integrity string
   // only appears in hand-edited / migrated lockfiles, so this is exercised via
-  // a lockfile-pinned local tarball.
-  it("accepts a local tarball matching a non-first digest of the strongest algorithm", async () => {
+  // a URL tarball pinned in a hand-written lockfile (a URL tarball verifies
+  // against the lockfile integrity on every platform, unlike a local tarball
+  // whose path is re-resolved).
+  function serveTarball(tgz: Buffer) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/baz.tgz")) {
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+  }
+
+  it("accepts a tarball matching a non-first digest of the strongest algorithm", async () => {
     const real = buildTarball(Buffer.from('{"name":"baz","version":"1.0.0"}\n'));
     const bogus = buildTarball(Buffer.from('{"name":"bogus","version":"9.9.9"}\n'));
 
-    using dir = tempDir("integrity-alt-match", {});
-    const tgzPath = join(String(dir), "baz.tgz");
-    await writeFile(tgzPath, real.tgz);
-    await writeFile(
-      join(String(dir), "package.json"),
-      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: tgzPath } }),
-    );
+    await using server = serveTarball(real.tgz);
+    const url = `http://127.0.0.1:${server.port}/baz.tgz`;
     // Bogus digest first (the one Bun used to pin to), real digest second. A
     // tarball matching only the second entry must still verify.
-    await writeFile(
-      join(String(dir), "bun.lock"),
-      JSON.stringify({
+    using dir = tempDir("integrity-alt-match", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: url } }),
+      "bun.lock": JSON.stringify({
         lockfileVersion: 1,
         configVersion: 1,
-        workspaces: { "": { name: "foo", dependencies: { baz: tgzPath } } },
-        packages: { baz: [`baz@${tgzPath}`, {}, `${bogus.sha512} ${real.sha512}`] },
+        workspaces: { "": { name: "foo", dependencies: { baz: url } } },
+        packages: { baz: [`baz@${url}`, {}, `${bogus.sha512} ${real.sha512}`] },
       }),
-    );
+    });
 
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
       cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
       stdout: "pipe",
       stderr: "pipe",
-      env,
     });
     const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(stderr + stdout).not.toContain("Integrity check failed");
@@ -798,34 +808,29 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(lockContent).toContain(real.sha512);
   });
 
-  it("rejects a local tarball matching no digest of the strongest algorithm", async () => {
+  it("rejects a tarball matching no digest of the strongest algorithm", async () => {
     const real = buildTarball(Buffer.from('{"name":"baz","version":"1.0.0"}\n'));
     const bogus1 = buildTarball(Buffer.from('{"name":"bogus1","version":"9.9.9"}\n'));
     const bogus2 = buildTarball(Buffer.from('{"name":"bogus2","version":"8.8.8"}\n'));
 
-    using dir = tempDir("integrity-alt-none", {});
-    const tgzPath = join(String(dir), "baz.tgz");
-    await writeFile(tgzPath, real.tgz);
-    await writeFile(
-      join(String(dir), "package.json"),
-      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: tgzPath } }),
-    );
-    await writeFile(
-      join(String(dir), "bun.lock"),
-      JSON.stringify({
+    await using server = serveTarball(real.tgz);
+    const url = `http://127.0.0.1:${server.port}/baz.tgz`;
+    using dir = tempDir("integrity-alt-none", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: url } }),
+      "bun.lock": JSON.stringify({
         lockfileVersion: 1,
         configVersion: 1,
-        workspaces: { "": { name: "foo", dependencies: { baz: tgzPath } } },
-        packages: { baz: [`baz@${tgzPath}`, {}, `${bogus1.sha512} ${bogus2.sha512}`] },
+        workspaces: { "": { name: "foo", dependencies: { baz: url } } },
+        packages: { baz: [`baz@${url}`, {}, `${bogus1.sha512} ${bogus2.sha512}`] },
       }),
-    );
+    });
 
     await using proc = spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
       stdout: "pipe",
       stderr: "pipe",
-      env,
     });
     const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(stderr + stdout).toContain("Integrity check failed");

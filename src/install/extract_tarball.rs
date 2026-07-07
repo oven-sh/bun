@@ -50,10 +50,12 @@ impl ExtractTarball {
     #[inline]
     pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
-            if !self.integrity.verify(bytes)
-                && !self
-                    .integrity_alternates
-                    .verify_bytes(self.integrity.tag, bytes)
+            // Hash once, then accept a match against the primary digest or any
+            // alternate of the same algorithm (SSRI any-match).
+            let tag = self.integrity.tag;
+            let digest = Integrity::hash_by_tag(tag, bytes);
+            if !self.integrity.matches_digest(&digest)
+                && !self.integrity_alternates.matches(tag, &digest)
             {
                 log.add_error_fmt(
                     None,

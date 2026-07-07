@@ -235,9 +235,20 @@ impl Integrity {
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 
-    pub fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
-        let mut digest: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
+    /// True if `digest` (already computed with `self.tag`) equals this value.
+    pub fn matches_digest(&self, digest: &[u8]) -> bool {
+        let len = self.tag.digest_len();
+        if len == 0 || digest.len() < len {
+            return false;
+        }
+        strings::eql_long(&self.value[0..len], &digest[0..len], true)
+    }
 
+    /// Hash `bytes` with `tag`, writing the digest into the first
+    /// `tag.digest_len()` bytes of the returned buffer (rest zero). Returns an
+    /// all-zero buffer for unsupported tags.
+    pub fn hash_by_tag(tag: Tag, bytes: &[u8]) -> [u8; DIGEST_BUF_LEN] {
+        let mut digest: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         match tag {
             Tag::SHA1 => {
                 const LEN: usize = SHA1_DIGEST_LEN;
@@ -246,7 +257,6 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
@@ -255,7 +265,6 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
@@ -264,7 +273,6 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
@@ -273,10 +281,19 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
             }
-            _ => false,
+            _ => {}
         }
+        digest
+    }
+
+    pub fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
+        let len = tag.digest_len();
+        if len == 0 {
+            return false;
+        }
+        let digest = Self::hash_by_tag(tag, bytes);
+        strings::eql_long(&digest[0..len], &sum[0..len], true)
     }
 }
 
@@ -373,20 +390,6 @@ impl IntegrityAlternates {
         }
         for i in 0..self.count as usize {
             if strings::eql_long(&self.values[i][0..len], &digest[0..len], true) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// True if `bytes` hashed with `tag` matches any alternate. Used by the
-    /// non-streaming extract path, which has no precomputed digest.
-    pub fn verify_bytes(&self, tag: Tag, bytes: &[u8]) -> bool {
-        if self.tag != tag || self.count == 0 {
-            return false;
-        }
-        for i in 0..self.count as usize {
-            if Integrity::verify_by_tag(tag, bytes, &self.values[i]) {
                 return true;
             }
         }

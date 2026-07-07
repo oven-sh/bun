@@ -1305,9 +1305,7 @@ impl<'a> Putter<'a> {
             // for so raw datum bytes cannot surface as a value. Text-family
             // types are exempt: their `*send()` output is byte-identical to
             // text (and a BINARY CURSOR FETCH sets format=1 on every column).
-            if field.binary
-                && !tag.is_binary_format_supported()
-                && !tag.is_binary_format_textlike()
+            if field.binary && !tag.is_binary_format_supported() && !tag.is_binary_format_textlike()
             {
                 return Err(AnyPostgresError::UnknownFormatCode);
             }

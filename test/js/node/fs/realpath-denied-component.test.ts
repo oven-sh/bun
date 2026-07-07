@@ -90,18 +90,21 @@ describe.skipIf(!isWindows)("realpath with a permission-denied component", () =>
     expect(result).toBe(expected);
   });
 
-  test.skipIf(!preconditionHolds)("realpathSync reports ENOENT when the tail behind the denied component is missing", () => {
-    // Both resolutions fail here: the JS walk on the denied lstat, the native
-    // one on the missing tail beyond the junction. The native verdict (ENOENT)
-    // must propagate, not the walk's EPERM.
-    let err: any;
-    try {
-      realpathSync(join(denied, "j", "does-not-exist.txt"));
-    } catch (e) {
-      err = e;
-    }
-    expect(err?.code).toBe("ENOENT");
-  });
+  test.skipIf(!preconditionHolds)(
+    "realpathSync reports ENOENT when the tail behind the denied component is missing",
+    () => {
+      // Both resolutions fail here: the JS walk on the denied lstat, the native
+      // one on the missing tail beyond the junction. The native verdict (ENOENT)
+      // must propagate, not the walk's EPERM.
+      let err: any;
+      try {
+        realpathSync(join(denied, "j", "does-not-exist.txt"));
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ENOENT");
+    },
+  );
 
   test.skipIf(!preconditionHolds)("callback realpath reports ENOENT for a missing tail", async () => {
     const err = await new Promise<any>(resolve => realpath(join(denied, "j", "does-not-exist.txt"), e => resolve(e)));

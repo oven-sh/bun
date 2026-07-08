@@ -559,27 +559,12 @@ impl<'a> Run<'a> {
             return Ok(caller);
         };
 
-        unsafe extern "C" {
-            fn Bun__JSValue__callReturnValueHoldingAPILock(
-                global: *mut JSGlobalObject,
-                object: JSValue,
-                this_object: JSValue,
-                argument_count: usize,
-                arguments: *const JSValue,
-            ) -> JSValue;
-        }
-        // SAFETY: `vm.global` is the live per-thread global; `macro_callback`
-        // was obtained from the VM's macro table; `args` is a stack slice of
-        // valid `JSValue`s.
-        let result = unsafe {
-            Bun__JSValue__callReturnValueHoldingAPILock(
-                vm.global,
-                macro_callback,
-                JSValue::ZERO,
-                args.len(),
-                args.as_ptr(),
-            )
-        };
+        let global = vm.global();
+        let result = vm.run_with_api_lock(|| {
+            macro_callback
+                .call(global, JSValue::ZERO, args)
+                .unwrap_or_else(|_| global.try_take_exception().unwrap_or(JSValue::ZERO))
+        });
 
         let mut runner = Run {
             caller,

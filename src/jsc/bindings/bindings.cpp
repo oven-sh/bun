@@ -2852,48 +2852,6 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     return JSC::JSValue::encode(result);
 }
 
-JSC::EncodedJSValue Bun__JSValue__callReturnValueHoldingAPILock(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedObject,
-    JSC::EncodedJSValue encodedThisObject,
-    size_t argumentCount,
-    const JSC::EncodedJSValue* arguments)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSLockHolder lock(vm);
-
-#if ASSERT_ENABLED
-    // This is a redundant check, but we add it to make the error message clearer.
-    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
-#endif
-
-    JSC::JSValue object = JSC::JSValue::decode(encodedObject);
-    JSC::JSObject* jsObject = object ? object.getObject() : nullptr;
-    if (!jsObject)
-        return {};
-
-    JSC::JSValue thisValue = JSC::JSValue::decode(encodedThisObject);
-    JSC::JSObject* jsThisObject = thisValue ? thisValue.getObject() : nullptr;
-    if (!jsThisObject)
-        jsThisObject = globalObject->globalThis();
-
-    JSC::MarkedArgumentBuffer argList;
-    for (size_t i = 0; i < argumentCount; i++)
-        argList.append(JSC::JSValue::decode(arguments[i]));
-
-    auto callData = getCallData(jsObject);
-    if (callData.type == JSC::CallData::Type::None)
-        return {};
-
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
-
-    if (returnedException.get()) {
-        return JSC::JSValue::encode(returnedException.get());
-    }
-
-    return JSC::JSValue::encode(result);
-}
-
 // CPP_DECL size_t JSC__PropertyNameArray__length(JSC__PropertyNameArray* arg0);
 // CPP_DECL const JSC__PropertyName*
 // JSC__PropertyNameArray__next(JSC__PropertyNameArray* arg0, size_t arg1);

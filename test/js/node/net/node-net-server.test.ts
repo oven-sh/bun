@@ -629,6 +629,12 @@ describe.skipIf(!ssBin)("net.Server listen backlog", () => {
     });
   });
 
+  it("truncates a non-integer backlog instead of throwing", async () => {
+    await withListener([{ port: 0, host: "127.0.0.1", backlog: 5.5 }], port => {
+      expect(kernelBacklog(port)).toBe(clamp(5));
+    });
+  });
+
   it("passes backlog for unix-socket listeners", async () => {
     const sockPath = join(realpathSync(tmpdir()), `backlog-${process.pid}-${Date.now()}.sock`);
     const server = createServer();

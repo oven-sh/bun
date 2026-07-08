@@ -3454,6 +3454,9 @@ Server.prototype[kRealListen] = function (
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
   // semantics itself, so the server option is consumed in JS only.
+  // Node normalizes as `backlog || 511` then hands to uv_listen via Int32Value();
+  // Bun.listen's `backlog` uses a strict integer converter, so truncate here.
+  backlog = backlog > 0 ? backlog | 0 : undefined;
   if (path) {
     this._handle = Bun.listen({
       unix: path,

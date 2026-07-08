@@ -200,7 +200,12 @@ describe("DatabaseSync", () => {
     expect(Object.keys(stmt)).toEqual(["sourceSQL", "expandedSQL"]);
     expect(Object.keys(tag)).toEqual(["capacity", "db", "size"]);
     const desc = Object.getOwnPropertyDescriptor(db, "isOpen")!;
-    expect({ hasGet: typeof desc.get, set: desc.set, enumerable: desc.enumerable, configurable: desc.configurable }).toEqual({
+    expect({
+      hasGet: typeof desc.get,
+      set: desc.set,
+      enumerable: desc.enumerable,
+      configurable: desc.configurable,
+    }).toEqual({
       hasGet: "function",
       set: undefined,
       enumerable: true,

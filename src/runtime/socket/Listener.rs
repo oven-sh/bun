@@ -1435,9 +1435,7 @@ fn connect_finish<const IS_SSL: bool>(
             twin: JsCell::new(None),
         })
     };
-    // SAFETY: `socket` is either the caller's live JS-owned socket (the
-    // reconnect path) or the allocation created just above; both are
-    // intrusively refcounted and live for this call.
+    // Either the caller's JS-owned socket (reconnect) or the fresh one above.
     let socket_ref = socket;
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);

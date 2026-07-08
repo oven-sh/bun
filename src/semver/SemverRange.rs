@@ -131,6 +131,19 @@ impl Range {
         self.right.op != Op::Unset
     }
 
+    /// True when this range is node-semver's ANY comparator (`*` / `x` /
+    /// `>=0.0.0`): it accepts every release version and, under the default
+    /// prerelease rule, no prerelease.
+    pub fn is_match_all(self) -> bool {
+        if !self.has_left() {
+            return true;
+        }
+        self.left.op == Op::Gte
+            && self.left.version.is_zero()
+            && !self.left.version.tag.has_pre()
+            && !self.has_right()
+    }
+
     /// Is the Range equal to another Range
     /// This does not evaluate the range.
     #[inline]

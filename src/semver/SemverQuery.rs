@@ -350,6 +350,10 @@ pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
     pub const BUILD: usize = 0;
+    /// Set when an explicit `||` union contains a branch that is entirely the
+    /// ANY comparator (`*`, `x`, `>=0.0.0`, ...). node-semver collapses such a
+    /// range to `*` before applying the prerelease rule.
+    pub const MATCH_ALL_BRANCH: usize = 2;
 }
 
 pub struct Group {
@@ -462,6 +466,7 @@ impl Group {
         let range = &self.head.head.range;
         if self.head.next.is_none()
             && self.head.head.next.is_none()
+            && !self.flags.is_set(Flags::MATCH_ALL_BRANCH)
             && range.has_left()
             && range.left.op == RangeOp::Eql
             && !range.has_right()
@@ -578,6 +583,11 @@ impl Group {
     #[inline]
     pub fn satisfies(&self, version: Version, group_buf: &[u8], version_buf: &[u8]) -> bool {
         if version.tag.has_pre() {
+            // node-semver collapses a `||`-union containing a match-all branch
+            // to `*`, which then rejects every prerelease (see range.js L57-67).
+            if self.flags.is_set(Flags::MATCH_ALL_BRANCH) {
+                return false;
+            }
             self.head.satisfies_pre(version, group_buf, version_buf)
         } else {
             self.head.satisfies(version, group_buf, version_buf)
@@ -855,6 +865,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
+    let mut saw_or_separator = false;
+    let mut branch_has_non_any = false;
 
     while i < input.len() {
         skip_round = false;
@@ -926,6 +938,11 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
                 }
+                if !branch_has_non_any {
+                    list.flags.set_value(Flags::MATCH_ALL_BRANCH, true);
+                }
+                saw_or_separator = true;
+                branch_has_non_any = false;
                 is_or = true;
                 token.tag = TokenTag::None;
                 skip_round = true;
@@ -1074,6 +1091,9 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     },
                 };
 
+                if !range.is_match_all() {
+                    branch_has_non_any = true;
+                }
                 if is_or {
                     list.or_range(&range)?;
                 } else {
@@ -1090,27 +1110,36 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // tag, like "1 || - foo".
                 token.wildcard = Wildcard::None;
                 continue;
-            } else if count == 0 && token.tag == TokenTag::Version {
-                match parse_result.wildcard {
-                    Wildcard::None => {
-                        list.or_version(version)?;
-                    }
-                    _ => {
-                        list.or_range(&token.to_range(&parse_result.version))?;
-                    }
-                }
-            } else if count == 0 {
-                list.and_range(&token.to_range(&parse_result.version))?;
-            } else if is_or {
-                list.or_range(&token.to_range(&parse_result.version))?;
+            } else if count == 0
+                && token.tag == TokenTag::Version
+                && parse_result.wildcard == Wildcard::None
+            {
+                branch_has_non_any = true;
+                list.or_version(version)?;
             } else {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                let range = token.to_range(&parse_result.version);
+                if !range.is_match_all() {
+                    branch_has_non_any = true;
+                }
+                if count == 0 && token.tag == TokenTag::Version {
+                    list.or_range(&range)?;
+                } else if count == 0 {
+                    list.and_range(&range)?;
+                } else if is_or {
+                    list.or_range(&range)?;
+                } else {
+                    list.and_range(&range)?;
+                }
             }
 
             is_or = false;
             count += 1;
             token.wildcard = Wildcard::None;
         }
+    }
+
+    if saw_or_separator && !branch_has_non_any {
+        list.flags.set_value(Flags::MATCH_ALL_BRANCH, true);
     }
 
     Ok(list)

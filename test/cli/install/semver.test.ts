@@ -357,6 +357,34 @@ describe("Bun.semver.satisfies()", () => {
 
     testSatisfies("^3.0.0-next.0||^3.0.0", "3.0.0-next.2", true);
 
+    // node-semver collapses a `||`-union containing a match-all branch to `*`
+    // before applying the prerelease rule, so the prerelease is rejected even
+    // though a sibling branch names it explicitly.
+    for (const any of ["*", "x", "X", "x.x", "x.x.x", ">=0.0.0", ">=0.0.0+build", "* *", "0.0.0 - x", "^*", "~*", ""]) {
+      testSatisfies(`${any} || 1.2.3-alpha.1`, "1.2.3-alpha.1", false);
+      testSatisfies(`1.2.3-alpha.1 || ${any}`, "1.2.3-alpha.1", false);
+      testSatisfies(`${any} || ^1.2.3-alpha`, "1.2.3-alpha.1", false);
+      testSatisfies(`${any} || 1.2.3-alpha.1 || ${any}`, "1.2.3-alpha.1", false);
+    }
+    for (const any of ["*", "x", "X", "x.x", "x.x.x", ">=0.0.0", ">=0.0.0+build", "* *", "0.0.0 - x"]) {
+      // A release version still satisfies the collapsed `*`.
+      testSatisfies(`${any} || 1.2.3-alpha.1`, "1.2.4", true);
+    }
+    testSatisfies("|| 1.2.3-alpha.1", "1.2.3-alpha.1", false);
+    testSatisfies("1.2.3-alpha.1 ||", "1.2.3-alpha.1", false);
+    // A non-match-all first branch keeps union semantics.
+    testSatisfies("1.x || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies(">0.0.0 || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies(">=1.0.0 || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    // `>=0.0.0-0` has a prerelease tag so it is not the ANY comparator.
+    testSatisfies(">=0.0.0-0 || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    // `*` alongside a narrower comparator in the same `||`-branch is not a
+    // match-all branch: node-semver drops the `*` and keeps the narrower one.
+    testSatisfies("* 2.0.0 || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("2.0.0 * || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("2.0.0 || * 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("* 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+
     const notPassing = [
       "0.1.0",
       "0.10.0",

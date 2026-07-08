@@ -694,17 +694,21 @@ async function runTests() {
               FORCE_COLOR: "0",
               NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
-              // common/tmpdir.js derives its directory from this; without it
-              // every test shares `.tmp.0` and --parallel runs race each
-              // other's tmpdir.refresh() (rm -rf) against open() calls.
+              // common/tmpdir.js keys its directory on this; without it every
+              // test shares `.tmp.0` and --parallel runs race each other's
+              // tmpdir.refresh() (rm -rf) against open() calls. spawnBun also
+              // sets NODE_TEST_DIR to the per-test tmpdir so aborted tests
+              // don't leave `.tmp.N` behind in the repo checkout.
               TEST_THREAD_ID: String(testIndex),
             };
-            if (isMacOS) {
+            if (isMacOS && basename(execPath).includes("asan")) {
               // ASAN debug builds resolve asan-dyld-shim.dylib via @rpath
               // relative to the binary. Tests that copy process.execPath
               // elsewhere (fork-exec-path, stdin-from-file-spawn, ...) lose
-              // that anchor; DYLD_LIBRARY_PATH is dyld's documented fallback.
-              env.DYLD_LIBRARY_PATH = dirname(realpathSync(execPath));
+              // that anchor; give dyld a last-resort search path (prepending
+              // rather than clobbering any inherited value).
+              const dir = dirname(realpathSync(execPath));
+              env.DYLD_FALLBACK_LIBRARY_PATH = [dir, process.env.DYLD_FALLBACK_LIBRARY_PATH].filter(Boolean).join(":");
             }
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
@@ -1287,6 +1291,10 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
+    // common/tmpdir.js reads NODE_TEST_DIR — point it at the per-test tmpdir
+    // so its `.tmp.<id>` subdir is swept by the finally-rmSync below even
+    // when the test aborts (ASAN abort_on_error skips its exit handler).
+    NODE_TEST_DIR: tmpdirPath,
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }

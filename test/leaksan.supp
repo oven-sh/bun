@@ -122,52 +122,73 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# test/js/node/test/parallel/test-worker-terminate-http2-respond-with-file.js
+# Live-thread TLS at exit: ParkingLot ThreadData / RunLoop holder of the vm
+# watchdog/aux threads still parked when the process exits.
 leak:WTF::ParkingLot::parkConditionallyImpl
+leak:WTF::RunLoop::currentSingleton
+# test/js/node/test/parallel/test-require-builtins.js
 # Parser-arena identifiers pinned in the atom table at VM-destroy exit —
 # covers all JSC::Parser parse productions (same family as the parse* entries above).
 leak:JSC::IdentifierArena::makeIdentifier
-# Live-thread TLS at exit: RunLoop holder of the vm watchdog/aux threads (same class as ParkingLot above).
-leak:WTF::RunLoop::currentSingleton
+# test/js/node/test/parallel/test-require-builtins.js
 # ASCIILiteral StringImpl wrapper for internal module names; pinned for process lifetime.
 leak:Bun::InternalModuleRegistry::createInternalModuleById
+# test/js/node/test/parallel/test-net-dns-lookup.js
 # macOS libdispatch/XPC continuation cached inside dns_configuration_free while
 # c-ares reads the system resolver config — OS-internal, not reachable by us.
 leak:ares_init_sysconfig_macos
+# test/js/node/test/parallel/test-fs-watch.js
 # FSEvents watcher thread (std::thread spawn block) still running at exit.
 leak:FSEventsLoop
+# test/js/node/test/parallel/test-tls-connect-simple.js
 # Apple CoreAnalytics XPC telemetry triggered inside SecTrustCopyAnchorCertificates /
 # system CA reads — OS-internal dispatch continuation.
 leak:CoreAnalytics
+# test/js/node/test/parallel/test-assert-checktag.js
 # ASCIILiteral StringImpl wrapper created while formatting a stack frame's source
 # URL on the exit path; same class as the InternalModuleRegistry entry above.
 leak:Zig::sourceURL
+# test/js/node/test/parallel/test-tls-connect-simple.js
 # Apple Security.framework keychain internals reached from our run_once system
 # root-CA load — cached for process lifetime by design.
 leak:us_get_root_system_cert_instances
+# test/js/node/test/parallel/test-shadow-realm-gc.js
 # JSC structure-heap bookkeeping (BitVector in StructureMemoryManager); grows
 # once per structure block and lives for the VM's lifetime.
 leak:JSC::StructureMemoryManager::tryMallocStructureBlock
+# test/js/node/test/parallel/test-tls-connect-simple.js
 # libsystem_info per-thread user-info cache (getpwuid via CFPreferences inside
 # Security.framework) — OS-internal thread-local storage.
 leak:LI_get_thread_info
+# test/js/node/test/parallel/test-child-process-stdio-inherit.js
 # backtrace_symbols() buffer malloc'd inside debug-only stack-trace dumps
 # (fd-UAF warning path); diagnostics memory, never freed by design.
 leak:backtrace_symbols
+# test/js/node/test/parallel/test-require-builtins.js
 # Per-VM JSON atom cache entry pinned in the atom table at VM-destroy exit
 # (same family as IdentifierArena::makeIdentifier above).
 leak:JSC::JSONAtomStringCache
-# Inspector/debugger server thread (bun_jsc::debugger::Debugger::create) still
-# parked at exit — live-thread allocation. Matches the Rust v0-mangled symbol.
-leak:bun_jsc8debugger
+# test/js/node/test/parallel/test-inspector-enabled.js
+# Inspector/debugger server thread still parked at exit — live-thread
+# allocation. Narrowed to the `Debugger` struct's inherent methods so
+# `AsyncTaskTracker`/`TestReporterAgent`/per-timer paths stay observable.
+leak:7bun_jsc8debugger8Debugger
+# test/js/node/test/parallel/test-worker-message-port.js
 # Per-worker WebCore::EventNames not reclaimed when a Worker thread exits —
 # bounded by live worker count at exit; needs a ThreadGlobalData teardown
 # follow-up rather than blocking every worker test locally.
 leak:WebCore::EventNames::operator new
-# `selectors` crate global caches (hashbrown tables) — process-lifetime statics.
-leak:9selectors
+# test/js/node/test/parallel/test-http-agent-keepalive.js
+# lol_html's compiled-selector storage (`selectors_vm`) reached via
+# HTMLRewriter — process-lifetime once compiled. Narrowed from `9selectors`
+# so `bun_css::selectors` (Bun's own CSS parser) stays observable.
+leak:8lol_html
+# test/js/node/test/parallel/test-crypto-subtle-zero-length.js
 # crypto.subtle lazy property: SubtleCrypto impl pinned by its JS wrapper at
 # VM-destroy exit. Same JSC-owned ref-cycle class as RunLoop::dispatchAfter.
 leak:WebCore::SubtleCrypto::create
+# test/js/node/test/parallel/test-require-builtins.js
 # Rust std lazily-allocated pthread mutex storage (sys::sync::once_box) —
 # intentionally never freed; one block per static mutex.
 leak:8once_box

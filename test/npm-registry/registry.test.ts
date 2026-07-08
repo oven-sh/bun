@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { statSync } from "node:fs";
+import { statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   NpmRegistry,
@@ -89,6 +89,16 @@ describe("packument", () => {
       "1.0.0": { bin: { ".dotcmd": "./cli.js", ".": "a", "..": "b" }, tarball: { "cli.js": "x" } },
     });
     expect((await registry.packument("dotty"))!.versions["1.0.0"]!.bin).toEqual({ ".dotcmd": "cli.js" });
+
+    // npm treats "\" (and, for keys, ":") as "/" before containing the
+    // basename; both outputs below are verified against the reference.
+    registry.define("winslash", {
+      "1.0.0": { bin: { "tools\\cmd": "bin\\cli.js", "C:alt": "cli.js" } },
+    });
+    expect((await registry.packument("winslash"))!.versions["1.0.0"]!.bin).toEqual({
+      cmd: "bin/cli.js",
+      alt: "cli.js",
+    });
   });
 
   test("dist.integrity is the sha512 of the bytes the tarball route serves", async () => {
@@ -721,6 +731,25 @@ describe("fixtures", () => {
     expect(await getJson(`${registry.url}twice`)).toMatchObject({
       status: 500,
       body: { error: expect.stringContaining("version 1.0.0 is defined by both a .tgz and a directory") },
+    });
+  });
+
+  // Windows checks a committed symlink out as a regular file
+  // (`core.symlinks=false`), so there the entry *is* a pure function of
+  // committed bytes and the test cannot be staged.
+  test.skipIf(isWindows)("a symlink in a directory fixture fails loudly instead of being skipped", async () => {
+    using fixtures = tempDir("npm-registry-fixture-symlink", {
+      "linked/1.0.0/package.json": JSON.stringify({ name: "linked", version: "1.0.0" }),
+      "linked/1.0.0/real.js": "module.exports = 1;\n",
+    });
+    symlinkSync("real.js", join(String(fixtures), "linked", "1.0.0", "alias.js"));
+    await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
+    // Before the guard this request succeeded and the packed tarball
+    // simply omitted `alias.js`, which is exactly the per-platform
+    // divergence the loud failure exists to prevent.
+    expect(await getJson(`${registry.url}linked`)).toMatchObject({
+      status: 500,
+      body: { error: expect.stringContaining("only regular files and directories") },
     });
   });
 });

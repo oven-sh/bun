@@ -219,7 +219,14 @@ function directoryVersion(name: string, version: string, versionDir: string): St
   };
 }
 
-/** Reads a directory into an in-memory file tree. */
+/**
+ * Reads a directory into an in-memory file tree. Anything other than a
+ * regular file or directory is a loud error: git materializes a
+ * committed symlink differently per platform (`core.symlinks`), so
+ * silently including one — or not — would be the one remaining
+ * on-disk input to the packed tarball that is not a pure function of
+ * committed bytes.
+ */
 function readFileTree(root: string): FileTree {
   const files: FileTree = {};
   const walk = (relative: string) => {
@@ -229,6 +236,11 @@ function readFileTree(root: string): FileTree {
         walk(path);
       } else if (entry.isFile()) {
         files[path] = readFileSync(join(root, path));
+      } else {
+        throw new Error(
+          `${join(root, path)}: fixture directory may contain only regular files and ` +
+            `directories (a committed symlink checks out differently per platform)`,
+        );
       }
     }
   };

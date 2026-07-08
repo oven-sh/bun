@@ -56,10 +56,11 @@ export function normalizeBin(name: string, bin: unknown): Record<string, string>
   const clean: Record<string, string> = {};
   for (const [key, target] of Object.entries(entries)) {
     if (typeof target !== "string") continue;
-    // npm's only key rejection is the contained basename being empty
-    // (".", ".." and ""); a name like ".dotcmd" is a legal bin.
-    const base = containedPath(posix.basename(key));
-    const normalized = containedPath(target);
+    // npm treats "\" (and, for keys, ":") as "/" before containing the
+    // basename; its only key rejection is the result being empty (".",
+    // ".." and ""), so a name like ".dotcmd" is a legal bin.
+    const base = containedPath(posix.basename(key.replace(/\\|:/g, "/")));
+    const normalized = containedPath(target.replace(/\\/g, "/"));
     if (base.length === 0 || normalized.length === 0) continue;
     clean[base] = normalized;
   }

@@ -123,8 +123,8 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
 template<bool SSL>
 static std::string* requestTrailersFor(us_socket_t* socket)
 {
-    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
-    return &httpResponseData->nodeHttpRequestTrailers;
+    auto* httpResponseData = (uWS::HttpResponseData<SSL, true>*)us_socket_ext(socket);
+    return &httpResponseData->uWS::HttpParser<true>::nodeCompat.nodeHttpRequestTrailers;
 }
 
 /* Move the connection's captured trailer section out, returning its (ptr, length)
@@ -160,8 +160,8 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
 
     /* Parse with the same field-line primitives the request-header parser uses
      * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
-    std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields);
+    std::pair<std::string_view, std::string_view> fields[uWS::HttpParser<true>::MAX_TRAILER_FIELDS];
+    unsigned count = uWS::HttpParser<true>::parseTrailerFields(section, fields);
     if (count == 0) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }

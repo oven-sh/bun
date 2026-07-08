@@ -60,11 +60,7 @@ test.concurrent("Bun.serve: client abort while async transform() is pending does
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // The readable is closed by the pump teardown, so enqueue must throw a TypeError.
   expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "SURVIVED threw TypeError",
@@ -115,11 +111,7 @@ test.concurrent("Bun.spawn stdin: child exit while async transform() is pending 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // The readable is closed by the pump teardown, so enqueue must throw a TypeError.
   expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "SURVIVED threw TypeError",

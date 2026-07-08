@@ -1129,4 +1129,50 @@ describe("parseArgs extra tests", () => {
     expect(parseArgs({ allowPositionals: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
     expect(parseArgs({ allowPositionals: null })).toEqual({ values: { __proto__: null }, positionals: [] });
   });
+
+  describe("allowNegative", () => {
+    test("--no-foo stores foo=false", () => {
+      const result = parseArgs({ args: ["--no-foo"], allowNegative: true, strict: false });
+      expect(result).toEqual({ values: { __proto__: null, foo: false }, positionals: [] });
+    });
+
+    test("bare --no- with strict:false stores empty-name key as false", () => {
+      const result = parseArgs({ args: ["--no-"], allowNegative: true, strict: false });
+      expect(result).toEqual({ values: { __proto__: null, "": false }, positionals: [] });
+    });
+
+    test("bare --no- with strict:true throws unknown option", () => {
+      let error;
+      try {
+        parseArgs({ args: ["--no-"], allowNegative: true, strict: true });
+      } catch (err) {
+        error = err;
+      }
+      expect(error).toMatchObject({ code: "ERR_PARSE_ARGS_UNKNOWN_OPTION", message: "Unknown option '--no-'" });
+    });
+
+    test("bare --no- with tokens:true produces empty-name token", () => {
+      const result = parseArgs({ args: ["--no-"], allowNegative: true, strict: false, tokens: true });
+      expect(result).toEqual({
+        values: { __proto__: null, "": false },
+        positionals: [],
+        tokens: [{ kind: "option", index: 0, name: "", rawName: "--no-", value: undefined, inlineValue: undefined }],
+      });
+    });
+
+    test("bare --no- with multiple:true on empty-name option appends to array", () => {
+      const result = parseArgs({
+        args: ["--no-", "--no-"],
+        allowNegative: true,
+        strict: false,
+        options: { "": { type: "boolean", multiple: true } },
+      });
+      expect(result).toEqual({ values: { __proto__: null, "": [false, false] }, positionals: [] });
+    });
+
+    test("--no- with allowNegative:false stores 'no-' as key", () => {
+      const result = parseArgs({ args: ["--no-"], allowNegative: false, strict: false });
+      expect(result).toEqual({ values: { __proto__: null, "no-": true }, positionals: [] });
+    });
+  });
 });

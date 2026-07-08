@@ -2698,10 +2698,9 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), shareableBuiltins, 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_byteorder"_s), JSC::jsString(vm, String("little"_s)), 0);
-    // Bun does not parse the NODE_OPTIONS environment variable; report the
-    // same configuration as a Node build compiled --without-node-options so
-    // tests and tooling skip NODE_OPTIONS-dependent paths.
-    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_without_node_options"_s), JSC::jsBoolean(true), 0);
+    // Node reports false unless it was ./configure'd --without-node-options;
+    // match that default so tooling that gates on this key sees a stock build.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_without_node_options"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
 
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
@@ -3405,7 +3404,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     gid_t gid = static_cast<gid_t>(gidValue.toUInt32(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // initgroups(3) takes a user *name*; resolve a numeric uid through passwd.
+    // initgroups(3) takes a user *name*. Node passes a string user through
+    // as-is (initgroups(3) reports EPERM/ENOMEM/etc. itself); only a numeric
+    // uid is pre-resolved through passwd so we have a name to pass.
     CString userNameUTF8;
     const char* userName = nullptr;
     struct passwd pwd;
@@ -3415,11 +3416,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         userNameUTF8 = str.utf8();
-        if (getpwnam_r(userNameUTF8.data(), &pwd, buf, sizeof(buf), &pp) != 0 || pp == nullptr) {
-            auto message = makeString("User identifier does not exist: "_s, str);
-            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
-            return {};
-        }
         userName = userNameUTF8.data();
     } else {
         uid_t uid = static_cast<uid_t>(user.toUInt32(globalObject));

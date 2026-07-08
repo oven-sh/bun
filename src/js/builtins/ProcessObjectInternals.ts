@@ -691,7 +691,6 @@ export function loadEnvFile(path) {
 }
 
 export function createProcessFinalization(process) {
-  const { validateFunction } = require("internal/validators");
   let entries: Array<{ ref: WeakRef<object>; fn: Function; evt: string }> = [];
   let installed = false;
 
@@ -729,7 +728,8 @@ export function createProcessFinalization(process) {
 
   function registerWithEvent(ref, fn, evt) {
     validateRef(ref);
-    validateFunction(fn, "fn");
+    // Node does not validate `fn` here; a non-callable fn only throws at
+    // exit/beforeExit time when it's invoked.
     ensureInstalled();
     entries.push({ ref: new WeakRef(ref), fn, evt });
   }

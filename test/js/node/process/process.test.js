@@ -458,6 +458,8 @@ it("process.config", () => {
   expect(process.config.variables.clang).toBeNumber();
   expect(process.config.variables.host_arch).toBeDefined();
   expect(process.config.variables.target_arch).toBeDefined();
+  // Node reports false unless compiled --without-node-options.
+  expect(process.config.variables.node_without_node_options).toBe(false);
 });
 
 it("process.execArgv", () => {
@@ -1861,4 +1863,42 @@ it("_rawDebug never throws when fd 2 is closed", async () => {
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows || process.getuid?.() === 0)(
+  "process.initgroups passes an unknown string user straight to initgroups(3)",
+  () => {
+    // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
+    // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
+    let err;
+    try {
+      process.initgroups("zz_no_user_zz", 0);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("EPERM");
+    expect(err?.syscall).toBe("initgroups");
+  },
+);
+
+it("process.finalization.register does not validate that fn is a function", async () => {
+  // Node only validates the ref (obj); a non-callable fn is stored and only
+  // fails at exit time. Run in a subprocess so registration doesn't leak into
+  // this process's exit path.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const obj = {};
+       let threw = false;
+       try { process.finalization.register(obj, 123); } catch { threw = true; }
+       console.log(JSON.stringify({ threw }));
+       process.finalization.unregister(obj);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: stdout.trim(), exitCode }).toEqual({ out: '{"threw":false}', exitCode: 0 });
 });

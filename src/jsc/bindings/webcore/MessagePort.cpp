@@ -191,17 +191,11 @@ void MessagePort::close()
     // later sends are rejected by the pipe's Closed check.
     flushQueuedMessagesBeforeClose();
 
-    // Fire 'close' after the queued messages and before teardown; guarded against a
-    // double dispatch when the peer already closed.
-    dispatchCloseEvent();
-
     m_isDetached = true;
 
     // m_pipe is held for the port's whole lifetime (the GC thread reads
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side);
-
-    removeAllEventListeners();
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
@@ -223,6 +217,18 @@ void MessagePort::close()
         m_isRefd = false;
         updateListenerEventLoopRef();
     }
+
+    // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
+    // after sync code and microtasks), so a listener added after close() still
+    // observes it and close(cb) interleaves with other listeners.
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
+            protectedThis->dispatchCloseEvent();
+            protectedThis->removeAllEventListeners();
+        });
+    } else {
+        removeAllEventListeners();
+    }
 }
 
 void MessagePort::dispatchCloseEvent()
@@ -237,8 +243,10 @@ void MessagePort::dispatchCloseEvent()
     if (context->isTerminating())
         return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
+    // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
+    // close task runs after m_isDetached is set.
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
-        dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 void MessagePort::peerClosed()

@@ -126,7 +126,3 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
-# A worker→parent postMessage that lands as the parent process exits leaves one
-# ConcurrentTask Box queued in the parent's concurrent queue (process-exit
-# race; the task is run-then-freed in the steady state).
-leak:WebCore::MessagePortPipe::scheduleDrain

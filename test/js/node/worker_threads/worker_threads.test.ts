@@ -836,6 +836,75 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
+test("MessagePort.hasRef() reports actual loop-ref state", () => {
+  const { port1 } = new MessageChannel();
+  expect(port1.hasRef()).toBe(false);
+  port1.on("message", () => {});
+  expect(port1.hasRef()).toBe(true);
+  port1.unref();
+  expect(port1.hasRef()).toBe(false);
+  port1.ref();
+  expect(port1.hasRef()).toBe(true);
+  port1.close();
+});
+
+test("MessagePort NodeEventTarget methods", () => {
+  const { port1 } = new MessageChannel();
+  expect(typeof port1.listenerCount).toBe("function");
+  expect(typeof port1.eventNames).toBe("function");
+  expect(typeof port1.removeAllListeners).toBe("function");
+  expect(typeof port1.getMaxListeners).toBe("function");
+  expect(typeof port1.setMaxListeners).toBe("function");
+  expect((port1 as any).prependListener).toBeUndefined();
+  expect((port1 as any).prependOnceListener).toBeUndefined();
+  const fn = () => {};
+  port1.on("message", fn);
+  expect(port1.listenerCount("message")).toBe(1);
+  expect(port1.eventNames()).toContain("message");
+  port1.removeAllListeners("message");
+  expect(port1.listenerCount("message")).toBe(0);
+  port1.close();
+});
+
+test("close(cb) fires cb via 'close' event asynchronously", async () => {
+  const { port1 } = new MessageChannel();
+  const order: string[] = [];
+  port1.on("close", () => order.push("before"));
+  port1.close(() => order.push("cb"));
+  port1.on("close", () => order.push("after"));
+  order.push("sync");
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  expect(order[0]).toBe("sync");
+  expect(order).toContain("before");
+  expect(order).toContain("cb");
+  expect(order).toContain("after");
+  expect(order.indexOf("before")).toBeLessThan(order.indexOf("cb"));
+  expect(order.indexOf("cb")).toBeLessThan(order.indexOf("after"));
+});
+
+test("getHeapStatistics settles when terminated mid-request", async () => {
+  const w = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  await once(w, "online");
+  const p = w.getHeapStatistics();
+  await w.terminate();
+  // Either resolves (round-trip completed first) or rejects with ERR_WORKER_NOT_RUNNING; never hangs.
+  await expect(
+    p.then(
+      () => "ok",
+      e => e?.code,
+    ),
+  ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
+});
+
+test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
+  const enumerable: string[] = [];
+  for (const k in globalThis.Worker.prototype) enumerable.push(k);
+  expect(enumerable).not.toContain("startCpuProfileInternal");
+  expect(enumerable).not.toContain("stopCpuProfileInternal");
+  expect(enumerable).not.toContain("cpuUsageInternal");
+});
+
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
     const proc = Bun.spawn({

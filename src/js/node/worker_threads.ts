@@ -41,14 +41,7 @@ function validateWorkerFilename(filename) {
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;
   }
-  const sep = String.fromCharCode(92); // backslash, avoids builtin-bundler escape handling
-  if (
-    pathIsAbsolute(filename) ||
-    filename.startsWith("./") ||
-    filename.startsWith("../") ||
-    filename.startsWith("." + sep) ||
-    filename.startsWith(".." + sep)
-  ) {
+  if (pathIsAbsolute(filename) || /^\.\.?[\\/]/.test(filename)) {
     return filename;
   }
   let message =
@@ -60,9 +53,7 @@ function validateWorkerFilename(filename) {
     message += " Wrap data: URLs with `new URL`.";
   }
   message += ` Received "${filename}"`;
-  const err = new TypeError(message);
-  err.code = "ERR_WORKER_PATH";
-  throw err;
+  throw $ERR_WORKER_PATH(message);
 }
 
 const {
@@ -88,6 +79,8 @@ const {
   6: _markAsUntransferable,
   7: _isMarkedAsUntransferable,
   8: _markAsUncloneable,
+  9: _setEntryEvaluatedHook,
+  10: _isNodeWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -98,6 +91,8 @@ const {
   (value: unknown) => void,
   (value: unknown) => boolean,
   (value: unknown) => void,
+  (hook: () => void) => void,
+  boolean,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -107,6 +102,15 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
 function injectFakeEmitter(Class) {
+  // Per-instance registry of wrapped listeners so listenerCount/eventNames/
+  // removeAllListeners work over EventTarget's opaque internal map.
+  const listenerRegistry = new WeakMap<object, Map<string, Set<Function>>>();
+  function registryFor(target, create) {
+    let map = listenerRegistry.get(target);
+    if (!map && create) listenerRegistry.set(target, (map = new Map()));
+    return map;
+  }
+
   function messageEventHandler(event: MessageEvent) {
     return event.data;
   }
@@ -155,13 +159,20 @@ function injectFakeEmitter(Class) {
   }
 
   function on(event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener));
+    const wrapper = functionForEventType(event, listener);
+    this.addEventListener(event, wrapper);
+    const map = registryFor(this, true)!;
+    let set = map.get(event);
+    if (!set) map.set(event, (set = new Set()));
+    set.add(wrapper);
     return this;
   }
 
   function off(event, listener) {
-    if (listener) {
-      this.removeEventListener(event, listener[wrappedListener] || listener);
+    const wrapper = listener ? listener[wrappedListener] || listener : undefined;
+    if (wrapper) {
+      this.removeEventListener(event, wrapper);
+      registryFor(this, false)?.get(event)?.delete(wrapper);
     } else {
       this.removeEventListener(event);
     }
@@ -169,7 +180,12 @@ function injectFakeEmitter(Class) {
   }
 
   function once(event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener), { once: true });
+    const wrapper = functionForEventType(event, listener);
+    this.addEventListener(event, wrapper, { once: true });
+    const map = registryFor(this, true)!;
+    let set = map.get(event);
+    if (!set) map.set(event, (set = new Set()));
+    set.add(wrapper);
     return this;
   }
 
@@ -189,20 +205,59 @@ function injectFakeEmitter(Class) {
     return this;
   }
 
-  // node inherits these from EventEmitter.prototype; use an intermediate prototype
-  // so Object.getOwnPropertyNames(MessagePort.prototype) matches node.
+  const kMaxListeners = Symbol("kMaxListeners");
+  function setMaxListeners(n) {
+    this[kMaxListeners] = n;
+    return this;
+  }
+  function getMaxListeners() {
+    return this[kMaxListeners] ?? 10;
+  }
+  function listenerCount(type) {
+    return registryFor(this, false)?.get(type)?.size ?? 0;
+  }
+  function eventNames() {
+    const map = registryFor(this, false);
+    if (!map) return [];
+    const out: string[] = [];
+    for (const [k, v] of map) if (v.size > 0) out.push(k);
+    return out;
+  }
+  function removeAllListeners(type) {
+    const map = registryFor(this, false);
+    if (!map) return this;
+    const removeType = t => {
+      const set = map.get(t);
+      if (set) {
+        for (const w of set) this.removeEventListener(t, w);
+        map.delete(t);
+      }
+    };
+    if (arguments.length === 0) {
+      for (const t of [...map.keys()]) removeType(t);
+    } else {
+      removeType(type);
+    }
+    return this;
+  }
+
+  // node inherits these from NodeEventTarget.prototype (a curated subset of
+  // EventEmitter, not EventEmitter itself); use an intermediate prototype so
+  // Object.getOwnPropertyNames(MessagePort.prototype) matches node.
   const proto = Class.prototype;
   const inherited = Object.create(Object.getPrototypeOf(proto));
-  // node aliases: prepend* and addListener/removeListener map onto on/once/off.
   const emitterMethods: [string, Function][] = [
     ["on", on],
     ["off", off],
     ["once", once],
     ["emit", emit],
-    ["prependListener", on],
-    ["prependOnceListener", once],
     ["addListener", on],
     ["removeListener", off],
+    ["listenerCount", listenerCount],
+    ["eventNames", eventNames],
+    ["removeAllListeners", removeAllListeners],
+    ["setMaxListeners", setMaxListeners],
+    ["getMaxListeners", getMaxListeners],
   ];
   for (const [methodName, value] of emitterMethods) {
     Object.defineProperty(inherited, methodName, { value, writable: true, enumerable: false, configurable: true });
@@ -222,13 +277,10 @@ const nativeMessagePortClose = MessagePort.prototype.close;
 Object.defineProperty(MessagePort.prototype, "close", {
   value: function close(cb) {
     closedMessagePorts.add(this);
-    // Native close() now dispatches the "close" event (after delivering any
-    // queued messages). node invokes the optional callback asynchronously.
-    const result = nativeMessagePortClose.$call(this);
-    if (typeof cb === "function") {
-      queueMicrotask(cb);
-    }
-    return result;
+    // node registers cb as a one-time 'close' listener before the native close,
+    // so it interleaves with other close listeners in registration order.
+    if (typeof cb === "function") this.once("close", cb);
+    return nativeMessagePortClose.$call(this);
   },
   writable: true,
   enumerable: true,
@@ -659,7 +711,7 @@ if (
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
-  if (controlPort) messaging.setupMainThreadPort(controlPort);
+  if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
 }
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
@@ -745,8 +797,10 @@ function fakeParentPort() {
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
-// In a worker, several process operations are unsupported (node disables them).
-if (!isMainThread) {
+// In a node:worker_threads worker, several process operations are unsupported.
+// Gate on _isNodeWorker so a raw `new globalThis.Worker` that transitively loads
+// this module does NOT have process.abort/chdir/setuid replaced.
+if (!isMainThread && _isNodeWorker) {
   applyWorkerProcessOverrides();
 }
 function applyWorkerProcessOverrides() {
@@ -1312,7 +1366,4 @@ export default {
   SHARE_ENV,
   threadId,
   threadName,
-  // Worker title for node:inspector's NodeWorker.attachedToWorker, exposed via a
-  // well-known symbol so inspector.ts can read it without a public export.
-  [Symbol.for("nodejs.worker_threads.inspectorTitle")]: isMainThread ? undefined : `[worker ${threadId}] ${threadName}`,
 };

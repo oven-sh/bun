@@ -125,9 +125,14 @@ function sendMessageToWorker(source, destination, value, transferList, memory) {
 function receiveMessageFromWorker(source, value, memory) {
   let response = WORKER_MESSAGING_RESULT_NO_LISTENERS;
 
-  // Don't use process.emit("workerMessage", ...): Bun's emit returns true even with no
-  // listeners (can't detect NO_LISTENERS) and routes a throwing listener to
-  // uncaughtException (can't map it to LISTENER_ERROR). Invoke the listeners directly.
+  // Don't use process.emit("workerMessage", ...): Bun's native emit routes a
+  // throwing listener to reportUnhandledError instead of rethrowing, so
+  // LISTENER_ERROR can't be detected. Invoke listeners directly.
+  //
+  // Known limitation: process.once('workerMessage', fn) listeners are not
+  // removed here — the native process EventEmitter tracks isOnce internally
+  // (fireEventListeners handles removal) with no JS-side onceWrapper to detect.
+  // Fixing this needs the native emit to rethrow (a broader change).
   const listeners = process.listeners("workerMessage");
   const listenerCount = listeners.length;
   if (listenerCount > 0) {
@@ -204,16 +209,18 @@ function handleMessageFromMainThreadGated(message) {
   handleMessageFromMainThread(message);
 }
 
-function setupMainThreadPort(port: any) {
+function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void) => void) {
   mainThreadPort = port;
   mainThreadPort.on("message", handleMessageFromMainThreadGated);
 
-  globalThis[Symbol.for("bun.worker.entryEvaluated")] = () => {
+  // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
+  // can't observe or clobber it. WebWorker__dispatchOnline calls it once.
+  setEntryEvaluatedHook(() => {
     entryEvaluated = true;
     const pending = pendingMainPortMessages;
     pendingMainPortMessages = null;
     if (pending) for (const message of pending) handleMessageFromMainThread(message);
-  };
+  });
 
   // Never block the process on this port.
   mainThreadPort.unref();

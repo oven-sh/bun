@@ -703,3 +703,50 @@ describe("structuredClone(Object.prototype)", () => {
     expect(cloned).toEqual({});
   });
 });
+
+describe("Error serialization semantics", () => {
+  // .message uses OWN data descriptor (HTML spec / Node); .stack uses [[Get]].
+  test("new Error() with no message clones without an own .message", () => {
+    const cloned = structuredClone(new Error());
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  test("accessor .message is not serialized", () => {
+    const e = new Error();
+    Object.defineProperty(e, "message", { get: () => "from-getter" });
+    const cloned = structuredClone(e);
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  test("inherited .message is not serialized", () => {
+    class MyErr extends Error {}
+    MyErr.prototype.message = "inherited";
+    const cloned = structuredClone(new MyErr());
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+});
+
+describe("options.transfer iterator error propagation", () => {
+  test("user-thrown error from Symbol.iterator propagates unchanged", () => {
+    class MyDomainError extends Error {}
+    const transfer = {
+      [Symbol.iterator]() {
+        throw new MyDomainError("bad state");
+      },
+    };
+    let caught: unknown;
+    try {
+      structuredClone(1, { transfer } as any);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(MyDomainError);
+    expect((caught as any).code).toBeUndefined();
+  });
+
+  test("non-object transfer still throws ERR_INVALID_ARG_TYPE", () => {
+    expect(() => structuredClone(1, { transfer: 42 } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});

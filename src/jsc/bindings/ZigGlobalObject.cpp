@@ -4024,6 +4024,7 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
+void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook) { m_nodeWorkerEntryEvaluatedHook.set(vm(), this, hook); }
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 
@@ -4033,6 +4034,11 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     if (vm.entryScope) {
         vm.entryScope = nullptr;
     }
+    // Mirror WebWorker__teardownJSCVM: mark this context terminating so late
+    // worker→parent posts (scheduleDrain/notifyPeerClosed) return false instead
+    // of enqueueing a ConcurrentTask that leaks past the last drain.
+    if (auto* ctx = globalObject->scriptExecutionContext())
+        ctx->markTerminating();
     Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
     Ref<WTF::RunLoop> runLoop = vm.runLoop();

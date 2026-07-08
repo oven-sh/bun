@@ -1750,33 +1750,38 @@ private:
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                // Read error fields under one catch scope: stack (and line/column/sourceURL
-                // derived from it) may be materialized via Error.prepareStackTrace, and a
-                // throwing getter must drop the field, not abort serialization (node drops
-                // the stack to undefined).
+                // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
+                // OWN data descriptors only (an inherited or accessor .message is
+                // NOT serialized). .stack: Node reads via [[Get]] to materialize
+                // V8's lazy accessor; a throwing prepareStackTrace/getter drops
+                // the field (only TerminationException propagates).
                 String message, sourceURL, stack;
                 unsigned line = 0, column = 0;
                 {
                     auto fieldScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                    // Clear a throwing getter's exception; only an unclearable
-                    // TerminationException is propagated instead of serializing a bogus record.
-                    const auto readString = [&](const JSC::Identifier& name, String& out) -> bool {
+                    const auto readOwnString = [&](const JSC::Identifier& name, String& out) -> bool {
+                        JSC::PropertyDescriptor d;
+                        if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, name, d) && !fieldScope.exception() && d.isDataDescriptor() && d.value().isString())
+                            out = d.value().toWTFString(m_lexicalGlobalObject);
+                        return fieldScope.tryClearException();
+                    };
+                    const auto readOwnNumber = [&](const JSC::Identifier& name, unsigned& out) -> bool {
+                        JSC::PropertyDescriptor d;
+                        if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, name, d) && !fieldScope.exception() && d.isDataDescriptor() && d.value().isNumber())
+                            out = d.value().toNumber(m_lexicalGlobalObject);
+                        return fieldScope.tryClearException();
+                    };
+                    const auto readGetString = [&](const JSC::Identifier& name, String& out) -> bool {
                         JSValue v = errorInstance->get(m_lexicalGlobalObject, name);
                         if (!fieldScope.exception() && v.isString())
                             out = v.toWTFString(m_lexicalGlobalObject);
                         return fieldScope.tryClearException();
                     };
-                    const auto readNumber = [&](const JSC::Identifier& name, unsigned& out) -> bool {
-                        JSValue v = errorInstance->get(m_lexicalGlobalObject, name);
-                        if (!fieldScope.exception() && v.isNumber())
-                            out = v.toNumber(m_lexicalGlobalObject);
-                        return fieldScope.tryClearException();
-                    };
-                    if (!readString(vm.propertyNames->message, message)
-                        || !readNumber(vm.propertyNames->line, line)
-                        || !readNumber(vm.propertyNames->column, column)
-                        || !readString(vm.propertyNames->sourceURL, sourceURL)
-                        || !readString(vm.propertyNames->stack, stack))
+                    if (!readOwnString(vm.propertyNames->message, message)
+                        || !readOwnNumber(vm.propertyNames->line, line)
+                        || !readOwnNumber(vm.propertyNames->column, column)
+                        || !readOwnString(vm.propertyNames->sourceURL, sourceURL)
+                        || !readGetString(vm.propertyNames->stack, stack))
                         return false;
                 }
 

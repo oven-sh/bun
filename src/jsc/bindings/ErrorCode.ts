@@ -279,6 +279,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_WORKER_NOT_RUNNING", Error],
   ["ERR_WORKER_UNSUPPORTED_OPERATION", TypeError],
+  ["ERR_WORKER_PATH", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],

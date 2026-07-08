@@ -416,6 +416,34 @@ bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
     return ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTF::move(task));
 }
 
+uint64_t Worker::registerCrossVMRequest(JSC::VM& vm, JSC::JSPromise* promise)
+{
+    uint64_t id = m_nextRequestId.fetch_add(1);
+    Locker lock(m_pendingTasksMutex);
+    m_pendingCrossVMRequests.add(id, JSC::Strong<JSC::JSPromise>(vm, promise));
+    return id;
+}
+
+JSC::Strong<JSC::JSPromise> Worker::takeCrossVMRequest(uint64_t id)
+{
+    Locker lock(m_pendingTasksMutex);
+    return m_pendingCrossVMRequests.take(id);
+}
+
+void Worker::rejectAllCrossVMRequests(JSC::JSGlobalObject* globalObject)
+{
+    HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> pending;
+    {
+        Locker lock(m_pendingTasksMutex);
+        pending = std::exchange(m_pendingCrossVMRequests, {});
+    }
+    if (pending.isEmpty())
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    for (auto& entry : pending)
+        entry.value->reject(vm, Bun::createError(defaultGlobalObject(globalObject), Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+}
+
 // ---- Worker-thread entry points ---------------------------------------------
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
@@ -597,6 +625,9 @@ bool Worker::dispatchExit(int32_t exitCode)
                 if (task.abandon)
                     task.abandon();
             }
+            // Reject any introspection promises whose round-trip never completed.
+            if (auto* ctx = protectedThis->scriptExecutionContext())
+                protectedThis->rejectAllCrossVMRequests(ctx->globalObject());
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
@@ -663,20 +694,12 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
     // bootstrap runs the synchronous CJS main before any port delivery, so a
     // routed message must not observe "no listeners" while the entry that
     // registers them is still loading.
-    {
+    if (auto* hook = globalObject->nodeWorkerEntryEvaluatedHook()) {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto symbol = vm.symbolRegistry().symbolForKey("bun.worker.entryEvaluated"_s);
-        JSValue hook = globalObject->getIfPropertyExists(globalObject, JSC::Identifier::fromUid(vm, &symbol.get()));
-        if (scope.exception()) [[unlikely]] {
-            CLEAR_IF_EXCEPTION(scope);
-            hook = {};
-        }
-        if (hook && hook.isCallable()) {
-            JSC::MarkedArgumentBuffer args;
-            JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
-            CLEAR_IF_EXCEPTION(scope);
-        }
+        JSC::MarkedArgumentBuffer args;
+        JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     worker->dispatchOnline(globalObject);
@@ -781,6 +804,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsMarkedAsUntransferable, (JSGlobalObject * l
     return JSC::JSValue::encode(jsBoolean(object && !!object->getDirect(vm, builtinNames(vm).isUntransferablePrivateName())));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* hook = callFrame->argument(0).getObject())
+        defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerEntryEvaluatedHook(hook);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -831,7 +861,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 9);
+    bool isNodeWorker = false;
+    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
+        isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
+
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -842,6 +876,8 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 6, JSFunction::create(vm, globalObject, 1, "markAsUntransferable"_s, jsFunctionMarkAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 7, JSFunction::create(vm, globalObject, 1, "isMarkedAsUntransferable"_s, jsFunctionIsMarkedAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     return array;
 }
 

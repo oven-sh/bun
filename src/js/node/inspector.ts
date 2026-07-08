@@ -143,19 +143,21 @@ class Session extends EventEmitter {
         return new Error("Coverage APIs are not supported");
 
       case "NodeWorker.enable": {
-        // Minimal NodeWorker domain: a session connected to the main thread
-        // reports the worker it lives in. node's worker-name test reads
-        // workerInfo.title ("[worker N] <name>").
+        // Minimal NodeWorker domain stub for test-worker-name only: a session
+        // connected from inside a worker reports itself. Main-thread child
+        // enumeration is NOT implemented — return an error there instead of
+        // silent success so callers know.
         const wt = require("node:worker_threads");
-        const title = wt[Symbol.for("nodejs.worker_threads.inspectorTitle")];
-        if (title !== undefined) {
-          const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
-          queueMicrotask(() => {
-            this.emit("NodeWorker.attachedToWorker", {
-              params: { sessionId: `worker:${wt.threadId}`, workerInfo },
-            });
-          });
+        if (wt.isMainThread) {
+          return new Error("Inspector method NodeWorker.enable is not supported on the main thread yet");
         }
+        const title = `[worker ${wt.threadId}] ${wt.threadName}`;
+        const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
+        queueMicrotask(() => {
+          this.emit("NodeWorker.attachedToWorker", {
+            params: { sessionId: `worker:${wt.threadId}`, workerInfo },
+          });
+        });
         return {};
       }
 

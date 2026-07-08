@@ -506,10 +506,10 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
-            // Explicit builtin specifiers (node:/bun:) skip the file resolver —
-            // the worker-side module loader resolves them. Lets node:worker_threads
-            // run its bootstrap (stdio rebinding) as a preload.
-            if utf8_slice.slice().starts_with(b"node:") || utf8_slice.slice().starts_with(b"bun:") {
+            // node: builtin specifiers skip the file resolver — the worker-side
+            // module loader resolves them. Lets node:worker_threads run its
+            // bootstrap (stdio rebinding) as a preload.
+            if utf8_slice.slice().starts_with(b"node:") {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
@@ -1116,9 +1116,9 @@ impl WebWorker {
                     return self.shutdown();
                 }
             } else if status == jsc::js_promise::Status::Pending {
-                // Unsettled top-level await (loop drained, entry promise still pending):
-                // node exits the worker with code 13, but only when nothing already set
-                // one (node_hooks.cc: `if (exit_code == ExitCode::kNoFailure)`).
+                // Unsettled top-level await (loop drained, entry promise still
+                // pending): node exits the worker with code 13, but only if the
+                // user hasn't set a nonzero process.exitCode.
                 if vm.exit_handler.exit_code == 0 {
                     vm.as_mut().exit_handler.exit_code = 13;
                 }

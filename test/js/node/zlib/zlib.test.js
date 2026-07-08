@@ -736,10 +736,7 @@ describe("brotli dictionary", () => {
   // Bytes produced by node's `brotliCompressSync(input, { dictionary: dict })`
   // for the `dict`/`input` above, so decoding this frame without attaching the
   // dictionary fails with ERR__ERROR_FORMAT_DICTIONARY.
-  const nodeDictFrame = Buffer.from(
-    "1b1c01c0c56dec3bce77185582d4830cb3ce6e8a145317f5e300c63a0f1df52d38",
-    "hex",
-  );
+  const nodeDictFrame = Buffer.from("1b1c01c0c56dec3bce77185582d4830cb3ce6e8a145317f5e300c63a0f1df52d38", "hex");
 
   it("brotliCompressSync honours the dictionary option", () => {
     const noDict = zlib.brotliCompressSync(input);

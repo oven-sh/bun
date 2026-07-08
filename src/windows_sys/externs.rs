@@ -431,12 +431,12 @@ pub struct FILE_ALL_INFORMATION {
     pub BasicInformation: FILE_BASIC_INFORMATION,
     pub StandardInformation: FILE_STANDARD_INFORMATION,
     pub InternalInformation: FILE_INTERNAL_INFORMATION,
-    pub EaSize: ULONG,          // FILE_EA_INFORMATION
-    pub AccessFlags: ULONG,     // FILE_ACCESS_INFORMATION
+    pub EaSize: ULONG,                    // FILE_EA_INFORMATION
+    pub AccessFlags: ULONG,               // FILE_ACCESS_INFORMATION
     pub CurrentByteOffset: LARGE_INTEGER, // FILE_POSITION_INFORMATION
-    pub Mode: ULONG,            // FILE_MODE_INFORMATION
-    pub AlignmentRequirement: ULONG, // FILE_ALIGNMENT_INFORMATION
-    pub FileNameLength: ULONG,  // FILE_NAME_INFORMATION
+    pub Mode: ULONG,                      // FILE_MODE_INFORMATION
+    pub AlignmentRequirement: ULONG,      // FILE_ALIGNMENT_INFORMATION
+    pub FileNameLength: ULONG,            // FILE_NAME_INFORMATION
     pub FileName: [WCHAR; 1],
 }
 

@@ -140,6 +140,7 @@ pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
+pub use bun_windows_sys::FILE_ALL_INFORMATION;
 pub use bun_windows_sys::FILE_ATTRIBUTE_ARCHIVE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_COMPRESSED;
 pub use bun_windows_sys::FILE_ATTRIBUTE_DEVICE;
@@ -153,7 +154,6 @@ pub use bun_windows_sys::FILE_ATTRIBUTE_REPARSE_POINT;
 pub use bun_windows_sys::FILE_ATTRIBUTE_SPARSE_FILE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_SYSTEM;
 pub use bun_windows_sys::FILE_ATTRIBUTE_TEMPORARY;
-pub use bun_windows_sys::FILE_ALL_INFORMATION;
 pub use bun_windows_sys::FILE_BASIC_INFORMATION;
 pub use bun_windows_sys::FILE_DEVICE_CONSOLE;
 pub use bun_windows_sys::FILE_DEVICE_NAMED_PIPE;
@@ -164,7 +164,6 @@ pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
 pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
-pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_OPEN_REPARSE_POINT;
 pub use bun_windows_sys::FILE_SEQUENTIAL_ONLY;
@@ -173,6 +172,7 @@ pub use bun_windows_sys::FILE_SHARE_READ;
 pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
 pub use bun_windows_sys::FILE_WRITE_THROUGH;
+pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::STANDARD_RIGHTS_READ;
@@ -227,16 +227,21 @@ pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
         sec -= 1;
         nsec += 1_000_000_000;
     }
-    bun_libuv_sys::uv_timespec_t { sec: sec as _, nsec: nsec as _ }
+    bun_libuv_sys::uv_timespec_t {
+        sec: sec as _,
+        nsec: nsec as _,
+    }
 }
 
 /// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
 /// Unix epoch) into a Windows `FILETIME`.
 #[inline]
 pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
-    let ticks =
-        (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
-    FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 }
+    let ticks = (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
+    FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    }
 }
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;

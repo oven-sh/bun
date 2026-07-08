@@ -981,7 +981,13 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           client.on("connect", () => resolve());
           await promise;
           try {
-            for (const args of [[], [Buffer.alloc(8)], [Buffer.alloc(8), 5], [Buffer.alloc(8), null], [Buffer.alloc(8), {}]]) {
+            for (const args of [
+              [],
+              [Buffer.alloc(8)],
+              [Buffer.alloc(8), 5],
+              [Buffer.alloc(8), null],
+              [Buffer.alloc(8), {}],
+            ]) {
               expect(() => client.ping(...args)).toThrow(
                 expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
               );

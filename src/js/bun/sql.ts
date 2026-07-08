@@ -717,7 +717,12 @@ const SQL: typeof Bun.SQL = function SQL(
         return result;
       } catch (err) {
         if (!(state.connectionState & ReservedConnectionState.closed)) {
-          await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          try {
+            await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          } catch {
+            // Best-effort; the savepoint may no longer exist if the engine
+            // already rolled the whole transaction back (SQLite SQLITE_FULL/IOERR).
+          }
         }
         throw err;
       }

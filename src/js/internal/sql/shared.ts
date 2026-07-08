@@ -762,10 +762,9 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
-      // queryCount is NOT zeroed here: every bound query still has a paired
-      // release() scheduled (bindQuery's query.finally / sql.begin's finally)
-      // which will decrement it back to 0. Zeroing it now would let those
-      // releases drive the count negative and permanently corrupt the slot.
+      // queryCount is NOT zeroed here: every bound query has a paired
+      // release() scheduled that will decrement it back to 0; zeroing it
+      // now would let those releases drive the count negative.
       this.flags &= ~PooledConnectionFlags.reserved;
 
       // notify all queries that the connection is closed

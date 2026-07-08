@@ -19,11 +19,9 @@ import { listeningServer, pgAuthenticationOk, pgCommandComplete, pgReadyForQuery
 
 type Received = { conn: number; sql: string };
 
-// Postgres FE/BE framing: the startup packet has no type byte
-// (Int32 len, Int32 protocol, ...); every later frontend message is
-// Byte1(type) Int32(len) body[len-4]. A single data event may contain
-// several messages and a message may span events. Query text containing
-// "KILL" destroys the socket without answering.
+// Postgres FE/BE framing: startup packet has no type byte; later frontend
+// messages are Byte1(type) Int32(len) body[len-4] and may span data events.
+// Query text containing "KILL" destroys the socket without answering.
 function pgMockServer(received: Received[]) {
   let nextConn = 0;
   return listeningServer(socket => {
@@ -60,12 +58,9 @@ function pgMockServer(received: Received[]) {
   });
 }
 
-/**
- * The server-received statement stream on each connection must form a valid
- * flat transaction sequence: every BEGIN is closed by exactly one
- * COMMIT/ROLLBACK before the next BEGIN, and no COMMIT/ROLLBACK appears
- * outside a BEGIN. Returns the first violation, or null.
- */
+// Per connection: every BEGIN must be closed by one COMMIT/ROLLBACK before
+// the next BEGIN, and no COMMIT/ROLLBACK outside a BEGIN. Returns the first
+// violation, or null.
 function firstInterleaving(received: Received[]): string | null {
   const depth = new Map<number, number>();
   for (const { conn, sql } of received) {
@@ -89,11 +84,8 @@ test("concurrent sql.begin() stays serialized after a server-side disconnect wit
   try {
     await sql.unsafe("SELECT 'warm'");
 
-    // Poison: two queries bound to the slot when the server drops it. The
-    // second is bound synchronously (queryCount=2) before the server replies;
-    // the native layer serializes simple queries so only the first reaches the
-    // wire before the socket dies. #finishClose() rejects both; before the fix
-    // each one's paired release then drove queryCount to -2.
+    // Poison: two queries bound to the slot (queryCount=2) when the server
+    // drops it; only the first reaches the wire. #finishClose() rejects both.
     const die1 = sql.unsafe("SELECT 'KILL'").execute();
     const die2 = sql.unsafe("SELECT 'never sent'").execute();
     const [e1, e2] = await Promise.all([
@@ -112,9 +104,8 @@ test("concurrent sql.begin() stays serialized after a server-side disconnect wit
     // Revive the slot; nothing resets the negative counter.
     await sql.unsafe("SELECT 'revive'");
 
-    // Two plain queries plus three concurrent sql.begin(). The plain queries are
-    // dispatched synchronously via .execute() so they are on the wire before the
-    // first reservation is taken.
+    // Two plain queries (dispatched synchronously via .execute()) plus three
+    // concurrent sql.begin().
     const pa = sql.unsafe("SELECT 'Pa'").execute();
     const pb = sql.unsafe("SELECT 'Pb'").execute();
     const t1 = sql.begin(async tx => {
@@ -140,9 +131,7 @@ test("concurrent sql.begin() stays serialized after a server-side disconnect wit
     expect((results[3] as PromiseRejectedResult).reason?.message).toBe("t2-app-error");
     expect(results[4]).toEqual({ status: "fulfilled", value: "t3" });
 
-    // The real invariant: on the wire, BEGIN...COMMIT/ROLLBACK blocks are
-    // contiguous. Before the fix the server saw BEGIN,BEGIN,BEGIN back to back
-    // and the first COMMIT closed the third transaction's BEGIN.
+    // Before the fix the server saw BEGIN,BEGIN,BEGIN back to back here.
     expect(firstInterleaving(received)).toBeNull();
   } finally {
     await sql.close({ timeout: 0 }).catch(() => {});

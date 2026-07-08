@@ -609,12 +609,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         // Like Node.js's connectionListenerInternal: the server timeout is
-        // applied to the socket before any request routing (so it also covers
-        // CONNECT and upgrade tunnels); a user-set per-socket timeout is
-        // refreshed, not cleared.
-        const serverTimeoutMs = server.timeout;
-        if (serverTimeoutMs) socket.setTimeout(serverTimeoutMs);
-        else socket._unrefTimer();
+        // applied once per connection (before any request routing, so it also
+        // covers CONNECT and upgrade tunnels) and before 'connection' fires so
+        // a user listener can override it; subsequent keep-alive requests only
+        // refresh the existing timer.
+        if (isSocketNew) {
+          const serverTimeoutMs = server.timeout;
+          if (serverTimeoutMs) socket.setTimeout(serverTimeoutMs);
+        } else {
+          socket._unrefTimer();
+        }
 
         const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
         if (isAncientHTTP) {
@@ -1042,6 +1046,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #pendingCallback = null;
   #timeoutTimer = null;
   #boundOnTimeout = null;
+  #lastBufferedAmount = 0;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
@@ -1187,12 +1192,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _onTimeout() {
     const handle = this[kHandle];
     const response = handle?.response;
-    // If there is a response, and it has pending data,
-    // we suppress the timeout because a write is in progress.
-    if (response && response.bufferedAmount > 0) {
+    // Like Node.js's net.Socket._onTimeout: only suppress when the buffered
+    // amount has changed since the last check (progress), so a stalled write
+    // still emits 'timeout' instead of looping forever.
+    const buffered = response ? response.bufferedAmount : 0;
+    if (buffered > 0 && buffered !== this.#lastBufferedAmount) {
+      this.#lastBufferedAmount = buffered;
       this._unrefTimer();
       return;
     }
+    this.#lastBufferedAmount = buffered;
     this.emit("timeout");
   }
   _unrefTimer() {

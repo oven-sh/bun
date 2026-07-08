@@ -1,7 +1,7 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 // https://nodejs.org/api/http.html#serversettimeoutmsecs-callback
 // Once a 'timeout' listener is installed on the server (or on req/res), the

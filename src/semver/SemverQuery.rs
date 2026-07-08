@@ -980,6 +980,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
         }
 
         if !skip_round {
+            let has_real_operand = matches!(input.get(i), Some(b'0'..=b'9' | b'x' | b'X' | b'*'));
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             let version = parse_result.version.min();
             if version.tag.has_build() {
@@ -1124,10 +1125,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 list.or_version(version)?;
             } else {
                 let range = token.to_range(&parse_result.version);
-                // A bare operator with no operand (`^`, `~`, `>=` at end of
-                // branch) parses len==0 and node-semver loose mode drops it
-                // before the collapse step, so it is not the ANY comparator.
-                if !range.is_match_all() || parse_result.len == 0 {
+                // An operator whose operand is not a real version or wildcard
+                // char (`^`, `~`, `>=`, `^v`, `vv`, ...) is dropped by
+                // node-semver loose mode before the collapse step.
+                if !range.is_match_all() || !has_real_operand {
                     branch_has_non_any = true;
                 }
                 if count == 0 && token.tag == TokenTag::Version {

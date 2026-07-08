@@ -333,9 +333,6 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
     }
 }
 
-/// `needs_deref` releases the ref the now-detached native socket held. The idle
-/// teardown is gated on the socket still holding the `Handlers` we entered with:
-/// `onConnectError` can reconnect, and we must not tear that connection down.
 /// Drains the thread's BoringSSL error queue on scope exit, whichever way the
 /// scope is left.
 struct ClearErrorQueue(bool);
@@ -367,6 +364,9 @@ impl Drop for PendingSystemError {
     }
 }
 
+/// `needs_deref` releases the ref the now-detached native socket held. The idle
+/// teardown is gated on the socket still holding the `Handlers` we entered with:
+/// `onConnectError` can reconnect, and we must not tear that connection down.
 struct ConnectErrorTeardown<const SSL: bool> {
     socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
     entered: Rc<Handlers>,
@@ -3413,9 +3413,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         // Only NOW is it safe for dispatch to fire: ext + kind point at `tls`.
-        // Store the allocation-root `tls_ptr` (from `heap::alloc`), NOT a
-        // reborrow-derived pointer, so dispatch's `&mut *ext` shares
-        // provenance with our per-use reborrows below.
         *uws::us_socket_t::opaque_mut(new_raw.as_ptr()).ext() = Some(tls);
         tls.socket
             .set(SocketHandler::<true>::from(new_raw.as_ptr()));
@@ -3915,7 +3912,6 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             TLSSocket::on_open(tls.this_ptr(), socket);
         }
     }
@@ -3924,21 +3920,18 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             TLSSocket::on_data(tls.this_ptr(), socket, decoded_data);
         }
     }
 
     fn on_session(&mut self, session: &[u8]) {
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             let _ = TLSSocket::on_session(tls.this_ptr(), session);
         }
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             let _ = TLSSocket::on_keylog(tls.this_ptr(), line);
         }
     }
@@ -3947,7 +3940,6 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             let tls = tls.this_ptr();
             let _ = TLSSocket::on_handshake(tls, socket, success as i32, ssl_error);
         }
@@ -3956,7 +3948,6 @@ impl DuplexUpgradeContext {
     fn on_end(&mut self) {
         let socket = self.duplex_socket();
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             TLSSocket::on_end(tls.this_ptr(), socket);
         }
     }
@@ -3965,7 +3956,6 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             TLSSocket::on_writable(tls.this_ptr(), socket);
         }
     }
@@ -4004,7 +3994,6 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
             TLSSocket::on_timeout(tls.this_ptr(), socket);
         }
     }
@@ -4215,10 +4204,6 @@ pub fn js_upgrade_duplex_to_tls(
     // duplex/named-pipe path shares one `SSL_CTX_new` with everyone else.
     // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
     // may also pass it top-level. Same lookup as `upgradeTLS` above.
-    // The local lives INSIDE the guard so all reads/writes go through
-    // `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _` and then
-    // writing the local by name would invalidate the guard's pointer tag
-    // under Stacked Borrows.
     let mut owned_ctx: Option<boringssl_sys::OwnedSslCtx> = None;
     let sc_js: JSValue = 'blk: {
         if let Some(v) = opts.get_truthy(global, "secureContext")? {

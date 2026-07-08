@@ -345,6 +345,9 @@ impl Handlers {
             mode,
             listener: Cell::new(None),
         });
+        // `store_callbacks`' async-context wrapping can allocate: root the cell
+        // across it for the same reason the callers hold one past this return.
+        let _cell_root = result.root_cell(global_object);
         result.store_callbacks(global_object, &callbacks);
         Ok(result)
     }

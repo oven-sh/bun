@@ -42,19 +42,19 @@ template <bool, bool, typename> struct WebSocketContext;
 /* Some pre-defined status constants to use with writeStatus */
 static const char *HTTP_200_OK = "200 OK";
 
-template <bool SSL>
+template <bool SSL, bool NODE_HTTP>
 struct HttpResponse : public AsyncSocket<SSL> {
     /* Solely used for getHttpResponseData() */
-    template <bool> friend struct TemplatedApp;
+    template <bool, bool> friend struct TemplatedApp;
     typedef AsyncSocket<SSL> Super;
 public:
 
-    HttpResponseData<SSL> *getHttpResponseData() {
-        return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
+    HttpResponseData<SSL, NODE_HTTP> *getHttpResponseData() {
+        return (HttpResponseData<SSL, NODE_HTTP> *) Super::getAsyncSocketData();
     }
 
-    static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
-        return (HttpResponseData<SSL> *) us_socket_ext(s);
+    static HttpResponseData<SSL, NODE_HTTP> *getHttpResponseDataS(us_socket_t *s) {
+        return (HttpResponseData<SSL, NODE_HTTP> *) us_socket_ext(s);
     }
 
     void setTimeout(uint8_t seconds) {
@@ -88,12 +88,12 @@ public:
 
     /* Called only once per request */
     void writeMark() {
-        if (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER) {
+        if (getHttpResponseData()->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_DATE_HEADER) {
             return;
         }
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this))))->date, 29));
-        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
+        getHttpResponseData()->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_DATE_HEADER;
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
@@ -110,7 +110,7 @@ public:
             totalSize = data.length();
         }
 
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         /* A no-body status carries no Content-Length (RFC 9110 8.6) and no body
          * bytes (RFC 9112 6.3 terminates it at the blank line). end() already
@@ -124,37 +124,41 @@ public:
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
         if (closeConnection) {
             /* We can only write the header once */
-            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
+            if (!(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_END_CALLED))) {
 
                 /* HTTP 1.1 must send this back unless the client already sent it to us.
                 * It is a connection close when either of the two parties say so but the
                 * one party must tell the other one so.
                 *
                 * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                if ((httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED))) {
                     writeHeader("Connection", "close");
                 }
 
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_CONNECTION_CLOSE;
             }
         }
 
         /* if write was called and there was previously no Content-Length header set.
          * node:http compat: pending response trailers (addTrailers) also force chunked
          * framing, since trailer fields can only be sent on a chunked body. */
-        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED || !httpResponseData->nodeHttpResponseTrailers.empty()) && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+        bool hasTrailers = false;
+        if constexpr (NODE_HTTP) {
+            hasTrailers = !httpResponseData->nodeCompat.nodeHttpResponseTrailers.empty();
+        }
+        if ((httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED || hasTrailers) && !(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
             /* Trailers-only end with no body chunk: write() below would early-return on
              * empty data, so terminate the header section and enter chunked mode here. */
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
+            if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
                 writeMark();
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
                     writeHeader("Transfer-Encoding", "chunked");
                 }
                 Super::write("\r\n", 2);
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+                httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
             }
 
             /* Write the chunked data if there is any (this will not send zero chunks) */
@@ -163,11 +167,15 @@ public:
 
             /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
              * between it and the final CRLF. */
-            if (!httpResponseData->nodeHttpResponseTrailers.empty()) [[unlikely]] {
-                Super::write("0\r\n", 3);
-                Super::write(httpResponseData->nodeHttpResponseTrailers.data(), (int) httpResponseData->nodeHttpResponseTrailers.length());
-                Super::write("\r\n", 2);
-                httpResponseData->nodeHttpResponseTrailers.clear();
+            if constexpr (NODE_HTTP) {
+                if (!httpResponseData->nodeCompat.nodeHttpResponseTrailers.empty()) [[unlikely]] {
+                    Super::write("0\r\n", 3);
+                    Super::write(httpResponseData->nodeCompat.nodeHttpResponseTrailers.data(), (int) httpResponseData->nodeCompat.nodeHttpResponseTrailers.length());
+                    Super::write("\r\n", 2);
+                    httpResponseData->nodeCompat.nodeHttpResponseTrailers.clear();
+                } else {
+                    Super::write("0\r\n\r\n", 5);
+                }
             } else {
                 Super::write("0\r\n\r\n", 5);
             }
@@ -176,7 +184,7 @@ public:
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
                 if (httpResponseData->shouldCloseConnection()) {
-                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                    if ((httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_RESPONSE_PENDING) == 0) {
                         if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                             ((AsyncSocket<SSL> *) this)->shutdown();
                             /* We need to force close after sending FIN since we want to hinder
@@ -195,7 +203,7 @@ public:
             return true;
         } else {
             /* Write content-length on first call */
-            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
+            if (!(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_END_CALLED))) {
                 /* Write mark, this propagates to WebSockets too */
                 writeMark();
 
@@ -205,13 +213,13 @@ public:
                     Super::write("Content-Length: ", 16);
                     writeUnsigned64(totalSize);
                     Super::write("\r\n\r\n", 4);
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                    httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                } else if (!(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED))) {
                     Super::write("\r\n", 2);
                 }
 
                 /* Mark end called */
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+                httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_END_CALLED;
             }
 
             /* Even if we supply no new data to write, its failed boolean is useful to know
@@ -242,7 +250,7 @@ public:
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
                     if (httpResponseData->shouldCloseConnection()) {
-                        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                        if ((httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_RESPONSE_PENDING) == 0) {
                             if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                                 ((AsyncSocket<SSL> *) this)->shutdown();
                                 /* We need to force close after sending FIN since we want to hinder
@@ -351,14 +359,17 @@ public:
         internalEnd({nullptr, 0}, 0, false, false, false, true);
 
         /* Grab the httpContext from res */
-        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
+        HttpContext<SSL, NODE_HTTP> *httpContext = HttpContext<SSL, NODE_HTTP>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
         auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
-        auto* socketData = responseData->socketData;
-        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        void* socketData = nullptr;
+        if constexpr (NODE_HTTP) {
+            socketData = responseData->nodeCompat.socketData;
+        }
+        HttpContextData<SSL, NODE_HTTP> *httpContextData = httpContext->getSocketContextData();
 
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
@@ -371,7 +382,7 @@ public:
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
             WebSocketContext<SSL, true, UserData>::socketKind(),
-            sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
+            sizeof(HttpResponseData<SSL, NODE_HTTP>), sizeof(WebSocketData) + sizeof(UserData));
         WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
         /* For whatever reason we were corked, update cork to the new socket */
@@ -440,18 +451,21 @@ public:
 
     /* Write a caller-built 1xx informational response line + headers. Shares
      * the AsyncSocket write path (and buffer) writeStatus/end use, so a
-     * pipelined replay stays ordered ahead of the final response bytes. */
+     * pipelined replay stays ordered ahead of the final response bytes.
+     * node:http compat only (writeEarlyHints, writeProcessing). */
     HttpResponse *writeRawInformational(std::string_view data) {
-        Super::write(data.data(), (int) data.length());
+        if constexpr (NODE_HTTP) {
+            Super::write(data.data(), (int) data.length());
+        }
         return this;
     }
 
     /* Write the HTTP status */
     HttpResponse *writeStatus(std::string_view status) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         /* Do not allow writing more than one status */
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_STATUS_CALLED) {
+        if (httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_STATUS_CALLED) {
             return this;
         }
 
@@ -464,7 +478,7 @@ public:
         }
 
         /* Update status */
-        httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
+        httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_STATUS_CALLED;
 
         Super::write("HTTP/1.1 ", 9);
         Super::write(status.data(), (int) status.length());
@@ -511,7 +525,7 @@ public:
 
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         /* 204/304 responses carry no body framing at all: no Content-Length,
          * no chunked framing and no terminating chunk, even when an explicit
@@ -527,7 +541,7 @@ public:
          * CONNECTION_CLOSE state is set directly so internalEnd() closes the
          * socket without adding a Connection: close header the user removed. */
         if (httpResponseData->closeDelimited) {
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_CONNECTION_CLOSE;
             internalEnd(data, data.length(), false, false, false);
             return;
         }
@@ -536,19 +550,19 @@ public:
          * streaming writes (a one-shot end), the body must still be chunk-framed.
          * Terminate the headers and enter chunked mode so internalEnd() takes the
          * chunked path instead of writing the raw body after the headers. */
-        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER) &&
-            !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) &&
+        if ((httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_TRANSFER_ENCODING_HEADER) &&
+            !(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED | HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) &&
             !httpResponseData->fromAncientRequest && !httpResponseData->noBodyStatus) {
             writeStatus(HTTP_200_OK);
             writeMark();
             Super::write("\r\n", 2);
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
         }
 
         /* Do not auto-write a Content-Length header when the user already wrote
          * a Content-Length or an explicit Transfer-Encoding header (a message
          * must not carry both, see RFC 9112 §6.2). */
-        internalEnd(data, data.length(), false, !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)), closeConnection);
+        internalEnd(data, data.length(), false, !(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)), closeConnection);
     }
 
     /* Try and end the response. Returns [true, true] on success.
@@ -561,16 +575,16 @@ public:
     /* Write the end of chunked encoded stream */
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
+        if (!(httpResponseData->state & (HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED | HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
             /* Write mark on first call to write */
             writeMark();
 
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+            if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
                 writeHeader("Transfer-Encoding", "chunked");
             }
             Super::write("\r\n", 2);
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
         }
 
         /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
@@ -583,26 +597,26 @@ public:
 
         writeStatus(HTTP_200_OK);
 
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         /* Close-delimited responses must not re-add the Transfer-Encoding
          * header the user removed; their body is raw, so take the else path. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+        if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+            if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
 
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
                     writeHeader("Transfer-Encoding", "chunked");
                 }
                 Super::write("\r\n", 2);
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+                httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
             }
 
-         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+         } else if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED)) {
             writeMark();
             Super::write("\r\n", 2);
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
         }
         if (flushImmediately) {
             /* Uncork the socket to send data to the client immediately */
@@ -656,28 +670,28 @@ public:
         }
 
 
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         /* Close-delimited responses (the user removed the framing headers)
          * write raw bytes with no chunk framing, like the else path. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+        if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
+            if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
 
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
                     writeHeader("Transfer-Encoding", "chunked");
                 }
                 Super::write("\r\n", 2);
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+                httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
             }
 
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
-        } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+        } else if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED)) {
             writeMark();
             Super::write("\r\n", 2);
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            httpResponseData->state |= HttpResponseData<SSL, NODE_HTTP>::HTTP_WRITE_CALLED;
         }
         size_t total_written = 0;
         bool has_failed = false;
@@ -702,7 +716,7 @@ public:
 
         /* Close-delimited bodies are raw; the chunk-terminating CRLF would be
          * injected into the body bytes. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
+        if (!(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
             // Write End of Chunked Encoding after data has been written
             Super::write("\r\n", 2);
         }
@@ -719,23 +733,23 @@ public:
 
     /* Get the current byte write offset for this Http response */
     uint64_t getWriteOffset() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->offset;
     }
 
     /* If you are messing around with sendfile you might want to override the offset. */
     void overrideWriteOffset(uint64_t offset) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->offset = offset;
     }
 
     /* Checking if we have fully responded and are ready for another request */
     bool hasResponded() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
-        return !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+        return !(httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_RESPONSE_PENDING);
     }
 
      /* Corks the response if possible. Leaves already corked socket be. */
@@ -766,9 +780,9 @@ public:
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
-            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+            HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
             if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                if ((httpResponseData->state & HttpResponseData<SSL, NODE_HTTP>::HTTP_RESPONSE_PENDING) == 0) {
                     if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                         ((AsyncSocket<SSL> *) this)->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
@@ -786,8 +800,8 @@ public:
     }
 
     /* Attach handler for writable HTTP response */
-    HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+    HttpResponse *onWritable(void* userData, HttpResponseData<SSL, NODE_HTTP>::OnWritableCallback handler) {
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->writableUserData = userData;
         httpResponseData->onWritable = handler;
@@ -796,7 +810,7 @@ public:
 
     /* Remove handler for writable HTTP response */
     HttpResponse *clearOnWritable() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
         httpResponseData->writableUserData = nullptr;
@@ -804,16 +818,16 @@ public:
     }
 
     /* Attach handler for aborted HTTP request */
-    HttpResponse *onAborted(void* userData,  HttpResponseData<SSL>::OnAbortedCallback handler) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+    HttpResponse *onAborted(void* userData,  HttpResponseData<SSL, NODE_HTTP>::OnAbortedCallback handler) {
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->userData = userData;
         httpResponseData->onAborted = handler;
         return this;
     }
 
-    HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL>::OnTimeoutCallback handler) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+    HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL, NODE_HTTP>::OnTimeoutCallback handler) {
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->userData = userData;
         httpResponseData->onTimeout = handler;
@@ -821,7 +835,7 @@ public:
     }
 
     HttpResponse* clearOnWritableAndAborted() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
         httpResponseData->writableUserData = nullptr;
@@ -832,21 +846,21 @@ public:
     }
 
     HttpResponse* clearOnAborted() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onAborted = nullptr;
         return this;
     }
 
     HttpResponse* clearOnTimeout() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onTimeout = nullptr;
         return this;
     }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
-    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) {
-        HttpResponseData<SSL> *data = getHttpResponseData();
+    void onData(void* userData, HttpResponseData<SSL, NODE_HTTP>::OnDataCallback handler) {
+        HttpResponseData<SSL, NODE_HTTP> *data = getHttpResponseData();
         data->userData = userData;
         data->inStream = handler;
 
@@ -855,17 +869,20 @@ public:
     }
 
     void* getSocketData() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        return httpResponseData->socketData;
+        if constexpr (NODE_HTTP) {
+            return getHttpResponseData()->nodeCompat.socketData;
+        }
+        return nullptr;
     }
     bool isConnectRequest() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        return httpResponseData->isConnectRequest;
+        if constexpr (NODE_HTTP) {
+            return getHttpResponseData()->nodeCompat.isConnectRequest;
+        }
+        return false;
     }
 
     void setWriteOffset(uint64_t offset) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        HttpResponseData<SSL, NODE_HTTP> *httpResponseData = getHttpResponseData();
 
         httpResponseData->offset = offset;
     }

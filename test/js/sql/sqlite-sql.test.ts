@@ -1137,7 +1137,7 @@ describe("Transactions", () => {
   });
 
   test("savepoint returning an array of queries rolls back atomically on failure", async () => {
-    let caught: unknown;
+    let caught: any;
     await sql.begin(async tx => {
       try {
         await tx.savepoint(async sp => [
@@ -1150,17 +1150,19 @@ describe("Transactions", () => {
       await tx`INSERT INTO accounts VALUES (5, 50)`;
     });
 
-    // The real error must be surfaced, not "no such savepoint".
-    expect(String(caught)).toMatch(/UNIQUE constraint failed/);
-
     // The sibling insert from the failed savepoint must not survive; the outer
-    // transaction's own write after the savepoint must still commit.
+    // transaction's own write after the savepoint must still commit. The real
+    // statement error must be surfaced, not "no such savepoint".
     const accounts = await sql`SELECT id, balance FROM accounts ORDER BY id`;
-    expect(accounts).toEqual([
-      { id: 1, balance: 1000 },
-      { id: 2, balance: 500 },
-      { id: 5, balance: 50 },
-    ]);
+    expect({ code: caught?.code, message: String(caught), accounts }).toEqual({
+      code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+      message: "SQLiteError: UNIQUE constraint failed: accounts.id",
+      accounts: [
+        { id: 1, balance: 1000 },
+        { id: 2, balance: 500 },
+        { id: 5, balance: 50 },
+      ],
+    });
   });
 
   // SQLite doesn't support read-only transactions via BEGIN syntax

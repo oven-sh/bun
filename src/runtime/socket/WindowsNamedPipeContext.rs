@@ -149,7 +149,10 @@ impl WindowsNamedPipeContext {
         // SAFETY: `s` is kept alive by the +1 ref taken in `create()`.
         // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
         match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-            NewSocket::on_open(s, socket_from_named_pipe::<SSL>(pipe))
+            NewSocket::on_open(
+                bun_ptr::ThisPtr::new(s),
+                socket_from_named_pipe::<SSL>(pipe),
+            )
         });
     }
 
@@ -158,7 +161,11 @@ impl WindowsNamedPipeContext {
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: see `on_open`.
         match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-            NewSocket::on_data(s, socket_from_named_pipe::<SSL>(pipe), decoded_data)
+            NewSocket::on_data(
+                bun_ptr::ThisPtr::new(s),
+                socket_from_named_pipe::<SSL>(pipe),
+                decoded_data,
+            )
         });
     }
 
@@ -168,7 +175,7 @@ impl WindowsNamedPipeContext {
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
             // SAFETY: see `on_data`; `on_session` takes `*mut Self`
             // (noalias re-entrancy) and routes JS errors internally.
-            let _ = unsafe { TLSSocket::on_session(s, session) };
+            let _ = unsafe { TLSSocket::on_session(bun_ptr::ThisPtr::new(s), session) };
         }
     }
 
@@ -176,7 +183,7 @@ impl WindowsNamedPipeContext {
         // SAFETY: same as `on_session` above.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
             // SAFETY: same as `on_session` above.
-            let _ = unsafe { TLSSocket::on_keylog(s, line) };
+            let _ = unsafe { TLSSocket::on_keylog(bun_ptr::ThisPtr::new(s), line) };
         }
     }
 
@@ -186,7 +193,7 @@ impl WindowsNamedPipeContext {
         // SAFETY: see `on_open`.
         match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
             _ = NewSocket::on_handshake(
-                s,
+                bun_ptr::ThisPtr::new(s),
                 socket_from_named_pipe::<SSL>(pipe),
                 success as i32,
                 ssl_error,
@@ -199,7 +206,10 @@ impl WindowsNamedPipeContext {
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: see `on_open`.
         match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-            NewSocket::on_end(s, socket_from_named_pipe::<SSL>(pipe))
+            NewSocket::on_end(
+                bun_ptr::ThisPtr::new(s),
+                socket_from_named_pipe::<SSL>(pipe),
+            )
         });
     }
 
@@ -208,7 +218,10 @@ impl WindowsNamedPipeContext {
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: see `on_open`.
         match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-            NewSocket::on_writable(s, socket_from_named_pipe::<SSL>(pipe))
+            NewSocket::on_writable(
+                bun_ptr::ThisPtr::new(s),
+                socket_from_named_pipe::<SSL>(pipe),
+            )
         });
     }
 
@@ -226,7 +239,7 @@ impl WindowsNamedPipeContext {
         } else {
             // SAFETY: see `on_open`.
             match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-                _ = NewSocket::handle_connect_error(s, err.errno as i32, 0)
+                _ = NewSocket::handle_connect_error(bun_ptr::ThisPtr::new(s), err.errno as i32, 0)
             });
         }
     }
@@ -236,7 +249,10 @@ impl WindowsNamedPipeContext {
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: see `on_open`.
         match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-            NewSocket::on_timeout(s, socket_from_named_pipe::<SSL>(pipe))
+            NewSocket::on_timeout(
+                bun_ptr::ThisPtr::new(s),
+                socket_from_named_pipe::<SSL>(pipe),
+            )
         });
     }
 
@@ -250,7 +266,12 @@ impl WindowsNamedPipeContext {
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: `s` held a +1 ref from `create()`; release it after dispatch.
         match_socket!(socket, |s: NewSocket<SSL>| unsafe {
-            _ = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
+            _ = NewSocket::on_close(
+                bun_ptr::ThisPtr::new(s),
+                socket_from_named_pipe::<SSL>(pipe),
+                0,
+                None,
+            );
             (*s).deref();
         });
         // SAFETY: `this` is the live ctx pointer registered in create();
@@ -409,7 +430,11 @@ impl WindowsNamedPipeContext {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
             match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0)
+                _ = NewSocket::handle_connect_error(
+                    bun_ptr::ThisPtr::new(s),
+                    SystemErrno::ENOENT as i32,
+                    0,
+                )
             });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
@@ -439,7 +464,11 @@ impl WindowsNamedPipeContext {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
             match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0)
+                _ = NewSocket::handle_connect_error(
+                    bun_ptr::ThisPtr::new(s),
+                    SystemErrno::ENOENT as i32,
+                    0,
+                )
             });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.

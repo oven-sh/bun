@@ -1503,13 +1503,12 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::ECONNREFUSED as c_int
             }
         };
-        // SAFETY: `socket` is the live heap pointer; `socket_ref`'s `&mut` is no
-        // longer used on this branch. `handle_connect_error` takes `*mut Self`
-        // (noalias re-entrancy) — no `&mut NewSocket` held across its JS call.
-        unsafe {
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno, 0);
+        // SAFETY: `socket` is the live heap allocation created above.
+        let this = unsafe { bun_ptr::ThisPtr::new(socket) };
+        {
+            let _ = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
-            (*socket).deref();
+            NewSocket::deref(&this);
         }
         return Ok(promise_value);
     }
@@ -1833,12 +1832,9 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         // TLSSocket wrapper.
         let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
         if s_ref.kind() == uws_sys::SocketKind::BunSocketTls {
-            let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
-            if tls_ptr.is_null() {
-                JSValue::UNDEFINED
-            } else {
-                // SAFETY: ext slot holds a live TLSSocket; single-threaded dispatch.
-                unsafe { bun_ptr::ThisPtr::new(tls_ptr) }.get_this_value(&global)
+            match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
+                Some(tls) => tls.get_this_value(&global),
+                None => JSValue::UNDEFINED,
             }
         } else {
             JSValue::UNDEFINED

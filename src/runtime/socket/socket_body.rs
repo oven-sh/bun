@@ -518,8 +518,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `self` is live until guard drop; all writes go through
         // interior-mutable cells.
         let _guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
-        // Stash the raw `*mut Self` for the uSockets ext slot.
-        let self_ptr: *mut Self = self.as_ctx_ptr();
+        // Stash the self-pointer for the uSockets ext slot.
+        // SAFETY: `self` is live for this call and outlives the sockets below.
+        let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
+        let self_ptr: *mut Self = this.as_ptr();
 
         let vm = self.get_handlers().vm;
         // SAFETY: per-thread VM singleton; `VirtualMachine::get()` yields the
@@ -582,13 +584,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                             return Err(bun_core::err!("FailedToOpenSocket"));
                         }
                         uws::ConnectResult::Socket(s) => {
-                            // SAFETY: ext slot is sized for `*mut Self`.
-                            unsafe { *(*s).ext::<*mut Self>() = self_ptr };
+                            *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                             SocketHandler::<SSL>::from(s)
                         }
                         uws::ConnectResult::Connecting(c) => {
-                            // SAFETY: ext slot is sized for `*mut Self`.
-                            unsafe { *(*c).ext::<*mut Self>() = self_ptr };
+                            *uws::ConnectingSocket::opaque_mut(c).ext() = Some(this);
                             SocketHandler::<SSL>::from_connecting(c)
                         }
                     },
@@ -605,8 +605,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if s.is_null() {
                     return Err(bun_core::err!("FailedToOpenSocket"));
                 }
-                // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *(*s).ext::<*mut Self>() = self_ptr };
+                *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
             Some(UnixOrHost::Fd(f)) => {
@@ -623,14 +622,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if s.is_null() {
                     return Err(bun_core::err!("ConnectionFailed"));
                 }
-                // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *(*s).ext::<*mut Self>() = self_ptr };
+                *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 let sock = SocketHandler::<SSL>::from(s);
                 self.socket.set(sock);
-                // SAFETY: the `&self.connection` match borrow has ended (NLL —
-                // `f` is unused past `from_fd`); `self_ptr` is the live
-                // `*mut Self`. `on_open` takes `*mut Self` (noalias re-entrancy).
-                unsafe { Self::on_open(self_ptr, sock) };
+                // SAFETY: `self_ptr` is the live allocation root; the
+                // `&self.connection` match borrow has ended (NLL).
+                let this = unsafe { bun_ptr::ThisPtr::new(self_ptr) };
+                Self::on_open(this, sock);
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
@@ -856,10 +854,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket` (uws dispatch contract: the ext
     /// slot holds the unique heap allocation); JS-thread only.
-    pub unsafe fn on_writable(this: *mut Self, _socket: SocketHandler<SSL>) {
+    pub fn on_writable(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -920,10 +916,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_timeout(this: *mut Self, _socket: SocketHandler<SSL>) {
+    pub fn on_timeout(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1019,13 +1013,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn handle_connect_error(
-        this: *mut Self,
+    pub fn handle_connect_error(
+        this: bun_ptr::ThisPtr<Self>,
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -1212,14 +1204,13 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_connect_error(
-        this: *mut Self,
+    pub fn on_connect_error(
+        this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
         errno: c_int,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract.
-        unsafe { Self::handle_connect_error(this, errno, socket.dns_error()) }
+        Self::handle_connect_error(this, errno, socket.dns_error())
     }
 
     pub fn mark_active(&self) {
@@ -1333,9 +1324,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_open(this: *mut Self, socket: SocketHandler<SSL>) {
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+    pub fn on_open(this: bun_ptr::ThisPtr<Self>, socket: SocketHandler<SSL>) {
         let this_ptr = this.as_ptr();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -1558,10 +1547,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_end(this: *mut Self, _socket: SocketHandler<SSL>) {
+    pub fn on_end(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1610,15 +1597,13 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_handshake(
-        this: *mut Self,
+    pub fn on_handshake(
+        this: bun_ptr::ThisPtr<Self>,
         s: SocketHandler<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1753,10 +1738,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_session(this: *mut Self, session: &[u8]) -> JsResult<()> {
+    pub fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         if this.socket.get().is_detached() {
             return Ok(());
         }
@@ -1805,10 +1788,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_keylog(this: *mut Self, line: &[u8]) -> JsResult<()> {
+    pub fn on_keylog(this: bun_ptr::ThisPtr<Self>, line: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         if this.socket.get().is_detached() {
             return Ok(());
         }
@@ -1857,15 +1838,13 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_close(
-        this: *mut Self,
+    pub fn on_close(
+        this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
         err: c_int,
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late close on a socket whose Handlers were already torn down
         // (mark_inactive freed them through a path that did not route back
         // through this dispatch - e.g. a JS-side destroy on a TLS socket
@@ -1896,12 +1875,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
         if let Some(raw) = this.twin.with_mut(|t| t.take()) {
-            let raw = IntrusiveRc::into_raw(raw);
-            // SAFETY: twin holds a +1 intrusive ref; uniquely accessed here.
-            // `on_close` itself runs `this.deref()` (via the cleanup guard),
-            // which releases that +1 — so hand it the raw pointer instead of
-            // letting `IntrusiveRc::drop` release a *second* time.
-            unsafe { Self::on_close(raw, socket, err, reason).ok() };
+            // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
+            // hand over the raw pointer rather than letting `IntrusiveRc::drop`
+            // release it a second time.
+            // SAFETY: the twin held a live +1 ref.
+            let raw = unsafe { bun_ptr::ThisPtr::new(IntrusiveRc::into_raw(raw)) };
+            Self::on_close(raw, socket, err, reason).ok();
         }
         let cleanup = CloseTeardown {
             socket: this,
@@ -1963,10 +1942,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
-    pub unsafe fn on_data(this: *mut Self, s: SocketHandler<SSL>, data: &[u8]) {
+    pub fn on_data(this: bun_ptr::ThisPtr<Self>, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
-        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -3465,9 +3442,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Store the allocation-root `tls_ptr` (from `heap::alloc`), NOT a
         // reborrow-derived pointer, so dispatch's `&mut *ext` shares
         // provenance with our per-use reborrows below.
-        // SAFETY: ext slot is sized for `*mut TLSSocket`; `new_raw` is the live
-        // adopted `us_socket_t`.
-        unsafe { *(*new_raw.as_ptr()).ext::<*mut TLSSocket>() = tls_ptr };
+        *uws::us_socket_t::opaque_mut(new_raw.as_ptr()).ext() = Some(tls);
         tls.socket
             .set(SocketHandler::<true>::from(new_raw.as_ptr()));
         tls.ref_();
@@ -3524,14 +3499,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
-        // SAFETY: `on_open` takes `*mut Self` (noalias re-entrancy) and may
-        // synchronously dispatch through the ext slot (which now stores
-        // `tls_ptr`); passing the allocation-root pointer keeps provenance and
-        // no `&mut TLSSocket` is held across the call.
-        unsafe {
-            let sock = tls.socket.get();
-            TLSSocket::on_open(tls_ptr, sock);
-        };
+        TLSSocket::on_open(tls, tls.socket.get());
         bun_opaque::opaque_deref_mut(new_raw.as_ptr()).start_tls_handshake();
         // The socket being wrapped may have had its readable interest off (an
         // accepted socket nobody was reading yet — its ClientHello is still in
@@ -3973,9 +3941,8 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch. `on_open`
-            // takes `*mut Self` (noalias re-entrancy) — no `&mut TLSSocket` held.
-            unsafe { TLSSocket::on_open(tls.as_ptr(), socket) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            TLSSocket::on_open(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
         }
     }
 
@@ -3983,24 +3950,26 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_data(tls.as_ptr(), socket, decoded_data) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            TLSSocket::on_data(
+                unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) },
+                socket,
+                decoded_data,
+            );
         }
     }
 
     fn on_session(&mut self, session: &[u8]) {
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch. `on_session`
-            // takes `*mut Self` (noalias re-entrancy); JS errors land on the
-            // socket's error handler inside.
-            let _ = unsafe { TLSSocket::on_session(tls.as_ptr(), session) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            let _ = TLSSocket::on_session(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, session);
         }
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
         if let Some(tls) = &mut self.tls {
-            // SAFETY: same as `on_session` above.
-            let _ = unsafe { TLSSocket::on_keylog(tls.as_ptr(), line) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            let _ = TLSSocket::on_keylog(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, line);
         }
     }
 
@@ -4008,17 +3977,17 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch.
-            let _ =
-                unsafe { TLSSocket::on_handshake(tls.as_ptr(), socket, success as i32, ssl_error) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            let tls = unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) };
+            let _ = TLSSocket::on_handshake(tls, socket, success as i32, ssl_error);
         }
     }
 
     fn on_end(&mut self) {
         let socket = self.duplex_socket();
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_end(tls.as_ptr(), socket) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            TLSSocket::on_end(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
         }
     }
 
@@ -4026,8 +3995,8 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_writable(tls.as_ptr(), socket) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            TLSSocket::on_writable(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
         }
     }
 
@@ -4055,14 +4024,13 @@ impl DuplexUpgradeContext {
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
                 let p = IntrusiveRc::into_raw(tls);
-                // SAFETY: intrusive refcount; single-threaded dispatch. The
-                // +1 transferred via `into_raw` is released by
-                // `handle_connect_error`'s `needs_deref` arm (socket is
-                // UpgradedDuplex, not Detached) — do NOT reconstruct the
-                // IntrusiveRc. `handle_connect_error` takes `*mut Self`.
-                let _ = unsafe {
-                    TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0)
-                };
+                // `handle_connect_error`'s `needs_deref` arm releases the +1
+                // transferred via `into_raw` (socket is UpgradedDuplex, not
+                // Detached) — do NOT reconstruct the `IntrusiveRc`.
+                // SAFETY: `p` carries that live +1.
+                let p = unsafe { bun_ptr::ThisPtr::new(p) };
+                let _ =
+                    TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
             }
         }
     }
@@ -4071,8 +4039,8 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = &mut self.tls {
-            // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_timeout(tls.as_ptr(), socket) };
+            // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
+            TLSSocket::on_timeout(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
         }
     }
 
@@ -4090,11 +4058,11 @@ impl DuplexUpgradeContext {
             // in `onError` instead of reading the Handlers that `tls.onClose`
             // → `markInactive` just freed.
             let p = IntrusiveRc::into_raw(tls);
-            // SAFETY: intrusive refcount; single-threaded dispatch. `on_close`
-            // consumes the +1 we held via its internal `deref()`, so we do NOT
-            // reconstruct the IntrusiveRc (that would double-deref). `on_close`
-            // takes `*mut Self` (noalias re-entrancy).
-            let _ = unsafe { TLSSocket::on_close(p, socket, 0, None) };
+            // `on_close` consumes the +1 we held, so we do NOT reconstruct the
+            // `IntrusiveRc` (that would double-deref).
+            // SAFETY: `p` carries that live +1.
+            let p = unsafe { bun_ptr::ThisPtr::new(p) };
+            let _ = TLSSocket::on_close(p, socket, 0, None);
         }
 
         self.deinit_in_next_tick();
@@ -4157,11 +4125,11 @@ impl DuplexUpgradeContext {
                         // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
                         let p = IntrusiveRc::into_raw(tls);
-                        // SAFETY: intrusive refcount; `handle_connect_error`'s
-                        // `needs_deref` arm releases the +1 transferred via
-                        // `into_raw` (socket is UpgradedDuplex, not Detached).
-                        // `handle_connect_error` takes `*mut Self`.
-                        let _ = unsafe { TLSSocket::handle_connect_error(p, errno, 0) };
+                        // `handle_connect_error`'s `needs_deref` arm releases
+                        // the +1 transferred via `into_raw`.
+                        // SAFETY: `p` carries that live +1.
+                        let p = unsafe { bun_ptr::ThisPtr::new(p) };
+                        let _ = TLSSocket::handle_connect_error(p, errno, 0);
                     }
                     // `startTLS`/`startTLSWithCTX` failed before the
                     // SSLWrapper was assigned, so its close callback

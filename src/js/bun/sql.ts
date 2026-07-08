@@ -145,7 +145,7 @@ const SQL: typeof Bun.SQL = function SQL(
     transactionQueries.delete(query);
   }
 
-  function queryFromTransactionHandler(transactionQueries, query, handle, err) {
+  function queryFromTransactionHandler(transactionQueries, preRunGuard, query, handle, err) {
     const pooledConnection = this;
     if (err) {
       transactionQueries.delete(query);
@@ -156,6 +156,14 @@ const SQL: typeof Bun.SQL = function SQL(
     if (query.cancelled) {
       transactionQueries.delete(query);
       return query.reject(pool.queryCancelledError());
+    }
+
+    if (preRunGuard !== null) {
+      const guardErr = preRunGuard();
+      if (guardErr) {
+        transactionQueries.delete(query);
+        return query.reject(guardErr);
+      }
     }
 
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
@@ -177,6 +185,7 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
     pooledConnection: PooledPostgresConnection,
     transactionQueries: Set<Query<any, any>>,
+    preRunGuard: (() => Error | null) | null = null,
   ) {
     try {
       const query = new Query(
@@ -185,7 +194,7 @@ const SQL: typeof Bun.SQL = function SQL(
         connectionInfo.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries, preRunGuard),
         pool,
       );
 
@@ -201,6 +210,7 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
     pooledConnection: PooledPostgresConnection,
     transactionQueries: Set<Query<any, any>>,
+    preRunGuard: (() => Error | null) | null = null,
   ) {
     try {
       let flags = connectionInfo.bigint
@@ -214,7 +224,7 @@ const SQL: typeof Bun.SQL = function SQL(
         strings,
         values,
         flags,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries, preRunGuard),
         pool,
       );
       transactionQueries.add(query);
@@ -564,6 +574,10 @@ const SQL: typeof Bun.SQL = function SQL(
         "current transaction is aborted (the database already rolled it back), commands ignored until end of transaction",
       );
     }
+    const preRunGuard =
+      isConnectionInTransaction === undefined
+        ? null
+        : () => (needs_rollback && !transaction_still_open() ? transaction_aborted_error() : null);
 
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -593,23 +607,20 @@ const SQL: typeof Bun.SQL = function SQL(
         return new SQLHelper([strings], values);
       }
 
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state.queries, preRunGuard);
     }
     transaction_sql.unsafe = (string, args = []) => {
       if (needs_rollback && !transaction_still_open()) {
         return Promise.$reject(transaction_aborted_error());
       }
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries, preRunGuard);
     };
     transaction_sql.file = async (path: string, args = []) => {
       if (needs_rollback && !transaction_still_open()) {
         throw transaction_aborted_error();
       }
       const text = await Bun.file(path).text();
-      if (needs_rollback && !transaction_still_open()) {
-        throw transaction_aborted_error();
-      }
-      return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries, preRunGuard);
     };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package

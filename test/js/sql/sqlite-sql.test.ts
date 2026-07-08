@@ -1233,6 +1233,24 @@ describe("Transactions", () => {
       });
     });
 
+    test("array-return form: queries created before the conflict are refused at execution time", async () => {
+      let beginErr: any;
+      await sql
+        .begin(tx => [
+          tx`INSERT INTO log VALUES ('before')`,
+          tx`INSERT INTO t VALUES ('dup')`,
+          tx`INSERT INTO log VALUES ('leaked')`,
+        ])
+        .catch(e => (beginErr = e));
+      expect({
+        code: beginErr?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        durable: [],
+      });
+    });
+
     test("INSERT OR ROLLBACK (statement-level conflict clause) behaves the same", async () => {
       await sql`CREATE TABLE t2 (v TEXT PRIMARY KEY)`;
       await sql`INSERT INTO t2 VALUES ('dup')`;

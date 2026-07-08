@@ -1744,34 +1744,18 @@ impl JSValkeyClient {
         {
             // SAFETY: last ref dropped — sole owner of `*this` (see above).
             let this_ref = unsafe { &*this };
-            // ref_count is 0, so any resource still linked had its +1
-            // over-released elsewhere. Unlink without deref so nothing
-            // dispatches into the box we're about to free.
-            if !this_ref.client.get().socket.is_closed() {
-                bun_core::hint::cold();
-                debug_assert!(
-                    !cfg!(bun_debug),
-                    "JSValkeyClient::deinit with socket still open"
-                );
-                if let Some(ext) = this_ref
-                    .client
-                    .get()
-                    .socket
-                    .ext::<Option<core::ptr::NonNull<JSValkeyClient>>>()
-                {
-                    // SAFETY: `ext` points at the live socket's ext storage;
-                    // single-threaded uWS dispatch, no other borrow outstanding.
-                    unsafe { *ext = None };
-                }
-            }
-            this_ref.detach_timer(&this_ref.timer);
-            this_ref.detach_timer(&this_ref.reconnect_timer);
+            debug_assert!(this_ref.client.get().socket.is_closed());
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
                 unsafe { boringssl::c::SSL_CTX_free(s) };
             }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());
+            // ref_count is already 0 here; `stop_timers()` → `remove_timer()`
+            // would deref a zero-count object. Unlink without deref so the VM
+            // doesn't fire into freed memory.
+            this_ref.detach_timer(&this_ref.timer);
+            this_ref.detach_timer(&this_ref.reconnect_timer);
             this_ref.ref_count.assert_no_refs();
         }
 

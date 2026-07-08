@@ -20,19 +20,20 @@ test.describe("plan capture at first t.assert access", () => {
   });
 });
 
-// t.test() after the parent finished must reject with Node's
-// parentAlreadyFinished error, not bun:test's internal-phase throw.
+// t.test() after the parent finished: Node fails the late subtest with
+// parentAlreadyFinished but resolves the returned promise (undefined); it must
+// not reject or fall through to bun:test's internal-phase throw.
 test("late subtest after parent finished", async t => {
   let saved;
   await t.test("parent", pt => {
     saved = pt;
   });
-  let caught;
+  let outcome;
   await saved
     .test("late", () => {})
-    .catch(e => {
-      caught = e;
-    });
-  assert.strictEqual(caught?.code, "ERR_TEST_FAILURE");
-  assert.strictEqual(caught?.failureType, "parentAlreadyFinished");
+    .then(
+      v => (outcome = { resolved: true, value: v }),
+      e => (outcome = { rejected: true, code: e?.code }),
+    );
+  assert.deepStrictEqual(outcome, { resolved: true, value: undefined });
 });

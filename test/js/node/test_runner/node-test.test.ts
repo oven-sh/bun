@@ -82,9 +82,11 @@ describe("node:test", () => {
     });
   });
 
-  test("should suppress runtime t.todo()/t.skip() failures and keep runner timers real under mock timers", async () => {
+  test("should count runtime t.todo()/t.skip() as todo/skip and keep runner timers real under mock timers", async () => {
     const { exitCode, stderr } = await runTests(["12-runtime-todo-and-mock-timers.js"]);
-    expect(stderr).toContain("5 pass");
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("1 skip");
+    expect(stderr).toContain("1 todo");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),
@@ -147,9 +149,10 @@ describe("node:test", () => {
     });
   });
 
-  test("should capture plan at first t.assert access and reject subtests started after their parent finished", async () => {
+  test("should capture plan at first t.assert access and resolve subtests started after their parent finished", async () => {
     const { exitCode, stderr } = await runTests(["16-plan-and-late-subtest.js"]);
-    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 todo");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

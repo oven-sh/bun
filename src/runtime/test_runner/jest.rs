@@ -526,6 +526,33 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
+/// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
+/// the running sequence's result so bun:test reports skip/todo instead of pass.
+pub(crate) fn js_node_test_mark_result(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use super::execution::Result as ExecResult;
+    let [mode] = callframe.arguments_as_array::<1>();
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    let active = buntest.get_current_state_data();
+    let Some((sequence_ptr, _)) =
+        buntest.execution.get_current_and_valid_execution_sequence(&active)
+    else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
+    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    if sequence.result == ExecResult::Pending {
+        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 pub mod on_unhandled_rejection {
     use super::*;
 

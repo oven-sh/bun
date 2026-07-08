@@ -649,12 +649,9 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
 // Test plan
 // -----------------------------------------------------------------------------
 
-function makeTestFailure(message: string, failureType?: string) {
+function makeTestFailure(message: string) {
   const error = new Error(message);
   (error as { code?: string }).code = "ERR_TEST_FAILURE";
-  if (failureType !== undefined) {
-    (error as { failureType?: string }).failureType = failureType;
-  }
   return error;
 }
 
@@ -879,6 +876,8 @@ class TestNode {
 // Bumped by the runner's enter_file. Bound privately rather than read off the
 // bun:test module object, which is public API.
 const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
+// Overrides the running bun:test sequence result: `false` → skip, `true` → todo.
+const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 1);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1664,10 +1663,18 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
   return (done: (error?: unknown) => void) => {
     executeTestNode(node, fn).then(
       failure => {
-        // A runtime t.skip()/t.todo() suppresses the failure, like Node; a
-        // declared todo body's failure must reach bun:test's todo accounting.
-        const runtimeMarked = node.skipped || (node.todoFlag && !declaredTodo);
-        done(failure === undefined || runtimeMarked ? undefined : failure);
+        // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
+        // (Node counts these as skip/todo even when the body threw); a declared
+        // todo body's failure must reach bun:test's own todo accounting instead.
+        if (node.skipped) {
+          markCurrentResult(false);
+        } else if (node.todoFlag && !declaredTodo) {
+          markCurrentResult(true);
+        } else {
+          done(failure);
+          return;
+        }
+        done(undefined);
       },
       err => done(err),
     );
@@ -1687,12 +1694,9 @@ function addTest(
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined) {
     if (runningNode.finished) {
-      // t.test() escaped its parent (e.g. via setImmediate). Node marks the
-      // late subtest failed with parentAlreadyFinished; do not fall through to
-      // bun:test, which would throw an internal-phase error.
-      return Promise.reject(
-        makeTestFailure("test could not be started because its parent finished", "parentAlreadyFinished"),
-      );
+      // t.test() escaped its parent: Node fails the late subtest but resolves
+      // the promise; don't fall through to bun:test's internal-phase throw.
+      return Promise.resolve(undefined);
     }
     if (runningNode.isRunning()) {
       // Subtest of a running test (or of an inline suite created inside one).
@@ -1757,9 +1761,7 @@ function addSuite(
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined && runningNode.finished) {
-    return Promise.reject(
-      makeTestFailure("test could not be started because its parent finished", "parentAlreadyFinished"),
-    );
+    return Promise.resolve(undefined);
   }
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);

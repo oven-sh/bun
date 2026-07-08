@@ -59,11 +59,13 @@ impl<'a> Default for InitOptions<'a> {
     }
 }
 
-use crate::webcore::headers_ref::blob_content_type;
-
 #[inline]
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+    // Match `RequestContext::get_content_type`: fall back to the File/S3 store's
+    // extension-sniffed mime so a sliced Bun.file() serves the same Content-Type
+    // as the unsliced file.
+    let ct = blob.content_type_or_mime_type().filter(|ct| !ct.is_empty());
+    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, ct)
 }
 
 #[inline]

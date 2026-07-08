@@ -182,11 +182,15 @@ describe("Blob type", () => {
     });
   });
 
-  test("serving a typeless file slice from a dynamic handler falls back to the file's mime type", async () => {
+  test("serving a typeless file slice falls back to the file's mime type", async () => {
     using dir = tempDir("blob-type-slice-serve", { "f.txt": "hello world" });
     const file = path.join(String(dir), "f.txt");
     await using server = Bun.serve({
       port: 0,
+      static: {
+        "/static-slice": new Response(Bun.file(file).slice(0, 5)),
+        "/static-full": new Response(Bun.file(file)),
+      },
       fetch: req =>
         new URL(req.url).pathname === "/slice"
           ? new Response(Bun.file(file).slice(0, 5))
@@ -196,10 +200,12 @@ describe("Blob type", () => {
       const r = await fetch(server.url.href + p);
       return { ct: r.headers.get("content-type"), cd: r.headers.get("content-disposition"), body: await r.text() };
     };
-    // Matches the unsliced file: extension-sniffed type, no Content-Disposition
-    // (not application/octet-stream, not an empty-valued header).
+    // Matches the unsliced file on both the dynamic and static route paths:
+    // extension-sniffed type, no Content-Disposition, not application/octet-stream.
     expect(await headers("slice")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello" });
     expect(await headers("full")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello world" });
+    expect(await headers("static-slice")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello" });
+    expect(await headers("static-full")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello world" });
   });
 });
 

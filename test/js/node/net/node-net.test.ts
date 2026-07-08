@@ -842,7 +842,7 @@ it.if(isWindows)(
     }
 
     const batch = [];
-    const before = heapStats().objectTypeCounts.TLSSocket || 0;
+    const before = heapStats().objectTypeCounts.TCPSocket || 0;
     for (let i = 0; i < 100; i++) {
       batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
       batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -857,7 +857,7 @@ it.if(isWindows)(
       }
     }
     await Promise.all(batch);
-    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+    await expectMaxObjectTypeCount(expect, "TCPSocket", before);
   },
   20_000,
 );
@@ -1015,8 +1015,8 @@ it("paused socket whose peer wrote >LIBUS_RECV_BUFFER_LENGTH then closed deliver
   let received = 0;
   let dataAfterEnd = 0;
   let ended = false;
+  const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
   try {
-    const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
     c.on("error", reject);
     c.on("data", chunk => {
       if (ended) dataAfterEnd += chunk.length;
@@ -1030,6 +1030,7 @@ it("paused socket whose peer wrote >LIBUS_RECV_BUFFER_LENGTH then closed deliver
     });
     await promise;
   } finally {
+    c.destroy();
     server.close();
   }
   expect({ received, dataAfterEnd }).toEqual({ received: TOTAL, dataAfterEnd: 0 });
@@ -1045,8 +1046,8 @@ it("paused socket that ends then receives the peer's FIN closes instead of busy-
   });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
   try {
-    const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
     c.on("error", reject);
     c.on("close", () => resolve("close"));
     await new Promise<void>(r => c.once("connect", () => r()));
@@ -1054,6 +1055,7 @@ it("paused socket that ends then receives the peer's FIN closes instead of busy-
     c.end("x");
     expect(await promise).toBe("close");
   } finally {
+    c.destroy();
     server.close();
   }
 });

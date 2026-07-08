@@ -1116,8 +1116,7 @@ mod _impl {
 
         if !data.run(output.slice_mut()) {
             boringssl::c::ERR_clear_error();
-            let err =
-                global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
+            let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
             return Err(global_this.throw_value(err));
         }
 

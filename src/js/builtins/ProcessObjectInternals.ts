@@ -645,13 +645,14 @@ export function installOnWarningListener(process, redirectPath, isDisabled) {
     const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
     let msg = `(node:${process.pid}) `;
     if (code) msg += `[${code}] `;
-    if (trace && warning.stack) {
-      msg += warning.stack;
+    const { stack, detail } = warning;
+    if (trace && stack) {
+      msg += stack;
     } else {
       const s = typeof warning.toString === "function" ? warning.toString() : `${name}: ${warning.message}`;
       msg += s;
     }
-    if (typeof warning.detail === "string") msg += `\n${warning.detail}`;
+    if (typeof detail === "string") msg += `\n${detail}`;
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;

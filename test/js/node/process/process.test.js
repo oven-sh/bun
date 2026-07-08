@@ -458,8 +458,9 @@ it("process.config", () => {
   expect(process.config.variables.clang).toBeNumber();
   expect(process.config.variables.host_arch).toBeDefined();
   expect(process.config.variables.target_arch).toBeDefined();
-  // Node reports false unless compiled --without-node-options.
-  expect(process.config.variables.node_without_node_options).toBe(false);
+  // Bun does not parse NODE_OPTIONS, so it reports the --without-node-options
+  // value; upstream tests use this key to skip NODE_OPTIONS-dependent cases.
+  expect(process.config.variables.node_without_node_options).toBe(true);
 });
 
 it("process.execArgv", () => {
@@ -1757,7 +1758,10 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
 
-it("delete process.env.TZ invalidates existing Date instances", async () => {
+// Windows uses a different TZ format and the upstream Node test-process-env-tz.js
+// skips Windows entirely; the JSEnvironmentVariableMap deleteProperty override that
+// resets the timezone is POSIX-only.
+it.skipIf(isWindows)("delete process.env.TZ invalidates existing Date instances", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

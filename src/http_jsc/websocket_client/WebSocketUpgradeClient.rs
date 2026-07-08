@@ -1295,7 +1295,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         remain_buf: &[u8],
     ) {
         let mut upgrade_header = picohttp::Header::ZERO;
-        let mut connection_header = picohttp::Header::ZERO;
+        let mut connection_header_seen = false;
+        let mut connection_has_upgrade = false;
         let mut websocket_accept_header = picohttp::Header::ZERO;
         let mut protocol_header_seen = false;
 
@@ -1311,13 +1312,21 @@ impl<const SSL: bool> HTTPClient<SSL> {
         for header in response.headers.list {
             match header.name().len() {
                 len if len == b"Connection".len() => {
-                    if connection_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(
-                            header.name(),
-                            b"Connection",
-                        )
-                    {
-                        connection_header = *header;
+                    if strings::eql_case_insensitive_ascii_ignore_length(
+                        header.name(),
+                        b"Connection",
+                    ) {
+                        // RFC 6455 §4.1: Connection must CONTAIN the token "Upgrade"
+                        // (case-insensitive). It is a comma-list (RFC 7230 §6.1) and
+                        // repeated field lines join (§3.2.2), so scan every line.
+                        connection_header_seen = true;
+                        let mut it = HeaderValueIterator::init(header.value());
+                        while let Some(token) = it.next() {
+                            if strings::eql_case_insensitive_ascii(token, b"Upgrade", true) {
+                                connection_has_upgrade = true;
+                                break;
+                            }
+                        }
                     }
                 }
                 len if len == b"Upgrade".len() => {
@@ -1512,12 +1521,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if connection_header
-            .name()
-            .len()
-            .min(connection_header.value().len())
-            == 0
-        {
+        if !connection_header_seen {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MissingConnectionHeader) };
             return;
@@ -1541,7 +1545,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if !strings::eql_case_insensitive_ascii(connection_header.value(), b"Upgrade", true) {
+        if !connection_has_upgrade {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };
             return;

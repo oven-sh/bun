@@ -9,8 +9,8 @@ import {
   bunExe,
   readdirSorted,
   runBunInstall,
-  toMatchNodeModulesAt,
   TestRegistry,
+  toMatchNodeModulesAt,
 } from "harness";
 import { join } from "path";
 

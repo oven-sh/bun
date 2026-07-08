@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -217,6 +217,42 @@ describe("RedisClient TLS hostname verification", () => {
         client.close();
       }
     });
+  });
+
+  test("does not over-release the refcount when SSL_CTX creation fails", async () => {
+    // connect() used to call on_valkey_close() on this branch before taking the
+    // socket keep-alive ref it releases, driving the refcount below zero and
+    // freeing the JSValkeyClient while the JS wrapper still points at it.
+    // https://github.com/oven-sh/bun/pull/33726
+    const script = `
+      const client = new Bun.RedisClient("rediss://127.0.0.1:1", {
+        autoReconnect: false,
+        tls: { cert: "/no-such-cert.pem", key: "/no-such-key.pem", ca: "/no-such-ca.pem" },
+      });
+      let err;
+      try { await client.connect(); } catch (e) { err = e; }
+      // Would UAF (ASAN) / read freed memory here before the fix.
+      client.close();
+      Bun.gc(true);
+      await Bun.sleep(1);
+      Bun.gc(true);
+      process.stdout.write(JSON.stringify({ message: String(err?.message ?? ""), connected: client.connected }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:fast_unwind_on_malloc=1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = stdout.trim() ? JSON.parse(stdout.trim()) : {};
+    expect({ ...out, signal: proc.signalCode, stderr }).toEqual({
+      message: expect.stringMatching(/Connection closed|TLS/i),
+      connected: false,
+      signal: null,
+      stderr: expect.not.stringContaining("AddressSanitizer"),
+    });
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("skips hostname verification for redis+tls+unix:// sockets", async () => {

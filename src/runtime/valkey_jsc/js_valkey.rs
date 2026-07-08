@@ -1098,19 +1098,26 @@ impl JSValkeyClient {
 
     /// Safely remove a timer with proper reference counting and event loop keepalive
     fn remove_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) {
-        if timer.get().state == Timer::State::ACTIVE {
-            // Remove the timer from the event loop
-            let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-            // SAFETY: `vm` is the live per-thread VM; `timer` is currently
-            // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
-
+        if self.detach_timer(timer) {
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
             // SAFETY: balanced with add_timer's ref_(); count stays > 0 so
             // `&self` remains valid past this call.
             unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         }
+    }
+
+    /// Unlink `timer` from the VM heap if ACTIVE without releasing the
+    /// matching keep-alive ref. Returns whether the timer was unlinked.
+    fn detach_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) -> bool {
+        if timer.get().state != Timer::State::ACTIVE {
+            return false;
+        }
+        let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
+        // SAFETY: `vm` is the live per-thread VM; `timer` is currently
+        // linked into the heap (state == ACTIVE checked above).
+        unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
+        true
     }
 
     fn reset_connection_timeout(&self) {
@@ -1614,6 +1621,10 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
+            // `on_valkey_close()` unconditionally releases the socket keep-alive
+            // ref taken below at `self.ref_()`, which we never reach on this
+            // branch. Balance it here so the count isn't driven below zero.
+            self.ref_();
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
@@ -1740,7 +1751,11 @@ impl JSValkeyClient {
             }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());
-            this_ref.stop_timers();
+            // ref_count is already 0 here; `stop_timers()` → `remove_timer()`
+            // would deref a zero-count object. Unlink without deref so the VM
+            // doesn't fire into freed memory.
+            this_ref.detach_timer(&this_ref.timer);
+            this_ref.detach_timer(&this_ref.reconnect_timer);
             this_ref.ref_count.assert_no_refs();
         }
 

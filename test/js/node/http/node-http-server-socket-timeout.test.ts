@@ -95,16 +95,28 @@ describe.concurrent("http server: per-connection setTimeout", () => {
   );
 
   test("socket.setTimeout(0, cb) removes the listener and clears socket.timeout", async () => {
-    let results: { timeoutAfterSet: number; timeoutAfterClear: number; returned: unknown; socket: unknown } | undefined;
+    let results:
+      | {
+          timeoutAfterSet: number;
+          timeoutAfterClear: number;
+          listenersAfterSet: number;
+          listenersAfterClear: number;
+          returned: unknown;
+          socket: unknown;
+        }
+      | undefined;
 
     const server = http.createServer((req, res) => {
       const socket = req.socket;
       const cb = () => {};
+      const baseListeners = socket.listenerCount("timeout");
       socket.setTimeout(2000, cb);
       const timeoutAfterSet = socket.timeout;
+      const listenersAfterSet = socket.listenerCount("timeout") - baseListeners;
       const returned = socket.setTimeout(0, cb);
       const timeoutAfterClear = socket.timeout;
-      results = { timeoutAfterSet, timeoutAfterClear, returned, socket };
+      const listenersAfterClear = socket.listenerCount("timeout") - baseListeners;
+      results = { timeoutAfterSet, timeoutAfterClear, listenersAfterSet, listenersAfterClear, returned, socket };
       res.end("ok");
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -118,8 +130,56 @@ describe.concurrent("http server: per-connection setTimeout", () => {
     }
 
     expect(results).toBeDefined();
-    expect(results!.timeoutAfterSet).toBe(2000);
-    expect(results!.timeoutAfterClear).toBe(0);
+    expect({
+      timeoutAfterSet: results!.timeoutAfterSet,
+      timeoutAfterClear: results!.timeoutAfterClear,
+      listenersAfterSet: results!.listenersAfterSet,
+      listenersAfterClear: results!.listenersAfterClear,
+    }).toEqual({
+      timeoutAfterSet: 2000,
+      timeoutAfterClear: 0,
+      listenersAfterSet: 1,
+      listenersAfterClear: 0,
+    });
     expect(results!.returned).toBe(results!.socket);
+  });
+
+  test("socket.setTimeout validates msecs like net.Socket", async () => {
+    let errors: Record<string, string | undefined> | undefined;
+
+    const server = http.createServer((req, res) => {
+      const socket = req.socket;
+      const codeOf = (fn: () => void) => {
+        try {
+          fn();
+          return undefined;
+        } catch (e) {
+          return (e as NodeJS.ErrnoException).code;
+        }
+      };
+      errors = {
+        negative: codeOf(() => socket.setTimeout(-1)),
+        nan: codeOf(() => socket.setTimeout(NaN)),
+        string: codeOf(() => socket.setTimeout("foo" as unknown as number)),
+        badCallback: codeOf(() => socket.setTimeout(1000, "nope" as unknown as () => void)),
+      };
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await res.text()).toBe("ok");
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+
+    expect(errors).toEqual({
+      negative: "ERR_OUT_OF_RANGE",
+      nan: "ERR_OUT_OF_RANGE",
+      string: "ERR_INVALID_ARG_TYPE",
+      badCallback: "ERR_INVALID_ARG_TYPE",
+    });
   });
 });

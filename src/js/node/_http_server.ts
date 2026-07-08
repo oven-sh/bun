@@ -16,6 +16,7 @@ const {
   validateFunction,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { getTimerDuration } = require("internal/timers");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -1327,6 +1328,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   setTimeout(msecs, callback) {
     this.timeout = msecs;
+    msecs = getTimerDuration(msecs, "msecs");
     if (msecs === 0) {
       if (callback !== undefined) {
         validateFunction(callback, "callback");

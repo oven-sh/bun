@@ -96,7 +96,16 @@ test("concurrent sql.begin() stays serialized after a server-side disconnect wit
     // each one's paired release then drove queryCount to -2.
     const die1 = sql.unsafe("SELECT 'KILL'").execute();
     const die2 = sql.unsafe("SELECT 'never sent'").execute();
-    const [e1, e2] = await Promise.all([die1.then(() => null, e => e), die2.then(() => null, e => e)]);
+    const [e1, e2] = await Promise.all([
+      die1.then(
+        () => null,
+        e => e,
+      ),
+      die2.then(
+        () => null,
+        e => e,
+      ),
+    ]);
     expect(e1).toBeInstanceOf(Error);
     expect(e2).toBeInstanceOf(Error);
 

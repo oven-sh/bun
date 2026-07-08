@@ -17,17 +17,14 @@ use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
 
-// The C-API surface is intentionally `#[deprecated]` upstream but is the
-// call path used for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
     InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
-#[allow(deprecated)]
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
-    JsError, ModuleLoader, WebCore, c as js,
+    JsError, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
@@ -562,17 +559,25 @@ impl<'a> Run<'a> {
             return Ok(caller);
         };
 
+        unsafe extern "C" {
+            fn Bun__JSValue__callReturnValueHoldingAPILock(
+                global: *mut JSGlobalObject,
+                object: JSValue,
+                this_object: JSValue,
+                argument_count: usize,
+                arguments: *const JSValue,
+            ) -> JSValue;
+        }
         // SAFETY: `vm.global` is the live per-thread global; `macro_callback`
         // was obtained from the VM's macro table; `args` is a stack slice of
-        // `#[repr(transparent)] i64` JSValues whose pointer is reinterpreted to
-        // the C-API `JSObjectRef` (same encoded value).
+        // valid `JSValue`s.
         let result = unsafe {
-            js::JSObjectCallAsFunctionReturnValueHoldingAPILock(
+            Bun__JSValue__callReturnValueHoldingAPILock(
                 vm.global,
                 macro_callback,
-                core::ptr::null_mut(),
+                JSValue::ZERO,
                 args.len(),
-                args.as_ptr().cast::<js::JSValueRef>(),
+                args.as_ptr(),
             )
         };
 

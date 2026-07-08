@@ -2422,14 +2422,7 @@ where
             // sentinel and calls `clone_into(.., preserve_url=false)`.
             unsafe { (*request_).clone(ctx)? }
         } else {
-            // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
-            // `first_arg.as_ref()` produces a valid `JSValueRef`.
-            let js_type =
-                unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
-            let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
-                .get(js_type)
-                .copied()
-                .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
+            let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),

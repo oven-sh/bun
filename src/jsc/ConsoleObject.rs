@@ -2303,13 +2303,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    // SAFETY: `value` is a cell with `js_type == GlobalProxy`,
-                    // so `as_object_ref()` is a valid `JSObjectRef` for the
-                    // C API call.
-                    let target = JSValue::c(unsafe {
-                        jsc::C::JSObjectGetProxyTarget(value.as_object_ref())
-                    });
-                    return Tag::get(target, global_this);
+                    return Tag::get(value.get_proxy_target(), global_this);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -4242,7 +4236,7 @@ pub mod formatter {
             // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
             let promise: &JSPromise =
-                JSPromise::opaque_ref(value.as_object_ref() as *const JSPromise);
+                JSPromise::opaque_ref(value.encoded() as *const JSPromise);
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),

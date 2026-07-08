@@ -2206,24 +2206,6 @@ impl core::fmt::Display for StringFormatter<'_> {
 }
 
 impl JSValue {
-    // ── C-API bridging. ───────
-    /// `JSValue.c(JSValueRef)` — wrap a C-API `JSValueRef` as a `JSValue`.
-    #[inline]
-    pub fn c(ptr: crate::C::JSValueRef) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
-    /// `JSValue.asRef()` — view as C-API `JSValueRef`.
-    #[inline]
-    pub fn as_ref(self) -> crate::C::JSValueRef {
-        self.0 as crate::C::JSValueRef
-    }
-    /// `JSValue.asObjectRef()` — view as C-API `JSObjectRef` (caller asserts
-    /// `is_object()`).
-    #[inline]
-    pub fn as_object_ref(self) -> crate::C::JSObjectRef {
-        self.0 as crate::C::JSObjectRef
-    }
-
     // ── Equality / identity. ────────────────
     #[inline]
     pub fn eql_value(self, other: JSValue) -> bool {
@@ -2607,6 +2589,24 @@ impl JSValue {
         Bun__ProxyObject__getInternalField(self, field as u32)
     }
 
+    /// Returns the wrapped target of a `JSGlobalProxy` or `ProxyObject`, or
+    /// `ZERO` if `self` is not a proxy.
+    pub fn get_proxy_target(self) -> JSValue {
+        Bun__JSValue__getProxyTarget(self)
+    }
+
+    // ── ArrayBufferView accessors. ─────────────────────
+    /// Backing `ArrayBuffer` wrapper for a typed array or `DataView`.
+    /// Returns `ZERO` if `self` is not an `ArrayBufferView`.
+    pub fn get_array_buffer_view_buffer(self, global: &JSGlobalObject) -> JSValue {
+        Bun__JSValue__getArrayBufferViewBuffer(self, global)
+    }
+
+    /// `byteOffset` of a typed array or `DataView`, `0` otherwise.
+    pub fn get_array_buffer_view_byte_offset(self) -> usize {
+        Bun__JSValue__getArrayBufferViewByteOffset(self)
+    }
+
     // ── Formatting. ────────────────────────────────────
     #[inline]
     pub fn fmt_string(self, global: &JSGlobalObject) -> StringFormatter<'_> {
@@ -2727,6 +2727,10 @@ unsafe extern "C" {
         callback: ForEachCallback,
     );
     safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
+    safe fn Bun__JSValue__getProxyTarget(this: JSValue) -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewBuffer(this: JSValue, global: &JSGlobalObject)
+    -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

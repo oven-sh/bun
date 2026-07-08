@@ -2852,12 +2852,11 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     return JSC::JSValue::encode(result);
 }
 
-JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject,
+JSC::EncodedJSValue Bun__JSValue__callReturnValueHoldingAPILock(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedObject,
+    JSC::EncodedJSValue encodedThisObject,
     size_t argumentCount,
-    const JSValueRef* arguments)
+    const JSC::EncodedJSValue* arguments)
 {
-    JSC::JSGlobalObject* globalObject = toJS(ctx);
     auto& vm = JSC::getVM(globalObject);
 
     JSC::JSLockHolder lock(vm);
@@ -2867,18 +2866,19 @@ JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 #endif
 
-    if (!object)
+    JSC::JSValue object = JSC::JSValue::decode(encodedObject);
+    JSC::JSObject* jsObject = object ? object.getObject() : nullptr;
+    if (!jsObject)
         return {};
 
-    JSC::JSObject* jsObject = toJS(object);
-    JSC::JSObject* jsThisObject = toJS(thisObject);
-
+    JSC::JSValue thisValue = JSC::JSValue::decode(encodedThisObject);
+    JSC::JSObject* jsThisObject = thisValue ? thisValue.getObject() : nullptr;
     if (!jsThisObject)
         jsThisObject = globalObject->globalThis();
 
     JSC::MarkedArgumentBuffer argList;
     for (size_t i = 0; i < argumentCount; i++)
-        argList.append(toJS(globalObject, arguments[i]));
+        argList.append(JSC::JSValue::decode(arguments[i]));
 
     auto callData = getCallData(jsObject);
     if (callData.type == JSC::CallData::Type::None)
@@ -6077,6 +6077,41 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__CustomGetterSetter__isSetterNull(JSC:
 CPP_DECL JSC::EncodedJSValue Bun__ProxyObject__getInternalField(JSC::EncodedJSValue value, uint32_t id)
 {
     return JSValue::encode(uncheckedDowncast<ProxyObject>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
+}
+
+CPP_DECL JSC::EncodedJSValue Bun__JSValue__getProxyTarget(JSC::EncodedJSValue encoded)
+{
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return JSValue::encode(JSValue());
+    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(value.asCell()))
+        return JSValue::encode(proxy->target());
+    if (auto* proxy = dynamicDowncast<ProxyObject>(value.asCell()))
+        return JSValue::encode(proxy->target());
+    return JSValue::encode(JSValue());
+}
+
+CPP_DECL JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue encoded, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return JSValue::encode(JSValue());
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell())) {
+        if (ArrayBuffer* buffer = view->possiblySharedBuffer())
+            return JSValue::encode(vm.m_typedArrayController->toJS(globalObject, view->realm(), *buffer));
+    }
+    return JSValue::encode(JSValue());
+}
+
+CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue encoded)
+{
+    JSC::JSValue value = JSValue::decode(encoded);
+    if (!value || !value.isCell())
+        return 0;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell()))
+        return view->byteOffset();
+    return 0;
 }
 
 CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__SourceProvider__deref(JSC::SourceProvider* provider)

@@ -1155,33 +1155,34 @@ describe("Transactions", () => {
       await fileSql`CREATE TABLE t (v TEXT)`;
       await fileSql`INSERT INTO t VALUES ('seed')`;
 
-      // Hold a read lock from a second connection so COMMIT on the writer returns SQLITE_BUSY.
-      const reader = new Database(dbPath);
-      reader.run("BEGIN DEFERRED");
-      reader.prepare("SELECT COUNT(*) c FROM t").get();
+      {
+        // Hold a read lock from a second connection so COMMIT on the writer returns SQLITE_BUSY.
+        using reader = new Database(dbPath);
+        reader.run("BEGIN DEFERRED");
+        reader.query("SELECT COUNT(*) c FROM t").get();
 
-      const beginError = await fileSql
-        .begin(async tx => {
-          await tx`INSERT INTO t VALUES ('in-tx')`;
-        })
-        .then(
-          () => null,
-          e => e,
-        );
-      expect(String(beginError)).toContain("database is locked");
-
-      reader.run("ROLLBACK");
-      reader.close();
+        const beginError = await fileSql
+          .begin(async tx => {
+            await tx`INSERT INTO t VALUES ('in-tx')`;
+          })
+          .then(
+            () => null,
+            e => e,
+          );
+        expect(String(beginError)).toContain("database is locked");
+        reader.run("ROLLBACK");
+      }
 
       // The connection must no longer be inside the aborted transaction.
       await fileSql`INSERT INTO t VALUES ('later-1')`;
       await fileSql`INSERT INTO t VALUES ('later-2')`;
 
       // A fresh connection must be able to read (no stale RESERVED lock).
-      const other = new Database(dbPath);
-      const rowsFromOther = other.prepare("SELECT v FROM t ORDER BY v").all() as { v: string }[];
-      other.close();
-      expect(rowsFromOther.map(r => r.v)).toEqual(["later-1", "later-2", "seed"]);
+      {
+        using other = new Database(dbPath);
+        const rowsFromOther = other.query("SELECT v FROM t ORDER BY v").all() as { v: string }[];
+        expect(rowsFromOther.map(r => r.v)).toEqual(["later-1", "later-2", "seed"]);
+      }
 
       // A subsequent begin() on the same instance must work.
       const second = await fileSql.begin(async tx => {
@@ -1192,9 +1193,8 @@ describe("Transactions", () => {
 
       // All post-failure writes must be durable after close.
       await fileSql.close();
-      const final = new Database(dbPath);
-      const finalRows = (final.prepare("SELECT v FROM t ORDER BY v").all() as { v: string }[]).map(r => r.v);
-      final.close();
+      using final = new Database(dbPath);
+      const finalRows = (final.query("SELECT v FROM t ORDER BY v").all() as { v: string }[]).map(r => r.v);
       expect(finalRows).toEqual(["later-1", "later-2", "later-3", "seed"]);
     } finally {
       await fileSql.close().catch(() => {});

@@ -356,12 +356,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                 let names_ = boring::X509V3_EXT_d2i(ext);
                 if !names_.is_null() {
                     let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
-                    let _guard = scopeguard::guard(names, |n| {
-                        // GENERAL_NAME_free per element — the container free
-                        // (`sk_GENERAL_NAME_free`) here leaks every nested
-                        // ASN1_STRING in the SAN list.
-                        boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_element_free)
-                    });
+                    let _guard = scopeguard::guard(names, |n| boring::GENERAL_NAMES_free(n));
                     for i in 0..boring::sk_GENERAL_NAME_num(names) {
                         let r#gen = boring::sk_GENERAL_NAME_value(names, i);
                         if let Some(name) = r#gen.as_ref() {

@@ -264,9 +264,6 @@ pub struct GENERAL_NAME {
 // OPENSSL_STACK low-level ABI (used by the typed `sk_*` inline wrappers)
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
-pub(crate) type OPENSSL_sk_call_free_func =
-    Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
 pub(crate) type OPENSSL_sk_cmp_func =
     Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>;
 
@@ -283,12 +280,6 @@ pub(crate) struct OPENSSL_STACK {
 unsafe extern "C" {
     fn sk_num(sk: *const OPENSSL_STACK) -> usize;
     fn sk_value(sk: *const OPENSSL_STACK, i: usize) -> *mut c_void;
-    fn sk_free(sk: *mut OPENSSL_STACK);
-    fn sk_pop_free_ex(
-        sk: *mut OPENSSL_STACK,
-        call_free_func: OPENSSL_sk_call_free_func,
-        free_func: OPENSSL_sk_free_func,
-    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -428,7 +419,9 @@ unsafe extern "C" {
     pub fn X509_NAME_get_entry(name: *const X509_NAME, loc: c_int) -> *mut X509_NAME_ENTRY;
     pub fn X509_NAME_ENTRY_get_data(entry: *const X509_NAME_ENTRY) -> *mut ASN1_STRING;
     pub fn X509V3_EXT_d2i(ext: *mut X509_EXTENSION) -> *mut c_void;
-    pub fn GENERAL_NAME_free(name: *mut GENERAL_NAME);
+    /// Deep-frees a `STACK_OF(GENERAL_NAME)` and every element's nested ASN1
+    /// values. Use this to release `X509V3_EXT_d2i` results for SAN extensions.
+    pub fn GENERAL_NAMES_free(gens: *mut struct_stack_st_GENERAL_NAME);
     pub fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
     pub safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
 }
@@ -439,9 +432,6 @@ unsafe extern "C" {
 // BoringSSL defines these as `static inline` in C, so they have no exported
 // symbol — they bottom out on the untyped `sk_*` ABI above.
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Per-stack free callback type used by `sk_GENERAL_NAME_pop_free`.
-pub(crate) type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_GENERAL_NAME);
 
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
@@ -470,66 +460,6 @@ pub unsafe fn sk_GENERAL_NAME_value(
     // return is narrowed from `sk_value`'s own `*mut c_void` result (C-heap
     // provenance), not derived from `sk`. No const→mut on a single value.
     unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<GENERAL_NAME>() }
-}
-
-/// Element destructor for `sk_GENERAL_NAME_pop_free`: frees one
-/// `GENERAL_NAME` and its nested ASN1 values. The parameter is spelled as the
-/// erased stack alias so it matches `sk_GENERAL_NAME_free_func`, but the
-/// pointer is a stack *element* (`GENERAL_NAME*`). Passing the container free
-/// (`sk_GENERAL_NAME_free`) here instead leaks every nested ASN1_STRING.
-pub unsafe extern "C" fn sk_GENERAL_NAME_element_free(name: *mut struct_stack_st_GENERAL_NAME) {
-    // SAFETY: per fn doc — `name` is a `GENERAL_NAME*` erased through the
-    // stack-typed callback signature; restore the element type for the
-    // exported BoringSSL destructor.
-    unsafe { GENERAL_NAME_free(name.cast::<GENERAL_NAME>()) }
-}
-
-#[inline]
-pub unsafe extern "C" fn sk_GENERAL_NAME_free(sk: *mut struct_stack_st_GENERAL_NAME) {
-    // SAFETY: mut→mut cast between opaque aliases of the same allocation.
-    // Caller's `unsafe` contract guarantees `sk` is NULL or an owned
-    // BoringSSL stack; `sk_free` is documented to accept both.
-    unsafe { sk_free(sk.cast::<OPENSSL_STACK>()) }
-}
-
-unsafe extern "C" fn sk_GENERAL_NAME_call_free_func(
-    free_func: OPENSSL_sk_free_func,
-    ptr: *mut c_void,
-) {
-    // SAFETY: `free_func` was originally an `sk_GENERAL_NAME_free_func` erased
-    // through `OPENSSL_sk_free_func` by `sk_GENERAL_NAME_pop_free` below; both
-    // are `extern "C" fn(*mut _)` so the pointer round-trip is ABI-sound.
-    let f: sk_GENERAL_NAME_free_func = unsafe {
-        core::mem::transmute::<unsafe extern "C" fn(*mut c_void), sk_GENERAL_NAME_free_func>(
-            free_func.expect("non-null free_func"),
-        )
-    };
-    // SAFETY: `ptr` is an element handed to this trampoline by `sk_pop_free_ex`
-    // while draining the `STACK_OF(GENERAL_NAME)` passed in below; the cast
-    // restores the typed pointer `f` was declared to accept before erasure.
-    unsafe { f(ptr.cast::<struct_stack_st_GENERAL_NAME>()) }
-}
-
-#[inline]
-pub unsafe fn sk_GENERAL_NAME_pop_free(
-    sk: *mut struct_stack_st_GENERAL_NAME,
-    free_func: sk_GENERAL_NAME_free_func,
-) {
-    // SAFETY: `sk` cast is mut→mut between opaque aliases; caller guarantees it
-    // is NULL or an owned `STACK_OF(GENERAL_NAME)`. The transmute erases
-    // `free_func`'s typed arg to `*mut c_void` — both sides are
-    // `extern "C" fn(*mut _)` so the fn-pointer reinterpret is ABI-sound, and
-    // `sk_GENERAL_NAME_call_free_func` restores the type before invoking it.
-    unsafe {
-        sk_pop_free_ex(
-            sk.cast::<OPENSSL_STACK>(),
-            Some(sk_GENERAL_NAME_call_free_func),
-            Some(core::mem::transmute::<
-                sk_GENERAL_NAME_free_func,
-                unsafe extern "C" fn(*mut c_void),
-            >(free_func)),
-        )
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

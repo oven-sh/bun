@@ -1746,21 +1746,24 @@ describe("HTTP Server Security Tests - Advanced", () => {
     test("duplicate request headers follow Node.js precedence rules", async () => {
       // Expected values verified against Node.js v24: singleton headers keep
       // the first value, joinable headers are comma-joined, Cookie joins with
-      // "; ", and Set-Cookie becomes an array.
+      // "; ", and Set-Cookie becomes an array. Duplicate Host lines are not
+      // exercised here: the parser now rejects them per RFC 9112 5.4 (the
+      // keep-first-value path is covered by the requireHostHeader:false test
+      // in test/js/bun/http/request-smuggling.test.ts).
       const { promise, resolve, reject } = Promise.withResolvers();
       server.on("request", (req, res) => {
         try {
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end("ok");
           resolve({
-            host: req.headers.host,
+            userAgent: req.headers["user-agent"],
             contentType: req.headers["content-type"],
             authorization: req.headers.authorization,
             accept: req.headers.accept,
             xCustom: req.headers["x-custom"],
             cookie: req.headers.cookie,
             setCookie: req.headers["set-cookie"],
-            rawHostCount: req.rawHeaders.filter(h => h.toLowerCase() === "host").length,
+            rawXCustomCount: req.rawHeaders.filter(h => h.toLowerCase() === "x-custom").length,
           });
         } catch (err) {
           reject(err);
@@ -1769,8 +1772,9 @@ describe("HTTP Server Security Tests - Advanced", () => {
 
       const msg = [
         "GET / HTTP/1.1",
-        "Host: first.example.com",
-        "Host: second.example.com",
+        "Host: example.com",
+        "User-Agent: first-ua",
+        "User-Agent: second-ua",
         "Content-Type: text/plain",
         "Content-Type: text/html",
         "Authorization: token1",
@@ -1792,7 +1796,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response).toInclude("200");
       const headers: any = await promise;
       // Singleton headers keep the first value.
-      expect(headers.host).toBe("first.example.com");
+      expect(headers.userAgent).toBe("first-ua");
       expect(headers.contentType).toBe("text/plain");
       expect(headers.authorization).toBe("token1");
       // Other headers are joined with ", ".
@@ -1803,7 +1807,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       // Set-Cookie is collected into an array.
       expect(headers.setCookie).toEqual(["x=1", "y=2"]);
       // rawHeaders still reports every received header.
-      expect(headers.rawHostCount).toBe(2);
+      expect(headers.rawXCustomCount).toBe(2);
     });
 
     test("duplicate request header edge cases follow Node.js precedence rules", async () => {

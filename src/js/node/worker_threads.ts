@@ -1226,8 +1226,6 @@ class Worker extends EventEmitter {
     }
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
-    this.#stdout?.push(null);
-    this.#stderr?.push(null);
     this.emit("exit", e.code);
   }
 

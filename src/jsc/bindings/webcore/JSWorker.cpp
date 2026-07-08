@@ -158,6 +158,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};
+    // Founding an env tree swaps the parent's process.env, so it is deferred until
+    // every option has validated (below).
+    bool shareEnv = false;
     JSValue nodeWorkerObject {};
     if (callFrame->argumentCount() == 3) {
         nodeWorkerObject = callFrame->argument(2);
@@ -241,7 +244,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         auto shareEnvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "shareEnv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (shareEnvValue) {
-            options.shareEnv = shareEnvValue.toBoolean(lexicalGlobalObject);
+            shareEnv = shareEnvValue.toBoolean(lexicalGlobalObject);
         }
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
@@ -252,11 +255,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         if (envValue && envValue.isSymbol()) {
             auto key = vm.symbolRegistry().symbolForKey("nodejs.worker_threads.SHARE_ENV"_s);
             if (&asSymbol(envValue)->uid() == key.ptr()) {
-                options.shareEnv = true;
+                shareEnv = true;
             }
         }
 
-        if (!options.shareEnv) {
+        if (!shareEnv) {
             if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
                 return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
             }
@@ -290,12 +293,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
                 options.env.emplace(WTF::move(env));
             }
-        } else {
-            // Seed the shared store from the parent's current process.env and
-            // swap the parent's process.env to the shared write-through variant
-            // (idempotent across SHARE_ENV workers), on the parent thread.
-            Bun::enableSharedEnvForWorker(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         // needed to match the coercion behavior of `String(value)`, which returns a descriptive
@@ -335,6 +332,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }
+    }
+
+    // Resolve the spawning thread's env tree (founding one if needed) so disjoint
+    // SHARE_ENV chains stay isolated. Runs only after every option validated,
+    // because founding a tree swaps this thread's process.env.
+    if (shareEnv) {
+        options.sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     Vector<RefPtr<MessagePort>> ports;

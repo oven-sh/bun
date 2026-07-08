@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "ActiveDOMObject.h"
+#include "SharedEnvStore.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -132,6 +133,11 @@ public:
     void markTerminating() { m_isTerminating.store(true, std::memory_order_release); }
     bool isTerminating() const { return m_isTerminating.load(std::memory_order_acquire); }
 
+    // Non-null once this thread joins a `worker_threads` SHARE_ENV tree; every
+    // thread in the tree holds a ref to the same store.
+    Bun::SharedEnvStore* sharedEnvStore() const { return m_sharedEnvStore.get(); }
+    void setSharedEnvStore(Bun::SharedEnvStore& store) { m_sharedEnvStore = &store; }
+
     void setGlobalObject(JSC::JSGlobalObject* globalObject)
     {
         m_globalObject = globalObject;
@@ -142,6 +148,7 @@ public:
 
 private:
     std::atomic<bool> m_isTerminating { false };
+    RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();

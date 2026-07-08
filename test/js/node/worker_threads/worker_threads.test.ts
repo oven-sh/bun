@@ -835,3 +835,80 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
+
+describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
+  async function run(mode: string) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "fixture-share-env-tree.js", mode],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface the fixture's own error output when it fails, but don't require an
+    // empty stderr: ASAN/debug lanes emit benign warnings there.
+    expect({ mode, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ mode, exitCode: 0, stderr: "" });
+    return JSON.parse(stdout);
+  }
+
+  // main -> A (snapshot env) -> B (SHARE_ENV) is a tree disjoint from
+  // main -> C (SHARE_ENV); values must not cross between them.
+  it("keeps disjoint SHARE_ENV chains isolated", async () => {
+    expect(await run("tree")).toEqual({
+      B_sees_FROM_A: "a",
+      B_sees_FROM_MAIN: "main",
+      A_sees_FROM_B: "b",
+      C_sees_FROM_B: null,
+      C_sees_FROM_MAIN: "main",
+      main_sees_FROM_B: null,
+      main_sees_FROM_C: "c",
+    });
+  });
+
+  // Founding a store must not adopt another tree's value for a key the founding
+  // thread already has.
+  it("does not clobber a worker's own env when it founds a store", async () => {
+    expect(await run("clobber")).toEqual({
+      A_SHARED_KEY_before: "from-A",
+      A_SHARED_KEY_after: "from-A",
+      B_sees_SHARED_KEY: "from-A",
+      main_SHARED_KEY: "from-main",
+    });
+  });
+
+  // Two SHARE_ENV children of one thread alias a single store: writes, deletes and
+  // enumeration cross between them, and a default-env grandchild snapshots it.
+  it("aliases one store across siblings, deletes and enumeration", async () => {
+    expect(await run("siblings")).toEqual({
+      s2_sees_S1_write: "s1",
+      s2_sees_TO_DELETE: null,
+      s2_keys_have_FROM_S1: true,
+      grandchild_sees_S1_write: "s1",
+      main_sees_FROM_S1: "s1",
+      main_sees_TO_DELETE: null,
+    });
+  });
+
+  // Founding a tree replaces process.env; Bun.env is reified from the same object
+  // at startup and must not be left observing the orphaned pre-swap env.
+  it("keeps Bun.env pointing at process.env after founding a tree", async () => {
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         Bun.env.HOME;
+         const w = new Worker("require('worker_threads').parentPort.postMessage(1)", { eval: true, env: SHARE_ENV });
+         w.on("exit", () => {
+           process.env.AFTER = "x";
+           console.log(JSON.stringify({ same: Bun.env === process.env, bunEnv: Bun.env.AFTER ?? null }));
+         });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ same: true, bunEnv: "x" });
+    expect(exitCode).toBe(0);
+  });
+});

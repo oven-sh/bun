@@ -564,10 +564,12 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
-            } else if (options.shareEnv) {
-                // worker_threads SHARE_ENV: this worker's process.env is a
-                // write-through view over the process-wide shared store (already
-                // seeded by the parent at spawn).
+            } else if (options.sharedEnvStore) {
+                // worker_threads SHARE_ENV: join the env tree the spawning thread
+                // resolved. Consumed like options.env, and published on the context
+                // before the view, which resolves its store through the context.
+                RefPtr<Bun::SharedEnvStore> store = std::exchange(options.sharedEnvStore, nullptr);
+                globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
 
@@ -637,6 +639,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // into the dead cell via NapiHandleScope::open. Point those envs at the
     // new global and adopt the refs before unprotecting the old one.
     globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+
+    // The swap replaces this thread's ScriptExecutionContext. If the thread had
+    // joined a worker_threads SHARE_ENV tree, carry it over (store + the
+    // write-through process.env) so it doesn't silently leave the tree.
+    if (auto* sharedEnvStore = oldContext->sharedEnvStore()) {
+        globalObject->scriptExecutionContext()->setSharedEnvStore(*sharedEnvStore);
+        globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
+    }
 
     // Drop the permanent root on the previous global so its module registry,
     // require.cache, and user objects become collectable. JSC's CodeCache and

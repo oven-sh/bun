@@ -605,11 +605,11 @@ const SQL: typeof Bun.SQL = function SQL(
       if (needs_rollback && !transaction_still_open()) {
         throw transaction_aborted_error();
       }
-      return await Bun.file(path)
-        .text()
-        .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
-        });
+      const text = await Bun.file(path).text();
+      if (needs_rollback && !transaction_still_open()) {
+        throw transaction_aborted_error();
+      }
+      return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
     };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
@@ -766,6 +766,9 @@ const SQL: typeof Bun.SQL = function SQL(
           !(state.connectionState & ReservedConnectionState.acceptQueries)
         ) {
           throw pool.connectionClosedError();
+        }
+        if (needs_rollback && !transaction_still_open()) {
+          throw transaction_aborted_error();
         }
 
         if ($isCallable(name)) {

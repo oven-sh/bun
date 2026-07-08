@@ -54,7 +54,7 @@ describe("node:test", () => {
   });
 });
 
-describe("node:test root before() timing", () => {
+describe.concurrent("node:test root before() timing", () => {
   // In Node a root-level before() hook runs synchronously at the call site
   // because the root test is already executing while the module body runs.
   // Suite-level before() (inside a describe) is deferred in both runtimes.

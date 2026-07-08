@@ -12,9 +12,12 @@ var {
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver: NodePerformanceObserver,
   PerformanceObserverEntryList,
 } = globalThis;
+
+// globalThis.PerformanceObserver now resolves to this module's subclass, so the
+// native class is fetched directly to avoid re-entering this module on load.
+var NodePerformanceObserver = $cpp("JSPerformanceObserver.cpp", "getPerformanceObserverConstructor");
 
 var constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,

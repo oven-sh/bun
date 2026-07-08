@@ -97,4 +97,6 @@ template<> struct JSDOMWrapperConverterTraits<PerformanceObserver> {
 };
 template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 
+JSC::JSValue getPerformanceObserverConstructor(Zig::GlobalObject* globalObject);
+
 } // namespace WebCore

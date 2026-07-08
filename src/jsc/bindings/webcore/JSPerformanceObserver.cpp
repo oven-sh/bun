@@ -423,4 +423,9 @@ PerformanceObserver* JSPerformanceObserver::toWrapped(JSC::VM&, JSC::JSValue val
     return nullptr;
 }
 
+JSC::JSValue getPerformanceObserverConstructor(Zig::GlobalObject* globalObject)
+{
+    return WebCore::JSPerformanceObserver::getConstructor(globalObject->vm(), globalObject);
+}
+
 }

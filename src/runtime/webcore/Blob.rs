@@ -6067,7 +6067,8 @@ pub fn on_file_stream_resolve_request_stream(
     }
     // SAFETY: `sink` is the live +1 FileSink held for the wrapper's lifetime.
     let written = unsafe { (*this.sink).written.get() } as f64;
-    this.promise.resolve(global_this, JSValue::js_number(written))?;
+    this.promise
+        .resolve(global_this, JSValue::js_number(written))?;
     Ok(JSValue::UNDEFINED)
 }
 

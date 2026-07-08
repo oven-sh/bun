@@ -26,12 +26,13 @@ TimeoutWatchdog::TimeoutWatchdog(JSC::VM& vm, std::optional<int64_t> timeoutMs)
             if (m_disarmed)
                 return;
             fire();
-            // Re-notify until disarmed: the first notify can be lost if it
-            // lands between the waiter's predicate check and parking.
+            // Re-assert until disarmed: a nested scope's clearTerminationState
+            // can wipe the request this watchdog installed, and a lost notify
+            // can land between the waiter's predicate check and parking.
             while (!m_disarmed) {
                 if (m_cond.waitUntil(m_lock, MonotonicTime::now() + 1_ms))
                     continue;
-                m_vm.syncWaiter()->condition().notifyOne();
+                fire();
             }
             return;
         }

@@ -3331,3 +3331,40 @@ it("close() completes when the peer never ACKs an outstanding SETTINGS", async (
   await closed; // hangs before this fix
   server.close();
 });
+
+// A pull-mode consumer (pause() then on('readable')/read()) must reopen the receive
+// window via _read(): the 'resume' event never fires on that path, so without _read()
+// clearing the paused gate the peer stalls at the initial ~64KB stream window.
+it("Http2Stream pull-mode read() after pause() replenishes the receive window", async () => {
+  const PAYLOAD = 200_000; // > 65535 initial stream window
+  const server = http2.createServer();
+  const { promise, resolve, reject } = Promise.withResolvers();
+  server.on("stream", stream => {
+    // Server-side stream already has an id, so pause() reaches setStreamReading().
+    stream.pause();
+    let received = 0;
+    stream.on("readable", () => {
+      let c;
+      while ((c = stream.read()) !== null) received += c.length;
+    });
+    stream.on("end", () => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+      resolve(received);
+    });
+    stream.on("error", reject);
+  });
+  await new Promise(r => server.listen(0, r));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    client.on("error", reject);
+    const req = client.request({ ":path": "/", ":method": "POST" });
+    req.on("error", reject);
+    req.end(Buffer.alloc(PAYLOAD, "x"));
+    const received = await promise;
+    expect(received).toBe(PAYLOAD);
+  } finally {
+    client.close();
+    server.close();
+  }
+});

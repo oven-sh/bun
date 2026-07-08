@@ -9,6 +9,7 @@ import {
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isMacOS,
   isPosix,
   tempDir,
   tls,
@@ -20,7 +21,7 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
-import { networkInterfaces } from "node:os";
+import { networkInterfaces, totalmem } from "node:os";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
@@ -2139,8 +2140,12 @@ it.concurrent("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
+// On 8 GB macOS boxes 5000 concurrent localhost connections exhaust the kernel
+// mbuf pool; the server used to wedge in sendfile(2) and become unkillable.
+// sendfile is no longer used on macOS, but the exhaustion itself still makes
+// this test unreliable there, so skip it on low-memory macOS runners.
 // prettier-ignore
-it("should be able to stop in the middle of a file response", async () => {
+it.skipIf(isMacOS && totalmem() < 12 * 1024 * 1024 * 1024)("should be able to stop in the middle of a file response", async () => {
   async function doRequest(url: string) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(10) });

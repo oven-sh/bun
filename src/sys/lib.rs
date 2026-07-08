@@ -6334,12 +6334,39 @@ pub unsafe extern "C" fn Bun__dlopen(path: *const c_char, flags: c_int) -> *mut 
 }
 
 /// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
+/// OHOS: if dlopen fails with EPERM (unsigned .node), sign and retry.
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
         // SAFETY: filename is NUL-terminated.
         let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
-        if p.is_null() { None } else { Some(p) }
+        if !p.is_null() {
+            return Some(p);
+        }
+        // OHOS: shared libraries must be signed. Try signing on EPERM.
+        #[cfg(target_env = "ohos")]
+        {
+            let err = last_errno();
+            if err == libc::EPERM {
+                let bytes = filename.as_bytes();
+                if let Ok(path_str) = core::str::from_utf8(bytes) {
+                    use std::process::Command;
+                    // Only sign .so and .node files.
+                    if path_str.ends_with(".so") || path_str.ends_with(".node") {
+                        // `binary-sign-tool sign` is idempotent — safe to call
+                        // unconditionally without a separate `display-sign` check.
+                        let _ = Command::new("binary-sign-tool")
+                            .args(["sign", "-selfSign", "1", "-inFile", path_str, "-outFile", path_str])
+                            .output();
+                        let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
+                        if !p.is_null() {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
     #[cfg(windows)]
     {

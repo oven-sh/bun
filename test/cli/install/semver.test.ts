@@ -78,6 +78,12 @@ describe("Bun.semver.order()", () => {
       "2.0.0\r",
       "10.0.0\r",
     ]);
+
+    // interior whitespace is not trimmed; node-semver rejects these.
+    for (const ws of ["\t", "\n", "\r", "\v", "\f"]) {
+      expect(() => order(`1.0.0${ws}9.9.9`, "5.0.0")).toThrow("Invalid SemVer");
+      expect(satisfies(`1.0.0${ws}9.9.9`, "*")).toBe(false);
+    }
   });
 
   // JS .trim() also removes non-ASCII whitespace (NBSP, BOM, Zs, LS/PS).

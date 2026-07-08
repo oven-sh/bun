@@ -539,6 +539,11 @@ function bunTest() {
 }
 
 let ctx: TestContext | undefined = undefined;
+let rootContext: TestContext | undefined = undefined;
+
+function getRootContext() {
+  return (rootContext ??= new TestContext(false, "<root>", Bun.main, undefined));
+}
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
@@ -664,17 +669,32 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
+  // Node waits on a done() callback when the function declares a second
+  // parameter (the first being the TestContext).
+  const usesCallback = fn.length === 2;
 
   const runTest = (done: (error?: unknown) => void) => {
     const originalContext = ctx;
     ctx = context;
+    let settled = false;
     const endTest = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
       try {
         done(error);
       } finally {
         ctx = originalContext;
       }
     };
+
+    if (usesCallback) {
+      try {
+        fn(context, endTest);
+      } catch (error) {
+        endTest(error);
+      }
+      return;
+    }
 
     let result: unknown;
     try {
@@ -738,26 +758,48 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
+  // Node passes a TestContext as the first argument (the enclosing suite's, or
+  // the root context at the top level) and, when the function declares a second
+  // parameter, a done() callback the runner waits on.
+  const hookContext = ctx ?? getRootContext();
+  const usesCallback = fn.length === 2;
+
   const runHook = (done: (error?: unknown) => void) => {
+    let settled = false;
+    const endHook = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      done(error);
+    };
+
+    if (usesCallback) {
+      try {
+        fn(hookContext, endHook);
+      } catch (error) {
+        endHook(error);
+      }
+      return;
+    }
+
     let result: unknown;
     try {
-      result = fn();
+      result = fn(hookContext);
     } catch (error) {
-      done(error);
+      endHook(error);
       return;
     }
     if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
+      (result as Promise<unknown>).then(() => endHook()).catch(error => endHook(error));
     } else {
-      done();
+      endHook();
     }
   };
 
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
-type HookFn = () => unknown | Promise<unknown>;
+type TestFn = (ctx: TestContext, done?: (error?: unknown) => void) => unknown | Promise<unknown>;
+type HookFn = (ctx: TestContext, done?: (error?: unknown) => void) => unknown | Promise<unknown>;
 
 type TestOptions = {
   concurrency?: number | boolean | null;

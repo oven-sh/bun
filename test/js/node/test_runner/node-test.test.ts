@@ -52,6 +52,21 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("hooks and tests receive (context, done) and wait for done()", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["06-hook-callbacks.js"]);
+    expect({ exitCode, stdout, stderr }).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringContaining("ORDER_OK"),
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("a hook's done(error) fails the run", async () => {
+    const { exitCode, stderr } = await runTests(["07-hook-done-error.js"]);
+    expect(stderr).toContain("boom from before done");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 async function runTests(filenames: string[]) {

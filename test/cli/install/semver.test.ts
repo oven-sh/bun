@@ -427,6 +427,10 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("| 1.2.3-alpha.1", "1.2.3-alpha.1", true);
     testSatisfies("1.2.3-alpha.1 |", "1.2.3-alpha.1", true);
     testSatisfies("* | 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("1.2.3-alpha.1 ||| 2.0.0", "1.2.3-alpha.1", true);
+    testSatisfies("1.2.3-alpha.1 ||| *", "1.2.3-alpha.1", false);
+    testSatisfies("||| 1.2.3-alpha.1", "1.2.3-alpha.1", false);
+    testSatisfies("1.2.3-alpha.1 ||||", "1.2.3-alpha.1", false);
 
     const notPassing = [
       "0.1.0",

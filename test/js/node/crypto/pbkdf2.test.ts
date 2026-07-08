@@ -156,10 +156,12 @@ describe("invalid inputs", () => {
   });
 });
 
-test("keylen=0 fails sync", () => {
-  expect(() => crypto.pbkdf2Sync("p", "s", 1, 0, "sha256")).toThrow(
-    expect.objectContaining({ name: "Error", message: "PBKDF2 derivation failed" }),
-  );
+[0, -0].forEach(input => {
+  test(`keylen=${Object.is(input, -0) ? "-0" : "0"} fails sync`, () => {
+    expect(() => crypto.pbkdf2Sync("p", "s", 1, input, "sha256")).toThrow(
+      expect.objectContaining({ name: "Error", message: "PBKDF2 derivation failed" }),
+    );
+  });
 });
 
 test("keylen=0 fails async via callback", async () => {
@@ -177,7 +179,7 @@ test("keylen=0 fails async via callback", async () => {
   expect(err.message).toBe("PBKDF2 derivation failed");
 });
 
-[-1, 2147483648, 4294967296].forEach(input => {
+[-1, 2147483648, 4294967296, 2 ** 52].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
       `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,

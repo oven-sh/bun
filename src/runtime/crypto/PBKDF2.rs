@@ -92,7 +92,7 @@ impl PBKDF2 {
 
         let keylen_num = arg3.as_number();
 
-        if !arg3.is_any_int() {
+        if !arg3.is_integer() {
             return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
@@ -127,7 +127,7 @@ impl PBKDF2 {
 
         let iterations_num = arg2.as_number();
 
-        if !arg2.is_any_int() {
+        if !arg2.is_integer() {
             return Err(global_this.throw_range_error(
                 iterations_num,
                 bun_jsc::RangeErrorOptions {

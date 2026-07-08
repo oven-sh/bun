@@ -26,23 +26,90 @@
 
 #include "MoveOnlyFunction.h"
 
+#include <type_traits>
+
 namespace uWS {
 
-template <bool SSL>
+template <bool, bool>
 struct HttpContext;
 
-template <bool SSL>
-struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
-    template <bool> friend struct HttpResponse;
-    template <bool> friend struct HttpContext;
+template <bool, bool>
+struct HttpResponse;
+
+/* Per-connection state that only node:http compatibility servers use. Compiled
+ * out entirely (via std::conditional_t + [[no_unique_address]]) for Bun.serve
+ * so that instantiation carries none of these bytes and none of the branches
+ * that read them. */
+struct NodeHttpResponseFields {
+    /* lastMessageStartMs: when the request currently being received started
+     * arriving (or when the connection was accepted, before its first
+     * request); 0 once the message has been fully received (idle). Mirrors
+     * last_message_start_ in Node's http parser ConnectionsList, which backs
+     * server.headersTimeout / requestTimeout. */
+    uint64_t lastMessageStartMs = 0;
+    /* Opaque JS-side per-socket handle (JSNodeHTTPServerSocket). */
+    void* socketData = nullptr;
+    /* Trailer fields set via response.addTrailers(), pre-rendered as
+     * "name: value\r\n" lines. Written between the terminating 0 chunk and the
+     * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces
+     * chunked framing for the response body. */
+    std::string nodeHttpResponseTrailers;
+    /* Number of pipelined responses dispatched to JS that have not yet become
+     * this connection's current response. While non-zero, newly parsed
+     * requests keep being queued (preserving response order) and socket reads
+     * stay paused (bounding memory under a pipeline flood). */
+    uint32_t nodeHttpQueuedPipelinedCount = 0;
+    /* Whether the currently-being-received request's head has been fully
+     * parsed. Mirrors headers_completed_ in Node's ConnectionsList. */
+    uint8_t headersCompleted : 1 = false;
+    /* The request currently being routed arrived while an earlier response on
+     * this connection is still in flight (HTTP/1.1 pipelining). NodeHTTP.cpp
+     * queues it on the server socket instead of making it the connection's
+     * current response; the per-response state reset is applied later by
+     * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
+     * the request handler dispatch is on the stack. */
+    uint8_t isNodeHttpPipelinedDispatch : 1 = false;
+    /* The JS layer stopped HTTP processing on this connection (Node frees the
+     * parser when 'close' is emitted on the socket); any further request data
+     * in the buffer is not parsed. */
+    uint8_t nodeHttpParsingStopped : 1 = false;
+    /* Socket reads were paused because pipelined responses are (or were)
+     * queued. Reads resume once the queue has drained AND the socket has no
+     * outgoing backpressure left (Node's flood prevention pauses the socket
+     * while responses back up). */
+    uint8_t nodeHttpReadsPaused : 1 = false;
+    /* An accepted Upgrade request with a body. The body is parsed and
+     * delivered through the request as usual; once it completes, the
+     * connection switches into CONNECT-style tunnel mode (isConnectRequest)
+     * and everything after the end of the message is opaque data for the
+     * 'upgrade' listener's socket. */
+    uint8_t nodeHttpTunnelAfterBody : 1 = false;
+    /* The peer half-closed (FIN) while pipelined responses were still queued
+     * behind the in-flight one. Like Node's http server, the connection stays
+     * open so those responses can still be written; it is shut down once the
+     * pipeline has drained (see shouldCloseConnection()). */
+    uint8_t nodeHttpReceivedFIN : 1 = false;
+    /* CONNECT-method request (or a completed Upgrade tunnel): everything on
+     * the wire is opaque data for JS's socket, not HTTP. */
+    uint8_t isConnectRequest : 1 = false;
+};
+
+/* Empty stand-in selected when NODE_HTTP is false. With
+ * [[no_unique_address]] this occupies zero bytes in HttpResponseData. */
+struct EmptyNodeHttp {};
+
+template <bool SSL, bool NODE_HTTP = false>
+struct HttpResponseData : AsyncSocketData<SSL>, HttpParser<NODE_HTTP> {
+    template <bool, bool> friend struct HttpResponse;
+    template <bool, bool> friend struct HttpContext;
     public:
-    using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL>*, uint64_t, void*);
-    using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
-    using OnTimeoutCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
-    using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
+    using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL, NODE_HTTP>*, uint64_t, void*);
+    using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL, NODE_HTTP>*, void*);
+    using OnTimeoutCallback = void (*)(uWS::HttpResponse<SSL, NODE_HTTP>*, void*);
+    using OnDataCallback = void (*)(uWS::HttpResponse<SSL, NODE_HTTP>* response, const char* chunk, size_t chunk_length, bool, void*);
 
     /* When we are done with a response we mark it like so */
-    void markDone(uWS::HttpResponse<SSL> *uwsRes) {
+    void markDone(uWS::HttpResponse<SSL, NODE_HTTP> *uwsRes) {
         onAborted = nullptr;
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
@@ -54,19 +121,19 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         onTimeout = nullptr;
 
         /* We are done with this request */
-        this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+        this->state &= ~HttpResponseData::HTTP_RESPONSE_PENDING;
 
-        HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
+        HttpResponseData *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
-    bool callOnWritable(uWS::HttpResponse<SSL>* response, uint64_t offset) {
+    bool callOnWritable(uWS::HttpResponse<SSL, NODE_HTTP>* response, uint64_t offset) {
         /* Borrow real onWritable */
         auto* borrowedOnWritable = std::move(onWritable);
 
         /* Set onWritable to placeholder */
-        onWritable = [](uWS::HttpResponse<SSL>*, uint64_t, void*) {return true;};
+        onWritable = [](uWS::HttpResponse<SSL, NODE_HTTP>*, uint64_t, void*) {return true;};
 
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
@@ -100,7 +167,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * pointer in its own slot so arming it does not redirect the other
      * callbacks to the wrong object. Mirrors Http3ResponseData. */
     void* writableUserData = nullptr;
-    void* socketData = nullptr;
 
     /* Per socket event handlers */
     OnWritableCallback onWritable = nullptr;
@@ -117,7 +183,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint8_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
     bool fromAncientRequest = false;
-    bool isConnectRequest = false;
     /* When set, the response carries no body framing at all: no Content-Length,
      * no chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
      * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */
@@ -127,62 +192,20 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * when the user removed the framing headers. */
     bool closeDelimited = false;
 
-    /* node:http server compat (HttpFlags::usingNodeHttpCompat only).
-     * lastMessageStartMs: when the request currently being received started
-     * arriving (or when the connection was accepted, before its first
-     * request); 0 once the message has been fully received (idle).
-     * headersCompleted: whether that request's head has been fully parsed.
-     * Mirrors last_message_start_/headers_completed_ in Node's http parser
-     * ConnectionsList, which back server.headersTimeout/requestTimeout. */
-    uint64_t lastMessageStartMs = 0;
-    bool headersCompleted = false;
-
-    /* node:http server compat: the request currently being routed arrived
-     * while an earlier response on this connection is still in flight
-     * (HTTP/1.1 pipelining). NodeHTTP.cpp queues it on the server socket
-     * instead of making it the connection's current response; the per-response
-     * state reset is applied later by
-     * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
-     * the request handler dispatch is on the stack. */
-    bool isNodeHttpPipelinedDispatch = false;
-    /* node:http server compat: the JS layer stopped HTTP processing on this
-     * connection (Node frees the parser when 'close' is emitted on the
-     * socket); any further request data in the buffer is not parsed. */
-    bool nodeHttpParsingStopped = false;
-    /* node:http server compat: number of pipelined responses dispatched to JS
-     * that have not yet become this connection's current response. While
-     * non-zero, newly parsed requests keep being queued (preserving response
-     * order) and socket reads stay paused (bounding memory under a pipeline
-     * flood). */
-    uint32_t nodeHttpQueuedPipelinedCount = 0;
-    /* node:http server compat: socket reads were paused because pipelined
-     * responses are (or were) queued. Reads resume once the queue has drained
-     * AND the socket has no outgoing backpressure left (Node's flood
-     * prevention pauses the socket while responses back up). */
-    bool nodeHttpReadsPaused = false;
-    /* node:http server compat: an accepted Upgrade request with a body. The
-     * body is parsed and delivered through the request as usual; once it
-     * completes, the connection switches into CONNECT-style tunnel mode
-     * (isConnectRequest) and everything after the end of the message is
-     * opaque data for the 'upgrade' listener's socket. */
-    bool nodeHttpTunnelAfterBody = false;
-    /* node:http server compat: trailer fields set via response.addTrailers(),
-     * pre-rendered as "name: value\r\n" lines. Written between the terminating
-     * 0 chunk and the final CRLF of a chunked response (RFC 9112 7.1.2);
-     * non-empty also forces chunked framing for the response body. */
-    std::string nodeHttpResponseTrailers;
-    /* node:http server compat: the peer half-closed (FIN) while pipelined
-     * responses were still queued behind the in-flight one. Like Node's http
-     * server, the connection stays open so those responses can still be
-     * written; it is shut down once the pipeline has drained (see
-     * shouldCloseConnection()). */
-    bool nodeHttpReceivedFIN = false;
+    /* node:http server compat state. When NODE_HTTP is false this is
+     * EmptyNodeHttp (zero bytes via [[no_unique_address]]) and every access is
+     * gated behind `if constexpr (NODE_HTTP)`, so Bun.serve pays nothing. */
+    [[no_unique_address]] std::conditional_t<NODE_HTTP, NodeHttpResponseFields, EmptyNodeHttp> nodeCompat;
 
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & HTTP_CONNECTION_CLOSE)
-            || (nodeHttpReceivedFIN && nodeHttpQueuedPipelinedCount == 0);
+        if constexpr (!NODE_HTTP) {
+            return state & HTTP_CONNECTION_CLOSE;
+        } else {
+            return (state & HTTP_CONNECTION_CLOSE)
+                || (nodeCompat.nodeHttpReceivedFIN && nodeCompat.nodeHttpQueuedPipelinedCount == 0);
+        }
     }
 
 #ifdef UWS_WITH_PROXY

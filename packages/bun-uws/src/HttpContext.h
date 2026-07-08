@@ -229,7 +229,7 @@ private:
         HttpContextData<SSL, NODE_HTTP> *httpContextData = getSocketContextDataS(s);
 
         if constexpr (NODE_HTTP) {
-            if(httpResponseData && (httpResponseData->nodeCompat.isConnectRequest || httpResponseData->nodeCompat.nodeHttpTunnelAfterBody)) {
+            if(httpResponseData && (httpResponseData->isConnectRequest || httpResponseData->nodeCompat.nodeHttpTunnelAfterBody)) {
                 if (httpResponseData->nodeCompat.socketData && httpContextData->nodeCompat.onSocketData) {
                     httpContextData->nodeCompat.onSocketData(httpResponseData->nodeCompat.socketData, SSL, s, "", 0, true);
                 }
@@ -290,7 +290,7 @@ private:
          * parsed as HTTP and keep flowing below. */
         if constexpr (NODE_HTTP) {
             if (httpResponseData->nodeCompat.nodeHttpParsingStopped
-                && !httpResponseData->nodeCompat.isConnectRequest) {
+                && !httpResponseData->isConnectRequest) {
                 us_socket_unref(s);
                 return s;
             }
@@ -311,13 +311,11 @@ private:
         proxyParser = &httpResponseData->proxyParser;
 #endif
 
-        /* CONNECT-tunnel state lives in nodeCompat (a bitfield, so not
-         * addressable). The parser mutates a local via bool&; sync it back to
-         * nodeCompat after the parse so onClose/onEnd/next-onData see it. */
-        bool isConnectRequest = false;
-        if constexpr (NODE_HTTP) {
-            isConnectRequest = httpResponseData->nodeCompat.isConnectRequest;
-        }
+        /* CONNECT-tunnel state is coupled with the parser's persisted
+         * remainingStreamingBytes across onData calls, so it must round-trip
+         * through the response data for both instantiations. The parser mutates
+         * a local via bool&; sync it back after the parse. */
+        bool isConnectRequest = httpResponseData->isConnectRequest;
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
@@ -494,7 +492,7 @@ private:
 
                 if (switchToTunnelAfterThisChunk) {
                     httpResponseData->nodeCompat.nodeHttpTunnelAfterBody = false;
-                    httpResponseData->nodeCompat.isConnectRequest = true;
+                    httpResponseData->isConnectRequest = true;
                     isConnectRequest = true;
                 }
             }
@@ -537,10 +535,8 @@ private:
             return user;
         });
 
-        if constexpr (NODE_HTTP) {
-            if (!us_socket_is_closed(s) && !httpContextData->upgradedWebSocket) {
-                httpResponseData->nodeCompat.isConnectRequest = isConnectRequest;
-            }
+        if (!us_socket_is_closed(s) && !httpContextData->upgradedWebSocket) {
+            httpResponseData->isConnectRequest = isConnectRequest;
         }
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
@@ -587,7 +583,7 @@ private:
              * pipelined request after the previous message completed) - its
              * headers timeout window opens now. */
             if constexpr (NODE_HTTP) {
-                if (!httpResponseData->nodeCompat.isConnectRequest && httpResponseData->nodeCompat.lastMessageStartMs == 0
+                if (!httpResponseData->isConnectRequest && httpResponseData->nodeCompat.lastMessageStartMs == 0
                     && httpResponseData->hasBufferedPartialRequestHeaders()) {
                     httpResponseData->nodeCompat.lastMessageStartMs = nodeCompatMonotonicMs();
                     httpResponseData->nodeCompat.headersCompleted = false;
@@ -674,7 +670,7 @@ private:
 
 
         if constexpr (NODE_HTTP) {
-            if (httpResponseData->nodeCompat.isConnectRequest && httpResponseData->nodeCompat.socketData && httpContextData->onSocketDrain) {
+            if (httpResponseData->isConnectRequest && httpResponseData->nodeCompat.socketData && httpContextData->onSocketDrain) {
                 httpContextData->onSocketDrain(httpResponseData->nodeCompat.socketData, SSL, (struct us_socket_t *) s);
             }
         }
@@ -748,7 +744,7 @@ private:
              * Node's http server (allowHalfOpen: true). This includes an accepted
              * Upgrade whose body never completed (nodeHttpTunnelAfterBody): the
              * EOF ends the upgrade socket, exactly like Node's UpgradeStream. */
-            if (httpResponseData->nodeCompat.isConnectRequest || httpResponseData->nodeCompat.nodeHttpTunnelAfterBody) {
+            if (httpResponseData->isConnectRequest || httpResponseData->nodeCompat.nodeHttpTunnelAfterBody) {
                 if (httpResponseData->nodeCompat.socketData && httpContextData->nodeCompat.onSocketData) {
                     httpContextData->nodeCompat.onSocketData(httpResponseData->nodeCompat.socketData, SSL, s, "", 0, true);
                 }

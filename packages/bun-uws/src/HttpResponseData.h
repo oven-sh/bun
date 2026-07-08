@@ -89,9 +89,6 @@ struct NodeHttpResponseFields {
      * open so those responses can still be written; it is shut down once the
      * pipeline has drained (see shouldCloseConnection()). */
     uint8_t nodeHttpReceivedFIN : 1 = false;
-    /* CONNECT-method request (or a completed Upgrade tunnel): everything on
-     * the wire is opaque data for JS's socket, not HTTP. */
-    uint8_t isConnectRequest : 1 = false;
 };
 
 /* Empty stand-in selected when NODE_HTTP is false. With
@@ -191,6 +188,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser<NODE_HTTP> {
      * no Content-Length and no chunked framing, then close. Used by node:http
      * when the user removed the framing headers. */
     bool closeDelimited = false;
+    /* CONNECT-method request (or a completed Upgrade tunnel): everything on
+     * the wire is opaque data, not HTTP. Coupled with HttpParser's persisted
+     * remainingStreamingBytes across onData calls, so it must persist for both
+     * NODE_HTTP instantiations (not in nodeCompat). */
+    bool isConnectRequest = false;
 
     /* node:http server compat state. When NODE_HTTP is false this is
      * EmptyNodeHttp (zero bytes via [[no_unique_address]]) and every access is

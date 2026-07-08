@@ -4,9 +4,9 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isWindows, libcPathForDlopen } from "harness";
-import net from "node:net";
-import http2 from "node:http2";
 import { once } from "node:events";
+import http2 from "node:http2";
+import net from "node:net";
 
 // POSIX getsockopt; Windows uses SOCKET handles rather than fds for this path.
 const { getsockopt } = isWindows

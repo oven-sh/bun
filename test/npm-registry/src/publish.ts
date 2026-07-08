@@ -56,7 +56,7 @@ export async function handlePublish(record: PackageRecord, body: PublishBody): P
   if (body.name !== undefined && body.name !== record.name) {
     return npmError(400, `package name mismatch: URL says ${record.name}, body says ${body.name}`);
   }
-  if (body._attachments !== undefined && Object.keys(body._attachments).length > 0) {
+  if (body._attachments != null && Object.keys(body._attachments).length > 0) {
     return publishVersions(record, body);
   }
   // A metadata-only PUT updates something that already exists; on a
@@ -73,13 +73,16 @@ async function publishVersions(record: PackageRecord, body: PublishBody): Promis
   // leaves the record exactly as it was.
   const staged: Array<{ version: string; stored: StoredVersion }> = [];
   for (const [version, manifest] of Object.entries(versions)) {
+    if (manifest == null || typeof manifest !== "object") {
+      return npmError(400, `versions[${JSON.stringify(version)}] must be an object`);
+    }
     if (record.versions.has(version)) {
       // registry.npmjs.org's exact wording; clients surface it verbatim.
       return npmError(403, `You cannot publish over the previously published versions: ${version}.`);
     }
     const filename = `${unscoped(record.name)}-${version}.tgz`;
     const attachment = attachments[filename] ?? attachments[`${record.name}-${version}.tgz`];
-    if (attachment === undefined) {
+    if (attachment == null || typeof attachment !== "object") {
       return npmError(400, `missing _attachments[${JSON.stringify(filename)}]`);
     }
     if (typeof attachment.data !== "string") {
@@ -125,7 +128,7 @@ async function updateMetadata(record: PackageRecord, body: PublishBody): Promise
   const versions = body.versions ?? {};
   for (const [version, incoming] of Object.entries(versions)) {
     const existing = record.versions.get(version);
-    if (existing === undefined) continue;
+    if (existing === undefined || incoming == null || typeof incoming !== "object") continue;
     const deprecated = (incoming as { deprecated?: string }).deprecated;
     const current = await existing.manifest();
     if (deprecated === current.deprecated) continue;

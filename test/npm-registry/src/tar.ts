@@ -182,9 +182,16 @@ export function buildTarball(files: FileTree, options: { executable?: Iterable<s
     offset += block.length;
   }
 
-  // Bun's gzip writes mtime=0 and OS=255 in the gzip header, so the only
-  // nondeterminism risk is the compressor itself changing across releases.
-  return { bytes: Bun.gzipSync(tar, { level: 9 }), fileCount: paths.length, unpackedSize };
+  // zlib writes the build host's OS_CODE at gzip header byte 9 (3 on
+  // Linux, 19 on macOS, 10 on Windows), so normalize it to 255
+  // ("unknown", node-tar's portable convention) or `dist.integrity`
+  // would differ per build platform. With mtime already 0 at offsets
+  // 4-7, the only remaining nondeterminism risk is the compressor
+  // itself changing across releases; a pinned known-answer sha512 in
+  // tar.test.ts is what catches that.
+  const bytes = Bun.gzipSync(tar, { level: 9 });
+  bytes[9] = 0xff;
+  return { bytes, fileCount: paths.length, unpackedSize };
 }
 
 /**

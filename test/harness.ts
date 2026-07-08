@@ -1883,8 +1883,7 @@ export class TestRegistry extends NpmRegistry {
 
   /**
    * A fresh project directory with a `bunfig.toml` pointing at this
-   * registry. Also forgets registered users, so a test file that shares
-   * one registry can `generateUser` the same name in every test.
+   * registry.
    */
   async createTestDir(
     opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = {
@@ -1895,7 +1894,6 @@ export class TestRegistry extends NpmRegistry {
     const packageDir = tempDir("npm-registry-test-", opts.files ?? {});
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
-    this.users.clear();
     return { packageDir: String(packageDir), packageJson };
   }
 

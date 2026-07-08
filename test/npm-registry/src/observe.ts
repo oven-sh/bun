@@ -32,6 +32,15 @@ export interface ObservedRequest {
  * `undefined` (or a promise of it) lets the request fall through to the
  * next interceptor and then to normal routing.
  */
+/** `decodeURIComponent`, or the input verbatim when it is malformed. */
+function safeDecodeURIComponent(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export type Interceptor = (
   request: Request,
   observed: ObservedRequest,
@@ -68,7 +77,7 @@ export class RequestObserver {
       index: this.requests.length,
       method: request.method,
       url: request.url,
-      path: decodeURIComponent(url.pathname),
+      path: safeDecodeURIComponent(url.pathname),
       headers: new Headers(request.headers),
     };
     this.requests.push(observed);

@@ -39,11 +39,11 @@ export async function readJsonObject<T extends object>(req: Request): Promise<T 
   return body as T;
 }
 
-export const notFound = (what: string) => npmError(404, `Not found: ${what}`);
-
 /**
- * The document npm registries return for `GET /<name>` when the package
- * does not exist. The exact string matters: clients special-case it.
+ * registry.npmjs.org's `GET /<name>` 404 body. bun never reads it (the
+ * resolve path branches on the status alone at `src/install/npm.rs`,
+ * and the one body-parsing consumer prints its own message); the shape
+ * is for parity with other npm clients only.
  */
 export function packageNotFound(name: string): Response {
   return json({ error: "Not found", reason: `document not found: ${name}` }, { status: 404 });

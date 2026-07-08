@@ -1370,6 +1370,26 @@ fn console_fixture_suite() {
     }
     let mut child = cmd.spawn().expect("spawn console fixture child");
 
+    // Drain both pipes concurrently with the wait so a verbose fixture cannot
+    // fill the anonymous-pipe buffer and deadlock on write before exiting.
+    use std::io::Read as _;
+    let out_pipe = child.stdout.take();
+    let err_pipe = child.stderr.take();
+    let out_th = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(mut p) = out_pipe {
+            let _ = p.read_to_string(&mut s);
+        }
+        s
+    });
+    let err_th = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(mut p) = err_pipe {
+            let _ = p.read_to_string(&mut s);
+        }
+        s
+    });
+
     // Bounded wait: a deadlocked fixture must fail, not hang the suite.
     let start = std::time::Instant::now();
     let status = loop {
@@ -1385,16 +1405,8 @@ fn console_fixture_suite() {
             }
         }
     };
-
-    use std::io::Read as _;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    if let Some(mut p) = child.stdout.take() {
-        let _ = p.read_to_string(&mut stdout);
-    }
-    if let Some(mut p) = child.stderr.take() {
-        let _ = p.read_to_string(&mut stderr);
-    }
+    let stdout = out_th.join().unwrap_or_default();
+    let stderr = err_th.join().unwrap_or_default();
 
     let fails: Vec<&str> = stdout
         .lines()

@@ -867,7 +867,8 @@ status = "pending"
 status = "pending"
 
 [HIST-06]
-status = "pending"
+status = "implemented"
+reason = "gated at the bun_windows_sys::ws2_32 module boundary; every ws2_32 fn routes through ensure_winsock()"
 
 [HIST-07]
 status = "pending"
@@ -1893,7 +1894,7 @@ test = "src/iocp/fsevent.rs::dir_watch_create_modify_rename_delete"
 
 [SIGEV-33]
 status = "implemented"
-test = "src/paths/string_paths.rs::grow_probe::grows_then_fits"
+test = "src/iocp/fsevent.rs::tests::recursive_watch_long_relative_paths"
 
 [SIGEV-34]
 status = "implemented"

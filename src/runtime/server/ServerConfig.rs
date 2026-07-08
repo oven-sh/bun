@@ -1,6 +1,5 @@
 use std::io::Write as _;
 
-use bun_core::env_var;
 use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
@@ -1225,6 +1224,7 @@ impl ServerConfig {
 
                 #[cfg(target_env = "ohos")]
                 let unix_slice: Box<[u8]> = {
+                    use bun_core::env_var;
                     let path = unix_str.slice();
                     // OHOS: relative Unix socket paths fail with EPERM in CWD.
                     // Prepend TMPDIR to make them absolute.

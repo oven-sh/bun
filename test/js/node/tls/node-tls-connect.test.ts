@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
+import https from "https";
 import net from "net";
 import { join } from "path";
 import stream from "stream";
@@ -691,4 +692,58 @@ it("delivers 'session' even when the data handler destroys the socket immediatel
   expect(session).toBe(true);
   server.close();
   await once(server, "close");
+});
+
+it("a write before 'secureConnect' still reports the handshake's own failure", async () => {
+  // An early write drives the handshake from inside SSL_write. The fatal
+  // reason that write hit used to be dropped, so the handshake dispatch had
+  // nothing to report and the dead session looked established: the only error
+  // left was checkServerIdentity's verdict on an empty peer certificate.
+  await using server = tls.createServer({ ...COMMON_CERT_ }, socket => socket.end());
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const client = tlsConnect({
+    port: (server.address() as AddressInfo).port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    ca: COMMON_CERT_.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.2",
+  });
+  let secureConnect = false;
+  client.on("secureConnect", () => (secureConnect = true));
+  client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  const [error] = await once(client, "error");
+  expect(error.code).toBe("ERR_SSL_NO_SUPPORTED_VERSIONS_ENABLED");
+  expect(secureConnect).toBe(false);
+});
+
+it("https.request reports an impossible version window as a TLS error, not a certificate error", async () => {
+  // The http client flushes the request headers as soon as the socket
+  // connects, so every https.request hits the early-write path above.
+  await using server = https.createServer({ ...COMMON_CERT_ }, (_req, res) => res.end("ok"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const options = {
+    host: "127.0.0.1",
+    port: (server.address() as AddressInfo).port,
+    servername: "localhost",
+    ca: COMMON_CERT_.cert,
+    agent: false as const,
+  };
+
+  const failing = https.request({ ...options, minVersion: "TLSv1.3", maxVersion: "TLSv1.2" });
+  failing.end();
+  const [error] = await once(failing, "error");
+  expect(error.code).toBe("ERR_SSL_NO_SUPPORTED_VERSIONS_ENABLED");
+
+  // A satisfiable window over the same cert/CA/servername still succeeds: the
+  // version range is the only thing that failed above.
+  const ok = https.request({ ...options, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" });
+  ok.end();
+  const [response] = await once(ok, "response");
+  let body = "";
+  response.on("data", (chunk: Buffer) => (body += chunk));
+  await once(response, "end");
+  expect(body).toBe("ok");
 });

@@ -167,6 +167,11 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(expected)
     }
 
+    pub fn skip_message(&mut self) -> Result<(), AnyPostgresError> {
+        let length = self.length()?;
+        self.skip(usize::try_from(length - 4).expect("int cast"))
+    }
+
     #[inline]
     pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.read(count)

@@ -462,8 +462,10 @@ impl LazySourceMap {
                 // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
-                    vec![None; source_files_count];
+                let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
+                    std::iter::repeat_with(std::sync::OnceLock::new)
+                        .take(source_files_count)
+                        .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
@@ -862,11 +864,17 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
+                // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
+                // every `..` segment here so the on-disk dump can't escape
+                // `dump_code_dir` (the join would otherwise normalize `..` above it).
+                let mut dump_rel: Vec<u8> = Vec::new();
+                options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
+                    .expect("write to Vec<u8>");
                 let mut path_buf = bun_paths::path_buffer_pool::get();
                 let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                     dump_code_dir,
                     &mut path_buf[..],
-                    &[dest_path],
+                    &[&dump_rel],
                 );
 
                 // Scoped block to handle dump failures without skipping module emission
@@ -2205,7 +2213,7 @@ pub struct SerializedSourceMapLoaded {
     /// Only decompress source code once! Once a file is decompressed,
     /// it is stored here. Decompression failures are stored as an empty
     /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[Option<Vec<u8>>]>,
+    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(

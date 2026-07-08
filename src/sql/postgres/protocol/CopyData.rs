@@ -15,7 +15,7 @@ impl CopyData {
     ) -> Result<Self, AnyPostgresError> {
         let length = reader.length()?;
 
-        let data = reader.read(usize::try_from(length.saturating_sub(5)).expect("int cast"))?;
+        let data = reader.read(usize::try_from(length - 4).expect("int cast"))?;
         Ok(Self { data })
     }
 

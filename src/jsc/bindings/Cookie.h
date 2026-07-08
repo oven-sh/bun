@@ -131,7 +131,7 @@ private:
     bool m_secure = false;
     CookieSameSite m_sameSite = CookieSameSite::Lax;
     bool m_httpOnly = false;
-    double m_maxAge = 0;
+    double m_maxAge = std::numeric_limits<double>::quiet_NaN();
     bool m_partitioned = false;
 };
 

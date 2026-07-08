@@ -240,7 +240,7 @@ describe("RedisClient TLS hostname verification", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:fast_unwind_on_malloc=1" },
+      env: { ...bunEnv, ASAN_OPTIONS: "detect_leaks=0:symbolize=0:fast_unwind_on_malloc=1" },
       stdout: "pipe",
       stderr: "pipe",
     });

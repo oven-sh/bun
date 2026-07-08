@@ -842,10 +842,7 @@ impl SendHandle {
 }
 
 #[bun_jsc::host_fn]
-fn close_sent_handle(
-    global: &JSGlobalObject,
-    callframe: &crate::CallFrame,
-) -> JsResult<JSValue> {
+fn close_sent_handle(global: &JSGlobalObject, callframe: &crate::CallFrame) -> JsResult<JSValue> {
     let [js] = callframe.arguments_as_array::<1>();
     if js.is_object() {
         if let Ok(Some(f)) = js.get(global, "close") {

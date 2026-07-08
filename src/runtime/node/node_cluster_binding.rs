@@ -886,10 +886,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 /// `listen({fd:2})` would make the primary close its own stderr on remove().
 /// Returns 0 for a socket, or a negative uv-style errno.
 #[bun_jsc::host_fn]
-pub(crate) fn cluster_validate_fd(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _ = global;
     let value = frame.arguments_old::<1>().ptr[0];
     if !value.is_number() {

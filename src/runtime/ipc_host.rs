@@ -281,13 +281,8 @@ pub(crate) fn do_send(
         pause_target = JSValue::UNDEFINED;
     }
 
-    let status = ipc_data.serialize_and_send(
-        global_object,
-        message,
-        is_internal,
-        callback,
-        zig_handle,
-    );
+    let status =
+        ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
     if status != SerializeAndSendResult::Failure
         && !pause_target.is_undefined()

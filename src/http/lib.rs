@@ -4893,8 +4893,7 @@ impl<'a> HTTPClient<'a> {
                             // OHOS: Brotli decompression broken on musl (corrupted output).
                             // Accept-Encoding already excludes br, but some servers
                             // (test registry, CDN) may still return it. Skip decoding.
-                            #[cfg(not(target_env = "ohos"))]
-                            {
+                            if cfg!(not(target_env = "ohos")) {
                                 self.state.encoding = Encoding::Brotli;
                                 self.state.content_encoding_i = header_i as u8;
                             }
@@ -4929,8 +4928,9 @@ impl<'a> HTTPClient<'a> {
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                         if !self.flags.disable_decompression {
                             // OHOS: Brotli decompression broken on musl.
-                            #[cfg(not(target_env = "ohos"))]
-                            self.state.transfer_encoding = Encoding::Brotli;
+                            if cfg!(not(target_env = "ohos")) {
+                                self.state.transfer_encoding = Encoding::Brotli;
+                            }
                         }
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                         if !self.flags.disable_decompression {

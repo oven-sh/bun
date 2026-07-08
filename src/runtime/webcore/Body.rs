@@ -3,7 +3,6 @@
 use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::borrow::Cow;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData,
@@ -60,31 +59,13 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
 
-fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
+fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
-    match mime_type.value {
-        Cow::Borrowed(interned) => {
-            if let Some(store) = blob_store_mut(blob) {
-                store.mime_type = MimeType {
-                    value: Cow::Borrowed(interned),
-                    category: mime_type.category,
-                };
-            }
-            blob.content_type.set(std::ptr::from_ref::<[u8]>(interned));
-            blob.content_type_allocated.set(false);
-        }
-        Cow::Owned(owned) => {
-            if let Some(store) = blob_store_mut(blob) {
-                store.mime_type = MimeType {
-                    value: Cow::Owned(owned.clone()),
-                    category: mime_type.category,
-                };
-            }
-            blob.content_type
-                .set(bun_core::heap::into_raw(owned.into_boxed_slice()));
-            blob.content_type_allocated.set(allocated);
-        }
+    if let Some(store) = blob_store_mut(blob) {
+        store.mime_type = mime_type.clone();
     }
+    blob.content_type
+        .set(blob::BlobContentType::from(mime_type));
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1012,7 +993,7 @@ impl Value {
                 drop(encoded);
                 let blob = Blob::init(owned.into_vec(), global_this);
                 blob.content_type
-                    .set(std::ptr::from_ref::<[u8]>(mime.as_bytes()));
+                    .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);
                 return Ok(Value::Blob(blob));
             }
@@ -1173,25 +1154,13 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_slice();
-                                let mut allocated = false;
-                                let mime_type = MimeType::init(
-                                    content_slice.slice(),
-                                    true,
-                                    Some(&mut allocated),
-                                );
-                                set_blob_content_type(blob, mime_type, allocated);
+                                let mime_type = MimeType::init(content_slice.slice(), true, None);
+                                set_blob_content_type(blob, mime_type);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                                bun_http_types::MimeType::TEXT.value.as_ref(),
-                            ));
-                            blob.content_type_allocated.set(false);
-                            blob.content_type_was_set.set(true);
-                            blob_store_mut(blob)
-                                .expect("infallible: checked above")
-                                .mime_type = bun_http_types::MimeType::TEXT;
+                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -2196,22 +2165,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
-                    let mut allocated = false;
-                    let mime_type =
-                        MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    set_blob_content_type(blob, mime_type, allocated);
+                    let mime_type = MimeType::init(content_slice.slice(), true, None);
+                    set_blob_content_type(blob, mime_type);
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                    bun_http_types::MimeType::TEXT.value.as_ref(),
-                ));
-                blob.content_type_allocated.set(false);
-                blob.content_type_was_set.set(true);
-                blob_store_mut(blob)
-                    .expect("infallible: checked above")
-                    .mime_type = bun_http_types::MimeType::TEXT;
+                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
             }
         }
         Ok(JSPromise::resolved_promise_value(

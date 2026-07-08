@@ -4277,9 +4277,9 @@ declare module "bun" {
       | string
       | {
           /**
-           * The proxy URL (http:// or https://)
+           * The proxy URL (http:// or https://), as a string or a `URL`.
            */
-          url: string;
+          url: string | URL;
           /**
            * Custom headers to send to the proxy server.
            * Supports plain objects or Headers class instances.

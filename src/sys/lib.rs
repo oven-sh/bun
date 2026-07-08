@@ -3763,14 +3763,138 @@ mod windows_impl {
         sys_uv::stat(path)
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        // sys_uv::fstat does `fd.uv()` which PANICS for HANDLE-backed
-        // (`FdKind::System`) Fds — i.e. the result of `openat()`. Convert
-        // via `_open_osfhandle` first (acknowledged CRT-fd leak —
-        // a leak is strictly better than a guaranteed panic).
-        let uvfd = fd
-            .make_libuv_owned()
-            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
-        sys_uv::fstat(uvfd)
+        if fd.kind() == FdKind::Uv {
+            return sys_uv::fstat(fd);
+        }
+        // HANDLE-backed (`FdKind::System`, e.g. `openat()` results): stat the
+        // HANDLE directly instead of allocating a throwaway CRT fd via
+        // `_open_osfhandle` (which cannot be `_close`d without also closing
+        // the caller's HANDLE, so it leaked a CRT slot per call).
+        fstat_handle(fd)
+    }
+    /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
+    /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a
+    /// raw HANDLE without touching the CRT fd table.
+    fn fstat_handle(fd: Fd) -> Maybe<Stat> {
+        use bun_core::S;
+        let handle = fd.native();
+        let nt_err = |rc: w::NTSTATUS| {
+            Error::new(w::translate_nt_status_to_errno(rc), Tag::fstat).with_fd(fd)
+        };
+        let mut st: Stat = bun_core::ffi::zeroed();
+
+        // Dispatch on handle type; pipes and consoles get a synthetic stat.
+        let file_type = w::GetFileType(handle);
+        if file_type == w::FILE_TYPE_PIPE {
+            st.st_mode = S::IFIFO as u64;
+            st.st_nlink = 1;
+            st.st_rdev = (w::FILE_DEVICE_NAMED_PIPE as u64) << 16;
+            st.st_ino = handle as usize as u64;
+            return Ok(st);
+        }
+        if file_type == w::FILE_TYPE_CHAR {
+            let mut mode: w::DWORD = 0;
+            // SAFETY: FFI; `handle` is a valid HANDLE, `mode` valid for write.
+            if unsafe { w::kernel32::GetConsoleMode(handle, &mut mode) } != 0 {
+                st.st_mode = S::IFCHR as u64;
+                st.st_nlink = 1;
+                st.st_rdev = (w::FILE_DEVICE_CONSOLE as u64) << 16;
+                st.st_ino = handle as usize as u64;
+                return Ok(st);
+            }
+            // Non-console char device (NUL, COM1, ...): fall through to the
+            // disk path, which special-cases `FILE_DEVICE_NULL`.
+        } else if file_type != w::FILE_TYPE_DISK {
+            return Err(Error::new(E::EBADF, Tag::fstat).with_fd(fd));
+        }
+
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+
+        let mut device_info: w::FILE_FS_DEVICE_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `handle` valid, output buffers valid for write.
+        let rc = unsafe {
+            w::ntdll::NtQueryVolumeInformationFile(
+                handle,
+                &mut io,
+                core::ptr::from_mut(&mut device_info).cast(),
+                core::mem::size_of::<w::FILE_FS_DEVICE_INFORMATION>() as u32,
+                w::FS_INFORMATION_CLASS::FileFsDeviceInformation,
+            )
+        };
+        if w::NT_ERROR(rc) {
+            return Err(nt_err(rc));
+        }
+        if device_info.DeviceType == w::FILE_DEVICE_NULL {
+            st.st_mode = (S::IFCHR | S::IRUSR | S::IWUSR) as u64;
+            st.st_mode |= (st.st_mode & 0o700) >> 3 | (st.st_mode & 0o700) >> 6;
+            st.st_nlink = 1;
+            st.st_blksize = 4096;
+            st.st_rdev = (w::FILE_DEVICE_NULL as u64) << 16;
+            return Ok(st);
+        }
+
+        let mut file_info: w::FILE_ALL_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `handle` valid, output buffers valid for write.
+        // STATUS_BUFFER_OVERFLOW (variable-length name truncated) is expected
+        // and is a warning, not an error; `NT_ERROR` excludes it.
+        let rc = unsafe {
+            w::ntdll::NtQueryInformationFile(
+                handle,
+                &mut io,
+                core::ptr::from_mut(&mut file_info).cast(),
+                core::mem::size_of::<w::FILE_ALL_INFORMATION>() as u32,
+                w::FILE_INFORMATION_CLASS::FileAllInformation,
+            )
+        };
+        if w::NT_ERROR(rc) {
+            return Err(nt_err(rc));
+        }
+
+        let mut volume_info: w::FILE_FS_VOLUME_INFORMATION = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `handle` valid, output buffers valid for write.
+        let rc = unsafe {
+            w::ntdll::NtQueryVolumeInformationFile(
+                handle,
+                &mut io,
+                core::ptr::from_mut(&mut volume_info).cast(),
+                core::mem::size_of::<w::FILE_FS_VOLUME_INFORMATION>() as u32,
+                w::FS_INFORMATION_CLASS::FileFsVolumeInformation,
+            )
+        };
+        if rc == w::NTSTATUS::NOT_IMPLEMENTED {
+            st.st_dev = 0;
+        } else if w::NT_ERROR(rc) {
+            return Err(nt_err(rc));
+        } else {
+            st.st_dev = volume_info.VolumeSerialNumber as u64;
+        }
+
+        // libuv's `S_IFLNK` arm is gated on `do_lstat`, which is always 0 on
+        // the fstat path, so reparse points fall through to DIR-or-REG.
+        let attrs = file_info.BasicInformation.FileAttributes;
+        if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+            st.st_mode = S::IFDIR as u64;
+            st.st_size = 0;
+        } else {
+            st.st_mode = S::IFREG as u64;
+            st.st_size = file_info.StandardInformation.EndOfFile as u64;
+        }
+        if attrs & w::FILE_ATTRIBUTE_READONLY != 0 {
+            st.st_mode |= S::IRUSR as u64;
+        } else {
+            st.st_mode |= (S::IRUSR | S::IWUSR) as u64;
+        }
+        st.st_mode |= (st.st_mode & 0o700) >> 3 | (st.st_mode & 0o700) >> 6;
+
+        st.atim = w::filetime_to_timespec(file_info.BasicInformation.LastAccessTime);
+        st.mtim = w::filetime_to_timespec(file_info.BasicInformation.LastWriteTime);
+        st.ctim = w::filetime_to_timespec(file_info.BasicInformation.ChangeTime);
+        st.birthtim = w::filetime_to_timespec(file_info.BasicInformation.CreationTime);
+        st.st_ino = file_info.InternalInformation.IndexNumber as u64;
+        st.st_nlink = file_info.StandardInformation.NumberOfLinks as u64;
+        st.st_blocks = (file_info.StandardInformation.AllocationSize as u64) >> 9;
+        st.st_blksize = 4096;
+        Ok(st)
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
         sys_uv::lstat(path)
@@ -4247,24 +4371,15 @@ mod windows_impl {
         }
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        // `uv_fs_futime` takes a CRT
-        // fd, and `fd.uv()` PANICS for HANDLE-backed (`FdKind::System`) Fds.
-        // Convert via `make_libuv_owned()` first (passes uv-backed Fds through
-        // unchanged) so an `openat()` result no longer crashes.
-        let uvfd = fd
-            .make_libuv_owned()
-            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
-        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
-        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
-        let mut req = uv::fs_t::uninitialized();
-        let rc =
-            unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, uvfd.uv(), a, m, None) };
-        // fs_t has no Drop impl; uv_fs_req_cleanup
-        // must run before any return (fd-based, so no path buffer is captured,
-        // but keep the pattern uniform with utimens/lutimens below).
-        req.deinit();
-        if let Some(err) = Error::from_uv_rc(rc, Tag::futimens) {
-            return Err(err.with_fd(fd));
+        // `uv_fs_futime` takes a CRT fd (`fd.uv()` PANICS for HANDLE-backed
+        // `FdKind::System` fds); `SetFileTime` operates on the HANDLE
+        // directly. `fd.native()` yields the HANDLE for both kinds.
+        let a = w::timespec_to_filetime(atime);
+        let m = w::timespec_to_filetime(mtime);
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `a`/`m` valid for read.
+        let rc = unsafe { w::kernel32::SetFileTime(fd.native(), core::ptr::null(), &a, &m) };
+        if rc == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::futimens).with_fd(fd));
         }
         Ok(())
     }
@@ -6136,7 +6251,7 @@ unsafe impl Send for DynLib {}
 // synchronized, so `&DynLib` may be shared across threads.
 unsafe impl Sync for DynLib {}
 impl DynLib {
-    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryA(path)`.
+    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_core::Error> {
         let mut buf = bun_paths::PathBuffer::default();
         // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
@@ -6202,7 +6317,7 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
-/// `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
+/// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
@@ -6213,8 +6328,29 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(windows)]
     {
         let _ = flags;
-        // SAFETY: filename is NUL-terminated.
-        let p = unsafe { bun_windows_sys::externs::LoadLibraryA(filename.as_ptr()) };
+        // `filename` is UTF-8; the `A` entry point would decode it as the
+        // system ANSI codepage and mangle any non-ASCII byte. Widen and use
+        // the `W` entry point like every other Windows path in this crate.
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, filename.as_bytes());
+        // Match libuv `uv_dlopen` (and Bun's own `process.dlopen`): request
+        // altered search so dependent DLLs resolve next to the loaded module.
+        // MSDN documents that flag as undefined for relative paths, so only
+        // set it when absolute; bare names keep the standard search order.
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+        let dw_flags = if bun_paths::is_absolute_windows(filename.as_bytes()) {
+            LOAD_WITH_ALTERED_SEARCH_PATH
+        } else {
+            0
+        };
+        // SAFETY: `to_w_path` NUL-terminates `wbuf`; `hFile` is reserved (NULL).
+        let p = unsafe {
+            bun_windows_sys::kernel32::LoadLibraryExW(
+                wpath.as_ptr(),
+                core::ptr::null_mut(),
+                dw_flags,
+            )
+        };
         if p.is_null() { None } else { Some(p.cast()) }
     }
 }

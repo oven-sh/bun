@@ -173,8 +173,6 @@ class JSDirectStreamController;
     V(onResumableSinkEndMicrotask)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
-// onDirectPullRejected is THE one reaction registered WITH a real (fresh, unhandled) result
-// promise — the unhandledRejection is load-bearing.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
     V(onDirectPullRejected)
 

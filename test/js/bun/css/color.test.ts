@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -304,17 +304,35 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
   });
 });
 
-// 2^24 color() calls take minutes on debug builds, past the per-test timeout.
+// 2^24 color() calls take minutes on debug builds (past the per-test timeout) and dominate
+// the ASAN lane, so those sweep the ansi256 equivalence classes (~13k deterministic inputs):
+// each single channel, the grey diagonal, the sub-8 cube, and a coarse 17-step cube.
 test.skipIf(isDebug)("fuzz ansi256", () => {
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 256; i++) {
-      const iShifted = i << 16;
-      for (let j = 0; j < 256; j++) {
-        const jShifted = j << 8;
-        for (let k = 0; k < 256; k++) {
-          const int = iShifted | jShifted | k;
-          if (color(int, "ansi256") === null) {
-            throw new Error(`color(${i}, ${j}, ${k}, "ansi256") is null`);
+    const check = (r: number, g: number, b: number) => {
+      if (color((r << 16) | (g << 8) | b, "ansi256") === null) {
+        throw new Error(`color(${r}, ${g}, ${b}, "ansi256") is null`);
+      }
+    };
+    if (isASAN) {
+      for (let v = 0; v < 256; v++) {
+        check(v, 0, 0);
+        check(0, v, 0);
+        check(0, 0, v);
+        check(v, v, v);
+      }
+      for (let r = 0; r < 256; r += r < 8 ? 1 : 17) {
+        for (let g = 0; g < 256; g += g < 8 ? 1 : 17) {
+          for (let b = 0; b < 256; b += b < 8 ? 1 : 17) {
+            check(r, g, b);
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < 256; i++) {
+        for (let j = 0; j < 256; j++) {
+          for (let k = 0; k < 256; k++) {
+            check(i, j, k);
           }
         }
       }

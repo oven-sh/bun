@@ -1020,23 +1020,31 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
 // consult that cache instead of teeing the now-empty native slot, or the
 // derived request's body is a branch of a disconnected stream and reads hang.
 test("new Request(src, init) with a user ReadableStream body: derived request's body carries the source's bytes", async () => {
-  const make = () =>
-    new Request("http://example.com/", {
-      method: "POST",
-      body: new ReadableStream({
-        start(controller) {
-          controller.enqueue(new Uint8Array([1, 2, 3]));
-          controller.close();
-        },
-      }),
-      // @ts-expect-error duplex
-      duplex: "half",
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
     });
+  // @ts-expect-error duplex
+  const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
 
   const twoArg = new Request(make(), { headers: { "x-a": "1" } });
   const oneArg = new Request(make());
-  expect(new Uint8Array(await twoArg.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
-  expect(new Uint8Array(await oneArg.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  // Bun extension: a Response as the second argument contributes its body via
+  // the sibling Response-source branch in construct_into.
+  // @ts-expect-error Bun accepts a Response as init
+  const fromResponse = new Request("http://example.com/", new Response(stream()));
+  expect({
+    twoArg: new Uint8Array(await twoArg.arrayBuffer()),
+    oneArg: new Uint8Array(await oneArg.arrayBuffer()),
+    fromResponse: new Uint8Array(await fromResponse.arrayBuffer()),
+  }).toEqual({
+    twoArg: new Uint8Array([1, 2, 3]),
+    oneArg: new Uint8Array([1, 2, 3]),
+    fromResponse: new Uint8Array([1, 2, 3]),
+  });
 });
 
 test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {

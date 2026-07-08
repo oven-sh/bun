@@ -128,8 +128,12 @@ describe("packument", () => {
     expect(etag).toMatch(/^"[0-9a-f]+"$/);
     expect(first.headers.get("cache-control")).toBe("public, max-age=300");
     expect(first.headers.get("last-modified")).toBe(new Date("1985-10-26T08:15:00.000Z").toUTCString());
+    // The body negotiates on Accept, so Vary must name it.
+    expect(first.headers.get("vary")).toBe("accept");
 
-    expect((await fetch(`${registry.url}pkg`, { headers: { "if-none-match": etag } })).status).toBe(304);
+    const revalidated = await fetch(`${registry.url}pkg`, { headers: { "if-none-match": etag } });
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers.get("vary")).toBe("accept");
     const lastModified = first.headers.get("last-modified")!;
     expect((await fetch(`${registry.url}pkg`, { headers: { "if-modified-since": lastModified } })).status).toBe(304);
     // New registry state invalidates the validator.

@@ -487,10 +487,12 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
 
     // Validators. The document is a pure function of the record, so its
     // hash is an honest strong ETag; `modified` is the publish clock.
+    // `Vary` names the one request header the body is a function of.
     const headers = new Headers({
       "content-type": abbreviated ? ABBREVIATED_CONTENT_TYPE : FULL_CONTENT_TYPE,
       "etag": `"${Bun.hash(body).toString(16)}"`,
       "last-modified": new Date(effectiveTime(record).modified!).toUTCString(),
+      "vary": "accept",
     });
     if (this.#options.cacheControl !== undefined) headers.set("cache-control", this.#options.cacheControl);
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import url from "node:url";
 import punycode from "node:punycode";
+import url from "node:url";
 
 const pairs = [
   ["ıíd", "xn--d-iga7r"],

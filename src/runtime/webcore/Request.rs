@@ -1180,10 +1180,8 @@ impl Request {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
-                        // `clone_into` teed the source body; migrate the
-                        // source's parked tee branch out of `locked.readable`
-                        // (see the two-arg branch below). `do_clone` does
-                        // this via `sync_cloned_body_stream_caches`.
+                        // Migrate the source's parked tee branch out of
+                        // `locked.readable` (see the two-arg branch below).
                         request.check_body_stream_ref(global_this);
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
@@ -1229,28 +1227,18 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                // Route through the JS-side cached stream so we tee the
-                                // existing readable instead of creating a second
-                                // disconnected ByteStream after `check_body_stream_ref`
-                                // has already migrated `locked.readable` into the
-                                // `js.gc.stream` slot. Going through `Value::clone(None)`
-                                // re-enters `tee()` with `on_start_streaming` consumed and
-                                // re-fires `on_readable_stream_available`, which overwrites
-                                // the server's `request_body_readable_stream_ref` and
-                                // orphans any reader of the previous stream.
+                                // Tee via the JS-side cached stream: `Value::clone(None)`
+                                // would create a second disconnected ByteStream and
+                                // re-fire `on_readable_stream_available`.
                                 match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
-                                // `tee()` parked the source's branch in
-                                // `locked.readable`; migrate it into the
-                                // source's `js.gc.stream` (as `do_clone` does
-                                // via `sync_cloned_body_stream_caches`) so an
-                                // unreachable `Strong` isn't left buffering
-                                // every body chunk until the source is
-                                // finalized.
+                                // Migrate the source's parked tee branch into its
+                                // `js.gc.stream` (as `do_clone` does) so an unreachable
+                                // `Strong` isn't left buffering every body chunk.
                                 request.check_body_stream_ref(global_this);
                                 fields.insert(Fields::Body);
                             }

@@ -4083,12 +4083,9 @@ where
         let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
 
-        // `on_start_streaming_request_body` is the normal drain path, but it
-        // is consumed via `.take()` in `Body::Value::{to_readable_stream,tee}`
-        // and this callback can fire again later without a preceding drain.
-        // Flush any bytes that slipped into `request_body_buf` in the interim
-        // so the streaming branch of `on_buffered_body_chunk` never observes
-        // a non-empty buffer, instead of silently dropping them.
+        // `on_start_streaming_request_body` is the normal drain but is consumed
+        // via `.take()`; flush anything that slipped into `request_body_buf`
+        // since so `on_buffered_body_chunk` never sees a non-empty buffer.
         if !this.request_body_buf.is_empty() {
             if let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr {
                 // BACKREF: `Source::Bytes` payload is the live non-null

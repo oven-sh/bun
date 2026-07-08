@@ -1026,8 +1026,12 @@ class TestContext {
       let cause: unknown;
       let hasCause = false;
       let timedOut = false;
+      let retry: ReturnType<typeof realSetTimeout> | undefined;
       const timer = realSetTimeout(() => {
         timedOut = true;
+        // Cancel a pending retry so condition() is not invoked again after
+        // reject (Node clears its pollerId in done()).
+        if (retry !== undefined) realClearTimeout(retry);
         const error = new Error("waitFor() timed out");
         if (hasCause) {
           (error as { cause?: unknown }).cause = cause;
@@ -1045,7 +1049,7 @@ class TestContext {
           if (timedOut) return;
           cause = err;
           hasCause = true;
-          realSetTimeout(poll, interval);
+          retry = realSetTimeout(poll, interval);
         }
       };
       poll();
@@ -1314,8 +1318,9 @@ function createStopController(timeout: number | undefined) {
   }
   let timer: ReturnType<typeof setTimeout>;
   const promise = new Promise<never>((_, reject) => {
+    // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
+    // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
     timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
-    timer.unref?.();
   });
   // Swallow the rejection when nothing is racing it anymore.
   promise.catch(() => {});
@@ -1346,7 +1351,6 @@ async function raceWithTimeoutAndSignal(
       racers.push(
         new Promise<never>((_, reject) => {
           timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
-          timer.unref?.();
         }),
       );
     }

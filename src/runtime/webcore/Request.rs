@@ -432,6 +432,10 @@ impl Request {
         cloned: &Request,
         js_wrapper: JSValue,
     ) {
+        // `JSBunRequest::create` bypasses `to_js`, so `cloned.js_ref` is still
+        // empty; set it first so `check_body_stream_ref` can migrate the
+        // clone's teed `locked.readable` into its GC-traced `stream` slot.
+        cloned.js_ref.set(JsRef::init_weak(js_wrapper));
         cloned.check_body_stream_ref(global_this);
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
     }

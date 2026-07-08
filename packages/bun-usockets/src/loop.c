@@ -78,6 +78,7 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
+    loop->data.emfile_fd = bsd_open_emfile_reserve();
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 #if ASSERT_ENABLED
@@ -94,6 +95,13 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 
     free(loop->data.recv_buf);
     free(loop->data.send_buf);
+
+#ifndef _WIN32
+    if (loop->data.emfile_fd >= 0) {
+        bsd_close_socket(loop->data.emfile_fd);
+        loop->data.emfile_fd = -1;
+    }
+#endif
 
     us_timer_close(loop->data.sweep_timer, 0);
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
@@ -414,12 +422,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
-                    /* Todo: start timer here */
-
+                    /* EMFILE/ENFILE: shed the backlog via the reserved spare
+                     * fd so the level-triggered poll stops firing. Other
+                     * errors (EAGAIN, ECONNABORTED) need no action. */
+                    bsd_drain_accept_on_emfile(us_poll_fd(p), &loop->data.emfile_fd);
                 } else {
-
-                    /* Todo: stop timer if any */
-
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);

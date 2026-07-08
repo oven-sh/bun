@@ -1010,6 +1010,48 @@ int bsd_would_block() {
 #endif
 }
 
+#ifndef _WIN32
+int bsd_open_emfile_reserve(void) {
+    int fd;
+    do { fd = open("/dev/null", O_RDONLY | O_CLOEXEC); } while (fd == -1 && errno == EINTR);
+    return fd;
+}
+#else
+int bsd_open_emfile_reserve(void) { return -1; }
+#endif
+
+/* accept() failed. If it was EMFILE/ENFILE, a level-triggered listener poll
+ * would otherwise fire again immediately and spin the loop at 100% CPU for as
+ * long as the fd shortage lasts. Drain the kernel backlog with the libuv/Node
+ * spare-fd trick: close the reserved fd, accept+close until EAGAIN, reopen the
+ * reserve. Peers see RST/FIN instead of a connection that is never serviced.
+ * No-op for EAGAIN/ECONNABORTED/etc. Windows' per-process handle limit (~16M)
+ * makes WSAEMFILE unrealistic in practice, so this is POSIX-only. */
+void bsd_drain_accept_on_emfile(LIBUS_SOCKET_DESCRIPTOR listen_fd, int *emfile_fd) {
+#ifndef _WIN32
+    if (errno != EMFILE && errno != ENFILE) return;
+    if (*emfile_fd < 0) return;
+    close(*emfile_fd);
+    *emfile_fd = -1;
+    for (;;) {
+        struct bsd_addr_t addr;
+        addr.len = sizeof(addr.mem);
+        LIBUS_SOCKET_DESCRIPTOR fd;
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+        fd = accept4(listen_fd, (struct sockaddr *) &addr, &addr.len, SOCK_CLOEXEC | SOCK_NONBLOCK);
+#else
+        fd = accept(listen_fd, (struct sockaddr *) &addr, &addr.len);
+#endif
+        if (fd >= 0) { close(fd); continue; }
+        if (errno == EINTR) continue;
+        break;
+    }
+    *emfile_fd = bsd_open_emfile_reserve();
+#else
+    (void)listen_fd; (void)emfile_fd;
+#endif
+}
+
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do

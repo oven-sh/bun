@@ -80,6 +80,11 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Spare fd on /dev/null, reserved at loop init so bsd_drain_accept_on_emfile
+     * can shed the accept backlog when accept() fails with EMFILE/ENFILE
+     * instead of busy-spinning the level-triggered listener poll. -1 on
+     * Windows / if the reserve open failed. */
+    int emfile_fd;
 };
 
 #endif // LOOP_DATA_H

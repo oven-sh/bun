@@ -55,6 +55,7 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    pub emfile_fd: c_int,
 }
 
 impl InternalLoopData {

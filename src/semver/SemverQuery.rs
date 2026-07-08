@@ -520,7 +520,8 @@ impl Group {
 
     #[inline]
     pub fn eql(&self, rhs: &Group) -> bool {
-        self.head.eql(&rhs.head)
+        self.flags.is_set(Flags::MATCH_ALL_BRANCH) == rhs.flags.is_set(Flags::MATCH_ALL_BRANCH)
+            && self.head.eql(&rhs.head)
     }
 
     pub fn to_version(&self) -> Version {
@@ -1112,6 +1113,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // covers a leading "--foo" (treat "--foo" the same as "-foo", example:
                 // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
                 // tag, like "1 || - foo".
+                branch_has_non_any = true;
                 token.wildcard = Wildcard::None;
                 continue;
             } else if count == 0

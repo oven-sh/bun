@@ -34,3 +34,19 @@ test("worker with a rejected top-level await emits error", async () => {
   const error = await new Promise<Error>(resolve => w.on("error", resolve));
   expect(error.message).toBe("boom");
 });
+
+// Node only assigns 13 when nothing else set an exit code
+// (node_hooks.cc: `if (exit_code == ExitCode::kNoFailure)`).
+test("unsettled top-level await preserves a user-set process.exitCode", async () => {
+  for (const code of [42, 5]) {
+    const w = new Worker(new URL(`data:text/javascript,process.exitCode=${code}; await new Promise(() => {})`));
+    const exitCode = await new Promise<number>(resolve => w.on("exit", resolve));
+    expect({ code, exitCode }).toEqual({ code, exitCode: code });
+  }
+});
+
+test("unsettled top-level await still exits 13 when process.exitCode is 0", async () => {
+  const w = new Worker(new URL("data:text/javascript,process.exitCode=0; await new Promise(() => {})"));
+  const exitCode = await new Promise<number>(resolve => w.on("exit", resolve));
+  expect(exitCode).toBe(13);
+});

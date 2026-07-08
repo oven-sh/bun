@@ -1117,8 +1117,9 @@ impl WebWorker {
                 }
             } else if status == jsc::js_promise::Status::Pending {
                 // Unsettled top-level await (loop drained, entry promise still pending):
-                // node exits the worker with code 13.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // node exits the worker with code 13, but only when nothing already set
+                // one (node_hooks.cc: `if (exit_code == ExitCode::kNoFailure)`).
+                if vm.exit_handler.exit_code == 0 {
                     vm.as_mut().exit_handler.exit_code = 13;
                 }
                 self.flush_logs(vm);

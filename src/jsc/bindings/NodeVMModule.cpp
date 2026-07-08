@@ -255,6 +255,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // Termination fired while nested under an enclosing evaluation's
             // watchdog/SIGINT watcher. Leave the request in place and
             // propagate it; the enclosing frame converts it.
+            status(Status::Errored);
             scope.throwException(globalObject, vm.ensureTerminationException());
             return {};
         }

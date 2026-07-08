@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import perf, { PerformanceObserver } from "perf_hooks";
 import net from "net";
+import perf, { PerformanceObserver } from "perf_hooks";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();

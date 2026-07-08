@@ -969,9 +969,9 @@ static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamI
     auto* stream = op->m_stream.get();
     if (!stream)
         return;
-    ReadableStreamState state = stream->m_state;
-    clearStreamControllerSlots(stream);
-    if (!op->m_didThrow && state != ReadableStreamState::Closed && state != ReadableStreamState::Errored) {
+    // The pump never installed this stream's controller; the TransformStream and tee machinery
+    // reach it through the stream for the stream's lifetime, so it is not ours to clear.
+    if (!op->m_didThrow && stream->m_state != ReadableStreamState::Closed && stream->m_state != ReadableStreamState::Errored) {
         readableStreamCloseIfPossible(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -1297,11 +1297,11 @@ static void resumableReleaseReader(JSC::VM& vm, JSGlobalObject* globalObject, JS
     auto* stream = op->m_stream.get();
     if (!stream)
         return;
-    ReadableStreamState state = stream->m_state;
-    clearStreamControllerSlots(stream);
+    // The pump never installed this stream's controller; the TransformStream and tee machinery
+    // reach it through the stream for the stream's lifetime, so it is not ours to clear.
     JSValue error = op->m_error.get();
     bool hasTruthyError = !error.isEmpty() && error.toBoolean(globalObject);
-    if (!hasTruthyError && state != ReadableStreamState::Closed && state != ReadableStreamState::Errored) {
+    if (!hasTruthyError && stream->m_state != ReadableStreamState::Closed && stream->m_state != ReadableStreamState::Errored) {
         readableStreamCloseIfPossible(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, );
     }

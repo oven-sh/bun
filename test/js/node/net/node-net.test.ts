@@ -999,3 +999,38 @@ describe("paused socket whose peer sends RST", () => {
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
   });
 });
+
+// Regression for test-net-write-slow.js (macOS): kqueue's EV_EOF fires with
+// bytes still buffered, and loop.c dispatched end while on_data had paused the
+// recv loop mid-drain, so resume pushed the remainder after push(null).
+it("paused socket whose peer wrote >LIBUS_RECV_BUFFER_LENGTH then closed delivers every byte before end", async () => {
+  const TOTAL = 2 * 1024 * 1024;
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.write(Buffer.alloc(TOTAL, 0x61));
+    c.end();
+  });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  let received = 0;
+  let dataAfterEnd = 0;
+  let ended = false;
+  try {
+    const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+    c.on("error", reject);
+    c.on("data", chunk => {
+      if (ended) dataAfterEnd += chunk.length;
+      received += chunk.length;
+      c.pause();
+      queueMicrotask(() => c.resume());
+    });
+    c.on("end", () => {
+      ended = true;
+      resolve();
+    });
+    await promise;
+  } finally {
+    server.close();
+  }
+  expect({ received, dataAfterEnd }).toEqual({ received: TOTAL, dataAfterEnd: 0 });
+});

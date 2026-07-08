@@ -693,7 +693,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
-            if(eof && s) {
+            /* is_paused: on_data paused us mid-drain. kqueue's EV_EOF fires with
+             * bytes still buffered, so dispatching end now would order end before
+             * data. Resume re-arms readable; level-triggered eof re-reports then. */
+            if(eof && s && !s->flags.is_paused) {
                 if (UNLIKELY(us_socket_is_closed(s))) {
                     // Do not call on_end after the socket has been closed
                     return;

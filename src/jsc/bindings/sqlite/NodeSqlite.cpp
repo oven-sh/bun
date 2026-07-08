@@ -2977,6 +2977,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     if (self->capturedGeneration() != stmt->resetGeneration()) {
         return throwNodeState(globalObject, scope, "iterator was invalidated by calling run(), get(), all(), or iterate() on the backing statement"_s);
     }
+    if (stmt->isStepping()) [[unlikely]] {
+        return throwNodeState(globalObject, scope, "statement is currently executing"_s);
+    }
     JSDatabaseSync::BusyScope busy { stmt->database() };
     JSStatementSync::SteppingScope stepping { stmt };
 

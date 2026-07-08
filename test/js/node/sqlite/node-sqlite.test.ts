@@ -524,6 +524,23 @@ describe("DatabaseSync.prototype.function()", () => {
     const stmt2 = db.prepare("SELECT reenter2()");
     stmt2.get();
     expect(caught).toEqual(["ERR_INVALID_STATE", "ERR_INVALID_STATE", "ERR_INVALID_STATE", "ERR_INVALID_STATE"]);
+    // Iterator next() on a statement whose step() is on the stack is the
+    // same re-entry path without a reset.
+    db.exec("INSERT INTO t VALUES ('a'),('b')");
+    let iterCaught;
+    db.function("reenter3", () => {
+      try {
+        it.next();
+        return "stepped";
+      } catch (e: any) {
+        iterCaught = e.code;
+        return e.code;
+      }
+    });
+    const it = db.prepare("SELECT reenter3() AS r FROM t").iterate();
+    expect(it.next().value).toEqual({ r: "ERR_INVALID_STATE" });
+    expect(iterCaught).toBe("ERR_INVALID_STATE");
+    it.return();
     db.close();
   });
 
@@ -552,9 +569,13 @@ describe("DatabaseSync.prototype.function()", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("AddressSanitizer");
-    expect(stdout.trim()).toBe(JSON.stringify({ rows: 30, calls: 30, isOpen: false }));
-    expect(exitCode).toBe(0);
+    // On regression ASAN aborts the process, so stdout/exitCode are the
+    // fail condition; stderr is captured so the diff is informative.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ rows: 30, calls: 30, isOpen: false }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 });
 

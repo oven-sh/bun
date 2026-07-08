@@ -607,15 +607,9 @@ const SQL: typeof Bun.SQL = function SQL(
       return queryFromTransaction(strings, values, pooledConnection, state.queries, preRunGuard);
     }
     transaction_sql.unsafe = (string, args = []) => {
-      if (needs_rollback && !transaction_still_open()) {
-        return Promise.$reject(transaction_aborted_error());
-      }
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries, preRunGuard);
     };
     transaction_sql.file = async (path: string, args = []) => {
-      if (needs_rollback && !transaction_still_open()) {
-        throw transaction_aborted_error();
-      }
       const text = await Bun.file(path).text();
       return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries, preRunGuard);
     };

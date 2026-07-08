@@ -250,12 +250,10 @@ pub(crate) const MAX_FIELDS: usize = 32;
 
 use crate::const_str_eq;
 
-/// `TypeId` of `F` without the `'static` bound `TypeId::of` imposes — needed
-/// because reflected `Field::ty` ids are not `'static`-restricted, and column
-/// callers routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
+/// `TypeId` of `F`. In practice every `F` passed here is `'static` (a struct
+/// field type used for layout discrimination), so the bound is fine.
 #[inline(always)]
-fn type_id_of<F: ?Sized>() -> TypeId {
-    // Uses TypeId::of which in Rust 2026+ works for non-`'static` types.
+const fn type_id_of<F: ?Sized + 'static>() -> TypeId {
     TypeId::of::<F>()
 }
 

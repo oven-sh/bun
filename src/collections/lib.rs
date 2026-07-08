@@ -4,7 +4,6 @@
     type_info,
     adt_const_params,
     unsized_const_params,
-    const_cmp,
     const_trait_impl,
     allocator_api
 )]

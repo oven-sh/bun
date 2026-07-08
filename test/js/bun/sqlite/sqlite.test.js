@@ -1341,7 +1341,7 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
   // Rows with >62 columns use a cached Structure with out-of-line (butterfly)
   // property storage. These tests pin object-mode correctness on both sides of
   // that boundary.
-  it.each([62, 63, 64, 100, 200])("returns correct values for all %d columns", count => {
+  it.each([62, 63, 64, 100, 200, 512, 513])("returns correct values for all %d columns", count => {
     const db = new Database(":memory:");
     const columns = Array.from({ length: count }, (_, i) => `c${i} INTEGER`);
     db.run(`CREATE TABLE wide (${columns.join(",")})`);
@@ -1354,6 +1354,7 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
       Object.fromEntries(Array.from({ length: count }, (_, i) => [`c${i}`, r * count + i])),
     );
     expect(rows).toEqual(expected);
+    expect(Object.keys(rows[0])).toEqual(Array.from({ length: count }, (_, i) => `c${i}`));
 
     // .get() takes the same row-construction path
     const first = db.query("SELECT * FROM wide LIMIT 1").get();
@@ -1438,6 +1439,14 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
     expect(narrow).toEqual({ "0": 3, "2": 1, name: 2 });
     expect(JSON.parse(JSON.stringify(narrow))).toEqual({ "0": 3, "2": 1, name: 2 });
 
+    // Named properties must enumerate in forward SQL column order when an
+    // index-like column routes the row off the cached-Structure fast path.
+    const mixedQuery = db.query(`SELECT 1 AS a, 2 AS "0", 3 AS b, 4 AS c`);
+    const mixed = mixedQuery.get();
+    expect(Object.keys(mixed)).toEqual(["0", "a", "b", "c"]);
+    expect(mixed).toEqual({ "0": 2, a: 1, b: 3, c: 4 });
+    expect(mixedQuery.columnNames).toEqual(["a", "0", "b", "c"]);
+
     const cols = Array.from({ length: 70 }, (_, i) => `${100 + i} AS "c${i}"`);
     cols[5] = `1005 AS "2"`;
     cols[65] = `1065 AS "0"`;
@@ -1448,9 +1457,8 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
     expect(wide[0]).toBe(1065);
     expect(wide.c0).toBe(100);
     expect(wide.c69).toBe(169);
-    const keys = Object.keys(wide);
-    expect(keys).toHaveLength(70);
-    expect(keys.slice(0, 2)).toEqual(["0", "2"]);
+    const expectedNamed = Array.from({ length: 70 }, (_, i) => `c${i}`).filter(n => n !== "c5" && n !== "c65");
+    expect(Object.keys(wide)).toEqual(["0", "2", ...expectedNamed]);
     const parsed = JSON.parse(JSON.stringify(wide));
     expect(parsed["2"]).toBe(1005);
     expect(parsed["0"]).toBe(1065);
@@ -1487,9 +1495,16 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
     const db = new Database(":memory:");
     const ncols = 80;
     const nrows = 100;
-    db.run(`CREATE TABLE wide_gc (${Array.from({ length: ncols }, (_, i) => `f${i} INTEGER`).join(",")})`);
+    // Columns >= 62 use out-of-line butterfly storage; put heap cells (TEXT ->
+    // JSString) there so GC visitation bugs surface as collected values.
+    db.run(
+      `CREATE TABLE wide_gc (${Array.from({ length: ncols }, (_, i) => `f${i} ${i >= 62 ? "TEXT" : "INTEGER"}`).join(",")})`,
+    );
+    const cellOf = (r, c) => (c >= 62 ? `cell_${r}_${c}_${Buffer.alloc(32, "x").toString()}` : r * ncols + c);
     for (let r = 0; r < nrows; r++) {
-      db.run(`INSERT INTO wide_gc VALUES (${Array.from({ length: ncols }, (_, i) => r * ncols + i).join(",")})`);
+      db.run(
+        `INSERT INTO wide_gc VALUES (${Array.from({ length: ncols }, (_, i) => (i >= 62 ? `'${cellOf(r, i)}'` : cellOf(r, i))).join(",")})`,
+      );
     }
     const rows = db.query("SELECT * FROM wide_gc").all();
 
@@ -1501,8 +1516,9 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
     // out-of-line property storage must survive GC
     for (let r = 0; r < nrows; r++) {
       for (let c = 0; c < ncols; c++) {
-        if (rows[r][`f${c}`] !== r * ncols + c) {
-          expect(rows[r][`f${c}`]).toBe(r * ncols + c);
+        const expected = cellOf(r, c);
+        if (rows[r][`f${c}`] !== expected) {
+          expect(rows[r][`f${c}`]).toBe(expected);
         }
       }
     }

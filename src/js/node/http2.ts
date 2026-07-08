@@ -3929,30 +3929,27 @@ class ServerHttp2Session extends Http2Session {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
     if (typeof payload === "function") {
       callback = payload;
-      payload = Buffer.alloc(8);
-    } else {
-      payload = payload || Buffer.alloc(8);
+      payload = undefined;
     }
-    if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      throw $ERR_INVALID_ARG_TYPE("payload", ["Buffer", "TypedArray"], payload);
+    if (payload != null) {
+      validateBuffer(payload, "payload");
+      if (payload.byteLength !== 8) {
+        throw $ERR_HTTP2_PING_LENGTH();
+      }
+    }
+    validateFunction(callback, "callback");
+    if (payload == null) {
+      payload = Buffer.allocUnsafe(8);
+      payload.writeBigUInt64LE(process.hrtime.bigint());
     }
     const parser = this.#parser;
     if (!parser) return false;
     if (!this[bunHTTP2Socket]) return false;
 
-    if (typeof callback === "function") {
-      if (payload.byteLength !== 8) {
-        const error = $ERR_HTTP2_PING_LENGTH();
-        callback(error, 0, payload);
-        return;
-      }
-      if (this.#pingCallbacks) {
-        this.#pingCallbacks.push([callback, Date.now()]);
-      } else {
-        this.#pingCallbacks = [[callback, Date.now()]];
-      }
-    } else if (payload.byteLength !== 8) {
-      throw $ERR_HTTP2_PING_LENGTH();
+    if (this.#pingCallbacks) {
+      this.#pingCallbacks.push([callback, Date.now()]);
+    } else {
+      this.#pingCallbacks = [[callback, Date.now()]];
     }
 
     parser.ping(payload);
@@ -4605,30 +4602,27 @@ class ClientHttp2Session extends Http2Session {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
     if (typeof payload === "function") {
       callback = payload;
-      payload = Buffer.alloc(8);
-    } else {
-      payload = payload || Buffer.alloc(8);
+      payload = undefined;
     }
-    if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      throw $ERR_INVALID_ARG_TYPE("payload", ["Buffer", "TypedArray"], payload);
+    if (payload != null) {
+      validateBuffer(payload, "payload");
+      if (payload.byteLength !== 8) {
+        throw $ERR_HTTP2_PING_LENGTH();
+      }
+    }
+    validateFunction(callback, "callback");
+    if (payload == null) {
+      payload = Buffer.allocUnsafe(8);
+      payload.writeBigUInt64LE(process.hrtime.bigint());
     }
     const parser = this.#parser;
     if (!parser) return false;
     if (!this[bunHTTP2Socket]) return false;
 
-    if (typeof callback === "function") {
-      if (payload.byteLength !== 8) {
-        const error = $ERR_HTTP2_PING_LENGTH();
-        callback(error, 0, payload);
-        return;
-      }
-      if (this.#pingCallbacks) {
-        this.#pingCallbacks.push([callback, Date.now()]);
-      } else {
-        this.#pingCallbacks = [[callback, Date.now()]];
-      }
-    } else if (payload.byteLength !== 8) {
-      throw $ERR_HTTP2_PING_LENGTH();
+    if (this.#pingCallbacks) {
+      this.#pingCallbacks.push([callback, Date.now()]);
+    } else {
+      this.#pingCallbacks = [[callback, Date.now()]];
     }
 
     parser.ping(payload);

@@ -709,6 +709,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return self.recv_failed(ErrorCode::UnsupportedControlFrame);
         }
 
+        // RFC 7692 §6.1: RSV1 marks the start of a compressed message, so only
+        // the first frame of a data message may ever set it.
+        if header.compressed && !matches!(header.opcode, Opcode::Text | Opcode::Binary) {
+            return self.recv_failed(ErrorCode::UnexpectedRsv1);
+        }
+
         if header.compressed && self.deflate.borrow().is_none() {
             return self.recv_failed(ErrorCode::CompressionUnsupported);
         }
@@ -1502,8 +1508,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure: Option<*mut SslCtx>,
         proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
     ) -> *mut Self {
-        // outlives this call.
-        let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
@@ -1525,7 +1529,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data_handler: Cell::new(None),
-            // re-derived from `global_this` so `vm` stays usable below
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
             event_loop: global_this.bun_vm().event_loop_mut(),
             deflate: RefCell::new(None),
@@ -1539,7 +1542,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params, vm.rare_data()).ok();
+            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params).ok();
         }
 
         ws
@@ -2046,6 +2049,7 @@ pub enum ErrorCode {
     ProxyAuthenticationRequired = 34,
     ProxyConnectionRefused = 35,
     ProxyTunnelFailed = 36,
+    UnexpectedRsv1 = 37,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2153,7 +2157,8 @@ struct ParsedHeader {
     payload_len: usize,
     is_fragmented: bool,
     is_final: bool,
-    /// RSV1 on a data frame (RFC 7692 per-message deflate).
+    /// The RSV1 bit (RFC 7692 per-message deflate). Validated by the caller:
+    /// only the first frame of a data message may set it.
     compressed: bool,
     next: ReceiveState,
 }
@@ -2186,14 +2191,9 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         payload_len,
         is_fragmented: opcode == Opcode::Continue || !header.final_(),
         is_final: header.final_(),
-        compressed: is_data_frame && header.compressed(),
+        compressed: header.compressed(),
         next: ReceiveState::Fail,
     };
-
-    // RFC 7692: only the first fragment of a data message may set RSV1.
-    if !is_data_frame && opcode != Opcode::Continue && header.compressed() {
-        return parsed;
-    }
 
     // A server must not mask data frames it sends to a client.
     if header.mask() && is_data_frame {
@@ -2201,7 +2201,7 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         return parsed;
     }
 
-    // rsv2 and rsv3 must always be 0 per RFC 6455 (rsv1 is handled above).
+    // rsv2 and rsv3 must always be 0 per RFC 6455 (rsv1 is checked by the caller).
     if header.rsv() != 0 {
         return parsed;
     }

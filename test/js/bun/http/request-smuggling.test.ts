@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import net from "net";
+import { createServer } from "node:http";
 
 // CVE-2020-8287 style request smuggling tests
 // These tests ensure Bun's HTTP server properly validates Transfer-Encoding headers
@@ -1389,4 +1390,172 @@ test("rejects Transfer-Encoding header with empty value", async () => {
 
   // The trailing bytes must never be interpreted as a second request.
   expect(seen).not.toContain("GET /admin");
+});
+
+describe("Host header field values in request.url", () => {
+  // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
+  // server is listening, so a refused connect (before anything was read) is retried.
+  const maxRefusedConnects = 20;
+  async function sendRawRequest(server: { port: number }, payload: string): Promise<string> {
+    for (let attempt = 0; ; attempt++) {
+      const outcome = await new Promise<{ response: string } | { refused: true }>((resolve, reject) => {
+        const client = net.connect(server.port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        client.on("error", error => {
+          if (
+            chunks.length === 0 &&
+            (error as NodeJS.ErrnoException).code === "ECONNREFUSED" &&
+            attempt < maxRefusedConnects
+          ) {
+            resolve({ refused: true });
+          } else {
+            reject(error);
+          }
+        });
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve({ response: Buffer.concat(chunks).toString() }));
+        // latin1 keeps bytes >= 0x80 as single bytes on the wire (a string write would UTF-8-encode them).
+        client.write(Buffer.from(payload, "latin1"));
+      });
+      if ("response" in outcome) return outcome.response;
+    }
+  }
+
+  test.each([
+    ["example.com/other"],
+    ["example com"],
+    ["user@example.com"],
+    ["example.com#frag"],
+    ["example.com\\other:8080"],
+    ["[::1]:3000?q"],
+  ])("an HTTP/1.1 request whose Host header is %j is served, with the request-target as request.url", async host => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    expect(response).toStartWith("HTTP/1.1 200");
+    // The handler ran, and none of the Host field's bytes were copied into the synthesized URL.
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  test.each([
+    ["example.com", "http://example.com/index"],
+    ["example.com:8080", "http://example.com:8080/index"],
+    ["[::1]:3000", "http://[::1]:3000/index"],
+  ])("request.url is synthesized from the valid Host header %j", async (host, url) => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    expect(response).toStartWith("HTTP/1.1 200");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(url);
+  });
+
+  test.each([
+    [" \t foo\tcom\t", "foo\tcom"],
+    [" example com ", "example com"],
+  ])("a node:http server serves a request whose raw Host header value is %j", async (raw, received) => {
+    const server = createServer((req, res) => {
+      res.end(String(req.headers.host));
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+      const response = await new Promise<string>((resolve, reject) => {
+        const client = net.connect(port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        client.on("error", reject);
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+        client.write(`GET / HTTP/1.1\r\nHost:${raw}\r\nConnection: close\r\n\r\n`);
+      });
+      expect(response).toContain("HTTP/1.1 200");
+      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
+      expect(body).toBe(received);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("accepts an empty Host header field value on HTTP/1.1, serving a request URL with no host", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(server, "GET /index HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 200");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  test.each([
+    [0x21, 0x40],
+    [0x41, 0x60],
+    [0x61, 0x7e],
+    [0x7f, 0xff],
+  ])(
+    "HTTP/1.1 and HTTP/1.0 requests synthesize request.url from the same Host bytes (%i-%i)",
+    async (firstByte, lastByte) => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(req.url);
+        },
+      });
+
+      // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]".
+      // Every byte in [0x7f, 0xff] is outside that set, so neither URL uses any of them.
+      const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
+
+      async function checkByte(byte: number) {
+        const char = String.fromCharCode(byte);
+        const host = `a${char}b`;
+        // Request::is_valid_host_header decides whether the Host header becomes the
+        // request URL's authority; the request itself is served either way.
+        // The two probes run sequentially so each batch keeps at most one socket per byte open.
+        const http11 = await sendRawRequest(server, `GET /p HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+        const http10 = await sendRawRequest(server, `GET /p HTTP/1.0\r\nHost: ${host}\r\n\r\n`);
+        return {
+          char,
+          http11Accepted: http11.startsWith("HTTP/1.1 200"),
+          http11Url: http11.slice(http11.indexOf("\r\n\r\n") + 4),
+          http10Url: http10.slice(http10.indexOf("\r\n\r\n") + 4),
+        };
+      }
+
+      const bytes = Array.from({ length: lastByte - firstByte + 1 }, (_, i) => firstByte + i);
+      // Connect in small batches: opening every connection at once can overflow the
+      // listen backlog (Windows answers with ECONNREFUSED instead of queueing).
+      const results: Awaited<ReturnType<typeof checkByte>>[] = [];
+      const batchSize = 8;
+      for (let i = 0; i < bytes.length; i += batchSize) {
+        results.push(...(await Promise.all(bytes.slice(i, i + batchSize).map(checkByte))));
+      }
+      expect(results).toEqual(
+        bytes.map(byte => {
+          const char = String.fromCharCode(byte);
+          // `req.url` carries the lowercased host (URL host normalization).
+          const url = isHostByte(char) ? `http://a${char.toLowerCase()}b/p` : "/p";
+          return {
+            char,
+            http11Accepted: true,
+            http11Url: url,
+            http10Url: url,
+          };
+        }),
+      );
+    },
+  );
 });

@@ -77,6 +77,21 @@ const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 
+// node.http trace events ('http.server.request' b/e). The agent module is
+// only created on the first request, and emission is gated per-request on the
+// category, so this is near-zero cost when tracing is off.
+const kHttpTraceCat = "node,node.http";
+let traceEvents = null;
+function traceServerRequestStart(http_res) {
+  traceEvents ??= require("internal/trace_events");
+  if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
+  traceEvents.emitEvent("b", kHttpTraceCat, "http.server.request");
+  http_res.once("finish", traceServerRequestEnd);
+}
+function traceServerRequestEnd() {
+  traceEvents.emitEvent("e", kHttpTraceCat, "http.server.request");
+}
+
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 
@@ -728,6 +743,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setCloseCallback(http_res, onClose);
+        // Node traces every parsed request before Expect/limit routing
+        // (parserOnIncoming); upgrades never reach that path.
+        if (!is_upgrade) traceServerRequestStart(http_res);
 
         // Like Node.js: with the optimizeEmptyRequests server option,
         // requests without body headers skip the Readable life cycle (no
@@ -1001,6 +1019,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 
 const kBytesWritten = Symbol("kBytesWritten");
 const kEnableStreaming = Symbol("kEnableStreaming");
+const kIsTunnel = Symbol("kIsTunnel");
 function onServerSocketError(this: any, _err) {
   // Default 'error' listener so socket-level errors (e.g. res.destroy(err)
   // forwarding the error to the socket) do not crash the process as
@@ -1018,6 +1037,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
+  [kIsTunnel] = false;
   [kHandle];
   server: Server;
   _httpMessage;
@@ -1051,6 +1071,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   [kEnableStreaming](enable: boolean) {
+    // kIsTunnel latches: once a socket is detached into CONNECT/upgrade tunnel
+    // mode it never returns to normal request handling, and #onClose relies on
+    // it to emit 'close' on native close.
+    if (enable) this[kIsTunnel] = true;
     const handle = this[kHandle];
     if (handle) {
       if (enable) {
@@ -1137,6 +1161,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // onServerResponseClose socket listener does.
     if (message && !message._closed) {
       process.nextTick(emitCloseNT, message);
+    }
+
+    // A tunneled/upgraded connection (CONNECT or WebSocket upgrade) is detached
+    // from the request/response lifecycle, so end the Duplex on native close to
+    // emit 'close' for the upgrade handler and user listeners, like Node.js.
+    if (this[kIsTunnel] && !this.destroyed) {
+      this.destroy();
     }
   }
   #onCloseForDestroy(closeCallback, err?: Error) {

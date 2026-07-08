@@ -3,7 +3,6 @@
 use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::borrow::Cow;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData,
@@ -60,31 +59,13 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
 
-fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
+fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
-    match mime_type.value {
-        Cow::Borrowed(interned) => {
-            if let Some(store) = blob_store_mut(blob) {
-                store.mime_type = MimeType {
-                    value: Cow::Borrowed(interned),
-                    category: mime_type.category,
-                };
-            }
-            blob.content_type.set(std::ptr::from_ref::<[u8]>(interned));
-            blob.content_type_allocated.set(false);
-        }
-        Cow::Owned(owned) => {
-            if let Some(store) = blob_store_mut(blob) {
-                store.mime_type = MimeType {
-                    value: Cow::Owned(owned.clone()),
-                    category: mime_type.category,
-                };
-            }
-            blob.content_type
-                .set(bun_core::heap::into_raw(owned.into_boxed_slice()));
-            blob.content_type_allocated.set(allocated);
-        }
+    if let Some(store) = blob_store_mut(blob) {
+        store.mime_type = mime_type.clone();
     }
+    blob.content_type
+        .set(blob::BlobContentType::from(mime_type));
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1012,7 +993,7 @@ impl Value {
                 drop(encoded);
                 let blob = Blob::init(owned.into_vec(), global_this);
                 blob.content_type
-                    .set(std::ptr::from_ref::<[u8]>(mime.as_bytes()));
+                    .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);
                 return Ok(Value::Blob(blob));
             }
@@ -1021,8 +1002,11 @@ impl Value {
         value.ensure_still_alive();
 
         if let Some(readable) = ReadableStream::from_js(value, global_this)? {
-            if readable.is_disturbed(global_this) {
-                return Err(global_this.throw(format_args!("ReadableStream has already been used")));
+            // fetch spec: a body init stream must be neither disturbed nor locked (TypeError).
+            if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
+                return Err(global_this.throw_type_error(format_args!(
+                    "Body object should not be disturbed or locked"
+                )));
             }
 
             match readable.ptr {
@@ -1170,25 +1154,13 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_slice();
-                                let mut allocated = false;
-                                let mime_type = MimeType::init(
-                                    content_slice.slice(),
-                                    true,
-                                    Some(&mut allocated),
-                                );
-                                set_blob_content_type(blob, mime_type, allocated);
+                                let mime_type = MimeType::init(content_slice.slice(), true, None);
+                                set_blob_content_type(blob, mime_type);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                                bun_http_types::MimeType::TEXT.value.as_ref(),
-                            ));
-                            blob.content_type_allocated.set(false);
-                            blob.content_type_was_set.set(true);
-                            blob_store_mut(blob)
-                                .expect("infallible: checked above")
-                                .mime_type = bun_http_types::MimeType::TEXT;
+                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
                         }
                         promise.resolve(global, blob.to_js(global))?;
                     }
@@ -1616,11 +1588,14 @@ impl Value {
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
-        self.to_blob_if_possible();
-
+        // Tee a Locked body before any blob extraction: `to_blob_if_possible()`
+        // would `.done()` an already-materialized `.body` stream, leaving the
+        // user-visible cached stream empty instead of a live tee branch.
         if matches!(self, Value::Locked(_)) {
             return self.tee(global_this, readable);
         }
+
+        self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
             let owned = internal_blob.to_owned_slice();
@@ -1770,20 +1745,32 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared `'brk:` block of `clone_into` / `clone_value`: clone the body
-    /// [`Value`], teeing through the JS-side cached stream if one exists.
+    /// Shared body-clone for `clone_into` / `clone_value`: tee through the
+    /// JS-side cached stream when present, then repoint this owner's
+    /// `body`/`stream` cache slots at the fresh branch in `locked.readable`.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        let cloned = 'brk: {
+            if let Some(js_ref) = self.js_ref() {
+                if let Some(stream) = Self::stream_get_cached(js_ref) {
+                    let mut readable = ReadableStream::from_js(stream, global_this)?;
+                    if let Some(r) = readable.as_mut() {
+                        break 'brk self
+                            .get_body_value()
+                            .clone_with_readable_stream(global_this, Some(r))?;
+                    }
+                }
+            }
+            self.get_body_value().clone(global_this)?
+        };
         if let Some(js_ref) = self.js_ref() {
-            if let Some(stream) = Self::stream_get_cached(js_ref) {
-                let mut readable = ReadableStream::from_js(stream, global_this)?;
-                if let Some(r) = readable.as_mut() {
-                    return self
-                        .get_body_value()
-                        .clone_with_readable_stream(global_this, Some(r));
+            if let Value::Locked(locked) = self.get_body_value() {
+                if let Some(readable) = locked.readable.get(global_this) {
+                    Self::body_set_cached(js_ref, global_this, readable.value);
                 }
             }
         }
-        self.get_body_value().clone(global_this)
+        self.check_body_stream_ref(global_this);
+        Ok(cloned)
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2193,22 +2180,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
-                    let mut allocated = false;
-                    let mime_type =
-                        MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    set_blob_content_type(blob, mime_type, allocated);
+                    let mime_type = MimeType::init(content_slice.slice(), true, None);
+                    set_blob_content_type(blob, mime_type);
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                    bun_http_types::MimeType::TEXT.value.as_ref(),
-                ));
-                blob.content_type_allocated.set(false);
-                blob.content_type_was_set.set(true);
-                blob_store_mut(blob)
-                    .expect("infallible: checked above")
-                    .mime_type = bun_http_types::MimeType::TEXT;
+                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
             }
         }
         Ok(JSPromise::resolved_promise_value(

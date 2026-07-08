@@ -748,7 +748,7 @@ pub mod parse_worker {
                 // SAFETY: `resolver` is a live `*mut Resolver`;
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
-                    .parse_json(log, source, mode, true)?
+                    .parse_json(log, source, mode)?
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -2135,12 +2135,11 @@ pub mod parse_worker {
                                 len: wrapper.result.source_len,
                             }
                         };
+                    // The plugin buffer has exactly one owner:
+                    // `self.task.external_free_function` (set above),
+                    // released via `BundleV2.finalizers`.
                     return Ok(CacheEntry {
                         contents,
-                        external_free_function: ExternalFreeFunction {
-                            ctx: wrapper.result.user_context,
-                            function: free_fn,
-                        },
                         fd: wrapper.original_source_fd,
                     });
                 }

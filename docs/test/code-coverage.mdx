@@ -41,11 +41,11 @@ To enable coverage reporting by default, add this to your `bunfig.toml`:
 coverage = true
 ```
 
-By default, coverage reports include test files and exclude sourcemaps. Both are configurable in `bunfig.toml`.
+By default, coverage reports exclude test files and use sourcemaps. Both are configurable in `bunfig.toml`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageSkipTestFiles = true  # default false
+coverageSkipTestFiles = false  # default true
 ```
 
 ## Coverage Thresholds
@@ -134,14 +134,14 @@ jobs:
 
 ### Skip Test Files
 
-Coverage reports include test files by default. Exclude them with:
+Coverage reports exclude test files by default. To include them:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageSkipTestFiles = true  # default false
+coverageSkipTestFiles = false  # default true
 ```
 
-This excludes files matching test patterns (for example `*.test.ts`, `*.spec.js`) from the coverage report.
+When `coverageSkipTestFiles` is `true` (the default), files matching test patterns (for example `*.test.ts`, `*.spec.js`) are excluded from the coverage report.
 
 ### Ignore Specific Paths and Patterns
 
@@ -214,7 +214,7 @@ By default, coverage reports:
 
 - **Exclude** `node_modules` directories
 - **Exclude** files loaded with non-JS/TS loaders (for example `.css`, `.txt`) unless a custom JS loader is specified
-- **Include** test files themselves (can be disabled with `coverageSkipTestFiles = true`)
+- **Exclude** test files themselves (can be included with `coverageSkipTestFiles = false`)
 - Can exclude additional files with `coveragePathIgnorePatterns`
 
 ## Advanced Configuration

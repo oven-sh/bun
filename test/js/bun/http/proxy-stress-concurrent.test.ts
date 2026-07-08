@@ -393,65 +393,69 @@ describe("memory probe (subprocess)", () => {
     // there but still enough to surface a UAF.
     const iterations = isASAN ? 300 : isCI ? 1200 : 600;
 
-    test(`${proxyTls ? "https" : "http"}-proxy → https-origin mode=${mode} ×${iterations}`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          join(import.meta.dir, "proxy-stress-memory-fixture.ts"),
-          proxyTls ? "https" : "http",
-          mode,
-          String(iterations),
-        ],
-        env: {
-          ...bunEnv,
-          ...proxyFreeEnv,
-          // UAFs on the HTTP thread must abort the process rather
-          // than race the main thread's clean exit.
-          ASAN_OPTIONS: ((bunEnv as any).ASAN_OPTIONS ?? "") + ":abort_on_error=1:halt_on_error=1",
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (exitCode !== 0) console.error("fixture stderr:\n" + stderr);
-
-      // Surface the child's final stats line before asserting.
-      const lines = stdout.trim().split("\n");
-      const lastLine = lines[lines.length - 1];
-      let result: { completed: number; failed: number; rssStart: number; rssEnd: number; rssMax: number };
-      try {
-        result = JSON.parse(lastLine);
-      } catch {
-        console.error("fixture stdout:\n" + stdout);
-        throw new Error("fixture did not emit a JSON summary line");
-      }
-
-      expect(exitCode).toBe(0);
-      expect(result.completed + result.failed).toBe(iterations);
-      // Non-abort modes must complete every request; abort modes must
-      // have actually aborted something.
-      if (mode.includes("abort")) {
-        expect(result.failed).toBeGreaterThan(0);
-      } else {
-        expect(result.failed).toBe(0);
-        expect(result.completed).toBe(iterations);
-      }
-
-      // RSS leak check: after a warm-up, RSS should plateau. Allow a
-      // generous 3× growth factor (ASAN, fragmentation, per-target pool
-      // entries) — a real leak of one tunnel/request shows as 10×+ with
-      // these iteration counts. Skip the threshold under ASAN because
-      // LeakSanitizer's shadow memory makes RSS non-representative; a
-      // UAF there shows up as a crash, not a slow leak.
-      if (!isASAN) {
-        const growth = result.rssEnd / Math.max(1, result.rssStart);
-        // Carry `mode` + the rounded ratio in the failing diff.
-        expect({ mode, growth: Number(growth.toFixed(2)), withinBound: growth < 3.0 }).toEqual({
-          mode,
-          growth: expect.any(Number),
-          withinBound: true,
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy → https-origin mode=${mode} ×${iterations}`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            join(import.meta.dir, "proxy-stress-memory-fixture.ts"),
+            proxyTls ? "https" : "http",
+            mode,
+            String(iterations),
+          ],
+          env: {
+            ...bunEnv,
+            ...proxyFreeEnv,
+            // UAFs on the HTTP thread must abort the process rather
+            // than race the main thread's clean exit.
+            ASAN_OPTIONS: ((bunEnv as any).ASAN_OPTIONS ?? "") + ":abort_on_error=1:halt_on_error=1",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
         });
-      }
-    }, 120_000);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        if (exitCode !== 0) console.error("fixture stderr:\n" + stderr);
+
+        // Surface the child's final stats line before asserting.
+        const lines = stdout.trim().split("\n");
+        const lastLine = lines[lines.length - 1];
+        let result: { completed: number; failed: number; rssStart: number; rssEnd: number; rssMax: number };
+        try {
+          result = JSON.parse(lastLine);
+        } catch {
+          console.error("fixture stdout:\n" + stdout);
+          throw new Error("fixture did not emit a JSON summary line");
+        }
+
+        expect(exitCode).toBe(0);
+        expect(result.completed + result.failed).toBe(iterations);
+        // Non-abort modes must complete every request; abort modes must
+        // have actually aborted something.
+        if (mode.includes("abort")) {
+          expect(result.failed).toBeGreaterThan(0);
+        } else {
+          expect(result.failed).toBe(0);
+          expect(result.completed).toBe(iterations);
+        }
+
+        // RSS leak check: after a warm-up, RSS should plateau. Allow a
+        // generous 3× growth factor (ASAN, fragmentation, per-target pool
+        // entries) — a real leak of one tunnel/request shows as 10×+ with
+        // these iteration counts. Skip the threshold under ASAN because
+        // LeakSanitizer's shadow memory makes RSS non-representative; a
+        // UAF there shows up as a crash, not a slow leak.
+        if (!isASAN) {
+          const growth = result.rssEnd / Math.max(1, result.rssStart);
+          // Carry `mode` + the rounded ratio in the failing diff.
+          expect({ mode, growth: Number(growth.toFixed(2)), withinBound: growth < 3.0 }).toEqual({
+            mode,
+            growth: expect.any(Number),
+            withinBound: true,
+          });
+        }
+      },
+      120_000,
+    );
   }
 });

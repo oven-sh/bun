@@ -225,6 +225,10 @@ const result = Bun.spawnSync({
 // process exits
 ```
 
+Bun stops reading as soon as the limit is passed, so the returned output can
+exceed `maxBuffer` only by the single read that passed it, never by whatever
+the process manages to write before the kill lands. This matches Node.js.
+
 ## Inter-process communication (IPC)
 
 Bun supports a direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
@@ -587,8 +591,6 @@ interface TerminalOptions {
 }
 
 interface Terminal extends AsyncDisposable {
-  readonly stdin: number;
-  readonly stdout: number;
   readonly closed: boolean;
   write(data: string | BufferSource): number;
   resize(cols: number, rows: number): void;

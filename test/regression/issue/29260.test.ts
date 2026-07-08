@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/29260
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -9,7 +9,9 @@ const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");
 const addonPath = join(napiAppDir, "build", "Debug", "uv_thread_addon.node");
 
 // We use real libuv on Windows, so the POSIX stubs don't apply there.
-describe.if(!isWindows)("issue/29260", () => {
+// canBuildNodeAddons gates out macOS dev boxes with toolchains too old to
+// compile the napi-app C++ targets (matches the sibling napi tests).
+describe.if(!isWindows && canBuildNodeAddons())("issue/29260", () => {
   beforeAll(
     () => {
       // node-gyp is slow (30s+); skip when the prebuilt output is on disk.

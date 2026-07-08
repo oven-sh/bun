@@ -707,12 +707,12 @@ const SQL: typeof Bun.SQL = function SQL(
 
       try {
         let result = await savepoint_callback(transaction_sql);
+        if ($isArray(result)) {
+          result = await Promise.all(result);
+        }
         if (RELEASE_SAVEPOINT_COMMAND) {
           // mssql dont have release savepoint
           await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
-        }
-        if ($isArray(result)) {
-          result = await Promise.all(result);
         }
         return result;
       } catch (err) {

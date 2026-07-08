@@ -839,19 +839,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.exit_scope(scope);
     }
 
-    /// Noalias re-entrancy: takes `this: *mut Self`, NOT
-    /// `&mut self`. `callback.call(...)` re-enters JS which can call
-    /// `socket.write()`/`socket.end()`/`socket.reload()` on this same wrapper
-    /// via the JS object's `m_ptr`, re-deriving a `&mut NewSocket` and mutating
+    /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
+    /// JS which can call `socket.write()`/`end()`/`reload()` on this same
+    /// wrapper via the JS object's `m_ptr`, re-deriving a borrow and mutating
     /// `flags`/`handlers`/`ref_count`/`buffered_data_for_node_net`. A live
-    /// noalias `&mut self` across that call lets LLVM cache those fields and
-    /// dead-store the re-entrant write (and is plain aliasing UB). Each
-    /// `(*this).foo()` materialises a short-lived borrow scoped to one
-    /// statement; none span `callback.call`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket` (uws dispatch contract: the ext
-    /// slot holds the unique heap allocation); JS-thread only.
+    /// `&mut self` across that call is aliasing UB and lets LLVM cache those
+    /// fields and dead-store the re-entrant write. `ThisPtr` derefs yield a
+    /// short-lived shared borrow per access; none span `callback.call`.
     pub fn on_writable(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
@@ -910,10 +904,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.exit_scope(scope);
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_timeout(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
@@ -1000,7 +991,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable` —
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `callback.call`/`reject` re-enter JS which can `connectInner()`/mutate
     /// this socket via `m_ptr` (node:net `autoSelectFamily` retries inside the
     /// `connectError` callback).
@@ -1008,9 +999,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
     /// lookup itself failed; 0 for a connect failure past name resolution
     /// (then `errno` carries the connect error).
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
     pub fn handle_connect_error(
         this: bun_ptr::ThisPtr<Self>,
         errno: c_int,
@@ -1198,10 +1186,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `handle_connect_error`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as
+    /// `handle_connect_error`.
     pub fn on_connect_error(
         this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
@@ -1316,12 +1302,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable` —
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `resolve_promise`/`callback.call` re-enter JS which can mutate this
     /// socket via `m_ptr`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
     pub fn on_open(this: bun_ptr::ThisPtr<Self>, socket: SocketHandler<SSL>) {
         let this_ptr = this.as_ptr();
         // A late event on a socket that already released its Handlers through
@@ -1541,10 +1524,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_end(this: bun_ptr::ThisPtr<Self>, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through
@@ -1591,10 +1571,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.exit_scope(scope);
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_handshake(
         this: bun_ptr::ThisPtr<Self>,
         s: SocketHandler<SSL>,
@@ -1734,8 +1711,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Dispatched from `ssl_flush_pending_session()` after the SSL stack has
     /// unwound, so the JS handler may safely destroy the socket.
     ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
@@ -1782,10 +1758,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_session`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_keylog(this: bun_ptr::ThisPtr<Self>, line: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
@@ -1832,10 +1805,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_close(
         this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
@@ -1934,10 +1904,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSocket`; JS-thread only.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_data(this: bun_ptr::ThisPtr<Self>, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
         // A late event on a socket that already released its Handlers through

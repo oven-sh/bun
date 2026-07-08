@@ -31,7 +31,9 @@ namespace uWS {
 template <bool SSL>
 struct HttpContext;
 
-template <bool SSL>
+/* IsNodeHttp defaults to false; the default lives on the declaration in
+ * HttpParser.h (the common include of this header and HttpContext.h). */
+template <bool SSL, bool IsNodeHttp>
 struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     template <bool> friend struct HttpResponse;
     template <bool> friend struct HttpContext;
@@ -186,14 +188,19 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 #endif
 };
 
-/* Per-connection state that only node:http compat servers need. A context with
- * HttpFlags::usingNodeHttpCompat set (which happens before listen()) sizes its
- * sockets' ext block as sizeof(NodeHttpResponseData<SSL>) and placement-news
- * this type in onOpen, so plain Bun.serve connections never allocate or touch
- * any of it. Every access must therefore be dominated by that flag (or sit on
- * a node-only code path) and downcast from HttpResponseData<SSL>. */
+/* Per-connection state that only node:http compat servers need.
+ * HttpResponseData<SSL, true> is the IsNodeHttp=true specialization: a context
+ * created for node:http (usingNodeHttpCompat, set before listen()) sizes its
+ * sockets' ext block for it and installs the IsNodeHttp=true socket handlers
+ * (see HttpContext<SSL>::setNodeHttpCompat), so plain Bun.serve connections
+ * never allocate or touch any of it and their handler instantiations contain
+ * none of the node code. It inherits the primary (rather than being an
+ * unrelated instantiation) because HttpResponse<SSL> is not templated on
+ * IsNodeHttp - it is the type the C API casts to from a runtime `int ssl` -
+ * and it must be able to address the shared fields of either kind through an
+ * HttpResponseData<SSL>*. */
 template <bool SSL>
-struct NodeHttpResponseData : HttpResponseData<SSL> {
+struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     /* lastMessageStartMs: when the request currently being received started
      * arriving (or when the connection was accepted, before its first
      * request); 0 once the message has been fully received (idle).
@@ -220,5 +227,10 @@ struct NodeHttpResponseData : HttpResponseData<SSL> {
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
 };
+
+/* Readable name for the IsNodeHttp=true specialization (used by the node:http
+ * bindings). */
+template <bool SSL>
+using NodeHttpResponseData = HttpResponseData<SSL, true>;
 
 }

@@ -760,7 +760,7 @@ public:
     /* Marks this app as backing a node:http server, enabling the per-socket
      * request timing used by headersTimeout/requestTimeout. */
     void setUsingNodeHttpCompat(bool value) {
-        httpContext->getSocketContextData()->flags.usingNodeHttpCompat = value;
+        httpContext->setNodeHttpCompat(value);
     }
 
     TemplatedApp &&run() {

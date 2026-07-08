@@ -165,8 +165,11 @@ public:
              * between it and the final CRLF. */
             if (httpResponseData->hasNodeHttpResponseTrailers) [[unlikely]] {
                 /* Only a node:http compat connection can set the flag, so the
-                 * downcast to the bigger ext block is safe. */
-                auto *nodeHttpResponseData = (NodeHttpResponseData<SSL> *) httpResponseData;
+                 * downcast to the bigger IsNodeHttp=true block is safe.
+                 * (HttpResponse<SSL> is not templated on IsNodeHttp - it is the
+                 * type the C API casts to from a runtime `int ssl` - so this
+                 * one shared read stays a runtime bit test.) */
+                auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                 Super::write("0\r\n", 3);
                 Super::write(nodeHttpResponseData->nodeHttpResponseTrailers.data(), (int) nodeHttpResponseData->nodeHttpResponseTrailers.length());
                 Super::write("\r\n", 2);
@@ -364,9 +367,11 @@ public:
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
-        /* Destroy HttpResponseData (the derived type on node:http compat contexts) */
+        /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
+         * compat contexts; upgrade() is not on a templated handler path, so it
+         * selects at runtime like socketExtSize()). */
         if (httpContextData->flags.usingNodeHttpCompat) {
-            ((NodeHttpResponseData<SSL> *) responseData)->~NodeHttpResponseData<SSL>();
+            ((HttpResponseData<SSL, true> *) responseData)->~HttpResponseData();
         } else {
             responseData->~HttpResponseData();
         }

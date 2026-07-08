@@ -29,7 +29,7 @@ class WeakReference<T extends WeakKey> {
   }
 
   get() {
-    return this.#weak.deref();
+    return this.#strong ?? this.#weak.deref();
   }
 
   incRef() {

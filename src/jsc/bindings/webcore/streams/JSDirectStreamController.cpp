@@ -460,54 +460,61 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
     if (m_deferClose == -1)
         return jsUndefined();
 
-    m_deferClose = -1;
-    m_deferFlush = -1;
+    int8_t deferredClose = 0;
+    int8_t deferredFlush = 0;
 
-    JSValue abrupt;
-    bool threw = false;
-    {
-        StreamAsyncContextScope asyncContextScope(globalObject, stream);
-        JSObject* underlyingSource = m_underlyingSource.get();
-        JSValue result;
+    // The user's pull() is one-shot: subsequent reads just set up m_pendingRead for the
+    // already-running pull to deliver into via flush()/end().
+    if (!m_pullStarted) {
+        m_pullStarted = true;
+        m_deferClose = -1;
+        m_deferFlush = -1;
+
+        JSValue abrupt;
+        bool threw = false;
         {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            // Unlike the spec, pull may be called many times; backpressure is the destination's job.
-            JSValue pullFunction = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-            if (!catchScope.exception()) [[likely]] {
-                MarkedArgumentBuffer args;
-                args.append(this);
-                result = JSC::call(globalObject, pullFunction, underlyingSource, args, "underlyingSource.pull is not a function"_s);
+            StreamAsyncContextScope asyncContextScope(globalObject, stream);
+            JSObject* underlyingSource = m_underlyingSource.get();
+            JSValue result;
+            {
+                auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                JSValue pullFunction = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
+                if (!catchScope.exception()) [[likely]] {
+                    MarkedArgumentBuffer args;
+                    args.append(this);
+                    result = JSC::call(globalObject, pullFunction, underlyingSource, args, "underlyingSource.pull is not a function"_s);
+                }
+                if (catchScope.exception()) [[unlikely]] {
+                    threw = true;
+                    abrupt = takeAbruptCompletion(globalObject, catchScope);
+                }
             }
-            if (catchScope.exception()) [[unlikely]] {
-                threw = true;
-                abrupt = takeAbruptCompletion(globalObject, catchScope);
+            if (threw) {
+                // A synchronous throw from pull errors the stream and rejects the returned read.
+                if (abrupt)
+                    handleError(globalObject, abrupt);
+            } else if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
+                // Nothing reads the result promise, but it must be a real one: onFulfilled is undefined,
+                // so a fulfilled pull forwards through PromiseResolveWithoutHandlerJob, which needs a
+                // promise to forward into. onDirectPullRejected returns normally, so it stays fulfilled.
+                auto* runtime = JSStreamsRuntime::from(globalObject);
+                auto* rejectionResult = JSPromise::create(vm, globalObject->promiseStructure());
+                pullPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), runtime->onDirectPullRejected(), rejectionResult, this);
             }
         }
-        if (threw) {
-            // A synchronous throw from pull errors the stream and rejects the returned read.
-            if (abrupt)
-                handleError(globalObject, abrupt);
-        } else if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
-            // Nothing reads the result promise, but it must be a real one: onFulfilled is undefined,
-            // so a fulfilled pull forwards through PromiseResolveWithoutHandlerJob, which needs a
-            // promise to forward into. onDirectPullRejected returns normally, so it stays fulfilled.
-            auto* runtime = JSStreamsRuntime::from(globalObject);
-            auto* rejectionResult = JSPromise::create(vm, globalObject->promiseStructure());
-            pullPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), runtime->onDirectPullRejected(), rejectionResult, this);
+
+        deferredClose = m_deferClose;
+        deferredFlush = m_deferFlush;
+        m_deferClose = 0;
+        m_deferFlush = 0;
+
+        if (threw && abrupt) {
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
         }
-    }
-
-    int8_t deferredClose = m_deferClose;
-    int8_t deferredFlush = m_deferFlush;
-    m_deferClose = 0;
-    m_deferFlush = 0;
-
-    if (threw && abrupt) {
+        // A VM termination from the pull, or a failure while registering the rejection reaction.
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
     }
-    // A VM termination from the pull, or a failure while registering the rejection reaction.
-    RETURN_IF_EXCEPTION(scope, {});
 
     // controller.error() inside pull is not deferred: re-validate before adding a read request.
     stream = m_stream.get();

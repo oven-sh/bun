@@ -703,6 +703,85 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(value.byteLength).toBe(10);
   });
 
+  // A type:"direct" pull() is one-shot: when it is async and awaits controller.flush(),
+  // subsequent reads on the JS path must not re-invoke it while the first call is still
+  // in flight (or after it has called end()).
+  describe("a direct stream's async pull() is invoked exactly once", () => {
+    const N = 30000;
+    const CS = 4096;
+    const body = new Uint8Array(N);
+    for (let i = 0; i < N; i++) body[i] = (i * 131) & 0xff;
+    const makeSource = counter => ({
+      type: "direct",
+      async pull(c) {
+        counter.pulls++;
+        for (let o = 0; o < N; o += CS) {
+          c.write(body.subarray(o, Math.min(o + CS, N)));
+          await c.flush();
+        }
+        c.end();
+      },
+    });
+    const readAll = async rs => {
+      const reader = rs.getReader();
+      const parts = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        total += value.length;
+      }
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+      }
+      return out;
+    };
+
+    it("via getReader()", async () => {
+      const counter = { pulls: 0 };
+      const bytes = await readAll(new ReadableStream(makeSource(counter)));
+      expect(counter.pulls).toBe(1);
+      expect(bytes.length).toBe(N);
+      expect(bytes).toEqual(body);
+    });
+
+    it("via tee()", async () => {
+      const counter = { pulls: 0 };
+      const [a, b] = new ReadableStream(makeSource(counter)).tee();
+      const [ba, bb] = await Promise.all([readAll(a), readAll(b)]);
+      expect(counter.pulls).toBe(1);
+      expect(ba.length).toBe(N);
+      expect(bb.length).toBe(N);
+      expect(ba).toEqual(body);
+      expect(bb).toEqual(body);
+    });
+
+    it("via for-await", async () => {
+      const counter = { pulls: 0 };
+      let total = 0;
+      for await (const chunk of new ReadableStream(makeSource(counter))) total += chunk.length;
+      expect(counter.pulls).toBe(1);
+      expect(total).toBe(N);
+    });
+
+    it("via readMany()", async () => {
+      const counter = { pulls: 0 };
+      const reader = new ReadableStream(makeSource(counter)).getReader();
+      let total = 0;
+      while (true) {
+        const r = await reader.readMany();
+        if (r.done) break;
+        for (const v of r.value) total += v.length;
+      }
+      expect(counter.pulls).toBe(1);
+      expect(total).toBe(N);
+    });
+  });
+
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {
     let releaseNow = null;
     Object.defineProperty(Object.prototype, "then", {

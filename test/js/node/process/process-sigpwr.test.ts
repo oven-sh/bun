@@ -111,7 +111,10 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
       let handled = 0;
       process.on("SIGPWR", () => { handled++; });
       const w = new Worker("data:text/javascript,postMessage(0);setInterval(()=>{},1e6)");
-      await new Promise(r => w.addEventListener("message", r, { once: true }));
+      await new Promise((resolve, reject) => {
+        w.addEventListener("message", resolve, { once: true });
+        w.addEventListener("error", reject, { once: true });
+      });
       for (let i = 0; i < ${iterations}; i++) {
         const junk = [];
         for (let j = 0; j < 200; j++) junk.push({ a: j, b: Buffer.alloc(64, 65).toString() });

@@ -1546,6 +1546,39 @@ describe("tls.Server secure-context options", () => {
     }
   });
 
+  it("a STARTTLS wrap does not decrement or spuriously close the never-listened tls.Server", async () => {
+    // Node counts only natively accepted sockets: server.emit('connection')
+    // never increments _connections, and _destroy decrements _server (which the
+    // wrap does not set), so a STARTTLS-only tls.Server must never emit 'close'
+    // on its own: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L912-L918
+    const tlsServer = createServer({ key: agent6Key, cert: agent6CertChain }, s => s.end());
+    const closes: number[] = [];
+    tlsServer.on("close", () => closes.push(1));
+    const rawServer = net.createServer(raw => tlsServer.emit("connection", raw));
+    let client: TLSSocket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      rawServer.once("listening", listening.resolve);
+      rawServer.once("error", listening.reject);
+      rawServer.listen(0);
+      await listening.promise;
+      const wrapClosed = Promise.withResolvers<void>();
+      client = connect({ port: (rawServer.address() as AddressInfo).port, rejectUnauthorized: false }, () =>
+        client!.end(),
+      );
+      client.on("error", wrapClosed.reject);
+      client.on("close", wrapClosed.resolve);
+      await wrapClosed.promise;
+      // Let the wrap's own deferred teardown run before observing the server.
+      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+      expect({ closes, connections: tlsServer._connections }).toEqual({ closes: [], connections: 0 });
+    } finally {
+      client?.destroy();
+      rawServer.close();
+      tlsServer.close();
+    }
+  });
+
   it("requests the client certificate on a direct server wrap whose secure context lacks requestCert", async () => {
     // The shared SecureContext carries no requestCert, so only the per-socket
     // option on the wrap can make the CertificateRequest go out - Node applies

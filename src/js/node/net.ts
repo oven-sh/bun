@@ -1504,6 +1504,7 @@ function Socket(options?) {
   this._handle = options?.handle || null;
   this[ksocket] = undefined;
   this.server = undefined;
+  this._server = undefined;
   this.pauseOnConnect = false;
   this._peername = null;
   this._sockname = null;
@@ -2109,7 +2110,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
-  const server = this.server;
+  // _server, not server: only natively accepted sockets are counted. Node's
+  // tlsConnectionListener sets `.server` alone, so a STARTTLS wrap handed to
+  // server.emit('connection') never had an increment to undo:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L912-L918
+  const server = this._server;
   if (server) {
     $debug("has server");
     server._connections--;

@@ -28,21 +28,21 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-// A tee branch's controller slot usually still carries the kind its tee installed, but
-// Bun's native-sink pumps clear a consumed stream's controller slot in their finally step,
-// so these recover as null when the branch has been torn down.
-static JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
+// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
+// stream's controller slot in their finally step, so a tee reaction queued before that
+// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
+static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
 {
-    if (stream->m_controllerKind != ControllerKind::Default)
+    if (branch->m_controllerKind != ControllerKind::Default)
         return nullptr;
-    return uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
 }
 
-static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
+static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
-    if (stream->m_controllerKind != ControllerKind::Byte)
+    if (branch->m_controllerKind != ControllerKind::Byte)
         return nullptr;
-    return uncheckedDowncast<JSReadableByteStreamController>(stream->m_controller.get());
+    return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
 }
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
@@ -150,8 +150,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     case ReadRequestKind::DefaultTee: {
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(m_context.get());
         teeState->m_reading = false;
-        auto* controller1 = defaultControllerOf(teeState->m_branch1.get());
-        auto* controller2 = defaultControllerOf(teeState->m_branch2.get());
+        auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get());
+        auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get());
         if (!teeState->m_canceled1 && controller1) {
             readableStreamDefaultControllerClose(globalObject, controller1);
             RETURN_IF_EXCEPTION(scope, void());
@@ -167,8 +167,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     case ReadRequestKind::ByteTee: {
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(m_context.get());
         teeState->m_reading = false;
-        auto* controller1 = byteControllerOf(teeState->m_branch1.get());
-        auto* controller2 = byteControllerOf(teeState->m_branch2.get());
+        auto* controller1 = teeBranchByteController(teeState->m_branch1.get());
+        auto* controller2 = teeBranchByteController(teeState->m_branch2.get());
         if (!teeState->m_canceled1 && controller1) {
             readableByteStreamControllerClose(globalObject, controller1);
             RETURN_IF_EXCEPTION(scope, void());
@@ -315,8 +315,8 @@ void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferVi
         teeState->m_reading = false;
         auto* byobBranch = forBranch2 ? teeState->m_branch2.get() : teeState->m_branch1.get();
         auto* otherBranch = forBranch2 ? teeState->m_branch1.get() : teeState->m_branch2.get();
-        auto* byobController = byteControllerOf(byobBranch);
-        auto* otherController = byteControllerOf(otherBranch);
+        auto* byobController = teeBranchByteController(byobBranch);
+        auto* otherController = teeBranchByteController(otherBranch);
         bool byobCanceled = forBranch2 ? teeState->m_canceled2 : teeState->m_canceled1;
         bool otherCanceled = forBranch2 ? teeState->m_canceled1 : teeState->m_canceled2;
         if (!byobCanceled && byobController) {

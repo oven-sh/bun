@@ -3187,22 +3187,21 @@ it("type: direct stream — small write queued under backpressure is delivered i
   }
 });
 
-// `const [a,b] = req.body.tee(); return new Response(a)`: when the client aborts the
-// upload, the response-side sink pump tears down branch `a`'s controller slot, then
-// the tee's queued closed-rejected / chunk reactions run against a branch that no
-// longer carries a default controller. That used to hit a RELEASE_ASSERT in
-// defaultControllerOf() and SIGABRT the whole server process.
+// Aborting an upload mid-body while a req.body.tee() branch is the in-flight
+// response body must not crash the server process.
 it("survives aborted uploads while responding with a tee()d request-body branch", async () => {
   const script = `
     const net = require("node:net");
     const readAll = async rs => { const rd = rs.getReader(); for (;;) { if ((await rd.read()).done) return; } };
+    let seen = 0, settled = 0, notify = () => {};
     const srv = Bun.serve({
       hostname: "127.0.0.1", port: 0, idleTimeout: 0,
       error() { return new Response("err"); },
       async fetch(req) {
         if (!req.body) return new Response("nobody");
+        seen++;
         const [a, b] = req.body.tee();
-        readAll(b).catch(() => {});
+        readAll(b).catch(() => {}).finally(() => { settled++; notify(); });
         return new Response(a);
       },
     });
@@ -3223,8 +3222,12 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
         s.on("error", () => done());
       });
     }
-    await new Promise(r => setTimeout(r, 20));
-    console.log("SURVIVED", it);
+    // One clean request so every aborted connection's header has reached fetch().
+    await fetch(srv.url).then(r => r.text());
+    // readAll(b) settles only after the tee's source-error reaction has errored branch b,
+    // so settled == seen proves every tee reaction for every handled request has run.
+    while (settled < seen) await new Promise(r => { notify = r; });
+    console.log("SURVIVED", it, seen === settled);
     srv.stop(true);
   `;
 
@@ -3237,7 +3240,7 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "SURVIVED 40",
+    stdout: "SURVIVED 40 true",
     stderr: "",
     exitCode: 0,
     signalCode: null,

@@ -855,28 +855,48 @@ void JSDatabaseSync::closeInternal()
     // JSStatementSync holds a strong WriteBarrier to this object, so during
     // normal GC the database is kept alive while any statement is reachable;
     // statements observe closure via isFinalized().
-    //
-    // Sessions are different — the preupdate hook they install keeps a
-    // back-pointer into the connection, and sqlite3_close_v2 does NOT
-    // tear them down, so delete any that JS hasn't already closed.
-    if (m_db) {
-        deleteTrackedSessions();
-        sqlite3_close_v2(m_db);
+    if (!m_db) return;
+
+    // A BusyScope is on the stack (re-entrant close from an option getter /
+    // UDF / authorizer). From a UDF close_v2 only zombifies, but from an
+    // authorizer during prepare() no Vdbe exists yet and close_v2 frees the
+    // sqlite3* while sqlite3Prepare is still holding it. Mark closed now
+    // (m_db == nullptr), stash the handle, and let the outermost BusyScope
+    // run the teardown. UDF contexts hold raw JSObject* rooted by
+    // m_registeredCallbacks, so that clear must wait too.
+    if (isBusy()) {
+        m_deferredClose = m_db;
         m_db = nullptr;
-        unregisterOpenDatabase(this);
-        // Drop the callback roots so an explicitly-closed database doesn't
-        // retain them for the rest of the cell's lifetime — but only when
-        // no step() is on the stack. With a live step() close_v2 only
-        // zombified the connection: UDF/aggregate contexts (which hold
-        // raw JSObject* rooted by m_registeredCallbacks) are still
-        // registered and will be invoked again, so clearing now would
-        // leave those pointers dangling for GC to collect mid-scan.
-        if (!isBusy()) {
-            m_namedRegistrations.clear();
-            Locker locker { cellLock() };
-            m_registeredCallbacks.clear();
-        }
+        return;
     }
+
+    // Sessions must go before close_v2: the preupdate hook they install
+    // keeps a back-pointer into the connection, and close_v2 does NOT
+    // tear them down.
+    deleteTrackedSessions();
+    sqlite3_close_v2(m_db);
+    m_db = nullptr;
+    unregisterOpenDatabase(this);
+    m_namedRegistrations.clear();
+    Locker locker { cellLock() };
+    m_registeredCallbacks.clear();
+}
+
+void JSDatabaseSync::finishDeferredClose()
+{
+    ASSERT(!isBusy());
+    sqlite3* handle = m_deferredClose;
+    m_deferredClose = nullptr;
+    if (!handle) return;
+    deleteTrackedSessions();
+    sqlite3_close_v2(handle);
+    // If open() ran after the deferred close but before this unwind, m_db is
+    // the new connection — keep its registration and roots.
+    if (m_db) return;
+    unregisterOpenDatabase(this);
+    m_namedRegistrations.clear();
+    Locker locker { cellLock() };
+    m_registeredCallbacks.clear();
 }
 
 // Called from ExitHandler::dispatch_on_exit, on the main thread only; entries
@@ -3806,6 +3826,13 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
             }
             progressFn = progressV.getObject();
         }
+    }
+
+    // An options getter (rate/source/target/progress, or href/protocol on a
+    // URL-like path) may have re-entered close(); sqlite3_backup_init
+    // dereferences pSrcDb->mutex with no API-armor guard.
+    if (!sourceDb->isOpen()) {
+        return throwNodeState(globalObject, scope, "database is not open"_s);
     }
 
     // All validation done — errors from here on reject the promise. We

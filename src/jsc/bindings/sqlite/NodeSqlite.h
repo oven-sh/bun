@@ -187,8 +187,12 @@ public:
     void rememberRegistration(const WTF::String& name, int argc, const std::array<size_t, 4>& slots);
 
     // Incremented for the duration of any native call that may re-enter JS.
-    // deserialize()/process-exit close consult it; close() itself does not
-    // (Node compat — sqlite3_close_v2 zombifies while stmts are outstanding).
+    // close()/deserialize()/process-exit consult it. Node permits re-entrant
+    // close(), so closeInternal() runs when busy but defers sqlite3_close_v2
+    // itself until the outermost BusyScope unwinds: while a statement is
+    // outstanding close_v2 only zombifies, but from an authorizer callback
+    // during prepare() no Vdbe exists yet and close_v2 would free the handle
+    // under the parser's feet.
     bool isBusy() const { return m_busyDepth > 0; }
     struct BusyScope {
         JSDatabaseSync* db;
@@ -206,13 +210,16 @@ public:
         }
         ~BusyScope()
         {
-            if (db) --db->m_busyDepth;
+            if (!db) return;
+            if (--db->m_busyDepth == 0 && db->m_deferredClose) [[unlikely]]
+                db->finishDeferredClose();
         }
         BusyScope(const BusyScope&) = delete;
         BusyScope& operator=(const BusyScope&) = delete;
         BusyScope(BusyScope&&) = delete;
         BusyScope& operator=(BusyScope&&) = delete;
     };
+    void finishDeferredClose();
 
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
@@ -225,6 +232,9 @@ private:
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
+    // Handle whose sqlite3_close_v2 was deferred by a re-entrant close()
+    // until the outermost BusyScope unwinds; see finishDeferredClose().
+    sqlite3* m_deferredClose = nullptr;
     unsigned m_openGeneration = 0;
     unsigned m_busyDepth = 0;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
@@ -702,11 +712,13 @@ private:
 // ─────────────────────────────────────────────────────────────────────────────
 // DatabaseSyncLimits — the object returned by `db.limits`. Reads and
 // writes to its eleven named properties (length, sqlLength, …) call
-// sqlite3_limit() on the owning connection. No prototype (so an
-// overridden Object.prototype can't shadow a limit name). Intercepted
-// via getOwnPropertySlot/put/getOwnPropertyNames rather than per-name
+// sqlite3_limit() on the owning connection. Intercepted via
+// getOwnPropertySlot/put/getOwnPropertyNames rather than per-name
 // accessors so the properties present as enumerable *own* data-like
-// properties (Node's tests do `Object.keys(db.limits)`).
+// properties (Node's tests do `Object.keys(db.limits)`); interception at
+// own-slot level means an overridden Object.prototype cannot shadow a
+// limit name even though the prototype chain reaches Object.prototype
+// (limits → {} → Object.prototype) to match Node's observable chain.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class JSNodeSqliteLimits final : public JSC::JSDestructibleObject {

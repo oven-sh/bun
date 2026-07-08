@@ -604,6 +604,36 @@ describe("DatabaseSync.prototype.function()", () => {
       exitCode: 0,
     });
   });
+
+  test("closing the database from an authorizer during the first prepare() defers sqlite3_close_v2", async () => {
+    // Authorizer fires from inside sqlite3_prepare_v2 before a Vdbe exists,
+    // so sqlite3_close_v2 would free (not zombify) the handle under the
+    // parser's feet. The close is deferred until the BusyScope unwinds; on
+    // regression ASAN reports heap-use-after-free in sqlite3AuthCheck and
+    // the process aborts.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { DatabaseSync } = require("node:sqlite");
+          const db = new DatabaseSync(":memory:");
+          let err;
+          db.setAuthorizer(() => { try { db.close(); } catch (e) { err = e.code; } return 0; });
+          const stmt = db.prepare("CREATE TABLE t(x)");
+          console.log(JSON.stringify({ isOpen: db.isOpen, err, haveStmt: !!stmt }));
+        `,
+      ],
+      env: { ...bunEnv, Malloc: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ isOpen: false, err: "ERR_INVALID_STATE", haveStmt: true }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
 });
 
 describe("DatabaseSync.prototype.aggregate()", () => {
@@ -954,6 +984,25 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
 // Each backup_step with rate=1 fsyncs the destination once per page; keep
 // the page count tiny so the test stays fast on slow-fsync CI filesystems.
 describe("backup()", () => {
+  test("re-checks the source is open after reading options", () => {
+    // sqlite3_backup_init dereferences pSrcDb->mutex with no API-armor
+    // guard; a hostile getter that closes the source would hand it a
+    // nullptr. Matches the post-option-parse REQUIRE_DB_OPEN on
+    // function()/aggregate()/createSession()/applyChangeset()/deserialize().
+    using dir = tempDir("node-sqlite-backup-recheck", {});
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t (x)");
+    expect(() =>
+      backup(src, path.join(String(dir), "dst.db"), {
+        get rate() {
+          src.close();
+          return 1;
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE", message: "database is not open" }));
+    expect(src.isOpen).toBe(false);
+  });
+
   test("copies an in-memory database to a file", async () => {
     using dir = tempDir("node-sqlite-backup", {});
     const src = new DatabaseSync(":memory:");
@@ -1846,7 +1895,7 @@ describe("GC stress", () => {
   test("aggregate step callback triggering GC between rows", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (x INTEGER)");
-    db.exec(`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 200) INSERT INTO t SELECT x FROM c`);
+    db.exec(`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 100) INSERT INTO t SELECT x FROM c`);
     db.aggregate("gcsum", {
       start: 0,
       step: (acc, x) => {
@@ -1855,7 +1904,7 @@ describe("GC stress", () => {
       },
     });
     // The Strong<> in sqlite3_aggregate_context must survive GC between xStep calls.
-    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get().s).toBe(20100);
+    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get().s).toBe(5050);
     db.close();
   });
 

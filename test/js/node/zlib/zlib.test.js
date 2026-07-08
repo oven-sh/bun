@@ -766,3 +766,51 @@ describe("crc32", () => {
     expect(zlib.crc32("abc")).toBe(891568578);
   });
 });
+
+describe("deflate output is independent of write() chunking", () => {
+  // The compressed bytes must be a pure function of (input, options). Node's
+  // canonical zlib guarantees this; zlib-ng's deflate_quick/deflate_medium
+  // strategies do not, so they are disabled in Bun's build.
+  const input = Buffer.alloc(4096);
+  for (let i = 0; i < input.length; i++) input[i] = (i * i) & 0x3f;
+
+  const collect = (s, chunks) =>
+    new Promise((resolve, reject) => {
+      const out = [];
+      s.on("data", d => out.push(d));
+      s.on("end", () => resolve(Buffer.concat(out)));
+      s.on("error", reject);
+      stream.Readable.from(chunks).pipe(s);
+    });
+
+  const splits = [
+    ["single write", [input]],
+    ["two writes", [input.subarray(0, 2048), input.subarray(2048)]],
+    ["32 writes", Array.from({ length: 32 }, (_, i) => input.subarray(i * 128, i * 128 + 128))],
+  ];
+
+  describe.each([
+    ["gzip", zlib.gzipSync, zlib.gzip, zlib.createGzip, zlib.gunzipSync],
+    ["deflate", zlib.deflateSync, zlib.deflate, zlib.createDeflate, zlib.inflateSync],
+    ["deflateRaw", zlib.deflateRawSync, zlib.deflateRaw, zlib.createDeflateRaw, zlib.inflateRawSync],
+  ])("%s", (_name, sync, asyncFn, create, decode) => {
+    it.each([-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9])("level %d", async level => {
+      const ref = sync(input, { level });
+      expect(decode(ref).equals(input)).toBe(true);
+
+      const asyncOut = await util.promisify(asyncFn)(input, { level });
+      const streamed = {};
+      for (const [label, chunks] of splits) {
+        streamed[label] = await collect(create({ level }), chunks);
+      }
+
+      expect({
+        async: asyncOut.toString("hex"),
+        ...Object.fromEntries(splits.map(([label]) => [label, streamed[label].toString("hex")])),
+      }).toEqual({
+        async: ref.toString("hex"),
+        ...Object.fromEntries(splits.map(([label]) => [label, ref.toString("hex")])),
+      });
+    });
+  });
+});

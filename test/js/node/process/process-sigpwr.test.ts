@@ -102,6 +102,16 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
     expect(await runScript(script)).toEqual(ok("survived\n"));
   });
 
+  test.concurrent("unsolicited SIGPWR after breakOnSigint primed the signal ring does not crash", async () => {
+    const script = /*js*/ `
+      require("node:vm").runInNewContext("1", {}, { breakOnSigint: true });
+      process.kill(process.pid, 30);
+      await new Promise(r => setImmediate(r));
+      console.log("survived");
+    `;
+    expect(await runScript(script)).toEqual(ok("survived\n"));
+  });
+
   // collectContinuously runs a dedicated collector thread in the same VM that suspends the
   // main mutator via pthread_kill(SIGPWR); a broken SI_TKILL passthrough would hang here.
   // The exact `handled` count also proves internal deliveries are not misrouted to JS.

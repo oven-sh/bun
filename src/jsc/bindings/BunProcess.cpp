@@ -1166,6 +1166,11 @@ bool isSignalName(WTF::String input)
 
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
+    // SigintWatcher::install() can prime the signal ring buffer without any process.on()
+    // ever running, in which case this map is still null and there is no listener to emit to.
+    if (!signalNumberToNameMap)
+        return;
+
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);

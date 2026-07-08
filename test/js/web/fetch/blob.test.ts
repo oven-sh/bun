@@ -766,4 +766,41 @@ describe("new Blob([part]) / new File([part], name) do not inherit part metadata
     expect(wrapped.lastModified).toBeGreaterThanOrEqual(before - 1000);
     expect(wrapped.lastModified).toBeLessThanOrEqual(after + 1000);
   });
+
+  test("a bare Blob body (not a part) keeps its content-type for server.fetch", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("content-type") ?? "<null>"),
+    });
+    const body = new Blob(['{"a":1}'], { type: "application/json" });
+    const res = await server.fetch(server.url.href, { method: "POST", body });
+    expect(await res.text()).toContain("application/json");
+  });
+
+  test("a Blob body with empty .type contributes no Content-Type header", async () => {
+    using dir = tempDir("blob-empty-ct", { "f.html": "<h1>hi</h1>" });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        Response.json({
+          has: req.headers.has("content-type"),
+          ct: req.headers.get("content-type"),
+        }),
+    });
+    const wrapped = new Blob([Bun.file(path.join(String(dir), "f.html"))]);
+    expect(wrapped.type).toBe("");
+    const res = await fetch(server.url, { method: "POST", body: wrapped });
+    expect(await res.json()).toEqual({ has: false, ct: null });
+  });
+
+  test("FormData.get() on a Bun.file entry still reports the file mtime", async () => {
+    using dir = tempDir("blob-formdata-mtime", { "f.bin": "hi" });
+    const p = path.join(String(dir), "f.bin");
+    const oldMtime = new Date(1_000_000_000_000); // 2001-09-09
+    utimesSync(p, oldMtime, oldMtime);
+    const fd = new FormData();
+    fd.append("f", Bun.file(p));
+    const entry = fd.get("f") as File;
+    expect(entry.lastModified).toBe(1_000_000_000_000);
+  });
 });

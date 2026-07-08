@@ -2191,9 +2191,10 @@ impl BlobExt for Blob {
 
     // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
-        if self.is_jsdom_file.get() {
-            // `new File()` always fills `last_modified` (explicit option or
-            // Date.now()); a file-backed store's live mtime must not override it.
+        // `new File()` always stamps `last_modified`; prefer it over a file
+        // store's live mtime. `Blob__setAsFile` leaves it 0.0, which falls
+        // through so FormData.get() on a Bun.file entry still reports mtime.
+        if self.is_jsdom_file.get() && self.last_modified.get() != 0.0 {
             return JSValue::js_number(self.last_modified.get());
         }
         if let Some(store) = self.store.get() {
@@ -2212,6 +2213,10 @@ impl BlobExt for Blob {
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
                 return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
             }
+        }
+
+        if self.is_jsdom_file.get() {
+            return JSValue::js_number(self.last_modified.get());
         }
 
         JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
@@ -3356,13 +3361,17 @@ impl BlobExt for Blob {
 
                 jsc::JSType::DOMWrapper => {
                     if !fail_if_top_value_is_not_typed_array_like {
+                        // REQUIRE_ARRAY callers reach here only via a length-1
+                        // array: `top_value` is a *part* (bytes only). A bare
+                        // Blob body (REQUIRE_ARRAY=false) keeps its metadata.
                         if let Some(blob_ptr) = top_value.as_::<Blob>() {
                             // SAFETY: JS heap pointer; single-threaded JS execution.
                             let blob = unsafe { &mut *blob_ptr };
-                            // Parts contribute only their bytes: share the store
-                            // (or move it), but never the part's content_type /
-                            // last_modified / name / is_jsdom_file.
-                            let out = blob.dupe_without_metadata();
+                            let out = if REQUIRE_ARRAY {
+                                blob.dupe_without_metadata()
+                            } else {
+                                blob.dupe()
+                            };
                             if MOVE {
                                 out.store.set(blob.take_store());
                             }
@@ -3370,7 +3379,11 @@ impl BlobExt for Blob {
                         } else if let Some(artifact) =
                             top_value.as_class_ref::<crate::api::BuildArtifact>()
                         {
-                            return Ok(artifact.blob.dupe_without_metadata());
+                            return Ok(if REQUIRE_ARRAY {
+                                artifact.blob.dupe_without_metadata()
+                            } else {
+                                artifact.blob.dupe()
+                            });
                         } else {
                             // Dispatch on the `ZigStringSlice` variant to detect an
                             // owned (heap) slice. Pass

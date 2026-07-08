@@ -15,7 +15,7 @@
  * verdaccio's `packages:` config: the first matching rule decides.
  */
 
-import { forbidden, json, npmError, unauthorized } from "./errors";
+import { forbidden, json, npmError, readJsonObject, unauthorized } from "./errors";
 import type { RegistryToken, RegistryUser } from "./types";
 
 /** Who may perform an action on a package. */
@@ -197,12 +197,8 @@ export class UserStore {
    * `PUT /-/user/org.couchdb.user:<name>` — `npm adduser`/`npm login`.
    */
   async handleAdduser(request: Request, couchId: string): Promise<Response> {
-    let body: { name?: string; password?: string; email?: string };
-    try {
-      body = await request.json();
-    } catch {
-      return npmError(400, "invalid JSON body");
-    }
+    const body = await readJsonObject<{ name?: string; password?: string; email?: string }>(request);
+    if (body instanceof Response) return body;
     const name = body.name ?? couchId.replace(/^org\.couchdb\.user:/, "");
     if (!name || typeof body.password !== "string" || body.password.length === 0) {
       return npmError(400, "user/password are required");

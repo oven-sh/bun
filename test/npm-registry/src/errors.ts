@@ -20,6 +20,25 @@ export function npmError(status: number, message: string, extraHeaders?: Headers
   return json({ error: message }, { status, headers: extraHeaders });
 }
 
+/**
+ * Reads a request's JSON body as a non-null, non-array object, or the
+ * npm 400 envelope for anything else. `null` is valid JSON that the
+ * try/catch around `req.json()` would let through, and every handler
+ * immediately dereferences a property of the result.
+ */
+export async function readJsonObject<T extends object>(req: Request): Promise<T | Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return npmError(400, "invalid JSON body");
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return npmError(400, "request body must be a JSON object");
+  }
+  return body as T;
+}
+
 export const notFound = (what: string) => npmError(404, `Not found: ${what}`);
 
 /**

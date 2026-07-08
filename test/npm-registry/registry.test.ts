@@ -886,4 +886,32 @@ describe("routing", () => {
     // not have been materialized for the bogus name.
     expect(registry.names).not.toContain("notascope/pkg");
   });
+
+  test("a non-object JSON body is a 400 on every handler that dereferences one", async () => {
+    // `null` is valid JSON; every handler immediately dereferences a
+    // property of the parsed body, and the server's own error hook says
+    // "a throw inside a handler is a bug in the registry".
+    await using registry = await new NpmRegistry().start();
+    registry.define("p", { "1.0.0": {} });
+    const send = (path: string, method: string, body: unknown) =>
+      getJson<{ error: string }>(`${registry.url}${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const expected = { status: 400, body: { error: "request body must be a JSON object" } };
+    for (const body of [null, [], 7, "x"]) {
+      expect(await send("p", "PUT", body)).toMatchObject(expected);
+      expect(await send("p/-rev/1-x", "PUT", body)).toMatchObject(expected);
+      expect(await send("-/npm/v1/security/advisories/bulk", "POST", body)).toMatchObject(expected);
+      expect(await send("-/user/org.couchdb.user:u", "PUT", body)).toMatchObject(expected);
+    }
+    // And an unparseable body is still the existing 400.
+    const invalid = await getJson(`${registry.url}p`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    expect(invalid).toMatchObject({ status: 400, body: { error: "invalid JSON body" } });
+  });
 });

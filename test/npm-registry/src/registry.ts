@@ -23,7 +23,7 @@ import type { Server } from "bun";
 import { AdvisoryStore } from "./audit";
 import { UserStore, type AccessRules, type AuthContext, type OtpChallengeOptions } from "./auth";
 import { recordFromSpecs, type PackageOptions, type VersionSpec } from "./define";
-import { json, npmError, packageNotFound } from "./errors";
+import { json, npmError, packageNotFound, readJsonObject } from "./errors";
 import { FixtureTree } from "./fixtures";
 import { RequestObserver, simulateFailures, type Interceptor, type SimulatedFailure } from "./observe";
 import { cloneRecord, createRecord, effectiveDistTags, effectiveTime, type PackageRecord } from "./package-store";
@@ -564,12 +564,8 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
     const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
 
-    let body: PublishBody;
-    try {
-      body = await req.json();
-    } catch {
-      return npmError(400, "invalid JSON body");
-    }
+    const body = await readJsonObject<PublishBody>(req);
+    if (body instanceof Response) return body;
     return this.#write(name, record => handlePublish(record, body));
   }
 
@@ -590,12 +586,8 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
     const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
     if (this.#resolve(name) === undefined) return packageNotFound(name);
-    let body: PublishBody;
-    try {
-      body = await req.json();
-    } catch {
-      return npmError(400, "invalid JSON body");
-    }
+    const body = await readJsonObject<PublishBody>(req);
+    if (body instanceof Response) return body;
     return this.#write(name, record => handleReplaceVersions(record, body));
   }
 
@@ -635,12 +627,8 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   }
 
   async #bulkAdvisories(req: Request): Promise<Response> {
-    let body: Record<string, string[]>;
-    try {
-      body = await req.json();
-    } catch {
-      return npmError(400, "invalid JSON body");
-    }
+    const body = await readJsonObject<Record<string, string[]>>(req);
+    if (body instanceof Response) return body;
     return this.advisories.handleBulk(body);
   }
 

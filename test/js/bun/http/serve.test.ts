@@ -3186,3 +3186,60 @@ it("type: direct stream — small write queued under backpressure is delivered i
     socket.destroy();
   }
 });
+
+// `const [a,b] = req.body.tee(); return new Response(a)`: when the client aborts the
+// upload, the response-side sink pump tears down branch `a`'s controller slot, then
+// the tee's queued closed-rejected / chunk reactions run against a branch that no
+// longer carries a default controller. That used to hit a RELEASE_ASSERT in
+// defaultControllerOf() and SIGABRT the whole server process.
+it("survives aborted uploads while responding with a tee()d request-body branch", async () => {
+  const script = `
+    const net = require("node:net");
+    const readAll = async rs => { const rd = rs.getReader(); for (;;) { if ((await rd.read()).done) return; } };
+    const srv = Bun.serve({
+      hostname: "127.0.0.1", port: 0, idleTimeout: 0,
+      error() { return new Response("err"); },
+      async fetch(req) {
+        if (!req.body) return new Response("nobody");
+        const [a, b] = req.body.tee();
+        readAll(b).catch(() => {});
+        return new Response(a);
+      },
+    });
+    const chunk = Buffer.alloc(8192, 66);
+    let it = 0;
+    for (; it < 40; it++) {
+      await new Promise(done => {
+        const s = net.connect(srv.port, "127.0.0.1", () => {
+          s.write("POST / HTTP/1.1\\r\\nhost: x\\r\\ncontent-length: 262144\\r\\n\\r\\n");
+          setImmediate(() => {
+            s.write(chunk);
+            s.write(chunk);
+            s.write(chunk);
+            setImmediate(() => { s.destroy(); done(); });
+          });
+        });
+        s.on("data", () => {});
+        s.on("error", () => done());
+      });
+    }
+    await new Promise(r => setTimeout(r, 20));
+    console.log("SURVIVED", it);
+    srv.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "SURVIVED 40",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

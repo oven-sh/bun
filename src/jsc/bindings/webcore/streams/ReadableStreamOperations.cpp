@@ -71,6 +71,23 @@ static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream
     return nullptr;
 }
 
+// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
+// stream's controller slot in their finally step, so a tee reaction queued before that
+// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
+static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
+{
+    if (branch->m_controllerKind != ControllerKind::Default)
+        return nullptr;
+    return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
+}
+
+static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
+{
+    if (branch->m_controllerKind != ControllerKind::Byte)
+        return nullptr;
+    return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
+}
+
 // The byte tee's mutable reader slot is erased to JSCell; recover the non-polymorphic
 // reader base through the two concrete classes.
 static JSReadableStreamReaderBase* teeReader(JSStreamTeeState* teeState)
@@ -977,6 +994,8 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     teeState->m_readAgain1 = false;
+    auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get());
+    auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get());
     JSValue chunk1 = chunk;
     JSValue chunk2 = chunk;
     if (!teeState->m_canceled2 && teeState->m_shouldClone) {
@@ -988,10 +1007,14 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
                 JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
                 if (thrown.isEmpty())
                     return {};
-                readableStreamDefaultControllerError(globalObject, defaultControllerOf(teeState->m_branch1.get()), thrown);
-                RETURN_IF_EXCEPTION(scope, {});
-                readableStreamDefaultControllerError(globalObject, defaultControllerOf(teeState->m_branch2.get()), thrown);
-                RETURN_IF_EXCEPTION(scope, {});
+                if (controller1) {
+                    readableStreamDefaultControllerError(globalObject, controller1, thrown);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                if (controller2) {
+                    readableStreamDefaultControllerError(globalObject, controller2, thrown);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
                 auto* cancelResult = readableStreamCancel(globalObject, teeState->m_stream.get(), thrown);
                 RETURN_IF_EXCEPTION(scope, {});
                 resolvePromise(globalObject, teeState->m_cancelPromise.get(), cancelResult);
@@ -1001,12 +1024,12 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
         }
         chunk2 = cloneResult;
     }
-    if (!teeState->m_canceled1) {
-        readableStreamDefaultControllerEnqueue(globalObject, defaultControllerOf(teeState->m_branch1.get()), chunk1);
+    if (!teeState->m_canceled1 && controller1) {
+        readableStreamDefaultControllerEnqueue(globalObject, controller1, chunk1);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (!teeState->m_canceled2) {
-        readableStreamDefaultControllerEnqueue(globalObject, defaultControllerOf(teeState->m_branch2.get()), chunk2);
+    if (!teeState->m_canceled2 && controller2) {
+        readableStreamDefaultControllerEnqueue(globalObject, controller2, chunk2);
         RETURN_IF_EXCEPTION(scope, {});
     }
     teeState->m_reading = false;
@@ -1022,10 +1045,14 @@ static EncodedJSValue defaultTeeReaderClosedRejected(JSGlobalObject* globalObjec
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    readableStreamDefaultControllerError(globalObject, defaultControllerOf(teeState->m_branch1.get()), reason);
-    RETURN_IF_EXCEPTION(scope, {});
-    readableStreamDefaultControllerError(globalObject, defaultControllerOf(teeState->m_branch2.get()), reason);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get())) {
+        readableStreamDefaultControllerError(globalObject, controller1, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get())) {
+        readableStreamDefaultControllerError(globalObject, controller2, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     if (!teeState->m_canceled1 || !teeState->m_canceled2) {
         resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
@@ -1158,6 +1185,8 @@ static EncodedJSValue byteTeeChunkStepsMicrotask(JSGlobalObject* globalObject, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     teeState->m_readAgain1 = false;
     teeState->m_readAgain2 = false;
+    auto* controller1 = teeBranchByteController(teeState->m_branch1.get());
+    auto* controller2 = teeBranchByteController(teeState->m_branch2.get());
     auto* chunk1 = uncheckedDowncast<JSArrayBufferView>(chunk);
     JSArrayBufferView* chunk2 = chunk1;
     if (!teeState->m_canceled1 && !teeState->m_canceled2) {
@@ -1169,10 +1198,14 @@ static EncodedJSValue byteTeeChunkStepsMicrotask(JSGlobalObject* globalObject, J
                 JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
                 if (thrown.isEmpty())
                     return {};
-                readableByteStreamControllerError(globalObject, byteControllerOf(teeState->m_branch1.get()), thrown);
-                RETURN_IF_EXCEPTION(scope, {});
-                readableByteStreamControllerError(globalObject, byteControllerOf(teeState->m_branch2.get()), thrown);
-                RETURN_IF_EXCEPTION(scope, {});
+                if (controller1) {
+                    readableByteStreamControllerError(globalObject, controller1, thrown);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                if (controller2) {
+                    readableByteStreamControllerError(globalObject, controller2, thrown);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
                 auto* cancelResult = readableStreamCancel(globalObject, teeState->m_stream.get(), thrown);
                 RETURN_IF_EXCEPTION(scope, {});
                 resolvePromise(globalObject, teeState->m_cancelPromise.get(), cancelResult);
@@ -1182,12 +1215,12 @@ static EncodedJSValue byteTeeChunkStepsMicrotask(JSGlobalObject* globalObject, J
         }
         chunk2 = cloneResult;
     }
-    if (!teeState->m_canceled1) {
-        readableByteStreamControllerEnqueue(globalObject, byteControllerOf(teeState->m_branch1.get()), chunk1);
+    if (!teeState->m_canceled1 && controller1) {
+        readableByteStreamControllerEnqueue(globalObject, controller1, chunk1);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (!teeState->m_canceled2) {
-        readableByteStreamControllerEnqueue(globalObject, byteControllerOf(teeState->m_branch2.get()), chunk2);
+    if (!teeState->m_canceled2 && controller2) {
+        readableByteStreamControllerEnqueue(globalObject, controller2, chunk2);
         RETURN_IF_EXCEPTION(scope, {});
     }
     teeState->m_reading = false;
@@ -1214,6 +1247,8 @@ static EncodedJSValue byteTeeReadIntoChunkStepsMicrotask(JSGlobalObject* globalO
     teeState->m_readAgain2 = false;
     auto* byobBranch = forBranch2 ? teeState->m_branch2.get() : teeState->m_branch1.get();
     auto* otherBranch = forBranch2 ? teeState->m_branch1.get() : teeState->m_branch2.get();
+    auto* byobController = teeBranchByteController(byobBranch);
+    auto* otherController = teeBranchByteController(otherBranch);
     bool byobCanceled = forBranch2 ? teeState->m_canceled2 : teeState->m_canceled1;
     bool otherCanceled = forBranch2 ? teeState->m_canceled1 : teeState->m_canceled2;
 
@@ -1226,10 +1261,14 @@ static EncodedJSValue byteTeeReadIntoChunkStepsMicrotask(JSGlobalObject* globalO
                 JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
                 if (thrown.isEmpty())
                     return {};
-                readableByteStreamControllerError(globalObject, byteControllerOf(byobBranch), thrown);
-                RETURN_IF_EXCEPTION(scope, {});
-                readableByteStreamControllerError(globalObject, byteControllerOf(otherBranch), thrown);
-                RETURN_IF_EXCEPTION(scope, {});
+                if (byobController) {
+                    readableByteStreamControllerError(globalObject, byobController, thrown);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                if (otherController) {
+                    readableByteStreamControllerError(globalObject, otherController, thrown);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
                 auto* cancelResult = readableStreamCancel(globalObject, teeState->m_stream.get(), thrown);
                 RETURN_IF_EXCEPTION(scope, {});
                 resolvePromise(globalObject, teeState->m_cancelPromise.get(), cancelResult);
@@ -1237,14 +1276,16 @@ static EncodedJSValue byteTeeReadIntoChunkStepsMicrotask(JSGlobalObject* globalO
                 return JSValue::encode(jsUndefined());
             }
         }
-        if (!byobCanceled) {
-            readableByteStreamControllerRespondWithNewView(globalObject, byteControllerOf(byobBranch), chunk);
+        if (!byobCanceled && byobController) {
+            readableByteStreamControllerRespondWithNewView(globalObject, byobController, chunk);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        readableByteStreamControllerEnqueue(globalObject, byteControllerOf(otherBranch), clonedChunk);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else if (!byobCanceled) {
-        readableByteStreamControllerRespondWithNewView(globalObject, byteControllerOf(byobBranch), chunk);
+        if (otherController) {
+            readableByteStreamControllerEnqueue(globalObject, otherController, clonedChunk);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    } else if (!byobCanceled && byobController) {
+        readableByteStreamControllerRespondWithNewView(globalObject, byobController, chunk);
         RETURN_IF_EXCEPTION(scope, {});
     }
     teeState->m_reading = false;
@@ -1266,10 +1307,14 @@ static EncodedJSValue byteTeeReaderClosedRejected(JSGlobalObject* globalObject, 
     auto* teeState = uncheckedDowncast<JSStreamTeeState>(context->getInternalField(0));
     if (context->getInternalField(1) != teeState->m_reader.get())
         return JSValue::encode(jsUndefined());
-    readableByteStreamControllerError(globalObject, byteControllerOf(teeState->m_branch1.get()), reason);
-    RETURN_IF_EXCEPTION(scope, {});
-    readableByteStreamControllerError(globalObject, byteControllerOf(teeState->m_branch2.get()), reason);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* controller1 = teeBranchByteController(teeState->m_branch1.get())) {
+        readableByteStreamControllerError(globalObject, controller1, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (auto* controller2 = teeBranchByteController(teeState->m_branch2.get())) {
+        readableByteStreamControllerError(globalObject, controller2, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     if (!teeState->m_canceled1 || !teeState->m_canceled2) {
         resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});

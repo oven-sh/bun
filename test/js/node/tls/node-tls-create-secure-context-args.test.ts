@@ -41,9 +41,11 @@ describe("tls.createSecureContext key/cert/ca input types", () => {
       const received = await new Promise<string>((resolve, reject) => {
         const client = tls.connect({ port, host: "127.0.0.1", ca: asDataView(ca1), servername: "agent1" });
         let data = "";
+        let ended = false;
         client.on("data", chunk => (data += chunk));
-        client.on("end", () => resolve(data));
+        client.on("end", () => ((ended = true), resolve(data)));
         client.on("error", reject);
+        client.on("close", () => ended || reject(new Error("client closed before 'end'")));
       });
       expect(received).toBe("hello");
     } finally {

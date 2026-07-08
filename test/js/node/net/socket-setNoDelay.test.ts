@@ -145,4 +145,17 @@ describe.skipIf(isWindows)("net.Socket TCP_NODELAY kernel state", () => {
       await new Promise<void>(r => server.close(() => r()));
     }
   });
+
+  test.concurrent("http2 server.emit('connection', sock) sets TCP_NODELAY=1", async () => {
+    const h2server = http2.createServer();
+    try {
+      await withPair({}, {}, (_client, accepted) => {
+        expect(readNoDelay(accepted)).toBe(0);
+        h2server.emit("connection", accepted);
+        expect(readNoDelay(accepted)).toBe(1);
+      });
+    } finally {
+      h2server.close();
+    }
+  });
 });

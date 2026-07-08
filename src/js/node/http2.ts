@@ -5623,6 +5623,9 @@ function closeIdleHttp1Connections(server) {
 }
 
 function connectionListener(socket: Socket) {
+  // Node's setupHandle disables Nagle per session regardless of how the
+  // socket arrived (including server.emit('connection', sock)).
+  socket.setNoDelay?.();
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
     if (options.allowHTTP1 === true) {

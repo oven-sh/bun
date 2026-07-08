@@ -1588,11 +1588,14 @@ impl Value {
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
-        self.to_blob_if_possible();
-
+        // Tee a Locked body before any blob extraction: `to_blob_if_possible()`
+        // would `.done()` an already-materialized `.body` stream, leaving the
+        // user-visible cached stream empty instead of a live tee branch.
         if matches!(self, Value::Locked(_)) {
             return self.tee(global_this, readable);
         }
+
+        self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
             let owned = internal_blob.to_owned_slice();
@@ -1742,20 +1745,32 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared `'brk:` block of `clone_into` / `clone_value`: clone the body
-    /// [`Value`], teeing through the JS-side cached stream if one exists.
+    /// Shared body-clone for `clone_into` / `clone_value`: tee through the
+    /// JS-side cached stream when present, then repoint this owner's
+    /// `body`/`stream` cache slots at the fresh branch in `locked.readable`.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        let cloned = 'brk: {
+            if let Some(js_ref) = self.js_ref() {
+                if let Some(stream) = Self::stream_get_cached(js_ref) {
+                    let mut readable = ReadableStream::from_js(stream, global_this)?;
+                    if let Some(r) = readable.as_mut() {
+                        break 'brk self
+                            .get_body_value()
+                            .clone_with_readable_stream(global_this, Some(r))?;
+                    }
+                }
+            }
+            self.get_body_value().clone(global_this)?
+        };
         if let Some(js_ref) = self.js_ref() {
-            if let Some(stream) = Self::stream_get_cached(js_ref) {
-                let mut readable = ReadableStream::from_js(stream, global_this)?;
-                if let Some(r) = readable.as_mut() {
-                    return self
-                        .get_body_value()
-                        .clone_with_readable_stream(global_this, Some(r));
+            if let Value::Locked(locked) = self.get_body_value() {
+                if let Some(readable) = locked.readable.get(global_this) {
+                    Self::body_set_cached(js_ref, global_this, readable.value);
                 }
             }
         }
-        self.get_body_value().clone(global_this)
+        self.check_body_stream_ref(global_this);
+        Ok(cloned)
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

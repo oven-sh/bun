@@ -91,7 +91,6 @@ function traceServerRequestEnd() {
   traceEvents.emitEvent("e", kHttpTraceCat, "http.server.request");
 }
 
-const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
@@ -107,7 +106,6 @@ const MathFloor = Math.floor;
 let cluster;
 
 function emitCloseServer(self: Server) {
-  callCloseCallback(self);
   self.emit("close");
 }
 function emitCloseNTServer(this: Server) {
@@ -370,7 +368,7 @@ Server.prototype.closeAllConnections = function () {
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
 
-  server.stop(true);
+  server.stop(true).$then(emitCloseNTServer.bind(this));
 };
 
 Server.prototype.getConnections = function (callback) {
@@ -398,10 +396,12 @@ Server.prototype.close = function (optionalCallback?) {
     return;
   }
   this[serverSymbol] = undefined;
-  if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
+  if (typeof optionalCallback === "function") this.once("close", optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
-  server.stop();
+  // Attach the 'close' emission here so it inherits the closer's async context,
+  // matching Node.js (which schedules emitCloseNT from inside close()).
+  server.stop().$then(emitCloseNTServer.bind(this));
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ...args) {
@@ -901,7 +901,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // },
     });
 
-    getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     // always set strict method validation to true for node.js compatibility
     setServerCustomOptions(

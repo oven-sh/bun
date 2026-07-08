@@ -1239,7 +1239,7 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.body_value_mut().clone(global_this) {
+                                match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1288,11 +1288,10 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        let body_value = response.get_body_value();
-                        match body_value {
+                        match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match body_value.clone(global_this) {
+                                match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }

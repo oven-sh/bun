@@ -1014,6 +1014,31 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
   });
 });
 
+// The two-arg `new Request(src, init)` constructor tees the source body via a
+// separate path from single-arg / .clone(); with a user ReadableStream body
+// (migrated into the source wrapper's stream cache at construction) it must
+// consult that cache instead of teeing the now-empty native slot, or the
+// derived request's body is a branch of a disconnected stream and reads hang.
+test("new Request(src, init) with a user ReadableStream body: derived request's body carries the source's bytes", async () => {
+  const make = () =>
+    new Request("http://example.com/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      }),
+      // @ts-expect-error duplex
+      duplex: "half",
+    });
+
+  const twoArg = new Request(make(), { headers: { "x-a": "1" } });
+  const oneArg = new Request(make());
+  expect(new Uint8Array(await twoArg.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  expect(new Uint8Array(await oneArg.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+});
+
 test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {
   // The Response and its clones share one underlying body store. Consuming a clone
   // with a different Content-Type must not change (or invalidate) the type of a Blob

@@ -3869,13 +3869,10 @@ mod windows_impl {
             st.st_dev = volume_info.VolumeSerialNumber as u64;
         }
 
+        // libuv's `S_IFLNK` arm is gated on `do_lstat`, which is always 0 on
+        // the fstat path, so reparse points fall through to DIR-or-REG.
         let attrs = file_info.BasicInformation.FileAttributes;
-        if attrs & w::FILE_ATTRIBUTE_REPARSE_POINT != 0
-            && device_info.DeviceType == bun_windows_sys::FILE_DEVICE_CD_ROM
-        {
-            st.st_mode = S::IFLNK as u64;
-            st.st_size = 0;
-        } else if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+        if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
             st.st_mode = S::IFDIR as u64;
             st.st_size = 0;
         } else {

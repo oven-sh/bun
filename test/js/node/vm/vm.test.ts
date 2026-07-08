@@ -1178,11 +1178,10 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
   });
 });
 
-describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
+describe.concurrent("timeout enforces a wall-clock deadline against Atomics.wait", () => {
   // Run in a subprocess so an unfixed build, which would sit in the wait for
-  // the full 30 s, fails the test by exceeding the test-file timeout rather
-  // than hanging the runner.
-  const run = async (label: string, source: string) => {
+  // the full 30 s, fails by exceeding the per-test timeout.
+  const run = async (source: string) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", source],
       env: bunEnv,
@@ -1190,12 +1189,11 @@ describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { label, stdout: stdout.trim(), stderr, exitCode };
+    return { stdout: stdout.trim(), stderr, exitCode };
   };
 
   test("a single Atomics.wait spanning the deadline is interrupted", async () => {
     const { stdout, exitCode } = await run(
-      "single",
       `
       const vm = require("node:vm");
       const ia = new Int32Array(new SharedArrayBuffer(8));
@@ -1216,7 +1214,6 @@ describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
 
   test("chunked short waits are bounded by the wall-clock deadline", async () => {
     const { stdout, exitCode } = await run(
-      "chunked",
       `
       const vm = require("node:vm");
       const ia = new Int32Array(new SharedArrayBuffer(8));
@@ -1227,8 +1224,7 @@ describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
       } catch (e) { threw = e; }
       const dt = Date.now() - t0;
       if (!threw || threw.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") { console.log("bad result " + dt + "ms"); process.exit(1); }
-      // Before the fix this took ~150x the budget (many seconds); anything
-      // under 3 s is a pass for the wall-clock watchdog.
+      // Before the fix this took ~150x the budget; anything under 3 s passes.
       if (dt >= 3000) { console.log("late " + dt + "ms"); process.exit(1); }
       console.log("ok");
       `,
@@ -1238,11 +1234,15 @@ describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
 
   test("the next timed evaluation runs cleanly after a blocked deadline", async () => {
     const { stdout, exitCode } = await run(
-      "next",
       `
       const vm = require("node:vm");
       const ia = new Int32Array(new SharedArrayBuffer(8));
-      try { vm.runInNewContext("Atomics.wait(ia, 0, 0, 600)", { ia }, { timeout: 60 }); } catch {}
+      let first = null;
+      try { vm.runInNewContext("Atomics.wait(ia, 0, 0, 600)", { ia }, { timeout: 60 }); }
+      catch (e) { first = e; }
+      if (!first || first.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") {
+        console.log("precondition: " + (first && first.code)); process.exit(1);
+      }
       // On an assert-enabled build this call previously aborted with
       // ASSERTION FAILED: hasTimeLimit() in JSC::Watchdog::startTimer.
       const v = vm.runInNewContext("6 * 7", {}, { timeout: 5000 });
@@ -1252,12 +1252,12 @@ describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "ok 42", exitCode: 0 });
   });
 
-  test("runInThisContext enforces the deadline against Atomics.wait", async () => {
+  test("runInThisContext enforces the deadline and keeps caller microtasks", async () => {
     const { stdout, exitCode } = await run(
-      "thisContext",
       `
       const vm = require("node:vm");
       globalThis.ia = new Int32Array(new SharedArrayBuffer(8));
+      queueMicrotask(() => console.log("microtask"));
       let threw = null;
       try {
         vm.runInThisContext("Atomics.wait(ia, 0, 0, 30000)", { timeout: 100 });
@@ -1265,6 +1265,6 @@ describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
       console.log(threw && threw.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" ? "ok" : "fail");
       `,
     );
-    expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok\nmicrotask", exitCode: 0 });
   });
 });

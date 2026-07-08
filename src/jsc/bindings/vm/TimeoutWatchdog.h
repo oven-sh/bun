@@ -8,10 +8,9 @@
 
 namespace Bun {
 
-// Wall-clock watchdog for node:vm's `timeout` option. On fire it requests VM
-// termination and wakes a blocked Atomics.wait so the guest cannot sit out the
-// deadline in a futex. The destructor joins the worker thread, so the watchdog
-// is always armed on the stack bracketing JSC::evaluate.
+// Wall-clock watchdog for node:vm's `timeout`. On fire it requests VM
+// termination and wakes a blocked Atomics.wait; the destructor joins the
+// worker, so instances are stack-allocated bracketing JSC::evaluate.
 class TimeoutWatchdog {
     WTF_MAKE_NONCOPYABLE(TimeoutWatchdog);
 
@@ -22,9 +21,8 @@ public:
     void disarm();
     bool didFire() const { return m_fired.load(std::memory_order_acquire); }
 
-    // Clears the VM's termination state (request flag + trap bits + pending
-    // exception) that this watchdog installed when it fired. Call from the
-    // mutator thread after evaluate returns.
+    // Clears request flag, trap bits, and pending termination exception.
+    // Call from the mutator thread after evaluate returns.
     static void clearTerminationState(JSC::VM&);
 
 private:

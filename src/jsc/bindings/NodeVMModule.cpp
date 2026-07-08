@@ -241,7 +241,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (getSigintReceived() || didTimeOut) {
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
+        if (nodeVmGlobalObject)
+            vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         TimeoutWatchdog::clearTerminationState(vm);
         if (getSigintReceived()) {
             setSigintReceived(false);

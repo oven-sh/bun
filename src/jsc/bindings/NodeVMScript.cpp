@@ -286,13 +286,16 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
 {
     bool sigint = script->getSigintReceived();
     if (!sigint && !didTimeOut) {
-        // A termination that this scope did not initiate (an enclosing
-        // node:vm timeout, or worker termination) propagates unchanged so the
-        // outer scope can translate it with its own timeout value.
+        // A termination this scope did not initiate (an enclosing timeout or
+        // worker termination) propagates unchanged so the outer scope can
+        // translate it with its own timeout value.
         return false;
     }
 
-    vm.drainMicrotasksForGlobalObject(globalObject);
+    // Discard microtasks the terminated sandbox queued on the default queue;
+    // skip for runInThisContext so the caller's own jobs survive.
+    if (dynamicDowncast<NodeVMGlobalObject>(globalObject))
+        vm.drainMicrotasksForGlobalObject(globalObject);
     TimeoutWatchdog::clearTerminationState(vm);
     if (sigint) {
         script->setSigintReceived(false);

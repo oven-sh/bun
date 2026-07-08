@@ -71,6 +71,10 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
+/* Reports "Bun ran out of memory" through the crash handler and aborts. For
+ * allocations this library has no way to fail gracefully from. */
+extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
@@ -197,6 +201,7 @@ void us_internal_socket_after_open(us_socket_r s, int error);
 void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
+void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */

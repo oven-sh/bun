@@ -1,4 +1,13 @@
-import { zstdCompress, zstdCompressSync, zstdDecompress, zstdDecompressSync } from "bun";
+import {
+  deflateSync,
+  gunzipSync,
+  gzipSync,
+  inflateSync,
+  zstdCompress,
+  zstdCompressSync,
+  zstdDecompress,
+  zstdDecompressSync,
+} from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import path from "path";
 
@@ -240,6 +249,84 @@ describe("Zstandard compression", async () => {
       }
     });
   }
+});
+
+describe("sync compression argument handling", () => {
+  it("zstdCompressSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = zstdCompressSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 3;
+      },
+    });
+    expect(zstdDecompressSync(compressed).byteLength).toBe(0);
+  });
+
+  it("zstdCompressSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      zstdCompressSync(42 as any, {
+        get level() {
+          throw new Error("level option was read");
+        },
+      }),
+    ).toThrow("level option was read");
+  });
+
+  it("gzipSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = gzipSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 6;
+      },
+    });
+    expect(gunzipSync(compressed).byteLength).toBe(0);
+  });
+
+  it("deflateSync evaluates the options object before capturing the input", () => {
+    const input = new Uint8Array(64).fill(97);
+    const compressed = deflateSync(input, {
+      get level() {
+        input.buffer.transfer();
+        return 6;
+      },
+    });
+    expect(inflateSync(compressed).byteLength).toBe(0);
+  });
+
+  it("gunzipSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      gunzipSync(42 as any, {
+        get windowBits() {
+          throw new Error("windowBits option was read");
+        },
+      }),
+    ).toThrow("windowBits option was read");
+  });
+
+  it("inflateSync evaluates the options object before validating the input", () => {
+    expect(() =>
+      inflateSync(42 as any, {
+        get windowBits() {
+          throw new Error("windowBits option was read");
+        },
+      }),
+    ).toThrow("windowBits option was read");
+  });
+
+  // An empty result must not register a GC-time deallocator: the backing Vec is
+  // empty, so its pointer is dangling and freeing it at collection is an invalid
+  // free (aborts under ASAN/debug allocators).
+  it("collecting empty decompression results does not free a dangling pointer", () => {
+    const empty = new Uint8Array(0);
+    for (let i = 0; i < 10; i++) {
+      expect(gunzipSync(gzipSync(empty)).byteLength).toBe(0);
+      expect(inflateSync(deflateSync(empty)).byteLength).toBe(0);
+      expect(zstdDecompressSync(zstdCompressSync(empty)).byteLength).toBe(0);
+      Bun.gc(true);
+    }
+  });
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

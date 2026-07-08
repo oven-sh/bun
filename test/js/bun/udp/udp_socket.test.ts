@@ -409,6 +409,55 @@ describe("udpSocket()", () => {
     }
   });
 
+  // The on_data callback receives a recvmmsg batch and iterates it. If the
+  // user's data handler closes the socket, the remaining packets in that
+  // batch must not be dispatched — matches libuv's per-datagram handle
+  // recheck (node:dgram relies on this for close() semantics).
+  test("close() from inside the data handler stops the rest of the recvmmsg batch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const trace = [];
+        const server = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            data(socket, buf) {
+              trace.push("data:" + socket.closed);
+              if (trace.length === 1) socket.close();
+            },
+          },
+        });
+        const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
+        const payload = [];
+        for (let i = 0; i < 32; i++) payload.push("x", server.port, "127.0.0.1");
+        // One sendmmsg syscall: on loopback the whole burst lands in the
+        // kernel recv queue before the event loop polls, so recvmmsg yields a
+        // multi-packet batch and on_data iterates more than once.
+        client.sendMany(payload);
+        // Let the event loop drain any additional recvmmsg rounds.
+        for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
+        client.close();
+        console.log(JSON.stringify(trace));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderr).toBe("");
+    // Exactly one data event, observed while the socket was still open.
+    expect(stdout.trim()).toBe('["data:false"]');
+    expect(exitCode).toBe(0);
+  });
+
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can
   // connect or disconnect the socket; sendMany must snapshot the connection

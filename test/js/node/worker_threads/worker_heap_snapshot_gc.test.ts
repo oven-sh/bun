@@ -23,17 +23,24 @@ test(
     const iters = isDebug ? "5" : slow ? "100" : "300";
     const fixture = join(import.meta.dir, "heap-snapshot-gc-race-fixture.js");
 
-    for (let i = 0; i < attempts; i++) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture],
-        env: { ...bunEnv, ITERS: iters },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // One assertion so a crash shows stdout/stderr/signal together.
-      expect({ attempt: i, stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        attempt: i,
+    // The attempts are independent processes with no shared state, so run them
+    // all concurrently; the race being guarded is intra-process.
+    const results = await Promise.all(
+      Array.from({ length: attempts }, async (_, i) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), fixture],
+          env: { ...bunEnv, ITERS: iters },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { attempt: i, stdout, stderr, exitCode, signalCode: proc.signalCode };
+      }),
+    );
+    for (const result of results) {
+      // One assertion per attempt so a crash shows stdout/stderr/signal together.
+      expect(result).toEqual({
+        attempt: result.attempt,
         stdout: "ok\n",
         stderr: "",
         exitCode: 0,

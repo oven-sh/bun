@@ -157,9 +157,11 @@ extern "C" fn on_data(
 
     let mut i: c_int = 0;
     while i < packets {
-        // A prior iteration's callback may have closed this socket or left a
-        // TerminationException pending; stop the batch so no 'data' fires
-        // after 'close' and no JS call is entered with a pending exception.
+        // A prior iteration's callback (or its error handler) may have closed
+        // this socket or left a TerminationException pending; stop dispatching
+        // the rest of the recvmmsg batch so no 'data' fires after 'close' and
+        // no JS call is entered with a pending exception. Matches libuv's
+        // per-datagram recheck.
         if udp_socket.closed.get() || global_this.has_exception() {
             break;
         }

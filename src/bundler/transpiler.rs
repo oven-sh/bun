@@ -834,13 +834,6 @@ pub enum AlreadyBundled {
 }
 
 impl AlreadyBundled {
-    pub fn bytecode_slice(&self) -> &[u8] {
-        match self {
-            AlreadyBundled::Bytecode(slice) | AlreadyBundled::BytecodeCjs(slice) => slice,
-            _ => &[],
-        }
-    }
-
     pub fn is_bytecode(&self) -> bool {
         matches!(
             self,

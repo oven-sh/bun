@@ -28,12 +28,12 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
     ```txt
     ✓ Select a project template: Blank
 
-    - .gitignore
-    - CLAUDE.md
-    - .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
-    - index.ts
-    - tsconfig.json (for editor autocomplete)
-    - README.md
+    + .gitignore
+    + CLAUDE.md
+    + .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
+    + index.ts
+    + tsconfig.json (for editor autocomplete)
+    + README.md
     ```
 
     The new `my-app` directory contains a basic Bun app.
@@ -73,7 +73,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
     bun run index.ts
     ```
     ```txt
-    Listening on http://localhost:3000
+    Listening on http://localhost:3000/
     ```
 
     Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see a page that says `"Bun!"`.
@@ -142,7 +142,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
     bun run index.ts
     ```
     ```txt
-    Listening on http://localhost:3000
+    Listening on http://localhost:3000/
     ```
 
     Visit [`http://localhost:3000/figlet`](http://localhost:3000/figlet) to test the server. You should see a page that says `"Bun!"` in ASCII art.
@@ -200,7 +200,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
     bun run index.ts
     ```
     ```txt
-    Listening on http://localhost:3000
+    Listening on http://localhost:3000/
     ```
 
     Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see the static HTML page.
@@ -220,7 +220,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 {/* prettier-ignore */}
 ```json package.json icon="file-json"
 {
-  "name": "quickstart",
+  "name": "my-app",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -231,7 +231,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^6"
   }
 }
 ```
@@ -243,7 +243,7 @@ bun run start
 ```
 
 ```txt
-Listening on http://localhost:3000
+Listening on http://localhost:3000/
 ```
 
 <Note>⚡️ **Performance** — `bun run` is roughly 28x faster than `npm run` (6ms vs 170ms of overhead).</Note>

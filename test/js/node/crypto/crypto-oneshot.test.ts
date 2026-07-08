@@ -86,3 +86,31 @@ describe("crypto.hash", () => {
     });
   });
 });
+
+describe("crypto.verify", () => {
+  test("uses the signature bytes provided at call time", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const data = Buffer.from("data to sign");
+    const signature = crypto.sign("sha256", data, privateKey);
+    expect(crypto.verify("sha256", data, publicKey, signature)).toBe(true);
+
+    const publicPem = publicKey.export({ type: "spki", format: "pem" });
+    let passphraseReads = 0;
+    const verified = crypto.verify(
+      "sha256",
+      data,
+      {
+        key: publicPem,
+        format: "pem",
+        get passphrase() {
+          passphraseReads++;
+          signature.fill(0);
+          return undefined;
+        },
+      },
+      signature,
+    );
+    expect(passphraseReads).toBe(1);
+    expect(verified).toBe(true);
+  });
+});

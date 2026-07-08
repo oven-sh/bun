@@ -472,6 +472,10 @@ mod _impl {
         }
 
         pub fn reset(&mut self) -> Error {
+            // Node's `Brotli{Encoder,Decoder}Context::ResetStream()` calls
+            // `Init()` with the default (empty) dictionary, so the attached
+            // dictionary is dropped on reset. Unlike zlib, this is Node's
+            // actual behaviour; match it.
             self.deinit_state();
             self.init(None)
         }

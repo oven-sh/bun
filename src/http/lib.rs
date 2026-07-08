@@ -4435,6 +4435,12 @@ impl<'a> HTTPClient<'a> {
             BodySize::Unknown
         };
 
+        // A followed redirect's intermediate head was only cloned to drive
+        // do_redirect(); on failure it must not surface as the final Response.
+        if self.state.flags.is_redirect_pending && self.state.fail.is_some() {
+            self.state.cloned_metadata = None;
+        }
+
         let mut certificate_info: Option<CertificateInfo> = None;
         if let Some(info) = self.state.certificate_info.take() {
             // transfer owner ship of the certificate info here

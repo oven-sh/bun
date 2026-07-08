@@ -610,6 +610,46 @@ describe("otp", () => {
     expect(response.status).toBe(401);
     expect(((await response.json()) as { error: string }).error).toBe(OTP_REQUIRED_MESSAGE);
   });
+
+  test("the challenge covers every destructive write, not just publish", async () => {
+    // registry.npmjs.org 401-challenges the second factor on every
+    // write to a 2FA-protected package (publish, unpublish, deprecate);
+    // the library's own authorizeOtp docstring says it "enforces the
+    // second factor for a write". The -rev routes are writes.
+    await using registry = await new NpmRegistry().start();
+    registry.define("p", { "1.0.0": {}, "2.0.0": {} });
+    const token = registry.addUser({ name: "two-fa", password: "pw", otp: "123456" });
+    const headers = (otp?: string) => ({
+      "authorization": `Bearer ${token}`,
+      "content-type": "application/json",
+      ...(otp !== undefined ? { "npm-otp": otp } : {}),
+    });
+
+    const versions = async () => Object.keys((await registry.packument("p"))?.versions ?? {}).sort();
+
+    // DELETE /:name/-rev/:rev — unpublish the whole package.
+    const unpublish = await fetch(`${registry.url}p/-rev/1-x`, { method: "DELETE", headers: headers() });
+    expect(unpublish.status).toBe(401);
+    expect(unpublish.headers.get("www-authenticate")).toBe("OTP");
+    expect(await versions()).toEqual(["1.0.0", "2.0.0"]);
+
+    // PUT /:name/-rev/:rev — drop one version (npm unpublish pkg@v).
+    const body = JSON.stringify({ name: "p", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": {} } });
+    const drop = await fetch(`${registry.url}p/-rev/1-x`, { method: "PUT", headers: headers(), body });
+    expect(drop.status).toBe(401);
+    expect(drop.headers.get("www-authenticate")).toBe("OTP");
+    expect(await versions()).toEqual(["1.0.0", "2.0.0"]);
+
+    // Both succeed with the OTP: the state change happens now, not above.
+    expect((await fetch(`${registry.url}p/-rev/1-x`, { method: "PUT", headers: headers("123456"), body })).status).toBe(
+      201,
+    );
+    expect(await versions()).toEqual(["1.0.0"]);
+    expect(
+      (await fetch(`${registry.url}p/-rev/1-x`, { method: "DELETE", headers: headers("123456") })).status,
+    ).toBe(200);
+    expect(await versions()).toEqual([]);
+  });
 });
 
 describe("fixtures", () => {

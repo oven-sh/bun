@@ -540,11 +540,21 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
     return this.#publish(req, `${name}/${versionOrTag}`);
   }
 
-  async #publish(req: RouteRequest, name: string): Promise<Response> {
+  /**
+   * Guards every destructive write (publish, unpublish, deprecate):
+   * first the access rule, then the second factor for a 2FA-enabled
+   * user. Shared so the write handlers cannot drift apart.
+   */
+  #denyWrite(req: RouteRequest, name: string): Response | undefined {
     const auth = this.#auth(req);
-    const denied =
+    return (
       this.users.authorizeWrite(name, auth) ??
-      this.users.authorizeOtp(req, auth, this.otpChallenge, otp => this.#newOtpSession(otp));
+      this.users.authorizeOtp(req, auth, this.otpChallenge, otp => this.#newOtpSession(otp))
+    );
+  }
+
+  async #publish(req: RouteRequest, name: string): Promise<Response> {
+    const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
 
     let body: PublishBody;
@@ -570,7 +580,7 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   }
 
   async #replaceVersions(req: RouteRequest, name: string): Promise<Response> {
-    const denied = this.users.authorizeWrite(name, this.#auth(req));
+    const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
     if (this.#resolve(name) === undefined) return packageNotFound(name);
     let body: PublishBody;
@@ -596,7 +606,7 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   }
 
   async #unpublishAll(req: RouteRequest, name: string): Promise<Response> {
-    const denied = this.users.authorizeWrite(name, this.#auth(req));
+    const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
     if (this.#resolve(name) === undefined) return packageNotFound(name);
     this.remove(name);
@@ -605,9 +615,10 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
 
   /**
    * `DELETE /:name/-/:file/-rev/:rev`: the last step of an unpublish.
-   * The version was already removed by the `-rev` PUT; this is the
-   * client asking the registry to delete the now-orphaned object, so
-   * there is nothing left to do but agree.
+   * The version was already removed by the (OTP-gated) `-rev` PUT;
+   * this is the client asking the registry to delete the now-orphaned
+   * object, so there is nothing left to authorize beyond the write
+   * rule itself.
    */
   async #removeTarball(req: RouteRequest): Promise<Response> {
     const { scope, name: bare } = req.params as { scope?: string; name: string };

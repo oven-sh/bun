@@ -165,6 +165,17 @@ static EncodedJSValue throwNodeState(JSGlobalObject* globalObject, ThrowScope& s
     return {};
 }
 
+// Node.js installs these getters via InstanceTemplate()->SetAccessorProperty
+// (DontDelete), so they are OWN properties — Object.keys(db) lists them and
+// {...db} copies them. Install in each finishCreation rather than on the
+// prototype; subsequent instances follow the cached structure transitions.
+static ALWAYS_INLINE void putNodeInstanceGetter(VM& vm, JSObject* target, ASCIILiteral name, JSC::GetValueFunc getter)
+{
+    target->putDirectCustomAccessor(vm, Identifier::fromString(vm, name),
+        CustomGetterSetter::create(vm, getter, nullptr),
+        PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete);
+}
+
 #define REQUIRE_DB_OPEN(db)                                                       \
     do {                                                                          \
         if ((db)->connection() == nullptr) {                                      \
@@ -776,10 +787,17 @@ JSDatabaseSync* JSDatabaseSync::create(VM& vm, Structure* structure, WTF::String
     return ptr;
 }
 
+JSC_DECLARE_CUSTOM_GETTER(jsDatabaseSyncIsOpen);
+JSC_DECLARE_CUSTOM_GETTER(jsDatabaseSyncIsTransaction);
+JSC_DECLARE_CUSTOM_GETTER(jsDatabaseSyncLimits);
+
 void JSDatabaseSync::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    putNodeInstanceGetter(vm, this, "isOpen"_s, jsDatabaseSyncIsOpen);
+    putNodeInstanceGetter(vm, this, "isTransaction"_s, jsDatabaseSyncIsTransaction);
+    putNodeInstanceGetter(vm, this, "limits"_s, jsDatabaseSyncLimits);
 }
 
 // DatabaseSync handles are GC cells and the VM is not destructed on a normal
@@ -1123,9 +1141,6 @@ JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncSerialize);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDeserialize);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDispose);
-JSC_DECLARE_CUSTOM_GETTER(jsDatabaseSyncIsOpen);
-JSC_DECLARE_CUSTOM_GETTER(jsDatabaseSyncIsTransaction);
-JSC_DECLARE_CUSTOM_GETTER(jsDatabaseSyncLimits);
 
 #define THIS_DATABASE()                                                                                                     \
     auto& vm = JSC::getVM(globalObject);                                                                                    \
@@ -2079,9 +2094,6 @@ static const HashTableValue JSDatabaseSyncPrototypeTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDatabaseSyncSerialize, 0 } },
     { "deserialize"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDatabaseSyncDeserialize, 1 } },
     { "createTagStore"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDatabaseSyncCreateTagStore, 0 } },
-    { "isOpen"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDatabaseSyncIsOpen, nullptr } },
-    { "isTransaction"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDatabaseSyncIsTransaction, nullptr } },
-    { "limits"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDatabaseSyncLimits, nullptr } },
 };
 
 void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
@@ -2298,10 +2310,15 @@ JSStatementSync* JSStatementSync::create(VM& vm, Structure* structure, JSDatabas
     return ptr;
 }
 
+JSC_DECLARE_CUSTOM_GETTER(jsStatementSyncSourceSQL);
+JSC_DECLARE_CUSTOM_GETTER(jsStatementSyncExpandedSQL);
+
 void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* stmt)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    putNodeInstanceGetter(vm, this, "sourceSQL"_s, jsStatementSyncSourceSQL);
+    putNodeInstanceGetter(vm, this, "expandedSQL"_s, jsStatementSyncExpandedSQL);
     m_stmt = stmt;
     m_originGeneration = db->openGeneration();
     m_database.set(vm, this, db);
@@ -2614,8 +2631,6 @@ JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetReadBigInts);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetReturnArrays);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowBareNamedParameters);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowUnknownNamedParameters);
-JSC_DECLARE_CUSTOM_GETTER(jsStatementSyncSourceSQL);
-JSC_DECLARE_CUSTOM_GETTER(jsStatementSyncExpandedSQL);
 
 #define THIS_STATEMENT()                                                                                                     \
     auto& vm = JSC::getVM(globalObject);                                                                                     \
@@ -2866,8 +2881,6 @@ static const HashTableValue JSStatementSyncPrototypeTableValues[] = {
     { "setReturnArrays"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatementSyncSetReturnArrays, 1 } },
     { "setAllowBareNamedParameters"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatementSyncSetAllowBareNamedParameters, 1 } },
     { "setAllowUnknownNamedParameters"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatementSyncSetAllowUnknownNamedParameters, 1 } },
-    { "sourceSQL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStatementSyncSourceSQL, nullptr } },
-    { "expandedSQL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStatementSyncExpandedSQL, nullptr } },
 };
 
 void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
@@ -3381,10 +3394,17 @@ JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure,
     return ptr;
 }
 
+JSC_DECLARE_CUSTOM_GETTER(jsTagStoreCapacity);
+JSC_DECLARE_CUSTOM_GETTER(jsTagStoreDb);
+JSC_DECLARE_CUSTOM_GETTER(jsTagStoreSize);
+
 void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, unsigned capacity)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    putNodeInstanceGetter(vm, this, "capacity"_s, jsTagStoreCapacity);
+    putNodeInstanceGetter(vm, this, "db"_s, jsTagStoreDb);
+    putNodeInstanceGetter(vm, this, "size"_s, jsTagStoreSize);
     m_database.set(vm, this, db);
     m_capacity = capacity;
 }
@@ -3651,9 +3671,6 @@ static const HashTableValue JSNodeSqliteTagStorePrototypeTableValues[] = {
     { "all"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTagStoreAll, 0 } },
     { "iterate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTagStoreIterate, 0 } },
     { "clear"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTagStoreClear, 0 } },
-    { "capacity"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTagStoreCapacity, nullptr } },
-    { "size"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTagStoreSize, nullptr } },
-    { "db"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTagStoreDb, nullptr } },
 };
 
 void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)

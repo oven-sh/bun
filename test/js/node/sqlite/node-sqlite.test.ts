@@ -189,6 +189,28 @@ describe("DatabaseSync", () => {
     expect(() => new StatementSync()).toThrow(/Illegal constructor/);
   });
 
+  test("isOpen/isTransaction/limits/sourceSQL/expandedSQL are own accessor properties", () => {
+    // Node installs these via InstanceTemplate()->SetAccessorProperty
+    // (DontDelete), so Object.keys() lists them and {...obj} copies them.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x)");
+    const stmt = db.prepare("SELECT 1");
+    const tag = db.createTagStore();
+    expect(Object.keys(db)).toEqual(["isOpen", "isTransaction", "limits"]);
+    expect(Object.keys(stmt)).toEqual(["sourceSQL", "expandedSQL"]);
+    expect(Object.keys(tag)).toEqual(["capacity", "db", "size"]);
+    const desc = Object.getOwnPropertyDescriptor(db, "isOpen")!;
+    expect({ hasGet: typeof desc.get, set: desc.set, enumerable: desc.enumerable, configurable: desc.configurable }).toEqual({
+      hasGet: "function",
+      set: undefined,
+      enumerable: true,
+      configurable: false,
+    });
+    expect(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(db), "isOpen")).toBeUndefined();
+    expect(Object.keys({ ...db })).toEqual(["isOpen", "isTransaction", "limits"]);
+    db.close();
+  });
+
   test("an Array first argument is treated as a named-parameter object", () => {
     // Node's test is IsObject() && !IsArrayBufferView(); Arrays are not
     // special-cased. Their own-enumerable keys ("0", "1", …) go through the

@@ -145,9 +145,16 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
             return nullptr;
         break;
     case NamedCurve::X25519:
+        if (keyData.kty != "OKP"_s)
+            return nullptr;
         if (keyData.crv != "X25519"_s)
             return nullptr;
-        // FIXME: Add further checks.
+        if (usages && !keyData.use.isEmpty() && keyData.use != "enc"_s)
+            return nullptr;
+        if (keyData.key_ops && ((keyData.usages & usages) != usages))
+            return nullptr;
+        if (keyData.ext && !keyData.ext.value() && extractable)
+            return nullptr;
         break;
     }
 

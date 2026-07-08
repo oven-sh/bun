@@ -57,6 +57,7 @@ pub(crate) fn postgres_error_to_js(
     let code: &'static [u8] = match err {
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
         ConnectionFailed => b"ERR_POSTGRES_CONNECTION_FAILED",
+        ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
         ExpectedRequest => b"ERR_POSTGRES_EXPECTED_REQUEST",
         ExpectedStatement => b"ERR_POSTGRES_EXPECTED_STATEMENT",
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",

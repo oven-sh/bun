@@ -15,7 +15,7 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;
 use bun_threading::Mutex;
 
-use super::path_watcher::EventType;
+use super::node_fs_watcher::WatchEventKind;
 // The callbacks are *associated functions* on `FSWatcher`, not free fns.
 use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
@@ -153,7 +153,7 @@ pub struct PathWatcher {
 #[derive(Clone, Copy)]
 pub(crate) struct ChangeEvent {
     hash: bun_watcher::HashType,
-    event_type: EventType,
+    event_type: WatchEventKind,
     timestamp: u64,
 }
 
@@ -161,7 +161,7 @@ impl Default for ChangeEvent {
     fn default() -> Self {
         Self {
             hash: 0,
-            event_type: EventType::Change,
+            event_type: WatchEventKind::Change,
             timestamp: 0,
         }
     }
@@ -172,12 +172,14 @@ impl ChangeEvent {
         &mut self,
         hash: bun_watcher::HashType,
         timestamp: u64,
-        event_type: EventType,
+        event_type: WatchEventKind,
     ) -> bool {
         let time_diff = timestamp.saturating_sub(self.timestamp);
-        // skip consecutive duplicates
-        if (self.timestamp == 0 || time_diff > 1)
-            || (self.event_type != event_type && self.hash != hash)
+        // skip consecutive exact duplicates (same path and event type) only
+        if self.timestamp == 0
+            || time_diff > 1
+            || self.event_type != event_type
+            || self.hash != hash
         {
             self.timestamp = timestamp;
             self.event_type = event_type;
@@ -232,31 +234,32 @@ impl PathWatcher {
             return;
         }
 
-        let Some(path) = (if filename.is_null() {
-            None
+        let event_type = if events & uv::UV_RENAME != 0 {
+            WatchEventKind::Rename
         } else {
-            // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-            Some(ZStr::from_cstr(unsafe {
-                core::ffi::CStr::from_ptr(filename)
-            }))
-        }) else {
-            return;
+            WatchEventKind::Change
         };
+
+        if filename.is_null() {
+            // ReadDirectoryChangesW overflowed and changes were lost (always
+            // UV_CHANGE), or libuv could not convert the name to UTF-8.
+            // Forward `(event, null)` to every handler like node, unsuppressed.
+            this.emit_in_progress = true;
+            for &ctx in this.handlers.keys() {
+                on_path_update_fn(Some(ctx), Event::NoFilename(event_type), false);
+                on_update_end_fn(Some(ctx));
+            }
+            this.emit_in_progress = false;
+            this.maybe_deinit();
+            return;
+        }
+        // SAFETY: libuv passes a valid NUL-terminated string when non-null.
+        let path = ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(filename) });
 
         // Intentional wrap to bun_watcher::HashType
         let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !this.handle.is_dir();
-        this.emit(
-            path.as_bytes(),
-            hash,
-            timestamp,
-            is_file,
-            if events & uv::UV_RENAME != 0 {
-                EventType::Rename
-            } else {
-                EventType::Change
-            },
-        );
+        this.emit(path.as_bytes(), hash, timestamp, is_file, event_type);
     }
 
     pub(crate) fn emit(
@@ -265,7 +268,7 @@ impl PathWatcher {
         hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
-        event_type: EventType,
+        event_type: WatchEventKind,
     ) {
         self.emit_in_progress = true;
         #[cfg(debug_assertions)]

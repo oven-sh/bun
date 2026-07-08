@@ -373,10 +373,10 @@ macro_rules! mark_binding {
     };
     ($fn_name:expr) => {
         // Opt-in via BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
-        // `debug_assertions` (== `Environment::ENABLE_LOGS`) — never on a Cargo
+        // `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) — never on a Cargo
         // feature, since `cfg!(feature = ..)` is resolved against the *calling*
         // crate and would warn (or silently no-op) in crates without it.
-        if cfg!(debug_assertions) && $crate::Global::JSC_SCOPE.is_visible() {
+        if $crate::env::IS_DEBUG && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(::core::format_args!(
                 "[JSC] {} ({}:{})\n",
                 $fn_name,
@@ -403,7 +403,7 @@ pub mod debug_flags {
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(str_, bp) {
+            if crate::strings::includes(str_, bp) {
                 return true;
             }
         }
@@ -414,8 +414,7 @@ pub mod debug_flags {
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(pretty, bp) || crate::strings_impl::includes(text, bp)
-            {
+            if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
                 return true;
             }
         }
@@ -430,7 +429,7 @@ pub mod debug_flags {
 
 /// Does not have the canary tag, because it is exposed in `Bun.version`
 /// "1.0.0" or "1.0.0-debug"
-pub const package_json_version: &str = if cfg!(debug_assertions) {
+pub const package_json_version: &str = if env::IS_DEBUG {
     concatcp!(version_string, "-debug")
 } else {
     version_string
@@ -442,7 +441,7 @@ pub const package_json_version_nl: &str = concatcp!(package_json_version, "\n");
 
 /// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
 /// like "1.0.0-canary.12"
-pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
+pub const package_json_version_with_canary: &str = if env::IS_DEBUG {
     concatcp!(version_string, "-debug")
 } else if env::IS_CANARY {
     formatcp!("{}-canary.{}", version_string, env::CANARY_REVISION)
@@ -453,7 +452,7 @@ pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
 /// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
     package_json_version
-} else if cfg!(debug_assertions) {
+} else if env::IS_DEBUG {
     formatcp!("{} ({})", version_string, env::GIT_SHA_SHORT)
 } else if env::IS_CANARY {
     formatcp!(
@@ -470,7 +469,7 @@ pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
 /// "1.0.0+abcdefghi" or "1.0.0-canary.12+abcdefghi"
 pub const package_json_version_with_revision: &str = if env::GIT_SHA.is_empty() {
     package_json_version
-} else if cfg!(debug_assertions) {
+} else if env::IS_DEBUG {
     formatcp!("{}-debug+{}", version_string, env::GIT_SHA_SHORT)
 } else if env::IS_CANARY {
     formatcp!(

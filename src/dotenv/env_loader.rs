@@ -1395,44 +1395,44 @@ impl Map {
         })
     }
 
-    /// Write the Windows environment block into a buffer
-    /// This can be passed to CreateProcessW's lpEnvironment parameter
-    pub fn write_windows_env_block(
-        &mut self,
-        result: &mut [u16; 32767],
-    ) -> Result<*const u16, bun_core::Error> {
-        let mut i: usize = 0;
-        let mut it = self.map.iterator();
-        while let Some(pair) = it.next() {
-            if i + pair.key_ptr.len() + 7 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+    /// Build a heap-allocated Windows environment block suitable for
+    /// `CreateProcessW`'s `lpEnvironment` with `CREATE_UNICODE_ENVIRONMENT`.
+    ///
+    /// The 32,767-character limit applies to `CreateProcessA` (ANSI) only; the
+    /// Unicode block has no documented size limit, so this sizes the buffer to
+    /// the actual contents instead of failing when the environment is large.
+    pub fn write_windows_env_block(&mut self) -> Vec<u16> {
+        // UTF-16 output is at most one code unit per UTF-8 input byte (ASCII
+        // is 1:1; multi-byte sequences shrink; surrogate pairs are 2 units
+        // from 4 bytes), so the UTF-8 byte length is a safe upper bound.
+        let mut capacity: usize = 4;
+        {
+            let mut it = self.map.iterator();
+            while let Some(pair) = it.next() {
+                capacity += pair.key_ptr.len() + 1 + pair.value_ptr.value.len() + 1;
             }
-            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
-            if i + 7 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
-            }
-            result[i] = b'=' as u16;
-            i += 1;
-            if i + pair.value_ptr.value.len() + 5 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
-            }
-            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], &pair.value_ptr.value)
-                .len();
-            if i + 5 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
-            }
-            result[i] = 0;
-            i += 1;
         }
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
 
-        Ok(result.as_ptr())
+        let mut result = vec![0u16; capacity];
+        let mut i: usize = 0;
+        {
+            let mut it = self.map.iterator();
+            while let Some(pair) = it.next() {
+                i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
+                result[i] = b'=' as u16;
+                i += 1;
+                i += strings::convert_utf8_to_utf16_in_buffer(
+                    &mut result[i..],
+                    &pair.value_ptr.value,
+                )
+                .len();
+                result[i] = 0;
+                i += 1;
+            }
+        }
+        // Terminator: four trailing NUL u16s (already zero-initialized above).
+        result.truncate(i + 4);
+        result
     }
 
     pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {

@@ -16,8 +16,6 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink, ReadableStream, blob};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-#[cfg(not(unix))]
-use bun_core::Output;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -1103,6 +1101,10 @@ impl Writable {
                 Stdio::Ipc | Stdio::Capture(_) => {
                     return Ok(Writable::Ignore);
                 }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
+                }
             }
         }
         #[cfg(not(windows))]
@@ -1162,6 +1164,10 @@ impl Writable {
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
+                }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
                 }
             }
         }
@@ -1236,17 +1242,22 @@ impl Readable {
         event_loop: EventLoopHandle,
         eager: bool,
     ) -> bun_sys::Result<()> {
-        if let Readable::Pipe(pipe) = self {
-            let p = arc_as_mut_ptr(pipe);
-            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, and
-            // during `spawn` the `Arc<PipeReader>` is uniquely held (the
-            // reader callback is registered by `start` itself), so no other
-            // `&PipeReader` can exist for this scope.
-            let p = unsafe { &mut *p };
-            p.start(process, event_loop)?;
-            if eager {
-                p.read_all();
-            }
+        // `start` (poll registration failing) and `read_all` (the eager read
+        // erroring) can both complete the reader synchronously, which runs
+        // `close_io` → `Readable::finalize` and drops this slot's `Arc`.
+        // Clone it so the `PipeReader` outlives both re-entrant calls.
+        let keepalive = match self {
+            Readable::Pipe(pipe) => Arc::clone(pipe),
+            _ => return Ok(()),
+        };
+        let p = arc_as_mut_ptr(&keepalive);
+        // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; the
+        // re-entrant reader callbacks only hold raw `*mut PipeReader`, so no
+        // other `&PipeReader` can exist for this scope.
+        let p = unsafe { &mut *p };
+        p.start(process, event_loop)?;
+        if eager {
+            p.read_all();
         }
         Ok(())
     }
@@ -1320,6 +1331,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             };
         }
 
@@ -1363,6 +1376,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             }
         }
     }
@@ -1997,6 +2012,13 @@ impl PipeReader {
         match self.reader.start(self.stdio_result.unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
+                // `reader.start` reports a poll-registration failure through
+                // `on_reader_error` (not its return value), so the reader may
+                // already be errored/torn down here; same guard as
+                // `SubprocessPipeReader::start`.
+                if matches!(self.state, PipeReaderState::Err(_)) {
+                    return Ok(());
+                }
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct
@@ -2030,26 +2052,19 @@ impl PipeReader {
 
         self.captured_writer.do_write(chunk);
 
-        let should_continue = has_more != ReadState::Eof;
-
-        if should_continue {
-            #[cfg(unix)]
-            {
-                self.reader.register_poll();
-            }
-            #[cfg(not(unix))]
-            match self.reader.start_with_current_pipe() {
-                bun_sys::Result::Err(e) => {
-                    Output::panic(format_args!(
-                        "TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{:?}",
-                        e
-                    ));
-                }
-                _ => {}
-            }
-        }
-
-        should_continue
+        // No explicit re-arm here (`register_poll()` on POSIX /
+        // `start_with_current_pipe()` on Windows). This callback runs from
+        // inside the bun_io read loop, which still holds `&mut self.reader`
+        // on its stack and re-registers the poll itself based on the bool we
+        // return (`IOReader::on_read_chunk_cb` and
+        // `WindowsBufferedReader::on_read` document the same contract).
+        //
+        // Re-arming from here also violates `BufferedReaderParent`'s
+        // requirement that `on_read_chunk` never frees the reader:
+        // `register_poll()`'s failure path dispatches `on_reader_error`,
+        // which drops the last `Arc<PipeReader>` and frees the
+        // `PosixBufferedReader` the loop is still reading through.
+        has_more != ReadState::Eof
     }
 
     /// Reconstruct an owning `Arc<Self>` from the raw parent pointer the
@@ -2161,9 +2176,9 @@ impl PipeReader {
             out_kind_str(out_type),
             done
         );
-        if cfg!(debug_assertions) {
-            debug_assert!(process.is_some());
-        }
+        // `process` is `None` once `detach()` (via `close_io`) has run, i.e. this
+        // reader already signalled its Cmd. The reader can still deliver terminal
+        // callbacks after that (see `read_with_fn`'s EAGAIN arm), so no-op here.
         if let Some(proc) = process {
             // SAFETY: `proc` is the heap-allocated `ShellSubprocess` (stable
             // address) freed only by `Cmd::deinit`, which runs strictly after

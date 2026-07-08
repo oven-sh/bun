@@ -5,12 +5,22 @@ import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { bunEnv, bunExe, isCI, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import {
+  bunEnv,
+  bunExe,
+  getPuppeteerInstallEnv,
+  isCI,
+  isWindows,
+  tmpdirSync,
+  toMatchNodeModulesAt,
+} from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
 let root = tmpdirSync();
+
+const puppeteerInstallEnv = getPuppeteerInstallEnv();
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -92,7 +102,7 @@ beforeAll(async () => {
 
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install"), ...puppeteerInstallEnv },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
@@ -150,7 +160,7 @@ test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
 
     ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
       cwd: root,
-      env: bunEnv,
+      env: { ...bunEnv, ...puppeteerInstallEnv },
       stdio: ["ignore", "inherit", "inherit"],
     }));
 

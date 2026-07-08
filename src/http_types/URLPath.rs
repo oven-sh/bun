@@ -74,6 +74,14 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         decoded_pathname = decoded_storage.as_deref().unwrap();
     }
 
+    // The slicing below assumes a non-empty pathname with a leading byte to
+    // skip. An empty input (or an input like "%PUBLIC_URL%" that the fault-
+    // tolerant decoder consumes entirely) would otherwise index out of bounds.
+    if decoded_pathname.is_empty() {
+        decoded_pathname = b"/";
+        decoded_storage = None;
+    }
+
     let mut question_mark_i: i32 = -1;
     let mut period_i: i32 = -1;
 
@@ -131,14 +139,19 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         }
     };
 
-    let mut path: &[u8] = if question_mark_i < 0 {
-        &decoded_pathname[1..]
+    // `path` is the pathname without the leading byte and without the query
+    // string. When the input begins with '?' the end index is 0, so clamp the
+    // start to avoid a 1..0 slice.
+    let path_end: usize = if question_mark_i < 0 {
+        decoded_pathname.len()
     } else {
-        &decoded_pathname[1..usize::try_from(question_mark_i).expect("int cast")]
+        usize::try_from(question_mark_i).expect("int cast")
     };
+    let mut path: &[u8] = &decoded_pathname[1.min(path_end)..path_end];
 
-    let first_segment = &decoded_pathname
-        [1..(usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len())];
+    let first_segment_end_u: usize =
+        (usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len());
+    let first_segment = &decoded_pathname[1.min(first_segment_end_u)..first_segment_end_u];
     let is_source_map = extname == b"map";
     let mut backup_extname: &[u8] = extname;
     if is_source_map && path.len() > b".map".len() {

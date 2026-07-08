@@ -1092,16 +1092,23 @@ impl ShellRmTask {
             need_to_wait_out: None,
         };
 
+        // The loop may have already enqueued child DirTasks (bumping
+        // `dir_task.subtask_count`) when a readdir/unlink error or an
+        // `error_signal` from another worker aborts it. Returning from
+        // inside the loop would skip the `need_to_wait` hand-off below,
+        // so the last child's `post_run` would never drive
+        // `delete_after_waiting_for_children` on this dir and the owning
+        // `ShellRmTask` would never be freed.
         let mut i: usize = 0;
-        loop {
+        let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
-                Err(e) => return Err(self.error_with_path(&e, path.as_bytes())),
-                Ok(None) => break,
+                Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
+                Ok(None) => break Ok(()),
                 Ok(Some(ent)) => ent,
             };
             // TODO this seems bad maybe better to listen to kqueue/epoll event
             if (i & 3) == 0 && self.error_signal().load(Ordering::SeqCst) {
-                return Ok(());
+                break Ok(());
             }
             i += 1;
             match current.kind {
@@ -1121,15 +1128,26 @@ impl ShellRmTask {
                         let joined = self.buf_join(buf, &[path.as_bytes(), name]);
                         ZBox::from_bytes(joined.as_bytes())
                     };
-                    self.remove_entry_file(
+                    if let Err(e) = self.remove_entry_file(
                         dir_task,
                         file_path.as_zstr(),
                         is_absolute,
                         buf,
                         &mut child_vtable,
-                    )?;
+                    ) {
+                        break Err(e);
+                    }
                 }
             }
+        };
+
+        // Stash any loop error before the hand-off — once `need_to_wait`
+        // is published `self` may be freed, and `handle_err` takes a
+        // mutex so it must not sit between the `subtask_count` load and
+        // the `need_to_wait` store. The `error_signal` check below covers
+        // the no-children early-out.
+        if let Err(e) = loop_result {
+            self.handle_err(e);
         }
 
         // Need to wait for children to finish.
@@ -1372,9 +1390,9 @@ impl DirTask {
             Ok(waiting) => waiting,
             Err(err) => {
                 tm.handle_err(err);
-                // `need_to_wait` is only stored on the `Ok(())` return path of
-                // `remove_entry_dir`, so an error guarantees ownership of
-                // `this` was not handed off.
+                // `need_to_wait` is only stored on the `Ok(())` return path
+                // of `remove_entry_dir`, so an `Err` return guarantees
+                // ownership of `this` was not handed off.
                 false
             }
         };

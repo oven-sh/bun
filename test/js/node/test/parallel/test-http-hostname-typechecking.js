@@ -15,7 +15,9 @@ vals.forEach((v) => {
     {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: 'The "options.hostname" property must be of type string, undefined, or null.' + received
+      message: 'The "options.hostname" property must be of ' +
+               'type string or one of undefined or null.' +
+               received
     }
   );
 
@@ -24,7 +26,9 @@ vals.forEach((v) => {
     {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: 'The "options.host" property must be of type string, undefined, or null.' + received
+      message: 'The "options.host" property must be of ' +
+               'type string or one of undefined or null.' +
+               received
     }
   );
 });

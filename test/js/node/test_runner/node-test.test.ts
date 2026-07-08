@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
@@ -217,6 +217,10 @@ describe("node:test mock tracker semantics", () => {
 describe("node:test mock.fn is a transparent Proxy", () => {
   const { mock } = require("node:test");
 
+  afterEach(() => {
+    mock.reset();
+  });
+
   class Service {
     url: string;
     static kind = "svc";
@@ -246,7 +250,6 @@ describe("node:test mock.fn is a transparent Proxy", () => {
       staticKind: "svc",
       callCount: 1,
     });
-    mock.reset();
   });
 
   test("construct call record has target=original and this=result, like node", () => {
@@ -264,7 +267,6 @@ describe("node:test mock.fn is a transparent Proxy", () => {
       resultIsInstance: true,
       args: ["http://y"],
     });
-    mock.reset();
   });
 
   test("name and length pass through from the original", () => {
@@ -277,7 +279,6 @@ describe("node:test mock.fn is a transparent Proxy", () => {
       length: 3,
       proto: "object",
     });
-    mock.reset();
   });
 
   test("a mocked arrow function is not constructible and records no call", () => {
@@ -288,7 +289,6 @@ describe("node:test mock.fn is a transparent Proxy", () => {
     expect(m.mock.callCount()).toBe(0);
     expect(m(1, 2)).toBe(3);
     expect(m.mock.callCount()).toBe(1);
-    mock.reset();
   });
 
   test("properties pass through to the original function", () => {
@@ -296,7 +296,6 @@ describe("node:test mock.fn is a transparent Proxy", () => {
     const m = mock.fn(original);
     (original as any).custom = 42;
     expect((m as any).custom).toBe(42);
-    mock.reset();
   });
 });
 

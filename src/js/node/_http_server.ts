@@ -116,6 +116,7 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
+const DateNow = Date.now;
 
 let cluster;
 
@@ -801,7 +802,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
         http_res._keepAliveTimeout = server.keepAliveTimeout;
-        http_res[kUniqueHeaders] = server[kUniqueHeaders];
+        // Only stamp the symbol when the server actually set `uniqueHeaders`:
+        // unconditionally adding it (even as undefined) forced a hidden-class
+        // transition on every ServerResponse, which measurably slowed every
+        // later property access on it (renderNativeHeaders in particular).
+        const uniqueHeaders = server[kUniqueHeaders];
+        if (uniqueHeaders !== undefined) http_res[kUniqueHeaders] = uniqueHeaders;
 
         // The request itself forbids connection reuse (HTTP/1.0, or the
         // client sent Connection: close): end the server's writable side as
@@ -1325,6 +1331,11 @@ function detachSocketListenersForHandoff(socket) {
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
+// When the keep-alive idle period on a connection started (the last response
+// finish). onResponseFinishHandleSocket records this instead of rescheduling
+// the socket timer on every response; onSocketTimeoutTimerExpired reads it to
+// grant the remaining idle budget when the timer actually fires.
+const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
@@ -1397,10 +1408,34 @@ function noopOnError() {}
 
 function onSocketTimeoutTimerExpired(socket) {
   // The keep-alive idle timer is left armed across the request to avoid a
-  // clear + setTimeout cycle per request; ignore a stale fire while a request
-  // is in flight (kKeepAliveTimeoutSet was cleared on request arrival).
+  // clear + setTimeout cycle per request. A fire while a request is in
+  // flight (kKeepAliveTimeoutSet was cleared on request arrival) is stale;
+  // re-arm the timer so the response-finish fast path, which relies on it
+  // staying live, keeps working, and bail. This runs at most once per idle
+  // interval per busy connection, not once per request.
   if (socket.timeout === 0 && !socket[kKeepAliveTimeoutSet]) {
+    socket[kSocketTimeoutTimer]?.refresh();
     return;
+  }
+  // onResponseFinishHandleSocket records when the last response finished
+  // instead of rescheduling the timer on every response, so the timer's
+  // deadline may predate the start of the real idle period. Grant the
+  // remaining budget once, measured from that last finish. Gated on
+  // kKeepAliveTimeoutSet so a fire of the server's regular per-socket
+  // timeout (socket.timeout !== 0 with no response outstanding) never
+  // consumes a stale keep-alive idle mark.
+  const idleStart = socket[kKeepAliveIdleStart];
+  if (idleStart !== undefined && socket[kKeepAliveTimeoutSet]) {
+    socket[kKeepAliveIdleStart] = undefined;
+    const remaining = socket.timeout - (DateNow() - idleStart);
+    if (remaining > 0) {
+      const existingTimer = socket[kSocketTimeoutTimer];
+      if (existingTimer !== undefined) clearTimeout(existingTimer);
+      const timer = setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
+      timer.unref();
+      socket[kSocketTimeoutTimer] = timer;
+      return;
+    }
   }
   socket._onTimeout();
 }
@@ -2251,7 +2286,21 @@ function onResponseFinishHandleSocket(server, socket, res) {
   if (keepAliveTimeout) {
     // Extend the internal timeout by the configured buffer to reduce
     // the likelihood of ECONNRESET errors, like Node.js's resOnFinish.
-    socket.setTimeout(keepAliveTimeout + keepAliveTimeoutBuffer);
+    const total = keepAliveTimeout + keepAliveTimeoutBuffer;
+    // Rescheduling the socket timer on every response finish was the single
+    // largest per-request cost of the keep-alive path. Once the timer is
+    // armed with this exact interval (every response after the first on a
+    // kept-alive connection), leave it in place and only record when this
+    // idle period started; onSocketTimeoutTimerExpired grants the remaining
+    // budget if the timer fires early, so the socket still closes after
+    // exactly `total` ms of idle.
+    const timer = socket[kSocketTimeoutTimer];
+    if (timer !== undefined && timer._idleTimeout === total) {
+      socket.timeout = total;
+    } else {
+      socket.setTimeout(total);
+    }
+    socket[kKeepAliveIdleStart] = DateNow();
     socket[kKeepAliveTimeoutSet] = true;
   }
 }

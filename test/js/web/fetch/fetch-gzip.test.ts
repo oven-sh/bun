@@ -439,16 +439,16 @@ describe("corrupt compressed responses", () => {
     for (let i = 2; i < 8; i++) payload[i] ^= 0xff;
     return payload;
   };
-  const bodies = {
-    gzip: corrupt(gzipSync),
-    deflate: corrupt(deflateSync),
-    br: corrupt(brotliCompressSync),
-    zstd: corrupt(zstdCompressSync),
+  const bodies: Record<string, [Buffer, string]> = {
+    gzip: [corrupt(gzipSync), "ZlibError"],
+    deflate: [corrupt(deflateSync), "ZlibError"],
+    br: [corrupt(brotliCompressSync), "BrotliDecompressionError"],
+    zstd: [corrupt(zstdCompressSync), "ZstdDecompressionError"],
   };
   const listen = (srv: import("node:net").Server) =>
     new Promise<number>(r => srv.listen(0, "127.0.0.1", () => r((srv.address() as { port: number }).port)));
 
-  for (const [encoding, body] of Object.entries(bodies)) {
+  for (const [encoding, [body, errorCode]] of Object.entries(bodies)) {
     for (const framing of ["content-length", "chunked"] as const) {
       it(`${encoding} ${framing}: fetch() resolves, body read rejects`, async () => {
         const head =
@@ -477,6 +477,7 @@ describe("corrupt compressed responses", () => {
             e => e,
           );
           expect(bodyErr).toBeInstanceOf(Error);
+          expect((bodyErr as { code?: string }).code).toBe(errorCode);
           // The streaming body reader must surface the same failure.
           const res2 = await fetch(`http://127.0.0.1:${port}/`);
           expect(res2.status).toBe(200);
@@ -488,6 +489,7 @@ describe("corrupt compressed responses", () => {
             streamErr = e;
           }
           expect(streamErr).toBeInstanceOf(Error);
+          expect((streamErr as { code?: string }).code).toBe(errorCode);
         } finally {
           srv.close();
         }
@@ -511,13 +513,23 @@ describe("corrupt compressed responses", () => {
     });
     const port = await listen(srv);
     try {
-      await expect(fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" })).rejects.toThrow();
+      const followErr = await fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" }).then(
+        r => ({ status: r.status }),
+        e => e,
+      );
+      expect(followErr).toBeInstanceOf(Error);
+      expect((followErr as { code?: string }).code).toBe("InvalidHTTPResponse");
 
       // With redirect:"manual" the 302 *is* the final response.
       const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
       expect(res.status).toBe(302);
       expect(res.headers.get("location")).toBe("http://127.0.0.1:1/unreached");
-      await expect(res.arrayBuffer()).rejects.toThrow();
+      const bodyErr = await res.arrayBuffer().then(
+        () => null,
+        e => e,
+      );
+      expect(bodyErr).toBeInstanceOf(Error);
+      expect((bodyErr as { code?: string }).code).toBe("InvalidHTTPResponse");
     } finally {
       srv.close();
     }

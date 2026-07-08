@@ -3197,9 +3197,8 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       }
     } else if (error != null && !stream[kNeverAnnounced]) {
       // A session destroyed without an error synthesizes ERR_HTTP2_STREAM_CANCEL for its open
-      // streams; node only surfaces that on streams that never became active, otherwise the close
-      // is silent. Bun does not yet track that distinction, so this one code stays listener-gated
-      // rather than becoming an uncaught exception on active streams.
+      // streams; node only surfaces that on streams that never became active. Bun does not yet
+      // track that distinction, so this one code stays listener-gated to avoid uncaught exceptions.
       if (error.code !== "ERR_HTTP2_STREAM_CANCEL" || stream.listenerCount("error") > 0) {
         error_instance = error;
       }
@@ -5212,10 +5211,23 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+      // Native rejects an oversized/invalid header block synchronously via run_callback, which can
+      // drain the deferring nextTick before this call returns (event-loop enter count 0); the
+      // caller has no reference to req yet, so keep it never-announced for the native call.
+      req[kNeverAnnounced] = true;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
       } else {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      }
+      req[kNeverAnnounced] = false;
+      if (req.destroyed) {
+        // Synchronous rejection: surface the error after the caller has attached listeners.
+        const rstCode = req.rstCode;
+        if (rstCode && rstCode !== NGHTTP2_CANCEL) {
+          process.nextTick(emitEventNT, req, "error", streamErrorFromCode(rstCode));
+        }
+        return req;
       }
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });

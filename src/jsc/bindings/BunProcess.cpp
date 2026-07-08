@@ -1051,6 +1051,8 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGSTKFLT"),
         MAKE_STATIC_STRING_IMPL("SIGPOLL"),
         MAKE_STATIC_STRING_IMPL("SIGPWR"),
+        MAKE_STATIC_STRING_IMPL("SIGUNUSED"),
+        MAKE_STATIC_STRING_IMPL("SIGLOST"),
     };
 
     return signalNames;
@@ -1161,6 +1163,12 @@ static void loadSignalNumberMap()
 #endif
 #ifdef SIGPWR
         signalNameToNumberMap->add(signalNames[34], SIGPWR);
+#endif
+#ifdef SIGUNUSED
+        signalNameToNumberMap->add(signalNames[35], SIGUNUSED);
+#endif
+#ifdef SIGLOST
+        signalNameToNumberMap->add(signalNames[36], SIGLOST);
 #endif
 #endif
     });
@@ -1536,6 +1544,12 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
 #ifdef SIGPWR
             signalNumberToNameMap->add(SIGPWR, signalNames[34]);
+#endif
+#ifdef SIGUNUSED
+            signalNumberToNameMap->add(SIGUNUSED, signalNames[35]);
+#endif
+#ifdef SIGLOST
+            signalNumberToNameMap->add(SIGLOST, signalNames[36]);
 #endif
         });
 

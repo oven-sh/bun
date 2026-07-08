@@ -568,6 +568,15 @@ describe("DatabaseSync.prototype.function()", () => {
     expect(it.next().value).toEqual({ r: "ERR_INVALID_STATE" });
     expect(iterCaught).toBe("ERR_INVALID_STATE");
     it.return();
+    // Iterator return() while stepping skips the sqlite3_reset (tolerant)
+    // and just marks done; the outer next() still yields the in-flight row.
+    db.function("reenter4", () => {
+      it2.return();
+      return "r";
+    });
+    const it2 = db.prepare("SELECT reenter4() AS r FROM t").iterate();
+    expect(it2.next()).toEqual({ done: false, value: { r: "r" } });
+    expect(it2.next()).toEqual({ done: true, value: null });
     db.close();
   });
 

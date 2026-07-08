@@ -3066,7 +3066,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     // was already reset and may be mid-iteration under a newer iterator —
     // resetting again would silently rewind that iterator's cursor.
     // (Deliberate divergence: Node v26.3.0 resets unconditionally here.)
-    if (!self->done() && stmt && !stmt->isFinalized()
+    // isStepping() — this iterator's own sqlite3_step is on the C stack (a
+    // UDF re-entered return()); sqlite3_reset on a running VDBE is misuse.
+    if (!self->done() && stmt && !stmt->isFinalized() && !stmt->isStepping()
         && self->capturedGeneration() == stmt->resetGeneration()) {
         sqlite3_reset(stmt->statement());
     }

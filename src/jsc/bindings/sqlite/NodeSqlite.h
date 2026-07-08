@@ -385,6 +385,10 @@ public:
             ++stmt->m_steppingDepth;
         }
         ~SteppingScope() { --stmt->m_steppingDepth; }
+        SteppingScope(const SteppingScope&) = delete;
+        SteppingScope& operator=(const SteppingScope&) = delete;
+        SteppingScope(SteppingScope&&) = delete;
+        SteppingScope& operator=(SteppingScope&&) = delete;
     };
 
     // Bind callFrame->argument(anon_start..) to the statement using Node.js

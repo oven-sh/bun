@@ -3186,3 +3186,56 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+it("session.ref()/unref() and session.socket.ref()/unref() return undefined and do not expose the raw socket", async () => {
+  const serverSide = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("session", session => {
+    session.on("error", () => {});
+    try {
+      serverSide.resolve({
+        sessionRef: session.ref(),
+        sessionUnref: session.unref(),
+        socketRef: session.socket.ref(),
+        socketUnref: session.socket.unref(),
+      });
+      session.ref();
+    } catch (e) {
+      serverSide.reject(e);
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const connected = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", connected.reject);
+    client.on("connect", () => connected.resolve());
+    await connected.promise;
+    try {
+      // These methods route to the session (not blocked by ERR_HTTP2_NO_SOCKET_MANIPULATION) but
+      // must not hand back net.Socket#ref/#unref's `this`, or the proxy guard is bypassed.
+      expect({
+        sessionRef: client.ref(),
+        sessionUnref: client.unref(),
+        socketRef: client.socket.ref(),
+        socketUnref: client.socket.unref(),
+      }).toEqual({
+        sessionRef: undefined,
+        sessionUnref: undefined,
+        socketRef: undefined,
+        socketUnref: undefined,
+      });
+      expect(client.ref()).not.toBeInstanceOf(net.Socket);
+      expect(await serverSide.promise).toEqual({
+        sessionRef: undefined,
+        sessionUnref: undefined,
+        socketRef: undefined,
+        socketUnref: undefined,
+      });
+    } finally {
+      client.close();
+    }
+  } finally {
+    server.close();
+  }
+});

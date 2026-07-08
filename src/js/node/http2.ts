@@ -3907,12 +3907,14 @@ class ServerHttp2Session extends Http2Session {
 
   unref() {
     // Generic-stream sockets (e.g. duplexPair) have no unref; node treats it as a no-op.
+    // Do not return the socket's return value: net.Socket#unref returns `this`, which would
+    // leak the un-proxied socket past the ERR_HTTP2_NO_SOCKET_MANIPULATION guard.
     const socket = this[bunHTTP2Socket];
-    if (typeof socket?.unref === "function") return socket.unref();
+    if (typeof socket?.unref === "function") socket.unref();
   }
   ref() {
     const socket = this[bunHTTP2Socket];
-    if (typeof socket?.ref === "function") return socket.ref();
+    if (typeof socket?.ref === "function") socket.ref();
   }
   setTimeout(msecs, callback) {
     // node registers the callback as a one-shot 'timeout' listener on the session itself; the
@@ -4577,12 +4579,14 @@ class ClientHttp2Session extends Http2Session {
   }
   unref() {
     // Generic-stream sockets (e.g. duplexPair) have no unref; node treats it as a no-op.
+    // Do not return the socket's return value: net.Socket#unref returns `this`, which would
+    // leak the un-proxied socket past the ERR_HTTP2_NO_SOCKET_MANIPULATION guard.
     const socket = this[bunHTTP2Socket];
-    if (typeof socket?.unref === "function") return socket.unref();
+    if (typeof socket?.unref === "function") socket.unref();
   }
   ref() {
     const socket = this[bunHTTP2Socket];
-    if (typeof socket?.ref === "function") return socket.ref();
+    if (typeof socket?.ref === "function") socket.ref();
   }
   setNextStreamID(id) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();

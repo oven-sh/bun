@@ -48,7 +48,11 @@ describe.concurrent("http server: per-connection setTimeout", () => {
       let timeoutReadback: number | undefined;
 
       const server = http.createServer((req, res) => {
-        const { returned, expected, timeoutReadback: readback } = arm(req, res, () => {
+        const {
+          returned,
+          expected,
+          timeoutReadback: readback,
+        } = arm(req, res, () => {
           timeoutFired = true;
           req.socket.destroy();
         });

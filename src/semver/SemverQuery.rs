@@ -934,17 +934,24 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             b'|' => {
                 i += 1;
 
+                let is_double = i < input.len() && input[i] == b'|';
                 while i < input.len() && input[i] == b'|' {
                     i += 1;
                 }
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
                 }
-                if !branch_has_non_any {
-                    list.flags.set_value(Flags::MATCH_ALL_BRANCH, true);
+                // node-semver only splits on `||`; a lone `|` is loose-mode
+                // garbage dropped before the collapse step, not a separator.
+                if is_double {
+                    if !branch_has_non_any {
+                        list.flags.set_value(Flags::MATCH_ALL_BRANCH, true);
+                    }
+                    saw_or_separator = true;
+                    branch_has_non_any = false;
+                } else {
+                    branch_has_non_any = true;
                 }
-                saw_or_separator = true;
-                branch_has_non_any = false;
                 is_or = true;
                 token.tag = TokenTag::None;
                 skip_round = true;

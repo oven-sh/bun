@@ -414,6 +414,10 @@ describe("Bun.semver.satisfies()", () => {
       testSatisfies(`1.2.3-alpha.1 || ${op}`, "1.2.3-alpha.1", true);
       testSatisfies(`${op} || 1.2.3-alpha.1`, "1.2.3-alpha.1", true);
     }
+    // A lone `|` is not the `||` separator and is dropped in loose mode.
+    testSatisfies("| 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("1.2.3-alpha.1 |", "1.2.3-alpha.1", true);
+    testSatisfies("* | 1.2.3-alpha.1", "1.2.3-alpha.1", true);
 
     const notPassing = [
       "0.1.0",

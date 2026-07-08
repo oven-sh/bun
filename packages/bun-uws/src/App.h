@@ -746,24 +746,22 @@ public:
         httpContext->getSocketContextData()->onSocketDrain = onDrain;
     }
     void setOnSocketData(typename HttpContextData<SSL, NODE_HTTP>::OnSocketDataCallback onData) {
-        if constexpr (NODE_HTTP) {
-            httpContext->getSocketContextData()->nodeCompat.onSocketData = onData;
-        }
+        static_assert(NODE_HTTP, "setOnSocketData is node:http-only; use NodeHttpApp/NodeHttpSSLApp");
+        httpContext->getSocketContextData()->nodeCompat.onSocketData = onData;
     }
 
     void setOnClientError(typename HttpContextData<SSL, NODE_HTTP>::OnClientErrorCallback onClientError) {
-        if constexpr (NODE_HTTP) {
-            httpContext->getSocketContextData()->nodeCompat.onClientError = std::move(onClientError);
-        }
+        static_assert(NODE_HTTP, "setOnClientError is node:http-only; use NodeHttpApp/NodeHttpSSLApp");
+        httpContext->getSocketContextData()->nodeCompat.onClientError = std::move(onClientError);
     }
 
     void setOnSocketUpgraded(typename HttpContextData<SSL, NODE_HTTP>::OnSocketUpgradedCallback onUpgraded) {
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
-    /* NODE_HTTP is now the compile-time flag; runtime setter kept as a no-op
-     * so existing CAPI callers keep compiling until migrated. */
-    void setUsingNodeHttpCompat(bool /*value*/) {}
+    void setUsingNodeHttpCompat(bool /*value*/) {
+        static_assert(NODE_HTTP, "setUsingNodeHttpCompat is obsolete; use NodeHttpApp/NodeHttpSSLApp");
+    }
 
     TemplatedApp &&run() {
         uWS::run();

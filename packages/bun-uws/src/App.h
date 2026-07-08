@@ -770,6 +770,10 @@ public:
     TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        /* setFlags is the node:http configuration entry point (Bun.serve never calls it).
+         * Node.js accepts duplicate Host header lines and keeps the first value, so opt
+         * out of the RFC 9112 5.4 rejection here to preserve Node.js compatibility. */
+        httpContext->getSocketContextData()->flags.rejectDuplicateHostHeader = false;
         return std::move(*this);
     }
 

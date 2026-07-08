@@ -1516,55 +1516,14 @@ describe("duplicate Host header field lines", () => {
     expect(body).toEqual({ url: "http://a.test/exact", host: "a.test" });
   });
 
-  test("node:http rejects a request with two Host header lines", async () => {
-    // requireHostHeader defaults to true, so the same RFC 9112 5.4 check applies.
-    let handlerReached = false;
+  test("node:http serves a request with two Host header lines, keeping the first value", async () => {
+    // Node.js accepts duplicate Host header lines (llhttp leniency) and
+    // IncomingMessage keeps only the first value in req.headers.host. node:http has
+    // no req.url/headers split-brain (req.url is the bare request-target), so it
+    // opts out of the parser-level rejection for Node.js compatibility.
+    const seen: { url: string; host: string | undefined; rawHeaders: string[] }[] = [];
     const server = createServer((req, res) => {
-      handlerReached = true;
-      res.end("OK");
-    });
-    try {
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address() as { port: number };
-      const response = await sendRaw(
-        port,
-        "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
-      );
-      expect(response).toContain("HTTP/1.1 400");
-      expect(handlerReached).toBe(false);
-    } finally {
-      server.close();
-    }
-  });
-
-  test("node:http rejects two Host header lines even when an Upgrade header is present", async () => {
-    // An Upgrade header without Connection: upgrade falls through to normal dispatch in
-    // node:http; the duplicate-Host rejection must still apply on that path.
-    let handlerReached = false;
-    const server = createServer((req, res) => {
-      handlerReached = true;
-      res.end("OK");
-    });
-    try {
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address() as { port: number };
-      const response = await sendRaw(
-        port,
-        "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nUpgrade: h2c\r\nConnection: close\r\n\r\n",
-      );
-      expect(response).toContain("HTTP/1.1 400");
-      expect(handlerReached).toBe(false);
-    } finally {
-      server.close();
-    }
-  });
-
-  test("node:http with requireHostHeader:false serves a request with two Host header lines", async () => {
-    // The escape hatch: opting out of the Host requirement also opts out of the
-    // duplicate check, and the handler sees only the first value (Node semantics).
-    const seen: { host: string | undefined; rawHeaders: string[] }[] = [];
-    const server = createServer({ requireHostHeader: false }, (req, res) => {
-      seen.push({ host: req.headers.host, rawHeaders: req.rawHeaders });
+      seen.push({ url: req.url!, host: req.headers.host, rawHeaders: req.rawHeaders });
       res.end("OK");
     });
     try {
@@ -1577,6 +1536,7 @@ describe("duplicate Host header field lines", () => {
       expect(response).toContain("HTTP/1.1 200");
       expect(seen).toEqual([
         {
+          url: "/",
           host: "a.test",
           rawHeaders: ["Host", "a.test", "Host", "b.test", "Connection", "close"],
         },

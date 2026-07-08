@@ -398,20 +398,6 @@ impl Request {
         self.request_context.enable_timeout_events();
     }
 
-    #[bun_uws::uws_callback(export = "Request__setTimeout")]
-    pub fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) {
-        if !seconds.is_number() {
-            let _ = global_this.throw(format_args!(
-                "Failed to set timeout: The provided value is not of type 'number'."
-            ));
-            return;
-        }
-
-        // `JSValue.toU32` clamps via JS ToUint32 rules,
-        // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do.
-        self.set_timeout(seconds.to_u32() as c_uint);
-    }
-
     /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
     /// so it needs the same fetch-spec step-1 usability check.

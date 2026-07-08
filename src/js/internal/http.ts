@@ -5,7 +5,6 @@ const {
   setHeader,
   Headers,
   assignHeaders: assignHeadersFast,
-  setRequestTimeout,
   headersTuple,
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
@@ -16,7 +15,6 @@ const {
   setHeader: (headers: Headers, name: string, value: string) => void;
   Headers: (typeof globalThis)["Headers"];
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  setRequestTimeout: (req: Request, timeout: number) => boolean;
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
   setServerCustomOptions: (
@@ -580,7 +578,6 @@ export {
   setHeader,
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
-  setRequestTimeout,
   setServerCustomOptions,
   statusCodeSymbol,
   statusMessageSymbol,

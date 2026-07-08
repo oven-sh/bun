@@ -353,6 +353,9 @@ mod advanced {
             x if x == IPCMessageType::SerializedMessage as u8
                 || x == IPCMessageType::SerializedInternalMessage as u8 =>
             {
+                if message_len > u32::MAX - HEADER_LENGTH_U32 {
+                    return Err(IPCDecodeError::InvalidFormat);
+                }
                 // `header_length + message_len` would be evaluated as u32; a peer-controlled
                 // `message_len >= 0xFFFFFFFB` wraps the sum to a small value and defeats the
                 // bounds check. Compare against the remaining bytes instead — `data.len >=
@@ -1502,39 +1505,21 @@ impl SendQueue {
     ) -> SerializeAndSendResult {
         log!("SendQueue#serializeAndSend");
         let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
-        // Note: reshaped for borrowck — work on msg via local then drop borrow before continue_send.
         let mode = self.mode;
-        // Remember whether start_message will push a fresh entry (always true
-        // for handle sends): on serialize failure that entry must be popped so
-        // the next drain doesn't spuriously .close() the user's socket via
-        // close_on_complete and re-fire the callback with null.
-        let will_push_fresh = handle.is_some()
-            || self.queue.is_empty()
-            || self.queue.last().is_none_or(|l| {
-                l.handle.is_some()
-                    || l.is_ack_nack()
-                    || (self.queue.len() == 1 && self.write_in_progress)
-            });
+        // Serialize into a local buffer BEFORE start_message so a serialize
+        // failure never leaves a stale queue entry (which would spuriously
+        // close the user's socket via close_on_complete on next drain).
+        let mut payload = StreamBuffer::default();
+        let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
+            Ok(n) => n,
+            Err(_) => return SerializeAndSendResult::Failure,
+        };
+        debug_assert!(payload.list.len() == payload_length);
         let msg = match self.start_message(global, callback, handle) {
             Ok(m) => m,
             Err(_) => return SerializeAndSendResult::Failure,
         };
-        let start_offset = msg.data.list.len();
-
-        let payload_length = match serialize(mode, &mut msg.data, global, value, is_internal) {
-            Ok(n) => n,
-            Err(_) => {
-                if will_push_fresh {
-                    // Drop the just-pushed SendHandle: its Drop closes the
-                    // dup'd wire fd; the callback is not enqueued (do_send_err
-                    // fires it with the real error).
-                    let _ = self.queue.pop();
-                }
-                return SerializeAndSendResult::Failure;
-            }
-        };
-        debug_assert!(msg.data.list.len() == start_offset + payload_length);
-
+        handle_oom(msg.data.write(&payload.list));
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
 
@@ -2104,6 +2089,7 @@ fn handle_ipc_message(
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
+                    FdExt::close(fd);
                     global_this.report_active_exception_as_unhandled(e);
                     return;
                 }

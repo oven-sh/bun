@@ -1181,8 +1181,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn is_if_clause_text_token_impl(&self, range: TextRange, if_clause_token: IfClauseTok) -> bool {
-        let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        self.text(range) == tagname
+        self.if_clause_tok_at(range) == Some(if_clause_token)
     }
 
     fn skip_newlines(&mut self) {
@@ -1913,6 +1912,13 @@ impl<'bump> Parser<'bump> {
             .any(|r| pos >= r.start && pos < r.end)
     }
 
+    fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        if self.is_interpolated_position(range.start) {
+            return None;
+        }
+        IfClauseTok::from_text(self.text(range))
+    }
+
     fn advance(&mut self) -> Token {
         if !self.is_at_end() {
             self.current += 1;
@@ -1983,9 +1989,7 @@ impl<'bump> Parser<'bump> {
 
     fn match_if_clausetok(&mut self, toktag: IfClauseTok) -> bool {
         if let Token::Text(range) = self.peek() {
-            if self.delimits(self.peek_n(1))
-                && self.text(range) == <&'static str>::from(toktag).as_bytes()
-            {
+            if self.delimits(self.peek_n(1)) && self.if_clause_tok_at(range) == Some(toktag) {
                 let _ = self.advance();
                 let _ = self.expect_delimit();
                 return true;
@@ -2037,13 +2041,10 @@ impl<'bump> Parser<'bump> {
         if !self.delimits(self.peek_n(1)) {
             return false;
         }
-        let txt = self.text(range);
-        for &tag in toktags {
-            if txt == <&'static str>::from(tag).as_bytes() {
-                return true;
-            }
-        }
-        false
+        let Some(tok) = self.if_clause_tok_at(range) else {
+            return false;
+        };
+        toktags.contains(&tok)
     }
 
     fn peek_any_comptime_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
@@ -2167,7 +2168,7 @@ impl IfClauseTok {
     /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
-            Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
+            Token::Text(range) if p.delimits(p.peek_n(1)) => p.if_clause_tok_at(range),
             _ => None,
         }
     }
@@ -4146,14 +4147,17 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-pub const SPECIAL_CHARS: [u8; 34] = [
+pub const SPECIAL_CHARS: [u8; 37] = [
     b'~',
     b'[',
     b']',
     b'#',
     b';',
     b'\n',
+    b'\t',
+    b'\r',
     b'*',
+    b'?',
     b'{',
     b',',
     b'}',
@@ -4333,6 +4337,13 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
         }
     }
     false
+}
+
+pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
+    use IfClauseTok::{Elif, Else, Fi, If, Then};
+    [If, Else, Elif, Then, Fi]
+        .iter()
+        .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────

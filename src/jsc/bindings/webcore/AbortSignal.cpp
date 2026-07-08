@@ -174,10 +174,14 @@ void AbortSignal::runAbortSteps()
     ASSERT(reason);
 
     auto callbacks = std::exchange(m_native_callbacks, {});
-    for (auto callback : callbacks) {
+    m_nativeCallbacksBeingDispatched = &callbacks;
+    for (auto& callback : callbacks) {
         const auto [ctx, func] = callback;
+        if (!func)
+            continue;
         func(ctx, JSC::JSValue::encode(reason));
     }
+    m_nativeCallbacksBeingDispatched = nullptr;
 
     // 1. For each algorithm of signal's abort algorithms: run algorithm.
     //    2. Empty signal's abort algorithms. (std::exchange empties)
@@ -249,6 +253,13 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
 
 void AbortSignal::cleanNativeBindings(void* ref)
 {
+    if (m_nativeCallbacksBeingDispatched) {
+        for (auto& callback : *m_nativeCallbacksBeingDispatched) {
+            if (std::get<0>(callback) == ref)
+                std::get<1>(callback) = nullptr;
+        }
+    }
+
     auto callbacks = std::exchange(m_native_callbacks, {});
 
     callbacks.removeAllMatching([=](auto callback) {

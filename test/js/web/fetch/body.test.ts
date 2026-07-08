@@ -736,3 +736,26 @@ describe.concurrent("string body consumption does not leak", () => {
     });
   }
 });
+
+// https://github.com/oven-sh/bun/issues/6860
+describe("constructing a body from an unusable ReadableStream", () => {
+  const bytes = () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("x"));
+        c.close();
+      },
+    });
+  test("a disturbed stream throws a TypeError", async () => {
+    const rs = bytes();
+    await new Response(rs).text();
+    expect(() => new Response(rs)).toThrow(TypeError);
+    expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+  test("a locked stream throws a TypeError", () => {
+    const rs = bytes();
+    rs.getReader();
+    expect(() => new Response(rs)).toThrow(TypeError);
+    expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+});

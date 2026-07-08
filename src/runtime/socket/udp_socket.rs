@@ -143,6 +143,13 @@ extern "C" fn on_data(
 
     let mut i: c_int = 0;
     while i < packets {
+        // A prior iteration's callback (or its error handler) may have closed
+        // this socket; stop dispatching the rest of the recvmmsg batch so no
+        // 'data' fires after 'close'. Matches libuv's per-datagram recheck.
+        if udp_socket.closed.get() {
+            break;
+        }
+
         let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];

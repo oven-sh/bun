@@ -1534,6 +1534,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
+        // SAFETY: short-lived `&self` read.
+        if !protocol_header_seen && !unsafe { (*this).subprotocols.is_empty() } {
+            // SAFETY: no `&mut Self` is live across this call.
+            unsafe { Self::terminate(this, ErrorCode::MissingClientProtocol) };
+            return;
+        }
+
         if !strings::eql_case_insensitive_ascii(connection_header.value(), b"Upgrade", true) {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };

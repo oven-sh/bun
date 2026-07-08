@@ -421,6 +421,47 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
+  it("runs checkServerIdentity on its own connection for each request that supplies it", async () => {
+    let connections = 0;
+    const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      connections++;
+      const chunks: Buffer[] = [];
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).includes("\r\n\r\n")) {
+          chunks.length = 0;
+          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+      socket.on("error", () => {});
+    });
+    try {
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      server.listen(0, onListening);
+      await listening;
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const url = `https://127.0.0.1:${port}/`;
+
+      const verified: string[] = [];
+      const tlsWithCallback = {
+        ca: validTls.cert,
+        checkServerIdentity(hostname: string) {
+          verified.push(hostname);
+          return undefined;
+        },
+      };
+
+      expect(await fetch(url, { tls: tlsWithCallback }).then(res => res.text())).toBe("ok");
+      expect(await fetch(url, { tls: { ca: validTls.cert } }).then(res => res.text())).toBe("ok");
+      expect(await fetch(url, { tls: tlsWithCallback }).then(res => res.text())).toBe("ok");
+
+      expect(verified).toEqual(["127.0.0.1", "127.0.0.1"]);
+      expect(connections).toBe(3);
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with self-sign certificate tls + rejectUnauthorized: false should not throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];

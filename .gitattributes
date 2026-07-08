@@ -34,6 +34,7 @@ src/jsc/bindings/ZigGeneratedCode.cpp linguist-generated
 src/jsc/bindings/headers.h linguist-generated
 
 packages/bun-uws/fuzzing/seed-corpus/**/* linguist-generated
+test/expected-durations.json linguist-generated
 
 src/jsc/bindings/sqlite/sqlite3.c linguist-vendored
 src/jsc/bindings/sqlite/sqlite3_local.h linguist-vendored

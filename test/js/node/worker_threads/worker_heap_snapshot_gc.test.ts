@@ -15,12 +15,10 @@ import { join } from "node:path";
 // builds are several times slower per heap snapshot, so they get a reduced
 // workload as a functional check — plain release CI is where this guards
 // against regressions.
-// Skipped on Windows and Intel (x64) macOS: the always-on per-worker stdio path
-// (control MessageChannels + setupWorkerStdio + console rebind) adds per-spawn
-// overhead that this 15x300-snapshot stress exceeds on the slower Windows and
-// macOS Intel CI builders. The race it guards is platform-agnostic and covered
-// on Linux and Apple-Silicon macOS; re-enable once the per-worker stdio overhead
-// is reduced (multiplex over the main control channel).
+// Skipped on Windows and Intel (x64) macOS: this branch's always-on per-worker
+// stdio path adds per-spawn overhead that a 15x300-snapshot stress exceeds on
+// those builders. The race it guards is platform-agnostic and still covered on
+// Linux and Apple-Silicon macOS.
 test.skipIf(isWindows || isIntelMacOS)(
   "worker.getHeapSnapshot() does not race the parent VM's Strong Handles list under GC",
   async () => {
@@ -29,30 +27,29 @@ test.skipIf(isWindows || isIntelMacOS)(
     const iters = isDebug ? "5" : slow ? "100" : "300";
     const fixture = join(import.meta.dir, "heap-snapshot-gc-race-fixture.js");
 
-    // The stress is probabilistic — more attempts only buy more chances to
-    // hit the (now fixed) race. Stop early when the next attempt could blow
-    // the runner's budget instead of timing out: the slowest release lane
-    // (alpine x64) runs ~9s per 300-snapshot attempt, so 15 attempts
-    // overshoot 120s while most lanes finish all 15 well inside it.
-    const deadline = Date.now() + (slow ? 40_000 : 90_000);
-
-    for (let i = 0; i < attempts; i++) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture],
-        env: { ...bunEnv, ITERS: iters },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // One assertion so a crash shows stdout/stderr/signal together.
-      expect({ attempt: i, stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        attempt: i,
+    // The attempts are independent processes with no shared state, so run them
+    // all concurrently; the race being guarded is intra-process.
+    const results = await Promise.all(
+      Array.from({ length: attempts }, async (_, i) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), fixture],
+          env: { ...bunEnv, ITERS: iters },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { attempt: i, stdout, stderr, exitCode, signalCode: proc.signalCode };
+      }),
+    );
+    for (const result of results) {
+      // One assertion per attempt so a crash shows stdout/stderr/signal together.
+      expect(result).toEqual({
+        attempt: result.attempt,
         stdout: "ok\n",
         stderr: "",
         exitCode: 0,
         signalCode: null,
       });
-      if (Date.now() > deadline) break;
     }
   },
   isDebug || isASAN ? 60_000 : 120_000,

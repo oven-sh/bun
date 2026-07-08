@@ -98,6 +98,7 @@ unsafe extern "C" {
         possible_readable_stream: &mut JSValue,
         ptr: &mut *mut c_void,
     ) -> Tag;
+    safe fn ReadableStream__is(value: JSValue) -> bool;
     safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -263,6 +264,11 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
+    pub fn is_readable_stream(value: JSValue) -> bool {
+        ReadableStream__is(value)
     }
 
     pub fn from_js(

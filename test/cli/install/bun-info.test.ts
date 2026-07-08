@@ -277,6 +277,40 @@ describe.concurrent("bun info", () => {
       expect(output).toContain("TypeScript definitions");
     });
 
+    // https://github.com/oven-sh/bun/issues/30311
+    // GitLab's npm registry rejects lowercase %2f; match npm CLI (uppercase %2F).
+    it("should use uppercase %2F in the manifest URL for scoped names", async () => {
+      const requestPaths: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          requestPaths.push(url.pathname);
+          const path = url.pathname.replaceAll("%2f", "/").replaceAll("%2F", "/");
+          if (path === "/@scoped/has-bin-entry") {
+            return Response.json({
+              name: "@scoped/has-bin-entry",
+              "dist-tags": { latest: "1.0.0" },
+              versions: { "1.0.0": { name: "@scoped/has-bin-entry", version: "1.0.0" } },
+            });
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+
+      const testDir = tempDirWithFiles("pm-view-scoped", {
+        "package.json": JSON.stringify({ name: "x", version: "0.0.1" }),
+        ".npmrc": `@scoped:registry=http://localhost:${server.port}/\n`,
+      });
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "view", "@scoped/has-bin-entry"], testDir);
+
+      expect(requestPaths).toEqual(["/@scoped%2Fhas-bin-entry"]);
+      expect(error).not.toContain("error:");
+      expect(output).toContain("@scoped/has-bin-entry@1.0.0");
+      expect(code).toBe(0);
+    });
+
     it("should handle .", async () => {
       const testDir = await setupTest();
       const { output, error, code } = await runCommand([bunExe(), "pm", "view", "."], testDir, false);

@@ -536,6 +536,33 @@ impl ValkeyClient {
         Ok(())
     }
 
+    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+        if self.in_flight.readable_length() == 0 {
+            return Ok(());
+        }
+
+        if self.flags.finalized {
+            let vm = self.vm;
+            let deferred_failure = Box::new(DeferredFailure {
+                message: Box::<[u8]>::from(message),
+                err,
+                global_this: GlobalRef::from(vm.global()),
+                in_flight: core::mem::replace(
+                    &mut self.in_flight,
+                    command::promise_pair::Queue::init(),
+                ),
+                queue: command::entry::Queue::init(),
+            });
+            deferred_failure.enqueue();
+            return Ok(());
+        }
+
+        let global_this = self.global_object();
+        let jsvalue = valkey_error_to_js(&global_this, message, err);
+        let mut entries = command::entry::Queue::init();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
     /// Flush pending data to the socket
     pub fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();
@@ -678,6 +705,8 @@ impl ValkeyClient {
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
 
+        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
+
         // Signal reconnect timer should be started
         self.on_valkey_reconnect();
         Ok(())
@@ -788,7 +817,8 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer.consume(bytes_consumed as u32);
+                self.read_buffer
+                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
@@ -1070,21 +1100,24 @@ impl ValkeyClient {
         let mut pair_maybe: Option<command::PromisePair> = None;
 
         // For subscription clients, check if this is a push message that doesn't need a promise pair
-        if self.parent().is_subscriber() {
-            if let RESPValue::Push(push) = value {
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                    match msg_type {
-                        protocol::SubscriptionPushMessage::Message => {
-                            // Message pushes never need promise pairs
-                            should_consume_promise_pair = false;
-                        }
-                        protocol::SubscriptionPushMessage::Subscribe
-                        | protocol::SubscriptionPushMessage::Unsubscribe => {
-                            // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                            if self.in_flight.readable_length() == 0 {
-                                should_consume_promise_pair = false;
-                            }
-                        }
+        if let RESPValue::Push(push) = value {
+            match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
+                Some(protocol::SubscriptionPushMessage::Message) => {
+                    // Message pushes never need promise pairs
+                    should_consume_promise_pair = false;
+                }
+                Some(
+                    protocol::SubscriptionPushMessage::Subscribe
+                    | protocol::SubscriptionPushMessage::Unsubscribe,
+                ) => {
+                    // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
+                    if self.in_flight.readable_length() == 0 {
+                        should_consume_promise_pair = false;
+                    }
+                }
+                None => {
+                    if !protocol::SubscriptionPushMessage::is_reply_kind(&push.kind) {
+                        should_consume_promise_pair = false;
                     }
                 }
             }

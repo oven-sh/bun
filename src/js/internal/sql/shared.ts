@@ -1010,6 +1010,12 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   }
 
   validateDistributedTransactionName(name: string): { valid: boolean; error?: string } {
+    if (typeof name !== "string") {
+      return {
+        valid: false,
+        error: "Distributed transaction name must be a string.",
+      };
+    }
     if (name.indexOf("'") !== -1) {
       return {
         valid: false,

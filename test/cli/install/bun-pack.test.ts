@@ -1103,6 +1103,74 @@ describe("files", () => {
     ]);
   });
 
+  test("'files' overrides the overridable default ignores but never .git/.npmrc/lockfiles", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-default-ignores",
+          version: "1.1.1",
+          files: ["lib", ".git", ".npmrc", ".gitignore", "bunfig.toml", "package-lock.json", ".hg", ".svn", "CVS"],
+        }),
+      ),
+      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+      write(join(packageDir, ".git", "config"), "[core]"),
+      write(join(packageDir, ".npmrc"), "registry=https://registry.npmjs.org/"),
+      write(join(packageDir, ".gitignore"), "node_modules"),
+      write(join(packageDir, "bunfig.toml"), "[install]"),
+      write(join(packageDir, "package-lock.json"), "{}"),
+      write(join(packageDir, ".hg", "store"), "hg"),
+      write(join(packageDir, ".svn", "entries"), "svn"),
+      write(join(packageDir, "CVS", "Root"), "cvs"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-default-ignores-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/.gitignore" },
+      { "pathname": "package/.hg/store" },
+      { "pathname": "package/.svn/entries" },
+      { "pathname": "package/CVS/Root" },
+      { "pathname": "package/bunfig.toml" },
+      { "pathname": "package/lib/index.js" },
+    ]);
+  });
+
+  test("non-overridable default ignores are not packed when 'files' matches everything", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-default-ignores-glob",
+          version: "1.1.1",
+          files: ["**"],
+        }),
+      ),
+      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+      write(join(packageDir, ".git", "config"), "[core]"),
+      write(join(packageDir, ".npmrc"), "registry=https://registry.npmjs.org/"),
+      write(join(packageDir, ".gitignore"), "node_modules"),
+      write(join(packageDir, "bunfig.toml"), "[install]"),
+      write(join(packageDir, "package-lock.json"), "{}"),
+      write(join(packageDir, ".hg", "store"), "hg"),
+      write(join(packageDir, ".svn", "entries"), "svn"),
+      write(join(packageDir, "CVS", "Root"), "cvs"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-default-ignores-glob-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/.gitignore" },
+      { "pathname": "package/.hg/store" },
+      { "pathname": "package/.svn/entries" },
+      { "pathname": "package/CVS/Root" },
+      { "pathname": "package/bunfig.toml" },
+      { "pathname": "package/lib/index.js" },
+    ]);
+  });
+
   test(".npmignore cannot exclude CHANGELOG", async () => {
     await Promise.all([
       write(

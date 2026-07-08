@@ -264,7 +264,7 @@ cookie.name; // string - Cookie name
 cookie.value; // string - Cookie value
 cookie.domain; // string | null - Domain scope (null if not specified)
 cookie.path; // string - URL path scope (defaults to "/")
-cookie.expires; // number | undefined - Expiration timestamp (ms since epoch)
+cookie.expires; // Date | undefined - Expiration date
 cookie.secure; // boolean - Require HTTPS
 cookie.sameSite; // "strict" | "lax" | "none" - SameSite setting
 cookie.partitioned; // boolean - Whether the cookie is partitioned (CHIPS)
@@ -276,7 +276,7 @@ cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
 
 #### `isExpired(): boolean`
 
-Checks if the cookie has expired.
+Checks if the cookie has expired. When both `maxAge` and `expires` are set, `maxAge` takes precedence, as required by [RFC 6265](https://datatracker.ietf.org/doc/html/rfc6265#section-5.3).
 
 ```ts title="is-expired.ts" icon="/icons/typescript.svg"
 // Expired cookie (Date in the past)
@@ -290,6 +290,10 @@ const validCookie = new Bun.Cookie("name", "value", {
   maxAge: 3600, // 1 hour in seconds
 });
 console.log(validCookie.isExpired()); // false
+
+// A non-positive maxAge expires the cookie immediately
+const deletedCookie = new Bun.Cookie("name", "value", { maxAge: 0 });
+console.log(deletedCookie.isExpired()); // true
 
 // Session cookie (no expiration)
 const sessionCookie = new Bun.Cookie("name", "value");
@@ -313,9 +317,9 @@ const cookie = new Bun.Cookie("session", "abc123", {
 });
 
 console.log(cookie.serialize());
-// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
+// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=Strict"
 console.log(cookie.toString());
-// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
+// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=Strict"
 ```
 
 #### `toJSON(): CookieInit`

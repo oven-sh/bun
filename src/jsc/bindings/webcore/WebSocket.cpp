@@ -1786,6 +1786,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected opcode"_s);
         break;
     }
+    case Bun::WebSocketErrorCode::unexpected_rsv1: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - RSV1 must be clear"_s);
+        break;
+    }
     case Bun::WebSocketErrorCode::invalid_utf8: {
         // RFC 6455 7.4.1: 1007 is "invalid frame payload data" (for example,
         // non-UTF-8 in a text message); 1003 would mean an unsupported data type.

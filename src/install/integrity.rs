@@ -90,6 +90,17 @@ impl Integrity {
     }
 
     pub fn parse(buf: &[u8]) -> Integrity {
+        let mut strongest = Integrity::default();
+        for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
+            let parsed = Self::parse_entry(entry);
+            if parsed.tag.0 > strongest.tag.0 {
+                strongest = parsed;
+            }
+        }
+        strongest
+    }
+
+    fn parse_entry(buf: &[u8]) -> Integrity {
         if buf.len() < b"sha256-".len() {
             return Integrity {
                 tag: Tag::UNKNOWN,
@@ -115,8 +126,11 @@ impl Integrity {
         }
 
         let input = {
+            let mut s = &buf[offset..];
+            if let Some(i) = strings::index_of_char(s, b'?') {
+                s = &s[..i as usize];
+            }
             // trim trailing '=' padding
-            let s = &buf[offset..];
             let mut end = s.len();
             while end > 0 && s[end - 1] == b'=' {
                 end -= 1;

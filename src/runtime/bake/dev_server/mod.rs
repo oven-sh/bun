@@ -185,6 +185,14 @@ impl HmrTopic {
         }
     }
 
+    /// uWS topic name for this HMR channel. The leading `0xFF` byte cannot
+    /// occur in WTF-8, so no topic string passed to `ServerWebSocket`
+    /// `subscribe()`/`publish()` or `Server.publish()` can ever name it.
+    #[inline]
+    pub fn uws_topic(self) -> [u8; 2] {
+        [0xFF, self as u8]
+    }
+
     /// Maps a topic to its packed `HmrTopicBits` flag.
     #[inline]
     pub fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {

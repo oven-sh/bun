@@ -498,6 +498,9 @@ impl WritablePending {
             return;
         }
         self.state = PendingState::Used;
+        // `consumed` belongs to the operation being settled here; the next one
+        // starts from zero.
+        self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
             WritableFuture::Promise { mut strong, global } => {
@@ -1985,7 +1988,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             debug_assert!(self.pooled_buffer.is_none());
         }
 
-        if let Some(mut pooled) = self.pooled_buffer {
+        if let Some(pooled) = self.pooled_buffer {
             self.buffer.clear();
             if self.buffer.capacity() > 64 * 1024 {
                 self.buffer.clear_and_free();
@@ -2001,7 +2004,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
             // exclusively owned by this stream; `data` was rewritten just above,
             // so it is initialized. Ownership returns to the pool.
-            unsafe { ByteListPool::release(pooled.as_mut()) };
+            unsafe { ByteListPool::release(pooled.as_ptr()) };
         } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {

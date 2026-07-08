@@ -3846,9 +3846,8 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get originSet() {
-    if (this.encrypted) {
-      return Array.from(initOriginSet(this));
-    }
+    if (!this.encrypted || this.destroyed) return undefined;
+    return Array.from(initOriginSet(this));
   }
 
   get alpnProtocol() {
@@ -4141,7 +4140,8 @@ class ClientHttp2Session extends Http2Session {
     maxHeaderListSize: 65535,
     maxHeaderSize: 65535,
   };
-  #encrypted: boolean = false;
+  // node: undefined until the session socket has connected, then true for TLSSocket, false otherwise.
+  #encrypted: boolean | undefined = undefined;
   #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
   // SETTINGS counts as the first). node destroys the session with
@@ -4456,9 +4456,8 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get originSet() {
-    if (this.encrypted) {
-      return Array.from(initOriginSet(this));
-    }
+    if (!this.encrypted || this.destroyed) return undefined;
+    return Array.from(initOriginSet(this));
   }
   get alpnProtocol() {
     return this.#alpnProtocol;
@@ -4467,6 +4466,9 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
     this.#connected = true;
+    // node sets kEncrypted/kAlpnProtocol on ready; until then they read undefined, which is also
+    // what gates the originSet getter so it cannot seed from an unconnected socket.
+    this.#encrypted = socket instanceof TLSSocket;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
       // client must check alpnProtocol
@@ -4781,7 +4783,6 @@ class ClientHttp2Session extends Http2Session {
       );
       this[bunHTTP2Socket] = socket;
     }
-    this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket._handle;
 
     if (options?.settings !== undefined) {

@@ -15,15 +15,14 @@ const {
   validateBoolean,
 } = require("internal/validators");
 
-// node's name handling (lib/internal/worker.js): default "WorkerThread", validate + trim when provided.
+// node's name handling (lib/internal/worker.js): truthy → validateString + trim,
+// falsy (undefined/null/0/"") → default "". So {name: 0|null} is silently ignored.
 function normalizeWorkerName(rawName) {
-  // node gates on `!== undefined`, not truthiness: {name: 0|null|false} must
-  // throw ERR_INVALID_ARG_TYPE (via validateString) and {name: ""} stays "".
-  if (rawName !== undefined) {
+  if (rawName) {
     validateString(rawName, "options.name");
     return rawName.trim();
   }
-  return "WorkerThread";
+  return "";
 }
 
 const { isAbsolute: pathIsAbsolute } = require("node:path");
@@ -274,12 +273,14 @@ const MessagePort = _MessagePort;
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
+const setImmediateGlobal = globalThis.setImmediate;
 Object.defineProperty(MessagePort.prototype, "close", {
   value: function close(cb) {
     closedMessagePorts.add(this);
-    // node registers cb as a one-time 'close' listener before the native close,
-    // so it interleaves with other close listeners in registration order.
-    if (typeof cb === "function") this.once("close", cb);
+    // node fires the close callback from libuv's close-callbacks phase — after
+    // this iteration's setImmediate. A nested setImmediate lands in the next
+    // check pass, matching that ordering versus a caller's own setImmediate.
+    if (typeof cb === "function") setImmediateGlobal(() => setImmediateGlobal(cb));
     return nativeMessagePortClose.$call(this);
   },
   writable: true,
@@ -694,8 +695,8 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
 
 let workerData = unpackJSTransferables(_workerData);
 let threadId = _threadId;
-// node: main thread name is "", worker default is "WorkerThread" (trimmed).
-const threadName = isMainThread ? "" : (_threadName ?? "WorkerThread");
+// node: main-thread and unspecified-worker name are both "" (trimmed).
+const threadName = isMainThread ? "" : (_threadName ?? "");
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");

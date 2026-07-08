@@ -1753,50 +1753,57 @@ private:
                 // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
                 // OWN data descriptors only (an inherited or accessor .message is
                 // NOT serialized). .stack: Node reads via [[Get]] to materialize
-                // V8's lazy accessor; a throwing prepareStackTrace/getter drops
-                // the field (only TerminationException propagates).
+                // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
+                // propagates out of postMessage/structuredClone (Node parity).
                 String message, sourceURL, stack;
                 unsigned line = 0, column = 0;
                 {
-                    auto fieldScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                    const auto readOwnString = [&](const JSC::Identifier& name, String& out) -> bool {
-                        JSC::PropertyDescriptor d;
-                        if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, name, d) && !fieldScope.exception() && d.isDataDescriptor() && d.value().isString())
-                            out = d.value().toWTFString(m_lexicalGlobalObject);
-                        return fieldScope.tryClearException();
-                    };
-                    const auto readOwnNumber = [&](const JSC::Identifier& name, unsigned& out) -> bool {
-                        JSC::PropertyDescriptor d;
-                        if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, name, d) && !fieldScope.exception() && d.isDataDescriptor() && d.value().isNumber())
-                            out = d.value().toNumber(m_lexicalGlobalObject);
-                        return fieldScope.tryClearException();
-                    };
-                    const auto readGetString = [&](const JSC::Identifier& name, String& out) -> bool {
-                        JSValue v = errorInstance->get(m_lexicalGlobalObject, name);
-                        if (!fieldScope.exception() && v.isString())
-                            out = v.toWTFString(m_lexicalGlobalObject);
-                        return fieldScope.tryClearException();
-                    };
                     // .message is ToString'd rather than gated on isString (node clones
-                    // `e.message = 42` as "42"), and a coercion throw propagates instead
-                    // of dropping the field. Reading it before .line also keeps a Symbol
-                    // message from reaching ErrorInstance's lazy info materialization.
-                    const auto readOwnMessage = [&](String& out) -> bool {
-                        JSC::PropertyDescriptor d;
-                        bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
-                        if (fieldScope.exception())
-                            return false;
-                        if (!found || !d.isDataDescriptor() || !d.value())
-                            return true;
-                        out = d.value().toWTFString(m_lexicalGlobalObject);
-                        return !fieldScope.exception();
-                    };
-                    if (!readOwnMessage(message)
-                        || !readOwnNumber(vm.propertyNames->line, line)
-                        || !readOwnNumber(vm.propertyNames->column, column)
-                        || !readOwnString(vm.propertyNames->sourceURL, sourceURL)
-                        || !readGetString(vm.propertyNames->stack, stack))
-                        return false;
+                    // `e.message = 42` as "42"). Reading it before .line also keeps a
+                    // Symbol message from reaching ErrorInstance's lazy materialization.
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value()) {
+                        message = d.value().toWTFString(m_lexicalGlobalObject);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    }
+                }
+                // Trigger ErrorInstance's lazy materialization up front so a throwing
+                // prepareStackTrace propagates here instead of tripping the exception
+                // assertion inside JSObject::getOwnPropertyDescriptor.
+                errorInstance->materializeErrorInfoIfNeeded(vm);
+                RETURN_IF_EXCEPTION(scope, false);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        line = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        column = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isString())
+                        sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                {
+                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (v.isString())
+                        stack = v.toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
 
                 write(ErrorInstanceTag);

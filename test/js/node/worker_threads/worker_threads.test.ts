@@ -700,11 +700,11 @@ test("transferred FileHandles are not neutered when name/filename validation rej
     expect(bytesRead).toBe(5);
     await fh.close();
   }
-  // ERR_INVALID_ARG_TYPE on options.name
+  // ERR_INVALID_ARG_TYPE on truthy non-string options.name (node ignores falsy).
   {
     const fh = await fs.promises.open(file, "r");
     expect(() => {
-      new Worker(file, { name: 0 as any, workerData: { fh }, transferList: [fh as any] } as any);
+      new Worker(file, { name: {} as any, workerData: { fh }, transferList: [fh as any] } as any);
     }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(fh.fd).toBeGreaterThanOrEqual(0);
     await fh.close();
@@ -866,21 +866,18 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.close();
 });
 
-test("close(cb) fires cb via 'close' event asynchronously", async () => {
+test("close(cb) fires cb asynchronously after this tick's setImmediate", async () => {
   const { port1 } = new MessageChannel();
   const order: string[] = [];
-  port1.on("close", () => order.push("before"));
   port1.close(() => order.push("cb"));
-  port1.on("close", () => order.push("after"));
   order.push("sync");
-  await new Promise(r => setImmediate(r));
-  await new Promise(r => setImmediate(r));
+  setImmediate(() => order.push("immediate1"));
+  await new Promise(r => setImmediate(() => setImmediate(() => setImmediate(r))));
+  // node fires the close callback from libuv's close-callbacks phase, i.e.
+  // after any setImmediate the caller queued in the same tick as close().
   expect(order[0]).toBe("sync");
-  expect(order).toContain("before");
   expect(order).toContain("cb");
-  expect(order).toContain("after");
-  expect(order.indexOf("before")).toBeLessThan(order.indexOf("cb"));
-  expect(order.indexOf("cb")).toBeLessThan(order.indexOf("after"));
+  expect(order.indexOf("immediate1")).toBeLessThan(order.indexOf("cb"));
 });
 
 test("getHeapStatistics settles when terminated mid-request", async () => {

@@ -857,6 +857,19 @@ describe("Error serialization semantics", () => {
     } as any;
     expect(() => structuredClone(e)).toThrow(MyDomainError);
   });
+
+  test("a throwing prepareStackTrace propagates the thrown error", () => {
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom");
+    };
+    try {
+      const e = new Error("payload");
+      expect(() => structuredClone(e)).toThrow("boom");
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+  });
 });
 
 describe("options.transfer iterator error propagation", () => {

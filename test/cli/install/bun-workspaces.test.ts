@@ -197,7 +197,12 @@ test("dependency on workspace without version in package.json", async () => {
 // to the workspace package, including when the lockfile is loaded rather than
 // resolved fresh; otherwise every install re-registers the folder and rewrites bun.lock.
 describe("file: dependency on a workspace member", () => {
-  async function writeWorkspace(appDependencies: Record<string, string>, rootDependencies?: Record<string, string>) {
+  async function writeWorkspace(
+    ctx: TestCtx,
+    appDependencies: Record<string, string>,
+    rootDependencies?: Record<string, string>,
+  ) {
+    const { packageDir, packageJson } = ctx;
     await Promise.all([
       write(
         packageJson,
@@ -216,7 +221,8 @@ describe("file: dependency on a workspace member", () => {
     ]);
   }
 
-  async function expectStableLockfile() {
+  async function expectStableLockfile(ctx: TestCtx) {
+    const { packageDir, env } = ctx;
     await runBunInstall(env, packageDir, { saveTextLockfile: true });
     const first = await file(join(packageDir, "bun.lock")).text();
 
@@ -237,26 +243,31 @@ describe("file: dependency on a workspace member", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
   }
 
-  test("declared by a sibling member", async () => {
-    await writeWorkspace({ lib: "file:../lib" });
-    await expectStableLockfile();
+  test.concurrent("declared by a sibling member", async () => {
+    using ctx = await setupTest();
+    await writeWorkspace(ctx, { lib: "file:../lib" });
+    await expectStableLockfile(ctx);
   });
 
-  test("declared by a sibling member under an alias", async () => {
-    await writeWorkspace({ "lib-alias": "file:../lib" });
-    await expectStableLockfile();
+  test.concurrent("declared by a sibling member under an alias", async () => {
+    using ctx = await setupTest();
+    await writeWorkspace(ctx, { "lib-alias": "file:../lib" });
+    await expectStableLockfile(ctx);
   });
 
-  test("declared by the root next to the workspaces array", async () => {
-    await writeWorkspace({}, { lib: "file:./packages/lib" });
-    await expectStableLockfile();
+  test.concurrent("declared by the root next to the workspaces array", async () => {
+    using ctx = await setupTest();
+    await writeWorkspace(ctx, {}, { lib: "file:./packages/lib" });
+    await expectStableLockfile(ctx);
   });
 
   // Negative contract: the rewrite keys on the folder path, not the dependency
   // name. A `file:` path outside the workspaces stays a plain folder dependency
   // even when its alias collides with a workspace member's name.
-  test("a colliding name pointing at a non-workspace folder stays a folder dependency", async () => {
-    await writeWorkspace({ lib: "file:../../vendor/other" });
+  test.concurrent("a colliding name pointing at a non-workspace folder stays a folder dependency", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await writeWorkspace(ctx, { lib: "file:../../vendor/other" });
     await write(
       join(packageDir, "vendor", "other", "package.json"),
       JSON.stringify({ name: "other", version: "2.0.0" }),
@@ -275,7 +286,8 @@ describe("file: dependency on a workspace member", () => {
   // `app` aliases the contents of packages/legacy-utils under the name of the
   // unrelated `utils` member, so the rewrite must decline (see
   // `find_workspace_by_path`) and the alias must link the folder it names.
-  async function writeAliasCollision() {
+  async function writeAliasCollision(ctx: TestCtx) {
+    const { packageDir, packageJson } = ctx;
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] })),
       write(join(packageDir, "packages", "utils", "package.json"), JSON.stringify({ name: "utils", version: "1.0.0" })),
@@ -290,8 +302,10 @@ describe("file: dependency on a workspace member", () => {
     ]);
   }
 
-  test("an alias colliding with another member's name still links the folder it names", async () => {
-    await writeAliasCollision();
+  test.concurrent("an alias colliding with another member's name still links the folder it names", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await writeAliasCollision(ctx);
     await runBunInstall(env, packageDir, { saveTextLockfile: true });
     const lockfile = await file(join(packageDir, "bun.lock")).text();
     expect(lockfile).toContain('"app/utils": ["legacy@workspace:packages/legacy-utils"]');
@@ -305,7 +319,9 @@ describe("file: dependency on a workspace member", () => {
   // pre-existing second-install lockfile rewrite. It needs the `Tag::Workspace`
   // resolver to prefer a dependency's stored path over its name-keyed lookup.
   test.todo("an alias colliding with another member's name also produces a stable lockfile", async () => {
-    await writeAliasCollision();
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await writeAliasCollision(ctx);
     await runBunInstall(env, packageDir, { saveTextLockfile: true });
     const first = await file(join(packageDir, "bun.lock")).text();
 

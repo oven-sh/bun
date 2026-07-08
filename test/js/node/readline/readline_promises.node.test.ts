@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readlinePromises from "node:readline/promises";
+import { PassThrough } from "node:stream";
 const { describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 // ----------------------------------------------------------------------------
@@ -91,5 +92,53 @@ describe("readline/promises.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
+  });
+});
+
+describe("readline/promises.Interface.question()", () => {
+  it("returns a rejected promise (not a sync throw) on a closed interface", async () => {
+    const rl = readlinePromises.createInterface({ input: new PassThrough() });
+    rl.close();
+    const result = rl.question("q? ");
+    expect(result).toBeInstanceOf(Promise);
+    const err = await result.then(
+      () => null,
+      e => e,
+    );
+    expect({ name: err?.name, code: err?.code }).toEqual({ name: "Error", code: "ERR_USE_AFTER_CLOSE" });
+  });
+
+  it("returns a rejected promise (not a sync throw) for an invalid options.signal", async () => {
+    const rl = readlinePromises.createInterface({ input: new PassThrough() });
+    try {
+      const result = rl.question("q? ", { signal: 42 as any });
+      expect(result).toBeInstanceOf(Promise);
+      const err = await result.then(
+        () => null,
+        e => e,
+      );
+      expect({ name: err?.name, code: err?.code }).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    } finally {
+      rl.close();
+    }
+  });
+
+  it("returns a rejected promise for an already-aborted signal", async () => {
+    const rl = readlinePromises.createInterface({ input: new PassThrough() });
+    try {
+      const result = rl.question("q? ", { signal: AbortSignal.abort("why") });
+      expect(result).toBeInstanceOf(Promise);
+      const err = await result.then(
+        () => null,
+        e => e,
+      );
+      expect({ name: err?.name, code: err?.code, cause: err?.cause }).toEqual({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: "why",
+      });
+    } finally {
+      rl.close();
+    }
   });
 });

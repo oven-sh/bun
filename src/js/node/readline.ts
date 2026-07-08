@@ -2699,28 +2699,26 @@ var PromisesInterface = class Interface extends _Interface {
     super(input, output, completer, terminal);
   }
   question(query, options = kEmptyObject) {
-    var signal = options?.signal;
-    if (signal) {
-      validateAbortSignal(signal, "options.signal");
-      if (signal.aborted) {
-        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      var signal = options?.signal;
+      if (signal) {
+        validateAbortSignal(signal, "options.signal");
+        if (signal.aborted) {
+          return reject($makeAbortError(undefined, { cause: signal.reason }));
+        }
+        var onAbort = () => {
+          this[kQuestionCancel]();
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
       }
-    }
-    const { promise, resolve, reject } = $newPromiseCapability(Promise);
-    var cb = resolve;
-    if (options?.signal) {
-      var onAbort = () => {
-        this[kQuestionCancel]();
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
-    }
-    this[kQuestion](query, cb);
-    return promise;
+      this[kQuestion](query, cb);
+    });
   }
 };
 

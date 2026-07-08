@@ -378,6 +378,8 @@ Socket.prototype.bindSync = function (options) {
   healthCheck(this);
   if (options !== undefined) validateObject(options, "options");
   const state = this[kStateSymbol];
+  const type = this.type;
+  const udp4 = type === "udp4";
 
   if (state.bindState !== BIND_STATE_UNBOUND) throw $ERR_SOCKET_ALREADY_BOUND();
 
@@ -386,7 +388,7 @@ Socket.prototype.bindSync = function (options) {
   const port = validatePort(options?.port ?? 0, "options.port");
   let address = options?.address;
   if (!address) {
-    address = this.type === "udp4" ? "0.0.0.0" : "::";
+    address = udp4 ? "0.0.0.0" : "::";
   } else {
     validateString(address, "options.address");
     const ipType = isIP(address);
@@ -401,11 +403,11 @@ Socket.prototype.bindSync = function (options) {
     // handle has a fixed family and rejects a mismatch with EINVAL at bind
     // time. Reject here so a udp4 socket can't silently bind to an IPv6
     // address (or vice versa).
-    if (ipType !== (this.type === "udp4" ? 4 : 6)) {
+    if (ipType !== (udp4 ? 4 : 6)) {
       throw $ERR_INVALID_ARG_VALUE(
         "options.address",
         address,
-        `must be an ${this.type === "udp4" ? "IPv4" : "IPv6"} address for a ${this.type} socket`,
+        `must be an ${udp4 ? "IPv4" : "IPv6"} address for a ${type} socket`,
       );
     }
   }
@@ -417,7 +419,7 @@ Socket.prototype.bindSync = function (options) {
   if (state.ipv6Only) flags |= uSockets.SOCKET_IPV6_ONLY;
   if (state.reusePort) flags |= uSockets.LISTEN_REUSE_PORT;
 
-  const family = this.type === "udp4" ? "IPv4" : "IPv6";
+  const family = udp4 ? "IPv4" : "IPv6";
   let socket;
   try {
     socket = Bun.udpSocket({

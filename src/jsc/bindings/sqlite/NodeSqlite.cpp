@@ -900,14 +900,14 @@ void JSDatabaseSync::closeInternal()
 void JSDatabaseSync::finishDeferredClose()
 {
     ASSERT(!isBusy());
+    // open() refuses while m_deferredClose is set, so m_db is still null and
+    // m_sessions / m_registeredCallbacks belong to the deferred handle.
+    ASSERT(!m_db);
     sqlite3* handle = m_deferredClose;
     m_deferredClose = nullptr;
     if (!handle) return;
     deleteTrackedSessions();
     sqlite3_close_v2(handle);
-    // If open() ran after the deferred close but before this unwind, m_db is
-    // the new connection — keep its registration and roots.
-    if (m_db) return;
     unregisterOpenDatabase(this);
     m_namedRegistrations.clear();
     Locker locker { cellLock() };
@@ -989,7 +989,12 @@ void JSDatabaseSync::sweepOrphanedSessions()
 
 bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    if (m_db) {
+    // m_deferredClose: close() from inside a UDF/authorizer stashed the old
+    // handle and its close_v2 runs when the outermost BusyScope unwinds.
+    // Opening now would orphan that handle (a second close overwrites the
+    // single slot) and put new-connection sessions into the vector
+    // finishDeferredClose() is about to sweep, so refuse until it completes.
+    if (m_db || m_deferredClose) {
         throwNodeState(globalObject, scope, "database is already open"_s);
         return false;
     }
@@ -1228,10 +1233,14 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
     auto sql = sqlVal.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto utf8 = sql.utf8();
-    int r = sqlite3_exec(self->connection(), utf8.data(), nullptr, nullptr, nullptr);
+    // Capture before the call: a UDF/authorizer re-entering close() nulls
+    // m_db (deferred close) but the handle itself stays valid until this
+    // frame's BusyScope unwinds, so read the error from it.
+    sqlite3* conn = self->connection();
+    int r = sqlite3_exec(conn, utf8.data(), nullptr, nullptr, nullptr);
     CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteError(globalObject, scope, conn);
         return {};
     }
     return JSValue::encode(jsUndefined());
@@ -1251,13 +1260,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
     auto utf8 = sql.utf8();
     sqlite3_stmt* stmt = nullptr;
     // utf8.data() is NUL-terminated (CString); -1 lets SQLite compute the
-    // length and avoids narrowing a size_t into int.
-    int r = sqlite3_prepare_v2(self->connection(), utf8.data(), -1, &stmt, nullptr);
+    // length and avoids narrowing a size_t into int. Capture the connection
+    // before the call for the error path (see jsDatabaseSyncExec).
+    sqlite3* conn = self->connection();
+    int r = sqlite3_prepare_v2(conn, utf8.data(), -1, &stmt, nullptr);
     // prepare() runs the authorizer callback (if any), which may
     // throw — surface that over SQLite's generic "not authorized".
     CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteError(globalObject, scope, conn);
         return {};
     }
     // sqlite3_prepare_v2 returns SQLITE_OK with *ppStmt == nullptr for empty /
@@ -2699,17 +2710,19 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     while (r == SQLITE_ROW)
         r = sqlite3_step(self->statement());
     CHECK_UDF_EXCEPTION(scope);
+    // Don't go through self->connection(): a named-parameter getter or UDF
+    // callback may have called db.close() since the caller's liveness
+    // check, in which case the wrapper's m_db is now null (deferred close)
+    // and sqlite3_changes64(NULL) is a raw db->nChange deref — and on the
+    // error path sqlite3_errmsg(NULL) reports "out of memory" instead of
+    // the real message. sqlite3_db_handle reads the statement's own
+    // back-pointer, which survives until the BusyScope unwinds and is what
+    // Node's StatementSync::Run uses.
+    sqlite3* db = sqlite3_db_handle(self->statement());
     if (r != SQLITE_DONE && r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteError(globalObject, scope, db);
         return {};
     }
-    // Don't go through self->connection() here: a named-parameter getter
-    // or UDF callback may have called db.close() since the caller's
-    // liveness check, in which case the wrapper's m_db is now null and
-    // sqlite3_changes64(NULL) is a raw db->nChange deref. sqlite3_db_handle
-    // reads the statement's own back-pointer, which survives zombification
-    // and is what Node's StatementSync::Run uses.
-    sqlite3* db = sqlite3_db_handle(self->statement());
     JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     RETURN_IF_EXCEPTION(scope, {});
     sqlite3_int64 changes = sqlite3_changes64(db);
@@ -2734,7 +2747,7 @@ static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope&
     CHECK_UDF_EXCEPTION(scope);
     if (r == SQLITE_DONE) return JSValue::encode(jsUndefined());
     if (r != SQLITE_ROW) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteError(globalObject, scope, sqlite3_db_handle(self->statement()));
         return {};
     }
     int numCols = sqlite3_column_count(self->statement());
@@ -2770,7 +2783,7 @@ static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope&
     }
     CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_DONE) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteError(globalObject, scope, sqlite3_db_handle(self->statement()));
         return {};
     }
     return JSValue::encode(rows);
@@ -3043,7 +3056,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         sqlite3_reset(stmt->statement());
         self->setDone();
         CHECK_UDF_EXCEPTION(scope);
-        throwSqliteError(globalObject, scope, stmt->connection());
+        throwSqliteError(globalObject, scope, sqlite3_db_handle(stmt->statement()));
         return {};
     }
     CHECK_UDF_EXCEPTION(scope);

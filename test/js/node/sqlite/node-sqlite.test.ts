@@ -649,6 +649,54 @@ describe("DatabaseSync.prototype.function()", () => {
       exitCode: 0,
     });
   });
+
+  test("open() refuses while a deferred close is pending", () => {
+    // m_deferredClose is a single slot; close(); open(); close() from a UDF
+    // would overwrite it and leak the first handle, and a session on the
+    // reopened connection would be swept by finishDeferredClose(). Refusing
+    // the open() avoids both.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x)");
+    let openErr;
+    db.function("g", () => {
+      db.close();
+      try {
+        db.open();
+        openErr = "opened";
+      } catch (e: any) {
+        openErr = e.code;
+      }
+      return null;
+    });
+    db.prepare("SELECT g()").run();
+    expect(openErr).toBe("ERR_INVALID_STATE");
+    expect(db.isOpen).toBe(false);
+    // Deferred close has completed on BusyScope unwind; a fresh open() works.
+    db.open();
+    expect(db.isOpen).toBe(true);
+    db.close();
+  });
+
+  test("step error after a UDF closes the database reports the real error", () => {
+    // The wrapper's m_db is nulled by the deferred close; reading the error
+    // from it would surface sqlite3_errmsg(NULL) = "out of memory". The
+    // statement's own back-pointer (sqlite3_db_handle) still points at the
+    // deferred handle until the BusyScope unwinds.
+    for (const fn of ["run", "get", "all"] as const) {
+      const db = new DatabaseSync(":memory:");
+      db.function("f", () => {
+        db.close();
+        return {};
+      });
+      expect(() => (db.prepare("SELECT f()")[fn] as () => void)()).toThrow(
+        expect.objectContaining({
+          code: "ERR_SQLITE_ERROR",
+          errcode: 1,
+          message: "Returned JavaScript value cannot be converted to a SQLite value",
+        }),
+      );
+    }
+  });
 });
 
 describe("DatabaseSync.prototype.aggregate()", () => {

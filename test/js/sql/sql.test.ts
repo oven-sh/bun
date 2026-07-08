@@ -4001,7 +4001,11 @@ CREATE TABLE ${table_name} (
       await using sql = postgres({ ...options, max: 1 });
       const reserved = await sql.reserve();
       await reserved.release();
-      const outcome = async (p: Promise<any>) => p.then(() => "fulfilled", (e: any) => `rejected: ${e.code}`);
+      const outcome = async (p: Promise<any>) =>
+        p.then(
+          () => "fulfilled",
+          (e: any) => `rejected: ${e.code}`,
+        );
       expect({
         template: await outcome(reserved`select 1 as x`),
         unsafe: await outcome(reserved.unsafe("select 1 as x")),
@@ -4020,7 +4024,11 @@ CREATE TABLE ${table_name} (
         leaked = tx;
         await tx.unsafe("select 1 as x");
       });
-      const outcome = async (p: Promise<any>) => p.then(() => "fulfilled", (e: any) => `rejected: ${e.code}`);
+      const outcome = async (p: Promise<any>) =>
+        p.then(
+          () => "fulfilled",
+          (e: any) => `rejected: ${e.code}`,
+        );
       expect({
         template: await outcome(leaked`select 1 as x`),
         unsafe: await outcome(leaked.unsafe("select 1 as x")),

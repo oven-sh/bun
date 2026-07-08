@@ -1154,7 +1154,11 @@ describe("Transactions", () => {
       leaked = tx;
       await tx.unsafe(`INSERT INTO accounts VALUES (10, 0)`);
     });
-    const outcome = async (p: Promise<any>) => p.then(() => "fulfilled", (e: any) => `rejected: ${e.message}`);
+    const outcome = async (p: Promise<any>) =>
+      p.then(
+        () => "fulfilled",
+        (e: any) => `rejected: ${e.message}`,
+      );
     expect({
       template: await outcome(leaked`SELECT 1`),
       savepoint: await outcome(Promise.resolve().then(() => leaked.savepoint(async () => {}))),

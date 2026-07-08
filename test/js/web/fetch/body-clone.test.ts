@@ -868,11 +868,34 @@ describe("clone() throws when the body is disturbed or locked", () => {
 // branch carrying every byte; the pre-clone stream object becomes the (now
 // locked) tee source. The `if (res.body) { cache.put(res.clone()); use
 // res.body }` middleware shape depends on this.
-describe("clone() after `.body` was observed returns a fresh tee branch for both sides", () => {
+describe.concurrent("clone() after `.body` was observed returns a fresh tee branch for both sides", () => {
   async function drain(stream: ReadableStream<Uint8Array>): Promise<number> {
     let n = 0;
     for await (const chunk of stream) n += chunk.byteLength;
     return n;
+  }
+
+  type Observed = { before: ReadableStream; after: ReadableStream; cloned: Request | Response };
+
+  function observeThenClone(target: Request | Response): Observed {
+    const before = target.body!;
+    expect(before.locked).toBe(false);
+    expect(target.bodyUsed).toBe(false);
+
+    const cloned = target.clone();
+    const after = target.body!;
+
+    // Spec: .body is a new tee branch; the pre-clone stream is the tee
+    // source and is now locked.
+    expect(after).not.toBe(before);
+    expect(before.locked).toBe(true);
+    expect(target.bodyUsed).toBe(false);
+    return { before, after, cloned };
+  }
+
+  async function checkBytes({ after, cloned }: Observed, n: number) {
+    const [origBytes, cloneBytes] = await Promise.all([drain(after), drain(cloned.body!)]);
+    expect({ origBytes, cloneBytes }).toEqual({ origBytes: n, cloneBytes: n });
   }
 
   // Each body type hits a different internal representation at clone() time:
@@ -940,22 +963,7 @@ describe("clone() after `.body` was observed returns a fresh tee branch for both
 
   for (const [label, make] of cases) {
     test(`${label}: reading .body after observe+clone yields the full payload on both sides`, async () => {
-      const target = await make();
-      const before = target.body!;
-      expect(before.locked).toBe(false);
-      expect(target.bodyUsed).toBe(false);
-
-      const cloned = target.clone();
-      const after = target.body!;
-
-      // Spec: .body is a new tee branch; the pre-clone stream is the tee
-      // source and is now locked.
-      expect(after).not.toBe(before);
-      expect(before.locked).toBe(true);
-      expect(target.bodyUsed).toBe(false);
-
-      const [origBytes, cloneBytes] = await Promise.all([drain(after), drain(cloned.body!)]);
-      expect({ origBytes, cloneBytes }).toEqual({ origBytes: N, cloneBytes: N });
+      await checkBytes(observeThenClone(await make()), N);
     });
 
     test(`${label}: .text() after observe+clone yields the full payload on both sides`, async () => {
@@ -967,6 +975,29 @@ describe("clone() after `.body` was observed returns a fresh tee branch for both
       expect(cloneText.length).toBe(N);
     });
   }
+
+  // `routes:` handlers receive a BunRequest subclass whose own `clone` is a
+  // separate native entry point (JSBunRequest::clone -> Request__clone); it
+  // must repoint the source's cached `.body` the same way.
+  test("Bun.serve routes: BunRequest observe+clone yields a fresh tee branch carrying the full payload", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/p/:id": async (req: Request) => {
+          try {
+            await checkBytes(observeThenClone(req), N);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      },
+    });
+    await fetch(new URL("/p/1", server.url), { method: "POST", body: payload });
+    await promise;
+  });
 
   test("fetch() Response: second clone after observe still yields full payload", async () => {
     await using server = Bun.serve({

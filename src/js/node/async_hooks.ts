@@ -519,9 +519,10 @@ const asyncWrapProviders = {
 };
 
 // Internal hook point for node:domain — not part of the public API surface.
-// A registry symbol so node:domain (a separate builtin bundle) can address
-// the same slot without exporting a public string key.
-const kSetDomainActiveGetter = Symbol.for("nodejs.async_hooks.domainActiveGetter");
+// The registry-symbol string is forgeable, but only the informational
+// AsyncResource `.domain` tag flows through it; error routing uses the
+// tamper-proof captured ALS methods.
+const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
 
 export default {
   AsyncLocalStorage,

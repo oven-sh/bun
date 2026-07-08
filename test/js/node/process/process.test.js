@@ -1148,6 +1148,27 @@ describe.concurrent(() => {
     expect(aborted(r)).toBe(true);
   });
 
+  it("dispatches to a capture callback installed inside uncaughtExceptionMonitor", async () => {
+    // Node reads exceptionHandlerState.captureFn after the monitor emit; the
+    // dispatch must not use a pre-monitor snapshot.
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        `
+        process.on("uncaughtExceptionMonitor", () =>
+          process.setUncaughtExceptionCaptureCallback(e => console.log("capture", e.message)),
+        );
+        process.on("uncaughtException", () => console.log("listener"));
+        setTimeout(() => { throw new Error("x") }, 0);
+      `,
+      ],
+      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "capture x", exitCode: 0 });
+  });
+
   it("uncaughtExceptionCaptureCallback survives domain enter/exit and hasUncaughtExceptionCaptureCallback reflects only the user slot", async () => {
     // Bun keeps the domain dispatch in a separate native slot, so a user
     // capture callback set before loading node:domain is not clobbered by

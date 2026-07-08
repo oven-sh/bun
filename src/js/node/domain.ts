@@ -554,7 +554,7 @@ EventEmitter.init = function init(this: any, opts: any) {
 
 // Install the AsyncResource domain-tagging getter now that node:domain has
 // loaded (mirrors Node registering its createHook init hook at load time).
-asyncHooks[Symbol.for("nodejs.async_hooks.domainActiveGetter")](currentActive);
+asyncHooks[Symbol.for("::bunternal::async_hooks.setDomainActiveGetter")](currentActive);
 
 // Hook the native uncaught-exception path. This is installed once when the
 // domain module is first loaded, like node's per-Domain asyncHook.enable().

@@ -918,8 +918,8 @@ test("EventEmitter.name", () => {
 // process-wide, so these run in a subprocess.
 describe("node:domain integration", () => {
   test("'error' on a captureRejections emitter routes to its domain", async () => {
-    // Bun installs the capture-rejections emit variant as an own instance
-    // property; the domain wrapper must apply to it too.
+    // Regression: the captureRejections emit path previously bypassed the
+    // domain prototype override.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -950,9 +950,8 @@ describe("node:domain integration", () => {
   });
 
   test("d.add() routes 'error' from a captureRejections emitter constructed before domain loads", async () => {
-    // Such an emitter carries the un-wrapped capture emit as an own
-    // property; the wrapped EventEmitter.init never saw it, so add() must
-    // wrap it.
+    // Regression: emitters constructed before node:domain loaded were not
+    // observed by the wrapped EventEmitter.init and bypassed domain routing.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

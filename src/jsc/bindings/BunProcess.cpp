@@ -1319,6 +1319,12 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         }
     }
 
+    // Re-read: a monitor listener or the domain dispatcher may have installed
+    // (or cleared) a capture callback. Node reads exceptionHandlerState.captureFn
+    // after the monitor emit; only the throw-time abort above needs the
+    // pre-monitor snapshot.
+    capture = process->getUncaughtExceptionCaptureCallback();
+
     // --abort-on-uncaught-exception aborts (after printing the error) unless
     // a capture callback is installed — either explicitly or by a domain
     // with an 'error' handler (which returned true above). This mirrors

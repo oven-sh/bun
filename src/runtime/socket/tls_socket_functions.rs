@@ -419,11 +419,11 @@ pub(super) fn set_max_send_fragment(
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
     let size = args.ptr[0].coerce_to_int64(global)?;
-    if size < 1 {
-        return Err(global.throw(format_args!("Expected size to be greater than 1")));
-    }
-    if size > 16384 {
-        return Err(global.throw(format_args!("Expected size to be less than 16385")));
+    // OpenSSL rejects a size outside [512, SSL3_RT_MAX_PLAIN_LENGTH] by
+    // returning 0, which Node surfaces as `false`. BoringSSL clamps into that
+    // range and always returns 1, so the rejection has to happen here.
+    if !(512..=16384).contains(&size) {
+        return Ok(JSValue::FALSE);
     }
 
     let Some(ssl_ptr) = this.socket.get().ssl() else {

@@ -1502,6 +1502,25 @@ describe("duplicate Host header field lines", () => {
     expect(handlerReached).toBe(false);
   });
 
+  test("Bun.serve rejects two Host header lines on a CONNECT request", async () => {
+    // CONNECT is exempt from the missing-Host check, but not from the duplicate-Host check.
+    let handlerReached = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        handlerReached = true;
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRaw(
+      server.port,
+      "CONNECT example.com:443 HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\n\r\n",
+    );
+    expect(response).toContain("HTTP/1.1 400");
+    expect(handlerReached).toBe(false);
+  });
+
   test("Bun.serve accepts a single Host header line (control)", async () => {
     await using server = Bun.serve({
       port: 0,

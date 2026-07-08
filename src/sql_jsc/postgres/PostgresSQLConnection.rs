@@ -372,21 +372,11 @@ impl PostgresSQLConnection {
 
     fn get_timeout_interval(&self) -> u32 {
         match self.status.get() {
-            Status::Connected => {
-                // The idle timer is only relevant when the connection is actually idle.
-                // If there are queued or in-flight requests, we must not arm the idle
-                // timer — otherwise we'd race against healthy queries and kill them
-                // when the timer fires (see #30646, #25405).
-                if self.requests.get().readable_length() > 0
-                    || !self
-                        .flags
-                        .get()
-                        .contains(ConnectionFlags::IS_READY_FOR_QUERY)
-                {
-                    return 0;
-                }
-                self.idle_timeout_interval_ms
-            }
+            // The idle timer is only relevant when the connection is actually idle.
+            // While a query is queued or in-flight we must not arm it — otherwise
+            // we'd race a healthy query and kill it when the timer fires (#30646, #25405).
+            Status::Connected if self.has_query_running() => 0,
+            Status::Connected => self.idle_timeout_interval_ms,
             Status::Failed => 0,
             _ => self.connection_timeout_ms,
         }
@@ -546,28 +536,17 @@ impl PostgresSQLConnection {
             return;
         }
 
+        // A busy `.connected` connection never reaches here: `get_timeout_interval()`
+        // returns 0 for it (via `has_query_running()`), so the early return above
+        // fires. Reaching this match with `Connected` therefore implies idle.
         use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
         let (code, kind, ms, sfx): (&[u8], _, _, _) = match self.status.get() {
-            Status::Connected => {
-                // Only fire the idle-timeout failure when the connection is genuinely
-                // idle. If a request slipped into the queue between the timer being
-                // armed and firing, reschedule rather than killing a healthy query.
-                if self.requests.get().readable_length() > 0
-                    || !self
-                        .flags
-                        .get()
-                        .contains(ConnectionFlags::IS_READY_FOR_QUERY)
-                {
-                    self.reset_connection_timeout();
-                    return;
-                }
-                (
-                    b"ERR_POSTGRES_IDLE_TIMEOUT",
-                    Idle,
-                    self.idle_timeout_interval_ms,
-                    "",
-                )
-            }
+            Status::Connected => (
+                b"ERR_POSTGRES_IDLE_TIMEOUT",
+                Idle,
+                self.idle_timeout_interval_ms,
+                "",
+            ),
             Status::SentStartupMessage => (
                 b"ERR_POSTGRES_CONNECTION_TIMEOUT",
                 Connection,
@@ -595,14 +574,15 @@ impl PostgresSQLConnection {
         // Only retire the connection once it's idle. If queries are queued or
         // in-flight, reschedule the timer so we close between queries rather
         // than killing healthy ones with ERR_POSTGRES_LIFETIME_TIMEOUT (#30646).
-        if self.status.get() == Status::Connected
-            && self.requests.get().readable_length() == 0
-            && self
-                .flags
-                .get()
-                .contains(ConnectionFlags::IS_READY_FOR_QUERY)
-        {
+        if self.status.get() == Status::Connected && !self.has_query_running() {
+            // `disconnect()` → `ref_and_close()` → `socket.close()` can run the
+            // JS `onclose` callback synchronously, which lets the pool drop the
+            // wrapper and makes it GC-eligible before `clean_up_requests` runs.
+            // Hold a ref across the teardown (mirrors `fail_with_js_value`).
+            self.ref_();
             self.disconnect();
+            // SAFETY: `self` is a live Box-allocated connection; releases the ref above.
+            unsafe { Self::deref(self.as_ctx_ptr()) };
             return;
         }
 

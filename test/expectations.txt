@@ -90,8 +90,8 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
-# node:repl vendored suite (107 tests; see PR #31827). 85 pass on Linux/macOS.
-# The eight below time out only on the Windows lanes: they use in-memory
+# node:repl vendored suite (106 tests; see PR #31827). 84 pass on Linux/macOS.
+# The nine below time out only on the Windows lanes: they use in-memory
 # ArrayStream (no ConPTY), so the hangs are JS-level, likely (A) `.load` with a
 # backslash path in terminal-mode write(), (B) globalPaths readdir walk in the
 # require/import completer, (C) inspector/preview stubs — not console I/O.
@@ -103,6 +103,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ WINDOWS ] test/js/node/test/parallel/test-repl-pretty-stack.js [ FAIL ] # (A) .load with backslash path
 [ WINDOWS ] test/js/node/test/parallel/test-repl-preview-newlines.js [ FAIL ] # (C) inspector/preview stub
 [ WINDOWS ] test/js/node/test/parallel/test-repl-tab-complete-import.js [ FAIL ] # (B) globalPaths readdir walk
+[ WINDOWS ] test/js/node/test/parallel/test-repl-tab-complete-on-editor-mode.js [ FAIL ] # (B) globalPaths readdir walk
 # 22 remaining upstream divergences (kept in-tree so gaps are tracked):
 test/js/node/test/parallel/test-repl-autocomplete.js [ FAIL ] # result previews need inspector side-effect-free eval
 test/js/node/test/parallel/test-repl-cli-eval.js [ FAIL ] # CLI child-process behavior divergence

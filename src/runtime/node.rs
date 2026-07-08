@@ -132,6 +132,9 @@ pub mod node_http_binding;
 #[path = "node/node_util_binding.rs"]
 pub mod node_util_binding;
 
+#[path = "node/node_repl_binding.rs"]
+pub mod node_repl_binding;
+
 #[path = "node/node_assert.rs"]
 pub mod node_assert;
 

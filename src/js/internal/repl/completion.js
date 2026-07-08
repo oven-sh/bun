@@ -8,9 +8,7 @@ const {
   ArrayPrototypeFilter,
   ArrayPrototypeForEach,
   ArrayPrototypeIncludes,
-  ArrayPrototypeJoin,
   ArrayPrototypeMap,
-  ArrayPrototypePop,
   ArrayPrototypePush,
   ArrayPrototypePushApply,
   ArrayPrototypeShift,
@@ -28,7 +26,6 @@ const {
   StringPrototypeEndsWith,
   StringPrototypeIncludes,
   StringPrototypeSlice,
-  StringPrototypeSplit,
   StringPrototypeStartsWith,
   StringPrototypeToLocaleLowerCase,
   StringPrototypeTrimStart,
@@ -58,9 +55,7 @@ const {
   getOwnNonIndexProperties,
 } = require("internal/repl/node-shims");
 
-// Lazy: don't destructure — see internal/repl/acorn.js.
-const acorn = require("internal/repl/acorn");
-const acornWalk = require("internal/repl/acorn-walk");
+const { isIdentifierStart, isIdentifierChar } = require("internal/repl/native-parse");
 
 const importRE = /\bimport\s*\(\s*['"`](([\w@./:-]+\/)?(?:[\w@./:-]*))(?![^'"`])$/;
 const requireRE = /\brequire\s*\(\s*['"`](([\w@./:-]+\/)?(?:[\w@./:-]*))(?![^'"`])$/;
@@ -81,13 +76,13 @@ function isIdentifier(str) {
     return false;
   }
   const first = StringPrototypeCodePointAt(str, 0);
-  if (!acorn.isIdentifierStart(first)) {
+  if (!isIdentifierStart(first)) {
     return false;
   }
   const firstLen = first > 0xffff ? 2 : 1;
   for (let i = firstLen; i < str.length; i += 1) {
     const cp = StringPrototypeCodePointAt(str, i);
-    if (!acorn.isIdentifierChar(cp)) {
+    if (!isIdentifierChar(cp)) {
       return false;
     }
     if (cp > 0xffff) {
@@ -378,12 +373,21 @@ function complete(line, callback) {
     }
     let expr = "";
     completeOn = completeTarget;
+    const targetSegments = line.length === 0 ? null : memberChainSegments(completeTarget);
     if (StringPrototypeEndsWith(line, ".")) {
       expr = StringPrototypeSlice(completeTarget, 0, -1);
-    } else if (line.length !== 0) {
-      const bits = StringPrototypeSplit(completeTarget, ".");
-      filter = ArrayPrototypePop(bits);
-      expr = ArrayPrototypeJoin(bits, ".");
+    } else if (targetSegments !== null && targetSegments.length > 1) {
+      const last = targetSegments[targetSegments.length - 1];
+      filter = last.key ?? "";
+      expr = targetSegments[targetSegments.length - 2].prefix;
+      // A trailing `[...]` segment isn't a partial identifier — nothing to filter on.
+      if (last.key === null) {
+        expr = last.prefix;
+        filter = "";
+      }
+    } else if (targetSegments !== null) {
+      // A bare identifier prefix (`tru`): no receiver, filter the globals by it.
+      filter = targetSegments[0].prefix;
     }
 
     // Resolve expr and get its completions.
@@ -407,25 +411,6 @@ function complete(line, callback) {
       return;
     }
 
-    // If the target ends with a dot (e.g. `obj.foo.`) such code won't be valid for AST parsing
-    // so in order to make it correct we add an identifier to its end (e.g. `obj.foo.x`)
-    const parsableCompleteTarget = completeTarget.endsWith(".") ? `${completeTarget}x` : completeTarget;
-
-    let completeTargetAst;
-    try {
-      completeTargetAst = acorn.parse(parsableCompleteTarget, {
-        __proto__: null,
-        sourceType: "module",
-        ecmaVersion: "latest",
-      });
-    } catch {
-      /* No need to specifically handle parse errors */
-    }
-
-    if (!completeTargetAst) {
-      return completionGroupsLoaded();
-    }
-
     // Destructuring keeps the "eval" property name out of member-access
     // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
     // `x["eval"]` inside builtin sources, and minify-syntax would fold a
@@ -433,8 +418,7 @@ function complete(line, callback) {
     const { eval: evalFn } = this;
 
     return includesProxiesOrGetters(
-      completeTargetAst.body[0].expression,
-      parsableCompleteTarget,
+      targetSegments,
       evalFn,
       this.context,
       includes => {
@@ -568,268 +552,155 @@ function complete(line, callback) {
  * @returns {string|null} a substring of the code representing the complete target is there was one, `null` otherwise
  */
 function findExpressionCompleteTarget(code) {
-  if (!code) {
-    return null;
-  }
-
-  if (code.at(-1) === ".") {
-    if (code.at(-2) === "?") {
-      // The code ends with the optional chaining operator (`?.`),
-      // such code can't generate a valid AST so we need to strip
-      // the suffix, run this function's logic and add back the
-      // optional chaining operator to the result if present
-      const result = findExpressionCompleteTarget(code.slice(0, -2));
-      return !result ? result : `${result}?.`;
+  // Scan backward from the end, treating each balanced `[...]` as opaque, so
+  // arbitrary index expressions (`obj["a" + "b"]`, `obj[k[0]]`) are captured
+  // whole. Stops at the first char that can't be part of a member expression.
+  let i = code.length;
+  const isIdent = c => RegExpPrototypeExec(/[\w$]/, c) !== null;
+  while (i > 0) {
+    let c = code[i - 1];
+    if (isIdent(c)) {
+      while (i > 0 && isIdent(code[i - 1])) i--;
+      c = code[i - 1];
     }
-
-    // The code ends with a dot, such code can't generate a valid AST
-    // so we need to strip the suffix, run this function's logic and
-    // add back the dot to the result if present
-    const result = findExpressionCompleteTarget(code.slice(0, -1));
-    return !result ? result : `${result}.`;
-  }
-
-  let ast;
-  try {
-    ast = acorn.parse(code, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
-  } catch {
-    const keywords = code.split(" ");
-
-    if (keywords.length > 1) {
-      // Something went wrong with the parsing, however this can be due to incomplete code
-      // (that is for example missing a closing bracket, as for example `{ a: obj.te`), in
-      // this case we take the last code keyword and try again
-      // TODO(dario-piotrowicz): make this more robust, right now we only split by spaces
-      //                         but that's not always enough, for example it doesn't handle
-      //                         this code: `{ a: obj['hello world'].te`
-      return findExpressionCompleteTarget(keywords.at(-1));
+    if (c === "." && code[i - 2] === "?") {
+      i -= 2;
+      continue;
     }
-
-    // The ast parsing has legitimately failed so we return null
-    return null;
+    if (c === ".") {
+      i--;
+      continue;
+    }
+    if (c === "]") {
+      let depth = 1;
+      let j = i - 1;
+      while (j > 0 && depth > 0) {
+        j--;
+        const cj = code[j];
+        if (cj === "]") depth++;
+        else if (cj === "[") depth--;
+        else if (cj === '"' || cj === "'" || cj === "`") {
+          const q = cj;
+          while (j > 0) {
+            j--;
+            if (code[j] === q && code[j - 1] !== "\\") break;
+          }
+        }
+      }
+      if (depth !== 0) return null;
+      // Bail on a call inside the brackets (identifier or `]` immediately
+      // before `(`). Grouping parens are allowed — the index expression is
+      // evaluated to obtain the key, same as Node's acorn-based path.
+      if (RegExpPrototypeExec(/[\w$\]]\s*\(/, StringPrototypeSlice(code, j + 1, i - 1)) !== null) return null;
+      i = j;
+      continue;
+    }
+    break;
   }
+  const result = StringPrototypeSlice(code, i);
+  if (result === "" || memberChainSegments(result) === null) return null;
+  return result;
+}
 
-  const lastBodyStatement = ast.body[ast.body.length - 1];
-
-  if (!lastBodyStatement) {
-    return null;
-  }
-
-  // If the last statement is a block we know there is not going to be a potential
-  // completion target (e.g. in `{ a: true }` there is no completion to be done)
-  if (lastBodyStatement.type === "BlockStatement") {
-    return null;
-  }
-
-  // If the last statement is an expression and it has a right side, that's what we
-  // want to potentially complete on, so let's re-run the function's logic on that
-  if (lastBodyStatement.type === "ExpressionStatement" && lastBodyStatement.expression.right) {
-    const exprRight = lastBodyStatement.expression.right;
-    const exprRightCode = code.slice(exprRight.start, exprRight.end);
-    return findExpressionCompleteTarget(exprRightCode);
-  }
-
-  // If the last statement is a variable declaration statement the last declaration is
-  // what we can potentially complete on, so let's re-run the function's logic on that
-  if (lastBodyStatement.type === "VariableDeclaration") {
-    const lastDeclarationInit = lastBodyStatement.declarations.at(-1).init;
-    if (!lastDeclarationInit) {
-      // If there is no initialization we can simply return
+/**
+ * Tokenize a member-expression source (already matched by simpleExpressionRE
+ * and containing no `(`) into `{prefix, key, keyExpr}` segments so the
+ * getter/Proxy walk can evaluate each prefix and inspect the next key.
+ */
+function memberChainSegments(src) {
+  const segs = [];
+  let i = 0;
+  const base = RegExpPrototypeExec(/^[A-Za-z_$][\w$]*/, src);
+  if (base === null) return null;
+  let prefix = base[0];
+  i = prefix.length;
+  segs.push({ prefix, key: null, keyExpr: null });
+  while (i < src.length) {
+    // `?.` links: skip the `?` for `?.ident`, and the `?.` for `?.[computed]`
+    // so the bracket branch below sees the `[`.
+    if (src[i] === "?" && src[i + 1] === ".") i += src[i + 2] === "[" ? 2 : 1;
+    if (src[i] === ".") {
+      i += 1;
+      const id = RegExpPrototypeExec(/^[A-Za-z_$][\w$]*/, StringPrototypeSlice(src, i));
+      if (id === null) {
+        // Trailing `.` or `?.` — the completion filter, not a chain link.
+        if (i === src.length) break;
+        return null;
+      }
+      prefix = StringPrototypeSlice(src, 0, i + id[0].length);
+      segs.push({ prefix, key: id[0], keyExpr: null });
+      i += id[0].length;
+    } else if (src[i] === "[") {
+      // Find the matching `]`, honoring nested `[` and quoted strings.
+      let depth = 1;
+      let j = i + 1;
+      while (j < src.length && depth > 0) {
+        const c = src[j];
+        if (c === "[") depth++;
+        else if (c === "]") depth--;
+        else if (c === '"' || c === "'" || c === "`") {
+          const q = c;
+          j++;
+          while (j < src.length && src[j] !== q) j += src[j] === "\\" ? 2 : 1;
+        }
+        j++;
+      }
+      if (depth !== 0) return null;
+      const inner = StringPrototypeSlice(src, i + 1, j - 1);
+      prefix = StringPrototypeSlice(src, 0, j);
+      // Literal string/number keys are resolved statically; anything else is
+      // evaluated to obtain the key (the caller has already rejected `(`).
+      const lit = RegExpPrototypeExec(
+        /^\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`|(\d+))\s*$/,
+        inner,
+      );
+      segs.push({
+        prefix,
+        key: lit ? (lit[1] ?? lit[2] ?? lit[3] ?? lit[4]) : null,
+        keyExpr: lit ? null : inner,
+      });
+      i = j;
+    } else {
       return null;
     }
-    const lastDeclarationInitCode = code.slice(lastDeclarationInit.start, lastDeclarationInit.end);
-    return findExpressionCompleteTarget(lastDeclarationInitCode);
   }
+  return segs;
+}
 
-  // If the last statement is an expression statement with a unary operator (delete, typeof, etc.)
-  // we want to extract the argument for completion (e.g. for `delete obj.prop` we want `obj.prop`)
-  if (
-    lastBodyStatement.type === "ExpressionStatement" &&
-    lastBodyStatement.expression.type === "UnaryExpression" &&
-    lastBodyStatement.expression.argument
-  ) {
-    const argument = lastBodyStatement.expression.argument;
-    const argumentCode = code.slice(argument.start, argument.end);
-    return findExpressionCompleteTarget(argumentCode);
-  }
-
-  // If the last statement is an expression statement with "new" syntax
-  // we want to extract the callee for completion (e.g. for `new Sample` we want `Sample`)
-  if (
-    lastBodyStatement.type === "ExpressionStatement" &&
-    lastBodyStatement.expression.type === "NewExpression" &&
-    lastBodyStatement.expression.callee
-  ) {
-    const callee = lastBodyStatement.expression.callee;
-    const calleeCode = code.slice(callee.start, callee.end);
-    return findExpressionCompleteTarget(calleeCode);
-  }
-
-  // Walk the AST for the current block of code, and check whether it contains any
-  // statement or expression type that would potentially have side effects if evaluated.
-  let isAllowed = true;
-  const disallow = () => (isAllowed = false);
-  acornWalk.simple(lastBodyStatement, {
-    ForInStatement: disallow,
-    ForOfStatement: disallow,
-    CallExpression: disallow,
-    AssignmentExpression: disallow,
-    UpdateExpression: disallow,
+/**
+ * Determine whether a member-expression chain touches a getter or Proxy
+ * (which could trigger side effects during completion).
+ */
+function includesProxiesOrGetters(segments, evalFn, ctx, callback, idx = 0) {
+  if (segments === null) return callback(false);
+  const seg = segments[idx];
+  evalFn(`try { ${seg.prefix} } catch { }`, ctx, getREPLResourceName(), (_, obj) => {
+    const t = typeof obj;
+    if ((t !== "object" && t !== "function") || obj === null) return callback(false);
+    if (isProxy(obj)) return callback(true);
+    const next = segments[idx + 1];
+    if (!next) return callback(false);
+    const step = key => {
+      if (key != null && segmentHasGetter(obj, key)) return callback(true);
+      return includesProxiesOrGetters(segments, evalFn, ctx, callback, idx + 1);
+    };
+    if (next.key !== null) return step(next.key);
+    if (next.keyExpr !== null) {
+      return evalFn(`try { ${next.keyExpr} } catch { }`, ctx, getREPLResourceName(), (_, k) =>
+        step(typeof k === "string" || typeof k === "number" ? k : null),
+      );
+    }
+    return step(null);
   });
-  if (!isAllowed) {
-    return null;
-  }
-
-  // If any of the above early returns haven't activated then it means that
-  // the potential complete target is the full code (e.g. the code represents
-  // a simple partial identifier, a member expression, etc...)
-  return code.slice(lastBodyStatement.start, lastBodyStatement.end);
 }
 
-/**
- * Utility used to determine if an expression includes object getters or proxies.
- *
- * Example: given `obj.foo`, the function lets you know if `foo` has a getter function
- * associated to it, or if `obj` is a proxy
- * @param {any} expr The expression, in AST format to analyze
- * @param {string} exprStr The string representation of the expression
- * @param {(str: string, ctx: any, resourceName: string, cb: (error, evaled) => void) => void} evalFn
- *   Eval function to use
- * @param {any} ctx The context to use for any code evaluation
- * @param {(includes: boolean) => void} callback Callback that will be called with the result of the operation
- * @returns {void}
- */
-function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
-  if (expr?.type !== "MemberExpression") {
-    // If the expression is not a member one for obvious reasons no getters are involved
-    return callback(false);
+function segmentHasGetter(obj, prop) {
+  while (obj != null) {
+    const d = ObjectGetOwnPropertyDescriptor(obj, prop);
+    if (d) return typeof d.get === "function";
+    obj = ObjectGetPrototypeOf(obj);
   }
-
-  if (expr.object.type === "MemberExpression") {
-    // The object itself is a member expression, so we need to recurse (e.g. the expression is `obj.foo.bar`)
-    return includesProxiesOrGetters(
-      expr.object,
-      exprStr.slice(0, expr.object.end),
-      evalFn,
-      ctx,
-      (includes, lastEvaledObj) => {
-        if (includes) {
-          // If the recurred call found a getter we can also terminate
-          return callback(includes);
-        }
-
-        if (isProxy(lastEvaledObj)) {
-          return callback(true);
-        }
-
-        // If a getter/proxy hasn't been found by the recursion call we need to check if maybe a getter/proxy
-        // is present here (e.g. in `obj.foo.bar` we found that `obj.foo` doesn't involve any getters so we now
-        // need to check if `bar` on `obj.foo` (i.e. `lastEvaledObj`) has a getter or if `obj.foo.bar` is a proxy)
-        return hasGetterOrIsProxy(lastEvaledObj, expr.property, doesHaveGetterOrIsProxy => {
-          return callback(doesHaveGetterOrIsProxy);
-        });
-      },
-    );
-  }
-
-  // This is the base of the recursion we have an identifier for the object and an identifier or literal
-  // for the property (e.g. we have `obj.foo` or `obj['foo']`, `obj` is the object identifier and `foo`
-  // is the property identifier/literal)
-  if (expr.object.type === "Identifier") {
-    return evalFn(`try { ${expr.object.name} } catch {}`, ctx, getREPLResourceName(), (err, obj) => {
-      if (err) {
-        return callback(false);
-      }
-
-      if (isProxy(obj)) {
-        return callback(true);
-      }
-
-      return hasGetterOrIsProxy(obj, expr.property, doesHaveGetterOrIsProxy => {
-        if (doesHaveGetterOrIsProxy) {
-          return callback(true);
-        }
-
-        return evalFn(`try { ${exprStr} } catch {} `, ctx, getREPLResourceName(), (err, obj) => {
-          if (err) {
-            return callback(false);
-          }
-          return callback(false, obj);
-        });
-      });
-    });
-  }
-
-  /**
-   * Utility to see if a property has a getter associated to it or if
-   * the property itself is a proxy object.
-   * @returns {void}
-   */
-  function hasGetterOrIsProxy(obj, astProp, cb) {
-    if (!obj || !astProp) {
-      return cb(false);
-    }
-
-    if (astProp.type === "Literal") {
-      // We have something like `obj['foo'].x` where `x` is the literal
-      return propHasGetterOrIsProxy(obj, astProp.value, cb);
-    }
-
-    if (astProp.type === "Identifier" && exprStr.at(astProp.start - 1) === ".") {
-      // We have something like `obj.foo.x` where `foo` is the identifier
-      return propHasGetterOrIsProxy(obj, astProp.name, cb);
-    }
-
-    return evalFn(
-      // Note: this eval runs the property expression, which might be side-effectful, for example
-      //       the user could be running `obj[getKey()].` where `getKey()` has some side effects.
-      //       Arguably this behavior should not be too surprising, but if it turns out that it is,
-      //       then we can revisit this behavior and add logic to analyze the property expression
-      //       and eval it only if we can confidently say that it can't have any side effects
-      `try { ${exprStr.slice(astProp.start, astProp.end)} } catch {} `,
-      ctx,
-      getREPLResourceName(),
-      (err, evaledProp) => {
-        if (err) {
-          return cb(false);
-        }
-
-        if (typeof evaledProp === "string") {
-          return propHasGetterOrIsProxy(obj, evaledProp, cb);
-        }
-
-        return cb(false);
-      },
-    );
-  }
-
-  return callback(false);
-}
-
-/**
- * Given an object and a property name, checks whether the property has a getter, if not checks whether its
- * value is a proxy.
- *
- * Note: the order is relevant here, we want to check whether the property has a getter _before_ we check
- *       whether its value is a proxy, to ensure that is the property does have a getter we don't end up
- *       triggering it when checking its value
- * @param {any} obj The target object
- * @param {string | number | bigint | boolean | RegExp} prop The target property
- * @param {(includes: boolean) => void} cb Callback that will be called with the result of the operation
- * @returns {void}
- */
-function propHasGetterOrIsProxy(obj, prop, cb) {
-  const propDescriptor = ObjectGetOwnPropertyDescriptor(obj, prop);
-  const propHasGetter = typeof propDescriptor?.get === "function";
-  if (propHasGetter) {
-    return cb(true);
-  }
-
-  if (isProxy(obj[prop])) {
-    return cb(true);
-  }
-
-  return cb(false);
+  return false;
 }
 
 __node_module__.exports = {

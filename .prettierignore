@@ -37,5 +37,3 @@ src/js/internal/repl/history.js
 src/js/internal/repl/utils.js
 src/js/internal/repl/completion.js
 src/js/internal/repl/await.js
-src/js/internal/repl/acorn.js
-src/js/internal/repl/acorn-walk.js

@@ -54,8 +54,6 @@
     "src/js/internal/repl/utils.js",
     "src/js/internal/repl/completion.js",
     "src/js/internal/repl/await.js",
-    "src/js/internal/repl/acorn.js",
-    "src/js/internal/repl/acorn-walk.js",
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors

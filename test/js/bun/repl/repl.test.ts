@@ -1447,3 +1447,112 @@ describe.concurrent("node:repl prints a frozen thrown error and continues", () =
     expect(exitCode).toBe(0);
   });
 });
+
+// The vendored acorn parser was replaced by a bun_js_parser binding
+// (internal/repl/native-parse). The upstream tests that would cover these
+// paths are still expectation-listed, so pin the behaviours here.
+describe.concurrent("node:repl native parser", () => {
+  const env = { ...bunEnv, NO_COLOR: "1" };
+
+  async function runScript(script: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  // Feeds `lines` to a non-terminal REPL and prints everything it wrote.
+  function evalScript(lines: string[]) {
+    return `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = ""; out.on("data", d => buf += d);
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "|" });
+      (async () => {
+        for (const l of ${JSON.stringify(lines)}) {
+          inp.write(l + "\\n");
+          await new Promise(res => setTimeout(res, 50));
+        }
+        r.close();
+        process.stdout.write(buf);
+        process.exit(0);
+      })();
+    `;
+  }
+
+  function completeScript(line: string, setup = "") {
+    return `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough(); out.resume();
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
+      ${setup}
+      r.complete(${JSON.stringify(line)}, (err, res) => {
+        r.close();
+        process.stdout.write(JSON.stringify(err ? { error: err.message } : res[0]));
+        process.exit(0);
+      });
+    `;
+  }
+
+  test("a bare identifier prefix filters the global list", async () => {
+    const hits = JSON.parse(await runScript(completeScript("tru")));
+    expect(hits).toEqual(["true"]);
+  });
+
+  test("a member prefix filters the receiver's keys", async () => {
+    const hits = JSON.parse(await runScript(completeScript("o.va", `r.context.o = { value: 1, other: 2 };`)));
+    // `valueOf` comes from the prototype group, `value` from the own-props group.
+    expect(hits).toContain("o.value");
+    expect(hits).not.toContain("o.other");
+  });
+
+  test("optional chaining with a computed member completes", async () => {
+    const hits = JSON.parse(await runScript(completeScript("a?.[0].bc", `r.context.a = [{ bcd: 1 }];`)));
+    expect(hits).toEqual(["a?.[0].bcd"]);
+  });
+
+  test("completion does not invoke a call inside a computed key", async () => {
+    const script = completeScript(
+      "o[side()].x",
+      `let fired = false; r.context.side = () => { fired = true; return "k"; };`,
+    );
+    const hits = JSON.parse(await runScript(script));
+    expect(hits).toEqual([]);
+  });
+
+  test("top-level await binds every declarator of a multi-binding declaration", async () => {
+    const out = await runScript(evalScript(["await 1; const { a, b } = { a: 1, b: 2 }", "a + b"]));
+    expect(out).toContain("3");
+    expect(out).not.toContain("SyntaxError");
+    expect(out).not.toContain("ReferenceError");
+  });
+
+  test("top-level await binds a destructured array and a non-ASCII name", async () => {
+    const out = await runScript(
+      evalScript(["const [x, y] = await Promise.resolve([7, 8])", "x + y", "let café = await 5", "café"]),
+    );
+    expect(out).toContain("15");
+    expect(out).toContain("5");
+    expect(out).not.toContain("SyntaxError");
+  });
+
+  test("an unterminated template with a substitution stays recoverable", async () => {
+    const out = await runScript(evalScript(["`abc ${1} def", "ghi`"]));
+    expect(out).toContain("abc 1 def\\nghi");
+    expect(out).not.toContain("SyntaxError");
+  });
+
+  test("an unterminated comment and a backslash-continued string stay recoverable", async () => {
+    const out = await runScript(evalScript(["/* c", "*/ 41 + 1"]));
+    expect(out).toContain("42");
+    expect(out).not.toContain("SyntaxError");
+  });
+
+  test("an unrecoverable syntax error is reported, not buffered", async () => {
+    const out = await runScript(evalScript(["1 +* 2"]));
+    expect(out).toContain("SyntaxError");
+  });
+});

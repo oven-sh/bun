@@ -1121,7 +1121,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_node_http_request(
         this: *mut Self,
         req: &mut uws_sys::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::NodeAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
         // `upgrade_ctx` null is valid (no upgrade).
@@ -1146,7 +1146,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_node_http_request_with_upgrade_ctx(
         this: *mut Self,
         req: &mut uws_sys::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws_sys::NodeAppResponse<SSL>,
         upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
     ) {
         use bun_http_jsc::method_jsc::MethodJsc as _;
@@ -1220,7 +1220,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 callback,
                 method_string,
                 req,
-                std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
+                std::ptr::from_mut::<uws_sys::NodeAppResponse<SSL>>(resp).cast(),
                 upgrade_ctx.cast(),
                 &mut node_http_response,
             )
@@ -3020,11 +3020,13 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         // user_data is the `*mut NewServer<..>` registered in set_routes.
-        // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
+        // S008: `Request` / `Response<SSL, true>` are ZST opaques — safe deref.
+        // node:http path is only registered on a NODE_HTTP=true app, so the C++
+        // object is always `HttpResponse<SSL, true>`.
         NewServer::<SSL, DEBUG>::on_node_http_request(
             user_data.cast(),
             bun_opaque::opaque_deref_mut(req),
-            bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
+            bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NodeAppResponse<SSL>>()),
         );
     }
 

@@ -52,6 +52,8 @@ enum class UWSResponseKind : int32_t {
     TCP = 0,
     SSL = 1,
     H3 = 2,
+    TCPNode = 3, // HttpResponse<false, true> (node:http compat layout)
+    SSLNode = 4, // HttpResponse<true,  true> (node:https compat layout)
 };
 #endif
 

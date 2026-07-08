@@ -1328,6 +1328,12 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     case UWSResponseKind::SSL:
         writeFetchHeadersToUWSResponse<true, false>(*arg0, reinterpret_cast<uWS::HttpResponse<true, false>*>(arg2));
         break;
+    case UWSResponseKind::TCPNode:
+        writeFetchHeadersToUWSResponse<false, true>(*arg0, reinterpret_cast<uWS::HttpResponse<false, true>*>(arg2));
+        break;
+    case UWSResponseKind::SSLNode:
+        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true, true>*>(arg2));
+        break;
     case UWSResponseKind::H3:
         writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;

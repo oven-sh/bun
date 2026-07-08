@@ -53,17 +53,27 @@ pub enum ResponseKind {
     Tcp = 0,
     Ssl = 1,
     H3 = 2,
+    /// `HttpResponse<false, true>` — node:http compat layout.
+    TcpNode = 3,
+    /// `HttpResponse<true, true>` — node:https compat layout.
+    SslNode = 4,
 }
 
 impl ResponseKind {
-    pub const fn from(ssl: bool, http3: bool) -> ResponseKind {
+    pub const fn from(ssl: bool, http3: bool, node_http: bool) -> ResponseKind {
         if http3 {
             ResponseKind::H3
+        } else if node_http {
+            if ssl { ResponseKind::SslNode } else { ResponseKind::TcpNode }
         } else if ssl {
             ResponseKind::Ssl
         } else {
             ResponseKind::Tcp
         }
+    }
+
+    pub fn from_any(r: bun_uws_sys::AnyResponse) -> ResponseKind {
+        Self::from(r.is_ssl(), r.is_h3(), r.is_node_http())
     }
 }
 

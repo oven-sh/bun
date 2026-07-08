@@ -463,5 +463,7 @@ pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
+/// node:http compat: response backed by `HttpResponseData<SSL, true>`.
+pub type NodeAppResponse<const SSL: bool> = response::Response<SSL, true>;
 pub type Socket = us_socket::us_socket_t;
 pub type SocketContext = us_socket_context_t;

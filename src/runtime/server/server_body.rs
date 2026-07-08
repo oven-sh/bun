@@ -1865,7 +1865,7 @@ where
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
                             fetch_headers_to_use.to_uws_response(
-                                ResponseKind::from(SSL, false),
+                                ResponseKind::from_any(raw_response),
                                 raw_response.socket().cast::<c_void>(),
                             );
                         }
@@ -2092,14 +2092,14 @@ where
             if let Some(h) = fetch_headers_to_use {
                 // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h).to_uws_response(
-                    ResponseKind::from(SSL, false),
+                    ResponseKind::from_any(resp),
                     resp.socket().cast::<c_void>(),
                 );
             }
             if let Some(c) = cookies_to_write.as_mut() {
                 c.write(
                     global,
-                    ResponseKind::from(SSL, false),
+                    ResponseKind::from_any(resp),
                     resp.socket().cast::<c_void>(),
                 )?;
             }
@@ -3278,6 +3278,12 @@ where
         if this.config.on_node_http_request.is_some() {
             // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
+            // node:http registered `app.ws(nh=true, ..)`, so the underlying
+            // C++ object is `HttpResponse<SSL, true>`; both `Response<SSL, N>`
+            // are ZST opaques over the same pointer, so re-type via cast.
+            let resp = bun_opaque::opaque_deref_mut(
+                std::ptr::from_mut(resp).cast::<uws_sys::NodeAppResponse<SSL>>(),
+            );
             Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
             return;
         }

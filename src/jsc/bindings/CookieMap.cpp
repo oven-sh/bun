@@ -32,6 +32,12 @@ extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* glo
     case UWSResponseKind::SSL:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true, false>*>(arg2));
         break;
+    case UWSResponseKind::TCPNode:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false, true>*>(arg2));
+        break;
+    case UWSResponseKind::SSLNode:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true, true>*>(arg2));
+        break;
     case UWSResponseKind::H3:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;

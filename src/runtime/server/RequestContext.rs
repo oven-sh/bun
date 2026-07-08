@@ -49,46 +49,11 @@ impl AdditionalOnAbortCallback {
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 
-// Surface gaps `AnyResponse` doesn't expose yet — hand-dispatched here so the
-// state machine can call them without touching `bun_uws_sys`.
-pub trait AnyResponseExt {
-    fn has_responded(self) -> bool;
-    fn override_write_offset(self, offset: u64);
-}
-
 /// Extract the raw FFI pointer from an `AnyResponse` for C-ABI shims that
 /// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
 #[inline]
 fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
     r.as_raw_ptr()
-}
-
-impl AnyResponseExt for uws::AnyResponse {
-    #[inline]
-    fn has_responded(self) -> bool {
-        // S012: variant payloads are ZST opaques (`Response<SSL>` / `H3Response`);
-        // route the `*mut → &mut` deref through the const-asserted
-        // `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
-        match self.kind() {
-            uws::AnyResponseKind::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponseKind::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponseKind::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-        }
-    }
-    #[inline]
-    fn override_write_offset(self, offset: u64) {
-        match self.kind() {
-            uws::AnyResponseKind::SSL(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-            uws::AnyResponseKind::TCP(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-            uws::AnyResponseKind::H3(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-        }
-    }
 }
 
 /// Back-reference to a stack-local "should this RequestContext defer its
@@ -547,7 +512,7 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
 where
     ThisServer: ServerLike + 'static,
 {
-    const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
+    const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3, false);
 
     /// Reborrow the owning server. `server` is a BACKREF (LIFETIMES.tsv): set
     /// at construction in `init()` from the `NewServer` that owns the request

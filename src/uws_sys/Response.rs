@@ -960,11 +960,21 @@ impl AnyResponse {
     }
 
     pub fn get_native_handle(self) -> Fd {
-        match self.kind {
-            AnyResponseKind::H3(_) => bun_core::Fd::INVALID,
-            AnyResponseKind::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
-            AnyResponseKind::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
+        match (self.kind, self.is_node_http) {
+            (AnyResponseKind::H3(_), _) => bun_core::Fd::INVALID,
+            (AnyResponseKind::SSL(ptr), false) => TLSResponse::as_handle(ptr).get_native_handle(),
+            (AnyResponseKind::SSL(ptr), true) => {
+                TLSNodeResponse::as_handle(ptr.cast()).get_native_handle()
+            }
+            (AnyResponseKind::TCP(ptr), false) => TCPResponse::as_handle(ptr).get_native_handle(),
+            (AnyResponseKind::TCP(ptr), true) => {
+                TCPNodeResponse::as_handle(ptr.cast()).get_native_handle()
+            }
         }
+    }
+
+    pub fn override_write_offset(self, offset: u64) {
+        any_dispatch!(self, |r| r.override_write_offset(offset))
     }
 
     pub fn prepare_for_sendfile(self) {

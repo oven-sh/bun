@@ -338,9 +338,22 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     unsafe { T::set_server(entry, server) };
 
     // Trampolines: uWS hands us an opaque `uws_res*`, a live `Request*`, and the
-    // user_data pointer (= `entry`). Cast back to the typed `Response<SSL>` /
-    // `T` and dispatch into the trait. Monomorphized per `<SSL, T>`.
-    extern "C" fn handler<const SSL: bool, T: StaticRouteLike<SSL>>(
+    // user_data pointer (= `entry`). Cast back to the typed response / `T` and
+    // dispatch into the trait. Monomorphized per `<SSL, NODE_HTTP, T>` so the
+    // constructed `AnyResponse` carries the C++ template discriminant.
+    #[inline(always)]
+    fn wrap_resp<const SSL: bool, const NODE_HTTP: bool>(
+        resp: *mut uws::uws_res,
+    ) -> bun_uws_sys::AnyResponse {
+        match (SSL, NODE_HTTP) {
+            (true, true) => bun_uws_sys::AnyResponse::SSL_node(resp.cast()),
+            (true, false) => bun_uws_sys::AnyResponse::SSL(resp.cast()),
+            (false, true) => bun_uws_sys::AnyResponse::TCP_node(resp.cast()),
+            (false, false) => bun_uws_sys::AnyResponse::TCP(resp.cast()),
+        }
+    }
+
+    extern "C" fn handler<const SSL: bool, const NODE_HTTP: bool, T: StaticRouteLike<SSL>>(
         resp: *mut uws::uws_res,
         req: *mut uws::Request,
         user_data: *mut core::ffi::c_void,
@@ -349,53 +362,47 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         // of the callback; `user_data` is the `entry` pointer registered below,
         // kept alive by the route table for the lifetime of the app.
         let route = user_data.cast::<T>();
-        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
-        // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
-        // selects the matching `AnyResponse` variant for the const-generic SSL flag.
-        let any_resp = if SSL {
-            bun_uws_sys::AnyResponse::SSL(resp.cast())
-        } else {
-            bun_uws_sys::AnyResponse::TCP(resp.cast())
-        };
+        let any_resp = wrap_resp::<SSL, NODE_HTTP>(resp);
         // SAFETY: `route`, `req`, and `resp` are non-null and valid for the
         // duration of this uWS callback (see invariants established above);
         // `on_request` only dereferences them while this frame is live.
         unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
-    extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
+    extern "C" fn head<const SSL: bool, const NODE_HTTP: bool, T: StaticRouteLike<SSL>>(
         resp: *mut uws::uws_res,
         req: *mut uws::Request,
         user_data: *mut core::ffi::c_void,
     ) {
         // SAFETY: see `handler` above.
         let route = user_data.cast::<T>();
-        let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
-        let any_resp = if SSL {
-            bun_uws_sys::AnyResponse::SSL(resp.cast())
-        } else {
-            bun_uws_sys::AnyResponse::TCP(resp.cast())
-        };
+        let any_resp = wrap_resp::<SSL, NODE_HTTP>(resp);
         // SAFETY: `route`, `req`, and `resp` validity is guaranteed by uWS for
         // the callback's duration — same invariants as `handler` above.
         unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
+    type RouteFn = extern "C" fn(*mut uws::uws_res, *mut uws::Request, *mut core::ffi::c_void);
     let user_data = entry.cast::<core::ffi::c_void>();
+    let (head_fn, handler_fn): (RouteFn, RouteFn) = if node_http {
+        (head::<SSL, true, T>, handler::<SSL, true, T>)
+    } else {
+        (head::<SSL, false, T>, handler::<SSL, false, T>)
+    };
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
     if !path_has_user_head_route && serves_head(&method) {
-        app.head(node_http, path, Some(head::<SSL, T>), user_data);
+        app.head(node_http, path, Some(head_fn), user_data);
     }
     match method {
         http_method::Optional::Any => {
-            app.any(node_http, path, Some(handler::<SSL, T>), user_data);
+            app.any(node_http, path, Some(handler_fn), user_data);
         }
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method(node_http, method_, path, Some(handler::<SSL, T>), user_data);
+                app.method(node_http, method_, path, Some(handler_fn), user_data);
             }
         }
     }

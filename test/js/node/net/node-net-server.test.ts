@@ -1,11 +1,11 @@
-import { realpathSync, readFileSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
+import { isLinux } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
-import { once } from "node:events";
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
-import { isLinux } from "harness";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 

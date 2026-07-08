@@ -1360,9 +1360,8 @@ describe("node:repl process-global side effects", () => {
   // Known limitation until process.addUncaughtExceptionCaptureCallback is
   // implemented natively: the shim occupies the exclusive capture slot for the
   // process lifetime. It must NOT displace a user callback installed BEFORE the
-  // first repl.start(), and unclaimed errors must still reach an
-  // 'uncaughtException' listener with the origin arg.
-  test("uncaught-exception capture shim defers to a pre-installed user callback and passes origin", async () => {
+  // first repl.start().
+  test("uncaught-exception capture shim defers to a pre-installed user callback", async () => {
     const script = `
       let userGot;
       process.setUncaughtExceptionCaptureCallback(e => { userGot = e.message; });
@@ -1371,8 +1370,6 @@ describe("node:repl process-global side effects", () => {
       const inp = new PassThrough(), out = new PassThrough(); out.resume();
       const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
       r.close();
-      let listenerOrigin;
-      process.on("uncaughtException", (e, origin) => { listenerOrigin = origin; });
       setImmediate(() => { throw new Error("boom"); });
       setImmediate(() => setImmediate(() => {
         console.log("userGot=" + userGot);

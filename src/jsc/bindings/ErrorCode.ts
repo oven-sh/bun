@@ -27,7 +27,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_BUFFER_CONTEXT_NOT_AVAILABLE", Error],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError],
   ["ERR_BUFFER_TOO_LARGE", RangeError],
-  ["ERR_CANNOT_WATCH_SIGINT", Error],
   ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
   ["ERR_CHILD_PROCESS_STDIO_MAXBUFFER", RangeError],
   ["ERR_CLOSED_MESSAGE_PORT", Error],
@@ -148,9 +147,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_OBJECT_DEFINE_PROPERTY", TypeError],
   ["ERR_INVALID_PACKAGE_CONFIG", Error],
   ["ERR_INVALID_PROTOCOL", TypeError],
-  ["ERR_INSPECTOR_NOT_AVAILABLE", Error],
-  ["ERR_INVALID_REPL_EVAL_CONFIG", TypeError],
-  ["ERR_INVALID_REPL_INPUT", TypeError],
   ["ERR_INVALID_RETURN_VALUE", TypeError],
   ["ERR_INVALID_STATE", Error, undefined, TypeError, RangeError],
   ["ERR_INVALID_THIS", TypeError],
@@ -343,5 +339,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_EEXIST", Error],
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
+  ["ERR_CANNOT_WATCH_SIGINT", Error],
+  ["ERR_INSPECTOR_NOT_AVAILABLE", Error],
+  ["ERR_INVALID_REPL_EVAL_CONFIG", TypeError],
+  ["ERR_INVALID_REPL_INPUT", TypeError],
 ];
 export default errors;

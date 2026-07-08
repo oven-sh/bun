@@ -353,12 +353,11 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 // Bun only implements the single-callback set/clear API; emulate Node's
-// additive API with a dispatcher list. Tracked so the exclusive slot is only
-// cleared when the shim itself owns it — never a user's callback — and is
-// released once the last REPL closes.
+// additive API with a dispatcher list. The shim occupies the exclusive slot
+// for the process lifetime once the first REPL starts — see repl.js
+// setupExceptionCapture() for the rationale.
 
 let captureCallbacks = null;
-let dispatcherInstalled = false;
 
 function addUncaughtExceptionCaptureCallback(cb) {
   if (!captureCallbacks) {
@@ -377,7 +376,6 @@ function addUncaughtExceptionCaptureCallback(cb) {
         } catch {}
         process.exit(1);
       });
-      dispatcherInstalled = true;
     } catch {
       // A user capture callback already occupies the exclusive slot. Node's
       // additive API coexists with it natively; without that engine support,
@@ -389,22 +387,8 @@ function addUncaughtExceptionCaptureCallback(cb) {
   captureCallbacks.push(cb);
 }
 
-function removeUncaughtExceptionCaptureCallback(cb) {
-  if (!captureCallbacks) return;
-  const i = captureCallbacks.indexOf(cb);
-  if (i !== -1) captureCallbacks.splice(i, 1);
-  if (captureCallbacks.length === 0) {
-    captureCallbacks = null;
-    if (dispatcherInstalled) {
-      dispatcherInstalled = false;
-      process.setUncaughtExceptionCaptureCallback(null);
-    }
-  }
-}
-
 export default {
   addUncaughtExceptionCaptureCallback,
-  removeUncaughtExceptionCaptureCallback,
   // internalBinding('contextify')
   startSigintWatchdog,
   stopSigintWatchdog,

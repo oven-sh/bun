@@ -2961,11 +2961,15 @@ impl RunCommand {
         if !user.is_empty() {
             // `node -i -e`: pass the user script as DATA (a JSON string
             // literal), never as spliced code — the bootstrap runs it via
-            // vm.runInThisContext after REPL.start(), matching Node's
-            // internal/main/repl.js order. Splicing code would let a
-            // user-side syntax error / unterminated `` ` `` swallow the
-            // bootstrap and would block-scope `-e` declarations away.
-            let json = bun_core::fmt::format_json_string_utf8(&user, Default::default());
+            // vm.runInThisContext; a `-e` error is fatal (exit 1) as in
+            // Node's internal/main/repl.js. Splicing code would let an
+            // unterminated `` ` `` swallow the bootstrap and would
+            // block-scope `-e` declarations away.
+            // Argv is arbitrary bytes on Linux; the JSON encoder's SAFETY
+            // contract requires UTF-8, so lossily normalize first.
+            let user = String::from_utf8_lossy(&user);
+            let json =
+                bun_core::fmt::format_json_string_utf8(user.as_bytes(), Default::default());
             write!(script, "const __BUN_EVAL_SCRIPT__ = {json};\n").unwrap_or_oom();
         }
         // SAFETY: embedded builtin sources are UTF-8 by construction.

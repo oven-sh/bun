@@ -162,7 +162,7 @@ const parentModule = __node_module__;
 // AsyncLocalStorage to track which REPL instance owns the current async context
 // This replaces the domain-based tracking for error handling
 const replContext = new AsyncLocalStorage();
-let exceptionCaptureUseCount = 0;
+let exceptionCaptureInstalled = false;
 
 function replExceptionCaptureCallback(err) {
   const store = replContext.getStore();
@@ -182,9 +182,9 @@ function replExceptionCaptureCallback(err) {
 // shim's fallthrough re-emits `uncaughtException` with the origin arg so user
 // listeners still see it.
 function setupExceptionCapture() {
-  if (exceptionCaptureUseCount++ === 0) {
-    require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
-  }
+  if (exceptionCaptureInstalled) return;
+  exceptionCaptureInstalled = true;
+  require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
 }
 
 const kBufferedCommandSymbol = Symbol("bufferedCommand");

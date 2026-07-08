@@ -711,9 +711,17 @@ impl ErrorCode {
     pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(326);
     /// `ERR_DIR_CONCURRENT_OPERATION` (instanceof Error)
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
+    /// `ERR_CANNOT_WATCH_SIGINT` (instanceof Error)
+    pub const CANNOT_WATCH_SIGINT: ErrorCode = ErrorCode(328);
+    /// `ERR_INSPECTOR_NOT_AVAILABLE` (instanceof Error)
+    pub const INSPECTOR_NOT_AVAILABLE: ErrorCode = ErrorCode(329);
+    /// `ERR_INVALID_REPL_EVAL_CONFIG` (instanceof TypeError)
+    pub const INVALID_REPL_EVAL_CONFIG: ErrorCode = ErrorCode(330);
+    /// `ERR_INVALID_REPL_INPUT` (instanceof TypeError)
+    pub const INVALID_REPL_INPUT: ErrorCode = ErrorCode(331);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 328;
+    pub const COUNT: u16 = 332;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1084,6 +1092,10 @@ impl ErrorCode {
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
     pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
     pub const ERR_PROXY_TUNNEL: ErrorCode = ErrorCode::PROXY_TUNNEL;
+    pub const ERR_CANNOT_WATCH_SIGINT: ErrorCode = ErrorCode::CANNOT_WATCH_SIGINT;
+    pub const ERR_INSPECTOR_NOT_AVAILABLE: ErrorCode = ErrorCode::INSPECTOR_NOT_AVAILABLE;
+    pub const ERR_INVALID_REPL_EVAL_CONFIG: ErrorCode = ErrorCode::INVALID_REPL_EVAL_CONFIG;
+    pub const ERR_INVALID_REPL_INPUT: ErrorCode = ErrorCode::INVALID_REPL_INPUT;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1429,6 +1441,10 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_EEXIST",
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
+    "ERR_CANNOT_WATCH_SIGINT",
+    "ERR_INSPECTOR_NOT_AVAILABLE",
+    "ERR_INVALID_REPL_EVAL_CONFIG",
+    "ERR_INVALID_REPL_INPUT",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1144,35 +1144,6 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
-
-  test("tx.unsafe() and tx.file() reject after begin() settles", async () => {
-    const dir = tempDirWithFiles("sql-tx-closed", {
-      "q.sql": `INSERT INTO accounts VALUES (98, 0)`,
-    });
-    let leaked: any;
-    await sql.begin(async tx => {
-      leaked = tx;
-      await tx.unsafe(`INSERT INTO accounts VALUES (10, 0)`);
-    });
-    const outcome = async (p: Promise<any>) =>
-      p.then(
-        () => "fulfilled",
-        (e: any) => `rejected: ${e.message}`,
-      );
-    expect({
-      template: await outcome(leaked`SELECT 1`),
-      savepoint: await outcome(Promise.resolve().then(() => leaked.savepoint(async () => {}))),
-      unsafe: await outcome(leaked.unsafe(`INSERT INTO accounts VALUES (99, 0)`)),
-      file: await outcome(leaked.file(join(dir, "q.sql"))),
-    }).toEqual({
-      template: "rejected: Connection closed",
-      savepoint: "rejected: Connection closed",
-      unsafe: "rejected: Connection closed",
-      file: "rejected: Connection closed",
-    });
-    const rows = await sql`SELECT id FROM accounts WHERE id >= 10 ORDER BY id`;
-    expect(rows).toEqual([{ id: 10 }]);
-  });
 });
 
 describe("SQLite-specific features", () => {

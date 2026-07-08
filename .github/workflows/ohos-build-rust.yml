@@ -105,8 +105,38 @@ jobs:
             echo "⚠️  No cargo registry cache found"
           fi
 
+      - name: Check Rust nightly version
+        id: rust-nightly
+        run: |
+          NIGHTLY_FILE=/home/user/sources/bun/.rust-nightly-version
+          CURRENT_NIGHTLY=$(grep '^channel' bun/rust-toolchain.toml | sed 's/.*= *"//;s/"//')
+          echo "Current nightly: $CURRENT_NIGHTLY"
+          if [ -f "$NIGHTLY_FILE" ]; then
+            PREV_NIGHTLY=$(cat "$NIGHTLY_FILE")
+            echo "Previous nightly: $PREV_NIGHTLY"
+            if [ "$CURRENT_NIGHTLY" != "$PREV_NIGHTLY" ]; then
+              echo "nightly_changed=true" >> "$GITHUB_OUTPUT"
+              echo "⚠️  Nightly version changed! Will clean old Rust artifacts."
+            else
+              echo "nightly_changed=false" >> "$GITHUB_OUTPUT"
+              echo "✅ Nightly version unchanged."
+            fi
+          else
+            echo "nightly_changed=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️  No previous nightly recorded. Will start clean."
+          fi
+
       - name: Restore Rust incremental build artifacts
         run: |
+          if [ "${{ steps.rust-nightly.outputs.nightly_changed }}" = "true" ]; then
+            echo "⚠️  Nightly version changed — cleaning old Rust deps/incremental"
+            SRC_TARGET=/home/user/sources/bun/build/release-ohos/rust-target
+            rm -rf "$SRC_TARGET/aarch64-unknown-linux-ohos/release/deps" 2>/dev/null || true
+            rm -rf "$SRC_TARGET/aarch64-unknown-linux-ohos/release/incremental" 2>/dev/null || true
+            rm -f "$SRC_TARGET/aarch64-unknown-linux-ohos/release/.cargo-lock" 2>/dev/null || true
+            rm -f "$SRC_TARGET/.rustc_info.json" 2>/dev/null || true
+            echo "⚠️  Will perform a full Rust rebuild"
+          fi
           SRC_TARGET=/home/user/sources/bun/build/release-ohos/rust-target
           if [ -d "$SRC_TARGET" ]; then
             mkdir -p bun/build/release-ohos
@@ -245,6 +275,12 @@ jobs:
         working-directory: bun
         run: |
           ninja -C build/release-ohos bun -j$NINJA_JOBS
+
+      - name: Save Rust nightly version
+        run: |
+          CURRENT_NIGHTLY=$(grep '^channel' bun/rust-toolchain.toml | sed 's/.*= *"//;s/"//')
+          echo "$CURRENT_NIGHTLY" > /home/user/sources/bun/.rust-nightly-version
+          echo "✅ Saved nightly version: $CURRENT_NIGHTLY"
 
       - name: Verify binary
         working-directory: bun

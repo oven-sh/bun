@@ -61,6 +61,47 @@ pre_check() {
     return "$fail"
 }
 
+# ─── 检测 nightly 版本变更 ─────────────────────────────────────────────────
+check_nightly_version() {
+    local toolchain_file="$DEV_SRC/rust-toolchain.toml"
+    local version_file="$DEV_SRC/.rust-nightly-version"
+
+    if [ ! -f "$toolchain_file" ]; then
+        warn "rust-toolchain.toml not found, skipping nightly check"
+        return
+    fi
+
+    local current
+    current="${RUSTUP_TOOLCHAIN:-$(grep '^channel' "$toolchain_file" | sed 's/.*= *"//;s/"//')}"
+
+    info "当前 nightly: $current"
+
+    if [ -f "$version_file" ]; then
+        local previous
+        previous=$(cat "$version_file")
+        if [ "$current" != "$previous" ]; then
+            warn "nightly 版本变更: $previous → $current"
+            warn "清理 Rust 构建缓存..."
+            rm -rf "${BUILD_DIR}/rust-target"
+            ok "Rust 构建缓存已清理"
+        else
+            info "nightly 无变化 ($current)"
+        fi
+    else
+        info "首次检测，记录 nightly 版本: $current"
+    fi
+
+    echo "$current" > "${version_file}.tmp"
+}
+
+save_nightly_version() {
+    local version_file="$DEV_SRC/.rust-nightly-version"
+    if [ -f "${version_file}.tmp" ]; then
+        mv "${version_file}.tmp" "$version_file"
+        ok "nightly 版本已记录 ($(cat "$version_file"))"
+    fi
+}
+
 # ─── 同步源码 ────────────────────────────────────────────────────────────────
 sync_source() {
     info "同步源码: ${DEV_SRC} → ${CI_SRC}"
@@ -279,8 +320,10 @@ main() {
             ;;
         ninja-only)
             pre_check
+            check_nightly_version
             run_codegen
             run_build
+            save_nightly_version
             ;;
         deploy-only)
             deploy_artifact
@@ -293,8 +336,10 @@ main() {
             pre_check
             sync_source
             sync_webkit
+            check_nightly_version
             run_codegen
             run_build
+            save_nightly_version
             deploy_artifact
             ;;
         *)

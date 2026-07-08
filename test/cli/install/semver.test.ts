@@ -392,7 +392,25 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("latest || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
     testSatisfies("boop || * || 1.2.3-alpha.1", "1.2.3-alpha.1", false);
     // A bare operator with no operand is likewise dropped, not treated as `*`.
-    for (const op of ["^", "~", ">=", ">", "<", "<=", "=", "v", "-", "- -", "- boop", "vv", "==", "^v", "~=", ">=v", "^\t"]) {
+    for (const op of [
+      "^",
+      "~",
+      ">=",
+      ">",
+      "<",
+      "<=",
+      "=",
+      "v",
+      "-",
+      "- -",
+      "- boop",
+      "vv",
+      "==",
+      "^v",
+      "~=",
+      ">=v",
+      "^\t",
+    ]) {
       testSatisfies(`1.2.3-alpha.1 || ${op}`, "1.2.3-alpha.1", true);
       testSatisfies(`${op} || 1.2.3-alpha.1`, "1.2.3-alpha.1", true);
     }

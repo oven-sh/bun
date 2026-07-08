@@ -2646,6 +2646,191 @@ it("close-delimited streaming writes carry raw bytes with no chunk framing artif
   }
 });
 
+it("node:http honours HTTP/1.0 Connection: keep-alive when the response has a Content-Length", async () => {
+  // Node.js (llhttp_should_keep_alive) treats HTTP/1.0 + Connection: keep-alive
+  // as persistent; the second request on the same socket must reach the
+  // server and get a response.
+  const seen: { url: string; shouldKeepAlive: boolean }[] = [];
+  const server = createServer((req, res) => {
+    seen.push({ url: req.url!, shouldKeepAlive: res.shouldKeepAlive });
+    res.writeHead(200, { "content-length": "2" });
+    res.end("hi");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<string>(resolve => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      let sentSecond = false;
+      socket.on("data", chunk => {
+        data += chunk;
+        // After the first response body arrived, reuse the socket for a
+        // second HTTP/1.0 request without keep-alive so the server closes
+        // the connection after it (deterministic 'close').
+        if (!sentSecond && data.includes("\r\n\r\nhi")) {
+          sentSecond = true;
+          socket.write("GET /second HTTP/1.0\r\nHost: a\r\n\r\n");
+        }
+      });
+      // If the server wrongly closed after /first the second write may
+      // EPIPE/ECONNRESET; the assertions below surface that.
+      socket.on("error", () => {});
+      socket.on("close", () => resolve(data));
+      // A compound, mixed-case Connection value: llhttp (and Node) match the
+      // keep-alive token within the comma-separated list, not the whole value.
+      socket.write("GET /first HTTP/1.0\r\nHost: a\r\nConnection: Keep-Alive, TE\r\n\r\n");
+    });
+
+    // Both requests reached the server over the one connection, and
+    // res.shouldKeepAlive mirrors the parser decision like Node.js's
+    // parserOnIncoming.
+    expect(seen).toEqual([
+      { url: "/first", shouldKeepAlive: true },
+      { url: "/second", shouldKeepAlive: false },
+    ]);
+    const responses = out.split(/(?=HTTP\/1\.1 200 OK\r\n)/);
+    expect(responses).toHaveLength(2);
+    expect(responses[0]).toContain("Connection: keep-alive");
+    expect(responses[0]).toContain("Keep-Alive: timeout=");
+    expect(responses[1]).toContain("Connection: close");
+    expect(responses[0].slice(responses[0].indexOf("\r\n\r\n") + 4)).toBe("hi");
+    expect(responses[1].slice(responses[1].indexOf("\r\n\r\n") + 4)).toBe("hi");
+  } finally {
+    server.close();
+  }
+});
+
+it("node:http refuses HTTP/1.0 keep-alive when the response has no explicit Content-Length", async () => {
+  // Node.js's shouldSendKeepAlive requires contLen || useChunkedEncodingByDefault;
+  // for HTTP/1.0 chunked is off, so without a user-set Content-Length the
+  // server answers Connection: close and ends the socket even though the
+  // client asked for keep-alive.
+  const server = createServer((req, res) => {
+    res.end("hello world");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<string>(resolve => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("error", () => {});
+      socket.on("close", () => resolve(data));
+      socket.write("GET / HTTP/1.0\r\nHost: a\r\nConnection: keep-alive\r\n\r\n");
+    });
+
+    expect(out).toContain("Connection: close");
+    expect(out).not.toContain("Transfer-Encoding");
+    expect(out).not.toContain("Connection: keep-alive");
+    const body = out.slice(out.indexOf("\r\n\r\n") + 4);
+    expect(body).toBe("hello world");
+  } finally {
+    server.close();
+  }
+});
+
+it("node:http closes after an HTTP/1.0 request without Connection: keep-alive", async () => {
+  // Default HTTP/1.0 behaviour: no keep-alive means the server closes after
+  // one response.
+  let seen = 0;
+  const server = createServer((req, res) => {
+    seen++;
+    res.writeHead(200, { "content-length": "2" });
+    res.end("ok");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<string>(resolve => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("error", () => {});
+      socket.on("close", () => resolve(data));
+      socket.write("GET / HTTP/1.0\r\nHost: a\r\n\r\n");
+    });
+
+    expect(seen).toBe(1);
+    expect(out).toContain("Connection: close");
+    expect(out.slice(out.indexOf("\r\n\r\n") + 4)).toBe("ok");
+  } finally {
+    server.close();
+  }
+});
+
+it("node:http closes after an HTTP/1.0 keep-alive response with an explicit unframeable Connection: keep-alive header", async () => {
+  // Node's _storeHeader: the user's Connection: keep-alive header is sent
+  // verbatim, but with no Content-Length and chunked unavailable the body is
+  // close-delimited, so _last = true still closes the socket (vendored
+  // test-http-1.0-keep-alive.js, case "keep-alive, no TE header").
+  const server = createServer((req, res) => {
+    res.writeHead(200, { Connection: "keep-alive" });
+    res.end("OK");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<string>(resolve => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("error", () => {});
+      // The server must send FIN on its own; the client never half-closes.
+      socket.on("close", () => resolve(data));
+      socket.write("POST / HTTP/1.0\r\nHost: a\r\nConnection: keep-alive\r\n\r\n");
+    });
+
+    expect(out).toContain("Connection: keep-alive");
+    expect(out.slice(out.indexOf("\r\n\r\n") + 4)).toBe("OK");
+  } finally {
+    server.close();
+  }
+});
+
+it("node:http does not inject a Content-Length header into an HTTP/1.0 streamed body", async () => {
+  // write() terminates the header block and emits the raw (close-delimited)
+  // body; end(chunk) must not append internalEnd()'s auto Content-Length
+  // into the byte stream after it. Node.js sends the body close-delimited
+  // with no Content-Length at all for an HTTP/1.0 response with streaming
+  // writes and no explicit framing headers.
+  const server = createServer((req, res) => {
+    res.write("hello");
+    res.end(" world");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<string>(resolve => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("error", () => {});
+      // The body is close-delimited; the server must send FIN on its own.
+      socket.on("close", () => resolve(data));
+      socket.write("GET / HTTP/1.0\r\nHost: a\r\nConnection: keep-alive\r\n\r\n");
+    });
+
+    expect(out.slice(out.indexOf("\r\n\r\n") + 4)).toBe("hello world");
+    expect(out).not.toContain("Content-Length");
+    expect(out).not.toContain("Transfer-Encoding");
+    expect(out).toContain("Connection: close");
+  } finally {
+    server.close();
+  }
+});
+
 // A bare `new IncomingMessage(null)` has httpVersionMajor/Minor === null;
 // `null < 1` is true, so the ServerResponse constructor's HTTP/1.0 branch
 // (matching node v26.3.0 lib/_http_server.js L214) sets shouldKeepAlive=false

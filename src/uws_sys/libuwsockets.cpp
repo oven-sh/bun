@@ -1346,6 +1346,13 @@ extern "C"
         }
         data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
       }
+      /* HTTP/1.0 cannot chunk-frame the body; without a Content-Length the
+       * (empty) body is close-delimited, so the socket must close even when
+       * the client asked for keep-alive. */
+      if (data->fromAncientRequest && !(data->state & uWS::HttpResponseData<true>::HTTP_WROTE_CONTENT_LENGTH_HEADER))
+      {
+        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
+      }
       if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
@@ -1364,6 +1371,13 @@ extern "C"
         {
           uwsRes->writeHeader("Connection", "close");
         }
+        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
+      }
+      /* HTTP/1.0 cannot chunk-frame the body; without a Content-Length the
+       * (empty) body is close-delimited, so the socket must close even when
+       * the client asked for keep-alive. */
+      if (data->fromAncientRequest && !(data->state & uWS::HttpResponseData<false>::HTTP_WROTE_CONTENT_LENGTH_HEADER))
+      {
         data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
       }
       if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))

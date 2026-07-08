@@ -1125,3 +1125,90 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
 });
+
+describe("brace alternatives spanning '/'", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+  let cwd = "";
+  beforeAll(() => {
+    cwd = tempDirWithFiles("glob-scan-brace-slash", {
+      "a": "1",
+      "q": "1",
+      "x": "1",
+      "b/c": "1",
+      "b/d": "1",
+      "src/a/index.ts": "1",
+      "src/b/c/index.ts": "1",
+      "src/q.ts": "1",
+    });
+  });
+
+  // The matcher already handles these patterns; the walker previously split
+  // on '/' inside {...} and returned nothing. Each case also asserts
+  // glob.match() accepts every path scan() found, so the two stay in sync.
+  const scanMatches = (pattern: string, opts: GlobScanOptions = {}) => {
+    const glob = new Glob(pattern);
+    const found = norm([...glob.scanSync({ cwd, onlyFiles: false, ...opts })]);
+    for (const p of found) expect({ pattern, path: p, match: glob.match(p) }).toEqual({ pattern, path: p, match: true });
+    return found;
+  };
+
+  test("{a,b/c}", () => {
+    expect(scanMatches("{a,b/c}")).toEqual(["a", "b/c"]);
+  });
+
+  test("{b/c,q} finds the slash-free alternative too", () => {
+    expect(scanMatches("{b/c,q}")).toEqual(["b/c", "q"]);
+  });
+
+  test("slash outside the group still works (control)", () => {
+    expect(scanMatches("b/{c,d}")).toEqual(["b/c", "b/d"]);
+  });
+
+  test("src/{a,b/c}/index.ts", () => {
+    expect(scanMatches("src/{a,b/c}/index.ts")).toEqual(["src/a/index.ts", "src/b/c/index.ts"]);
+  });
+
+  test("nested {a,{q,b/c}}", () => {
+    expect(scanMatches("{a,{q,b/c}}")).toEqual(["a", "b/c", "q"]);
+  });
+
+  test("comma-less {b/c}", () => {
+    expect(scanMatches("{b/c}")).toEqual(["b/c"]);
+  });
+
+  test("wildcard inside alternative {a,b/*}", () => {
+    expect(scanMatches("{a,b/*}")).toEqual(["a", "b/c", "b/d"]);
+  });
+
+  test("non-spanning group alongside spanning group is kept intact", () => {
+    expect(scanMatches("{a,b/c,b/d}")).toEqual(["a", "b/c", "b/d"]);
+    // {c,d} has no '/', so the walker should visit 'b' once.
+    expect(scanMatches("{a,b/{c,d}}")).toEqual(["a", "b/c", "b/d"]);
+  });
+
+  test("empty alternative {,b/c}", () => {
+    expect(scanMatches("a{,/index.ts}", { cwd: path.join(cwd, "src") })).toEqual(["a", "a/index.ts"]);
+  });
+
+  test("unclosed brace is not expanded", () => {
+    expect(scanMatches("{a,b/c")).toEqual([]);
+  });
+
+  test("escaped open brace is literal", () => {
+    expect(scanMatches("\\{a,b/c}")).toEqual([]);
+  });
+
+  test("overlapping alternatives are deduped", () => {
+    expect(scanMatches("{b/c,b/c,a}")).toEqual(["a", "b/c"]);
+    expect(scanMatches("{b/*,b/c}")).toEqual(["b/c", "b/d"]);
+  });
+
+  test("** inside alternative", () => {
+    expect(scanMatches("src/{q.ts,**/index.ts}")).toEqual(["src/a/index.ts", "src/b/c/index.ts", "src/q.ts"]);
+  });
+
+  test("async scan", async () => {
+    const found = norm(await Array.fromAsync(new Glob("{a,b/c}").scan({ cwd, onlyFiles: false })));
+    expect(found).toEqual(["a", "b/c"]);
+  });
+});

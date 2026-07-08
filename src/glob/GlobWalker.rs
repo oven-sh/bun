@@ -262,6 +262,11 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub basename_excluding_special_syntax_component_idx: u32,
 
     pub pattern_components: Vec<Component>,
+    /// Non-empty only when a brace group in the input pattern spans a `/`.
+    /// `pattern` is then `expanded_patterns[expanded_pattern_idx]` and the
+    /// iterator walks each in turn, deduping into `matched_paths`.
+    expanded_patterns: Vec<Box<[u8]>>,
+    expanded_pattern_idx: u32,
     pub matched_paths: MatchedMap,
     pub i: u32,
 
@@ -830,7 +835,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 IterState::GetNext => {
                     // Done
                     if self.walker.workbuf.is_empty() {
-                        return Ok(Ok(None));
+                        loop {
+                            if !self.walker.advance_to_next_pattern()? {
+                                return Ok(Ok(None));
+                            }
+                            if !self.walker.pattern_components.is_empty() {
+                                break;
+                            }
+                        }
+                        self.close_cwd_fd();
+                        self.cwd_fd = A::Handle::EMPTY;
+                        match self.init()? {
+                            Err(err) => return Ok(Err(err)),
+                            Ok(()) => continue 'outer,
+                        }
                     }
                     let mut work_item = self.walker.workbuf.pop().unwrap();
                     // The workbuf is LIFO, so `followed_links_len` restores the
@@ -1493,6 +1511,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             has_relative_components: false,
             pattern_components: Vec::new(),
+            expanded_patterns: Vec::new(),
+            expanded_pattern_idx: 0,
             matched_paths: MatchedMap::default(),
             i: 0,
             path_buf: Box::new(PathBuffer::uninit()),
@@ -1501,6 +1521,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
         };
+
+        if Self::brace_group_spans_separator(&this.pattern) {
+            this.expanded_patterns = Self::expand_sep_spanning_braces(&this.pattern);
+            debug_assert!(!this.expanded_patterns.is_empty());
+            this.pattern = this.expanded_patterns[0].clone();
+        }
 
         Self::build_pattern_components(
             &mut this.pattern_components,
@@ -1538,8 +1564,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     pub fn walk(&mut self) -> Result<Maybe<()>, Error> {
-        if self.pattern_components.is_empty() {
-            return Ok(Ok(()));
+        while self.pattern_components.is_empty() {
+            if !self.advance_to_next_pattern()? {
+                return Ok(Ok(()));
+            }
         }
 
         let mut iter = Iterator::new(self);
@@ -2232,6 +2260,151 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax.unwrap_or(&mut s1[1]),
             basename_excluding_special_syntax_component_idx.unwrap_or(&mut rest[0]),
         )
+    }
+
+    /// A `/` inside `{..}` makes alternatives span differing component counts,
+    /// which the linear component list cannot represent; expand those groups
+    /// up front (non-spanning braces stay intact for the per-component matcher).
+    const BRACE_EXPANSION_BUDGET: usize = 1024;
+
+    fn brace_group_spans_separator(pattern: &[u8]) -> bool {
+        let mut depth: u32 = 0;
+        let mut in_brackets = false;
+        let mut i: usize = 0;
+        while i < pattern.len() {
+            match pattern[i] {
+                b'\\' => {
+                    i += 2;
+                    continue;
+                }
+                b'[' if !in_brackets => in_brackets = true,
+                b']' => in_brackets = false,
+                b'{' if !in_brackets => depth += 1,
+                b'}' if !in_brackets => depth = depth.saturating_sub(1),
+                b'/' if depth > 0 => return true,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Scan one brace group starting at `pattern[open] == b'{'`. Returns
+    /// `(close_idx, has_slash, depth-1 alternative ranges)` or `None` when the
+    /// group is unclosed (then it is not a brace group to the matcher either).
+    fn scan_brace_group(pattern: &[u8], open: usize) -> Option<(usize, bool, Vec<(usize, usize)>)> {
+        let mut depth: u32 = 1;
+        let mut in_brackets = false;
+        let mut has_slash = false;
+        let mut alts: Vec<(usize, usize)> = Vec::new();
+        let mut alt_start = open + 1;
+        let mut j = open + 1;
+        while j < pattern.len() {
+            match pattern[j] {
+                b'\\' => {
+                    j += 2;
+                    continue;
+                }
+                b'[' if !in_brackets => in_brackets = true,
+                b']' => in_brackets = false,
+                b'{' if !in_brackets => depth += 1,
+                b'}' if !in_brackets => {
+                    depth -= 1;
+                    if depth == 0 {
+                        alts.push((alt_start, j));
+                        return Some((j, has_slash, alts));
+                    }
+                }
+                b',' if !in_brackets && depth == 1 => {
+                    alts.push((alt_start, j));
+                    alt_start = j + 1;
+                }
+                b'/' => has_slash = true,
+                _ => {}
+            }
+            j += 1;
+        }
+        None
+    }
+
+    /// First outermost brace group containing a `/` (directly or via nesting).
+    fn find_sep_spanning_brace(pattern: &[u8]) -> Option<(usize, usize, Vec<(usize, usize)>)> {
+        let mut in_brackets = false;
+        let mut i: usize = 0;
+        while i < pattern.len() {
+            match pattern[i] {
+                b'\\' => {
+                    i += 2;
+                    continue;
+                }
+                b'[' if !in_brackets => in_brackets = true,
+                b']' => in_brackets = false,
+                b'{' if !in_brackets => match Self::scan_brace_group(pattern, i) {
+                    Some((close, true, alts)) => return Some((i, close, alts)),
+                    Some((close, false, _)) => {
+                        i = close + 1;
+                        continue;
+                    }
+                    None => return None,
+                },
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn expand_sep_spanning_braces(pattern: &[u8]) -> Vec<Box<[u8]>> {
+        let mut out: Vec<Box<[u8]>> = Vec::new();
+        let mut work: Vec<Box<[u8]>> = Vec::with_capacity(4);
+        work.push(Box::from(pattern));
+        while let Some(p) = work.pop() {
+            if out.len() + work.len() >= Self::BRACE_EXPANSION_BUDGET {
+                out.push(p);
+                out.extend(work.drain(..));
+                break;
+            }
+            match Self::find_sep_spanning_brace(&p) {
+                None => out.push(p),
+                Some((open, close, alts)) => {
+                    let prefix = &p[..open];
+                    let suffix = &p[close + 1..];
+                    for &(a, b) in alts.iter().rev() {
+                        let mut v = Vec::with_capacity(prefix.len() + (b - a) + suffix.len());
+                        v.extend_from_slice(prefix);
+                        v.extend_from_slice(&p[a..b]);
+                        v.extend_from_slice(suffix);
+                        work.push(v.into_boxed_slice());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn advance_to_next_pattern(&mut self) -> Result<bool, AllocError> {
+        let next = self.expanded_pattern_idx as usize + 1;
+        if next >= self.expanded_patterns.len() {
+            return Ok(false);
+        }
+        self.expanded_pattern_idx = u32::try_from(next).expect("int cast");
+        self.pattern = self.expanded_patterns[next].clone();
+        self.pattern_components.clear();
+        self.has_relative_components = false;
+        self.end_byte_of_basename_excluding_special_syntax = 0;
+        self.basename_excluding_special_syntax_component_idx = 0;
+        self.followed_links.clear();
+        Self::build_pattern_components(
+            &mut self.pattern_components,
+            &self.pattern,
+            &mut self.has_relative_components,
+            &mut self.end_byte_of_basename_excluding_special_syntax,
+            &mut self.basename_excluding_special_syntax_component_idx,
+        )?;
+        if cfg!(debug_assertions) {
+            self.debug_pattern_components();
+        }
+        Ok(true)
     }
 
     fn build_pattern_components(

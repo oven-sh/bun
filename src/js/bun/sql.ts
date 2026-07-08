@@ -761,12 +761,14 @@ const SQL: typeof Bun.SQL = function SQL(
       if ($isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
       }
-      // at this point we dont need to rollback anymore
-      needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        BEFORE_COMMIT_OR_ROLLBACK_COMMAND = null;
       }
       await run_internal_transaction_sql(COMMIT_COMMAND);
+      // COMMIT succeeded; only now is it safe to skip ROLLBACK on the error path.
+      // SQLite leaves the transaction OPEN when COMMIT fails (e.g. SQLITE_BUSY).
+      needs_rollback = false;
       return resolve(transaction_result);
     } catch (err) {
       try {

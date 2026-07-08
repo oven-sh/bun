@@ -8,8 +8,9 @@ test("Bun.TOML.parse with non-string input throws", () => {
 
 // https://github.com/oven-sh/bun/issues/30893
 // https://github.com/oven-sh/bun/issues/32025
+// https://github.com/oven-sh/bun/issues/30825
 // `\u{…}` is a JavaScript escape, not TOML.
-test("Bun.TOML.parse rejects JS-style \\u{XX} escapes (#30893, #32025)", () => {
+test("Bun.TOML.parse rejects JS-style \\u{XX} escapes (#30893, #32025, #30825)", () => {
   let err: unknown;
   try {
     Bun.TOML.parse(`key = "\\u{41}"`);
@@ -20,6 +21,10 @@ test("Bun.TOML.parse rejects JS-style \\u{XX} escapes (#30893, #32025)", () => {
   expect((err as SyntaxError).message).toBe(
     "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
   );
+  // Arbitrarily long hex-digit runs, including ones that overflowed the old
+  // parser's i64 accumulator, are rejected at the opening brace.
+  expect(() => Bun.TOML.parse(`a = "\\u{${Buffer.alloc(64, "f").toString()}}"`)).toThrow(SyntaxError);
+  expect(() => Bun.TOML.parse('a = "\\u{41"')).toThrow(SyntaxError);
 });
 
 // https://github.com/oven-sh/bun/issues/30893: a `\x`/`\u` escape followed by

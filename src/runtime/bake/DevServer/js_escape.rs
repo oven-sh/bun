@@ -139,7 +139,8 @@ pub(crate) fn decode_js_escape_sequences<'a>(
                             let mut out_of_range = false;
                             loop {
                                 if !iterator.next(&mut iter) {
-                                    break;
+                                    // Ran out of input before the closing `}`.
+                                    return Err(syntax_error());
                                 }
                                 c3 = iter.c;
                                 if c3 == '}' as CodePoint {

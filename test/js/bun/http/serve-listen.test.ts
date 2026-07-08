@@ -199,50 +199,53 @@ describe.skipIf(!isWindows)("reusePort on Windows", () => {
   });
 
   // bun:ffi dlopen() is unavailable on Windows arm64 (TinyCC is disabled there).
-  test.skipIf(isArm64)("Bun.serve({reusePort:true}) sets SO_EXCLUSIVEADDRUSE so a SO_REUSEADDR hijacker cannot bind", () => {
-    const ws2 = dlopen("ws2_32.dll", {
-      socket: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.u64 },
-      setsockopt: { args: [FFIType.u64, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-      bind: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-      closesocket: { args: [FFIType.u64], returns: FFIType.i32 },
-      WSAGetLastError: { args: [], returns: FFIType.i32 },
-    }).symbols;
+  test.skipIf(isArm64)(
+    "Bun.serve({reusePort:true}) sets SO_EXCLUSIVEADDRUSE so a SO_REUSEADDR hijacker cannot bind",
+    () => {
+      const ws2 = dlopen("ws2_32.dll", {
+        socket: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.u64 },
+        setsockopt: { args: [FFIType.u64, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+        bind: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+        closesocket: { args: [FFIType.u64], returns: FFIType.i32 },
+        WSAGetLastError: { args: [], returns: FFIType.i32 },
+      }).symbols;
 
-    using first = serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      reusePort: true,
-      fetch: () => new Response("first"),
-    });
-    const port = first.port;
+      using first = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        reusePort: true,
+        fetch: () => new Response("first"),
+      });
+      const port = first.port;
 
-    const AF_INET = 2;
-    const SOCK_STREAM = 1;
-    const IPPROTO_TCP = 6;
-    const SOL_SOCKET = 0xffff;
-    const SO_REUSEADDR = 0x0004;
-    const INVALID_SOCKET = 0xffffffffffffffffn;
-    const WSAEACCES = 10013;
+      const AF_INET = 2;
+      const SOCK_STREAM = 1;
+      const IPPROTO_TCP = 6;
+      const SOL_SOCKET = 0xffff;
+      const SO_REUSEADDR = 0x0004;
+      const INVALID_SOCKET = 0xffffffffffffffffn;
+      const WSAEACCES = 10013;
 
-    const s = ws2.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    expect(BigInt(s)).not.toBe(INVALID_SOCKET);
-    try {
-      const one = new Int32Array([1]);
-      expect(ws2.setsockopt(s, SOL_SOCKET, SO_REUSEADDR, ptr(one), 4)).toBe(0);
+      const s = ws2.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      expect(BigInt(s)).not.toBe(INVALID_SOCKET);
+      try {
+        const one = new Int32Array([1]);
+        expect(ws2.setsockopt(s, SOL_SOCKET, SO_REUSEADDR, ptr(one), 4)).toBe(0);
 
-      // sockaddr_in: family(u16 LE), port(u16 BE), addr(4 bytes), zero(8 bytes)
-      const sa = new Uint8Array(16);
-      new DataView(sa.buffer).setUint16(0, AF_INET, true);
-      new DataView(sa.buffer).setUint16(2, port, false);
-      sa.set([127, 0, 0, 1], 4);
+        // sockaddr_in: family(u16 LE), port(u16 BE), addr(4 bytes), zero(8 bytes)
+        const sa = new Uint8Array(16);
+        new DataView(sa.buffer).setUint16(0, AF_INET, true);
+        new DataView(sa.buffer).setUint16(2, port, false);
+        sa.set([127, 0, 0, 1], 4);
 
-      const rc = ws2.bind(s, ptr(sa), sa.length);
-      const err = ws2.WSAGetLastError();
-      expect({ rc, err }).toEqual({ rc: -1, err: WSAEACCES });
-    } finally {
-      ws2.closesocket(s);
-    }
-  });
+        const rc = ws2.bind(s, ptr(sa), sa.length);
+        const err = ws2.WSAGetLastError();
+        expect({ rc, err }).toEqual({ rc: -1, err: WSAEACCES });
+      } finally {
+        ws2.closesocket(s);
+      }
+    },
+  );
 
   test("Bun.listen({reusePort:true}) reports ENOTSUP (matches Node's UV_TCP_REUSEPORT behavior)", () => {
     let listener: ReturnType<typeof Bun.listen> | undefined;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import "../../../harness"; // for expect().toRun()
-import { bunEnv, bunExe } from "harness";
 
 describe("Bun.main", () => {
   test("can be overridden", () => {

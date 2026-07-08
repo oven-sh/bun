@@ -1521,7 +1521,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path)).into_inner();
+            url_string =
+                jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path)).into_inner();
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a

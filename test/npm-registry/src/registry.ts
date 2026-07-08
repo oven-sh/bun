@@ -515,6 +515,7 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
    */
   async #tarball(req: RouteRequest): Promise<Response> {
     const { scope, name: bare, file } = req.params as { scope?: string; name: string; file: string };
+    if (scope !== undefined && !scope.startsWith("@")) return this.#unrouted(req);
     const name = scope !== undefined ? `${scope}/${bare}` : bare;
     const denied = this.users.authorizeRead(name, this.#auth(req));
     if (denied !== undefined) return denied;
@@ -624,6 +625,7 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
    */
   async #removeTarball(req: RouteRequest): Promise<Response> {
     const { scope, name: bare } = req.params as { scope?: string; name: string };
+    if (scope !== undefined && !scope.startsWith("@")) return this.#unrouted(req);
     const name = scope !== undefined ? `${scope}/${bare}` : bare;
     return this.users.authorizeWrite(name, this.#auth(req)) ?? json({ ok: true });
   }

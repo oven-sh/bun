@@ -515,6 +515,51 @@ describe("publish", () => {
     expect(await registry.packument("tamper")).toBeUndefined();
   });
 
+  test("a declared integrity in any W3C SRI form that proves the bytes is accepted", async () => {
+    // `dist.integrity` is SRI §3.3 (whitespace-separated list, optional
+    // padding), so the gate must parse it like ssri.checkData would,
+    // not compare by spelling. Covers sha384, sha512 without padding,
+    // and a multi-hash string with a leading wrong token.
+    await using registry = await new NpmRegistry().start();
+    const make = (name: string, integrity: string) => {
+      const body = publishBody(name, "1.0.0");
+      (body.versions["1.0.0"]!.dist as { integrity: string }).integrity = integrity;
+      return body;
+    };
+    const attached = (body: ReturnType<typeof publishBody>) =>
+      Buffer.from(Object.values(body._attachments)[0]!.data, "base64");
+    const b64 = (h: Bun.CryptoHasher) => Buffer.from(h.digest()).toString("base64");
+
+    const b1 = make("sri-384", `sha384-${b64(new Bun.SHA384().update(attached(make("sri-384", ""))))}`);
+    expect((await put(registry, "sri-384", b1)).status).toBe(201);
+
+    const b2 = make("sri-nopad", computeIntegrity(attached(make("sri-nopad", ""))).integrity.replace(/=+$/, ""));
+    expect((await put(registry, "sri-nopad", b2)).status).toBe(201);
+
+    const correct = computeIntegrity(attached(make("sri-multi", ""))).integrity;
+    const b3 = make("sri-multi", `sha512-WRONG== ${correct}`);
+    expect((await put(registry, "sri-multi", b3)).status).toBe(201);
+
+    // The registry serves its own sha512 regardless of what the client sent.
+    for (const n of ["sri-384", "sri-nopad", "sri-multi"]) {
+      expect((await registry.packument(n))!.versions["1.0.0"]!.dist.integrity).toMatch(/^sha512-[A-Za-z0-9+/]+=*$/);
+    }
+  });
+
+  test("a metadata-only PUT on a name the registry has never seen is a 404", async () => {
+    // The shape `npm deprecate` sends: no _attachments, just a mutated
+    // packument. On an unknown name that is a 404, like the sibling
+    // write handlers; it must not commit a fresh empty record.
+    await using registry = await new NpmRegistry().start();
+    const body = { name: "never", versions: { "1.0.0": { name: "never", version: "1.0.0", deprecated: "x" } } };
+    expect((await put(registry, "never", body)).status).toBe(404);
+    expect(await registry.packument("never")).toBeUndefined();
+    // Once the package exists the same body is a 201 that applies.
+    registry.define("never", { "1.0.0": {} });
+    expect((await put(registry, "never", body)).status).toBe(201);
+    expect((await registry.packument("never"))!.versions["1.0.0"]!.deprecated).toBe("x");
+  });
+
   test("scoped publish, with access rules and a bearer token", async () => {
     await using registry = await new NpmRegistry({ access: { "@secret/*": "authenticated" } }).start();
     const token = registry.addUser({ name: "alice", password: "pw" });
@@ -572,6 +617,9 @@ describe("otp", () => {
 
   test("a write by a 2FA user without npm-otp gets npm's OTP challenge, and succeeds with it", async () => {
     await using registry = await new NpmRegistry().start();
+    // `attempt` sends a metadata-only PUT, which updates an existing
+    // package; the OTP gate fires before the body is parsed either way.
+    registry.define("p", { "1.0.0": {} });
     const token = registry.addUser({ name: "two-fa", password: "pw", otp: "123456" });
 
     const challenged = await attempt(registry, token);
@@ -790,5 +838,25 @@ describe("routing", () => {
   test("/-/ping", async () => {
     await using registry = await new NpmRegistry().start();
     expect(await getJson(`${registry.url}-/ping`)).toMatchObject({ status: 200, body: {} });
+  });
+
+  test("a tarball route whose first segment is not a scope is unrouted", async () => {
+    // The four-segment tarball routes exist only for the literal-slash
+    // spelling of a scoped name; any other first segment has no such
+    // path and must 404 as unrouted, like every other scoped-sibling
+    // handler in the table.
+    await using registry = await new NpmRegistry().start();
+    registry.defineFallback({ "1.0.0": {} });
+    expect(await getJson(`${registry.url}notascope/pkg/-/pkg-1.0.0.tgz`)).toMatchObject({
+      status: 404,
+      body: { error: "Not found" },
+    });
+    expect(await getJson(`${registry.url}notascope/pkg/-/x.tgz/-rev/1`, { method: "DELETE" })).toMatchObject({
+      status: 404,
+      body: { error: "Not found" },
+    });
+    // The guard short-circuits before #resolve, so the fallback must
+    // not have been materialized for the bogus name.
+    expect(registry.names).not.toContain("notascope/pkg");
   });
 });

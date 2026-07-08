@@ -24,3 +24,29 @@ export interface Integrity {
 export function computeIntegrity(bytes: Uint8Array): Integrity {
   return { integrity: sriSha512(bytes), shasum: shasum(bytes) };
 }
+
+const SRI_ALGORITHMS: Record<string, new () => Bun.CryptoHasher> = {
+  sha256: Bun.SHA256,
+  sha384: Bun.SHA384,
+  sha512: Bun.SHA512,
+};
+
+/**
+ * Does `sri` prove `bytes`? `sri` is parsed as W3C SRI §3.3: a
+ * whitespace-separated list of `<algo>-<base64>` tokens (padding
+ * optional, trailing `?options` ignored), accepted when any token's
+ * hash matches `bytes` for the algorithm it names. That is what
+ * `ssri.checkData` and every installer does with `dist.integrity`.
+ */
+export function checkIntegrity(sri: string, bytes: Uint8Array): boolean {
+  for (const token of sri.trim().split(/\s+/)) {
+    const dash = token.indexOf("-");
+    if (dash <= 0) continue;
+    const Hasher = SRI_ALGORITHMS[token.slice(0, dash)];
+    if (Hasher === undefined) continue;
+    const claimed = token.slice(dash + 1).replace(/\?.*$/, "").replace(/=+$/, "");
+    const actual = Buffer.from(new Hasher().update(bytes).digest()).toString("base64").replace(/=+$/, "");
+    if (claimed === actual) return true;
+  }
+  return false;
+}

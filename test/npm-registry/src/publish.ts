@@ -22,8 +22,8 @@
  *     `DELETE`s each orphaned tarball.
  */
 
-import { json, npmError } from "./errors";
-import { computeIntegrity } from "./integrity";
+import { json, npmError, packageNotFound } from "./errors";
+import { checkIntegrity, computeIntegrity } from "./integrity";
 import {
   manifestFromValue,
   revString,
@@ -56,9 +56,13 @@ export async function handlePublish(record: PackageRecord, body: PublishBody): P
   if (body.name !== undefined && body.name !== record.name) {
     return npmError(400, `package name mismatch: URL says ${record.name}, body says ${body.name}`);
   }
-  return body._attachments !== undefined && Object.keys(body._attachments).length > 0
-    ? publishVersions(record, body)
-    : updateMetadata(record, body);
+  if (body._attachments !== undefined && Object.keys(body._attachments).length > 0) {
+    return publishVersions(record, body);
+  }
+  // A metadata-only PUT updates something that already exists; on a
+  // name the registry has never seen it must 404 like its sibling
+  // write handlers, not commit a fresh empty record.
+  return record.versions.size === 0 ? packageNotFound(record.name) : updateMetadata(record, body);
 }
 
 async function publishVersions(record: PackageRecord, body: PublishBody): Promise<Response> {
@@ -84,17 +88,16 @@ async function publishVersions(record: PackageRecord, body: PublishBody): Promis
     const tarball: Uint8Array = Buffer.from(attachment.data, "base64");
     // The client declares the tarball's integrity in `dist`; a registry
     // that accepted bytes that don't match would serve a package every
-    // installer then rejects, so catch it at the door.
+    // installer then rejects, so catch it at the door. `dist.integrity`
+    // is a W3C SRI string (whitespace-separated list, optional padding),
+    // so parse it and accept when any token proves the uploaded bytes.
     const claimed = (manifest as { dist?: { integrity?: string } }).dist?.integrity;
-    if (claimed !== undefined) {
-      const actual = computeIntegrity(tarball).integrity;
-      if (claimed !== actual) {
-        return npmError(
-          400,
-          `integrity mismatch for ${record.name}@${version}: ` +
-            `the manifest claims ${claimed} but the attached tarball is ${actual}`,
-        );
-      }
+    if (claimed !== undefined && !checkIntegrity(claimed, tarball)) {
+      return npmError(
+        400,
+        `integrity mismatch for ${record.name}@${version}: ` +
+          `the manifest claims ${claimed} but the attached tarball is ${computeIntegrity(tarball).integrity}`,
+      );
     }
     staged.push({ version, stored: storedFromPublished(manifest as Manifest, tarball) });
   }

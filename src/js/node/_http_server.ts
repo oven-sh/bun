@@ -27,7 +27,6 @@ const {
   kRealListen,
   tlsSymbol,
   optionsSymbol,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -75,6 +74,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kTimeout = Symbol("http.server.timeout");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -320,6 +320,7 @@ function Server(options, callback): void {
 
   this[optionsSymbol] = options;
   storeHTTPOptions.$call(this, options);
+  this[kTimeout] = 0;
 
   if (callback) this.on("request", callback);
   return this;
@@ -920,25 +921,37 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    if (this[kDeferredTimeouts]) {
-      for (const { msecs, callback } of this[kDeferredTimeouts]) {
-        this.setTimeout(msecs, callback);
-      }
-      delete this[kDeferredTimeouts];
+    const timeoutMs = this[kTimeout];
+    if (typeof timeoutMs === "number" && timeoutMs > 0) {
+      setServerIdleTimeout(this[serverSymbol], Math.ceil(timeoutMs / 1000));
     }
 
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 
+// Node.js applies `this.timeout` to every new socket in connectionListener,
+// so `server.timeout = N` and `server.setTimeout(N)` are interchangeable; the
+// accessor keeps that equivalence on top of Bun's server-wide idle timeout.
+Object.defineProperty(Server.prototype, "timeout", {
+  enumerable: true,
+  configurable: true,
+  get() {
+    return this[kTimeout];
+  },
+  set(msecs) {
+    this[kTimeout] = msecs;
+    const server = this[serverSymbol];
+    if (server) {
+      const seconds = typeof msecs === "number" && msecs > 0 ? Math.ceil(msecs / 1000) : 0;
+      setServerIdleTimeout(server, seconds);
+    }
+  },
+});
+
 Server.prototype.setTimeout = function (msecs, callback) {
-  const server = this[serverSymbol];
-  if (server) {
-    setServerIdleTimeout(server, Math.ceil(msecs / 1000));
-    if (typeof callback === "function") this.once("timeout", callback);
-  } else {
-    (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
-  }
+  this.timeout = msecs;
+  if (typeof callback === "function") this.on("timeout", callback);
   return this;
 };
 

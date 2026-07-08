@@ -88,7 +88,6 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -543,7 +542,6 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,

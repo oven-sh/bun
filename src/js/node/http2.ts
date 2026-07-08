@@ -346,6 +346,8 @@ const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
+const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
+const runInFrame = require("internal/async_context_frame").run;
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -2095,6 +2097,13 @@ class Http2Stream extends Duplex {
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: VoidFunction | null = null;
   [bunHTTP2StreamStatus]: number = 0;
+  // Async-context frame captured at construction so native-driven callbacks
+  // (response/data/end/…) observe the AsyncLocalStorage context that created
+  // the stream, matching Node's Http2Stream AsyncWrap semantics. Read only by
+  // withStreamFrame at the native→JS seam; user-initiated emit() is untouched.
+  // The raw frame is snapshotted directly so session.request()/pushStream()
+  // do not flip on async-context tracking when no AsyncLocalStorage is in use.
+  [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;
@@ -2568,29 +2577,18 @@ class Http2Stream extends Duplex {
     }
   }
 }
-class ClientHttp2Stream extends Http2Stream {
-  // Capture the async context active when the request was created so that
-  // events emitted from native parser callbacks (response, data, end, ...)
-  // observe it, matching Node's Http2Stream async resource semantics. The raw
-  // $asyncContext frame is snapshotted directly so session.request() does not
-  // flip on async-context tracking when no AsyncLocalStorage is in use.
-  #asyncContextFrame = $getInternalField($asyncContext, 0);
+class ClientHttp2Stream extends Http2Stream {}
 
-  emit(event, ...args) {
-    const frame = this.#asyncContextFrame;
-    // Skip the swap for events that EventEmitter fires synchronously from user
-    // .on()/.off() — those should observe the caller's current ALS context.
-    if (frame === undefined || event === "newListener" || event === "removeListener") {
-      return super.emit(event, ...args);
-    }
-    const prev = $getInternalField($asyncContext, 0);
-    $putInternalField($asyncContext, 0, frame);
-    try {
-      return super.emit(event, ...args);
-    } finally {
-      $putInternalField($asyncContext, 0, prev);
-    }
-  }
+// Wrap a native→JS #Handlers callback so its body runs inside the target
+// stream's captured async-context frame — the JS-side equivalent of Node's
+// AsyncWrap MakeCallback re-entering the resource scope. Applied only at the
+// native seam, not to public emit(), so user-driven emit()/destroy() observe
+// the caller's ALS context (matching Node).
+function withStreamFrame(handler) {
+  return function (self, stream, a, b, c) {
+    if (typeof stream !== "object" || stream === null) return handler(self, stream, a, b, c);
+    return runInFrame(stream[bunHTTP2AsyncContextFrame], handler, undefined, self, stream, a, b, c);
+  };
 }
 function tryClose(fd) {
   try {
@@ -3498,12 +3496,14 @@ class ServerHttp2Session extends Http2Session {
       // setStreamContext host call needed.
       return stream;
     },
-    frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
-      if (!self || typeof stream !== "object") return;
-      // Emit the frameError event with the frame type and error code
-      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
-    },
-    aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
+    frameError: withStreamFrame(
+      (self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) => {
+        if (!self || typeof stream !== "object") return;
+        // Emit the frameError event with the frame type and error code
+        process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      },
+    ),
+    aborted: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
@@ -3514,14 +3514,14 @@ class ServerHttp2Session extends Http2Session {
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
+    }),
+    streamError: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
+    }),
+    streamEnd: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
       if (state == 6 || state == 7) {
         if (stream.readable) {
@@ -3553,63 +3553,65 @@ class ServerHttp2Session extends Http2Session {
         // 5 = local closed aka write is closed
         markWritableDone(stream);
       }
-    },
-    streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
+    }),
+    streamData: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) => {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
-    },
-    streamHeaders(
-      self: ServerHttp2Session,
-      stream: ServerHttp2Stream,
-      headersTuple: [string[], Record<string, any>, string[] | undefined],
-      flags: number,
-    ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
-      let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
-      if (self.#strictFieldWhitespaceValidation) {
-        // stripInvalidWhitespaceFields returns its input by identity when nothing was
-        // stripped (the common case) — only then can the native-built object be reused.
-        const filtered = stripInvalidWhitespaceFields(rawheaders);
-        if (filtered !== rawheaders) {
-          rawheaders = filtered;
-          headers = toHeaderObject(filtered, headersTuple[2] || []);
+    }),
+    streamHeaders: withStreamFrame(
+      (
+        self: ServerHttp2Session,
+        stream: ServerHttp2Stream,
+        headersTuple: [string[], Record<string, any>, string[] | undefined],
+        flags: number,
+      ) => {
+        if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+        let rawheaders = headersTuple[0];
+        let headers = headersTuple[1];
+        if (self.#strictFieldWhitespaceValidation) {
+          // stripInvalidWhitespaceFields returns its input by identity when nothing was
+          // stripped (the common case) — only then can the native-built object be reused.
+          const filtered = stripInvalidWhitespaceFields(rawheaders);
+          if (filtered !== rawheaders) {
+            rawheaders = filtered;
+            headers = toHeaderObject(filtered, headersTuple[2] || []);
+          }
         }
-      }
-      // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
-      // from them). kRequestHeaders survives respond() overwriting the bunHTTP2Headers slot. Only
-      // the first HEADERS block counts - this handler also fires for trailers.
-      if (stream[kRequestHeaders] === undefined) {
-        stream[kRequestHeaders] = headers;
-      }
-      if (stream[bunHTTP2Headers] == null) {
-        stream[bunHTTP2Headers] = headers;
-      }
-      if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
-        stream[kHeadRequest] = true;
-      }
-      const status = stream[bunHTTP2StreamStatus];
-      if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
-      } else {
-        // Set the StreamResponded bit BEFORE dispatching the 'stream' event
-        // synchronously to user code. The user handler may call
-        // stream.respond()/stream.end() which set other bits (WantTrailer,
-        // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
-        // and wrote it back AFTER the emit, we'd clobber any bits set by the
-        // user handler — in particular, losing WantTrailer/FinalCalled breaks
-        // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
-        stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
-        if (onServerStreamCreatedChannel.hasSubscribers) {
-          onServerStreamCreatedChannel.publish({ stream, headers });
+        // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
+        // from them). kRequestHeaders survives respond() overwriting the bunHTTP2Headers slot. Only
+        // the first HEADERS block counts - this handler also fires for trailers.
+        if (stream[kRequestHeaders] === undefined) {
+          stream[kRequestHeaders] = headers;
         }
-        if (onServerStreamStartChannel.hasSubscribers) {
-          onServerStreamStartChannel.publish({ stream, headers });
+        if (stream[bunHTTP2Headers] == null) {
+          stream[bunHTTP2Headers] = headers;
         }
-        self[kServer].emit("stream", stream, headers, flags, rawheaders);
-        self.emit("stream", stream, headers, flags, rawheaders);
-      }
-    },
+        if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
+          stream[kHeadRequest] = true;
+        }
+        const status = stream[bunHTTP2StreamStatus];
+        if ((status & StreamState.StreamResponded) !== 0) {
+          stream.emit("trailers", headers, flags, rawheaders);
+        } else {
+          // Set the StreamResponded bit BEFORE dispatching the 'stream' event
+          // synchronously to user code. The user handler may call
+          // stream.respond()/stream.end() which set other bits (WantTrailer,
+          // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
+          // and wrote it back AFTER the emit, we'd clobber any bits set by the
+          // user handler — in particular, losing WantTrailer/FinalCalled breaks
+          // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
+          stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+          if (onServerStreamCreatedChannel.hasSubscribers) {
+            onServerStreamCreatedChannel.publish({ stream, headers });
+          }
+          if (onServerStreamStartChannel.hasSubscribers) {
+            onServerStreamStartChannel.publish({ stream, headers });
+          }
+          self[kServer].emit("stream", stream, headers, flags, rawheaders);
+          self.emit("stream", stream, headers, flags, rawheaders);
+        }
+      },
+    ),
     localSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
@@ -3647,7 +3649,7 @@ class ServerHttp2Session extends Http2Session {
       }
       self.destroy(errorCode as number);
     },
-    wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
+    wantTrailers: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream) => {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
@@ -3659,7 +3661,7 @@ class ServerHttp2Session extends Http2Session {
       } else {
         stream.emit("wantTrailers");
       }
-    },
+    }),
     goaway(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       if (self.destroyed) return;
@@ -4225,12 +4227,14 @@ class ClientHttp2Session extends Http2Session {
       }
       self.emit("stream", pushedStream, headers, flags, rawheaders);
     },
-    frameError(self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) {
-      if (!self || typeof stream !== "object") return;
-      // Emit the frameError event with the frame type and error code
-      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
-    },
-    aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
+    frameError: withStreamFrame(
+      (self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) => {
+        if (!self || typeof stream !== "object") return;
+        // Emit the frameError event with the frame type and error code
+        process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      },
+    ),
+    aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
@@ -4240,14 +4244,14 @@ class ClientHttp2Session extends Http2Session {
       }
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
+    }),
+    streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
+    }),
+    streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
 
       if (state == 6 || state == 7) {
@@ -4282,65 +4286,67 @@ class ClientHttp2Session extends Http2Session {
         // 5 = local closed aka write is closed
         markWritableDone(stream);
       }
-    },
-    streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
+    }),
+    streamData: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) => {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
-    },
-    streamHeaders(
-      self: ClientHttp2Session,
-      stream: ClientHttp2Stream,
-      headersTuple: [string[], Record<string, any>, string[] | undefined],
-      flags: number,
-    ) {
-      if (!self || typeof stream !== "object" || stream.rstCode) return;
-      let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
-      if (self.#strictFieldWhitespaceValidation) {
-        // stripInvalidWhitespaceFields returns its input by identity when nothing was
-        // stripped (the common case) — only then can the native-built object be reused.
-        const filtered = stripInvalidWhitespaceFields(rawheaders);
-        if (filtered !== rawheaders) {
-          rawheaders = filtered;
-          headers = toHeaderObject(filtered, headersTuple[2] || []);
+    }),
+    streamHeaders: withStreamFrame(
+      (
+        self: ClientHttp2Session,
+        stream: ClientHttp2Stream,
+        headersTuple: [string[], Record<string, any>, string[] | undefined],
+        flags: number,
+      ) => {
+        if (!self || typeof stream !== "object" || stream.rstCode) return;
+        let rawheaders = headersTuple[0];
+        let headers = headersTuple[1];
+        if (self.#strictFieldWhitespaceValidation) {
+          // stripInvalidWhitespaceFields returns its input by identity when nothing was
+          // stripped (the common case) — only then can the native-built object be reused.
+          const filtered = stripInvalidWhitespaceFields(rawheaders);
+          if (filtered !== rawheaders) {
+            rawheaders = filtered;
+            headers = toHeaderObject(filtered, headersTuple[2] || []);
+          }
         }
-      }
-      const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[HTTP2_HEADER_STATUS];
-      if (header_status === HTTP_STATUS_CONTINUE) {
-        stream.emit("continue");
-      }
+        const status = stream[bunHTTP2StreamStatus];
+        const header_status = headers[HTTP2_HEADER_STATUS];
+        if (header_status === HTTP_STATUS_CONTINUE) {
+          stream.emit("continue");
+        }
 
-      if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
-      } else {
-        if (header_status >= 100 && header_status < 200) {
-          stream.emit("headers", headers, flags, rawheaders);
+        if ((status & StreamState.StreamResponded) !== 0) {
+          stream.emit("trailers", headers, flags, rawheaders);
         } else {
-          // Set the bit BEFORE dispatching synchronously to user code — a
-          // 'response' handler that mutates stream state would otherwise be
-          // clobbered by a stale read-modify-write (see the server-side note
-          // at the stream handler above).
-          stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
-          if (header_status === 421) {
-            // 421 Misdirected Request
-            removeOriginFromSet(self, stream);
-          }
-          if (onClientStreamFinishChannel.hasSubscribers) {
-            onClientStreamFinishChannel.publish({ stream, headers, flags });
-          }
-          if (stream[kPush]) {
-            // A pushed stream delivers its response via 'push'; the session 'stream' event already
-            // fired (with the promised request headers) when the PUSH_PROMISE arrived.
-            stream.emit("push", headers, flags, rawheaders);
+          if (header_status >= 100 && header_status < 200) {
+            stream.emit("headers", headers, flags, rawheaders);
           } else {
-            // Node's ClientHttp2Session emits 'stream' only for pushed streams; a normal request's
-            // response arrives solely via the stream's own 'response' event.
-            stream.emit("response", headers, flags, rawheaders);
+            // Set the bit BEFORE dispatching synchronously to user code — a
+            // 'response' handler that mutates stream state would otherwise be
+            // clobbered by a stale read-modify-write (see the server-side note
+            // at the stream handler above).
+            stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+            if (header_status === 421) {
+              // 421 Misdirected Request
+              removeOriginFromSet(self, stream);
+            }
+            if (onClientStreamFinishChannel.hasSubscribers) {
+              onClientStreamFinishChannel.publish({ stream, headers, flags });
+            }
+            if (stream[kPush]) {
+              // A pushed stream delivers its response via 'push'; the session 'stream' event already
+              // fired (with the promised request headers) when the PUSH_PROMISE arrived.
+              stream.emit("push", headers, flags, rawheaders);
+            } else {
+              // Node's ClientHttp2Session emits 'stream' only for pushed streams; a normal request's
+              // response arrives solely via the stream's own 'response' event.
+              stream.emit("response", headers, flags, rawheaders);
+            }
           }
         }
-      }
-    },
+      },
+    ),
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
@@ -4383,7 +4389,7 @@ class ClientHttp2Session extends Http2Session {
       self.destroy(error_instance);
     },
 
-    wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
+    wantTrailers: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream) => {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
@@ -4393,7 +4399,7 @@ class ClientHttp2Session extends Http2Session {
       } else {
         stream.emit("wantTrailers");
       }
-    },
+    }),
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       if (self.destroyed) return;

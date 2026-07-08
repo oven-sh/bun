@@ -39,6 +39,7 @@ let inspect: typeof import("node:util").inspect | undefined;
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
 const kCapture = Symbol("kCapture");
@@ -828,6 +829,13 @@ class EventEmitterAsyncResource extends EventEmitter {
     }
     super(options);
     this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
+    // EventEmitter's constructor stamps `this.emit = emitWithRejectionCapture`
+    // as an OWN property when captureRejections is on, which would shadow the
+    // prototype's runInAsyncScope-wrapped emit below. Remove it so listeners
+    // still run in the resource's async scope; the prototype emit re-checks
+    // this[kCapture] on every call, so rejection capture is preserved. delete
+    // is a no-op when the property is absent, so no own-property check needed.
+    delete (this as { emit? }).emit;
   }
 
   // No explicit receiver guards: like node v26 (lib/events.js), the private
@@ -845,8 +853,14 @@ class EventEmitterAsyncResource extends EventEmitter {
     return this.#asyncResource;
   }
 
-  emit(...args) {
-    return this.#asyncResource.runInAsyncScope(() => super.emit(...args));
+  emit(event, ...args) {
+    const asyncResource = this.#asyncResource;
+    // The base EventEmitter picks its emit variant by stamping an own property;
+    // that own property is deleted in the constructor above, so pick per-call
+    // from this[kCapture] (matching Node, which branches inside prototype emit).
+    const emit = this[kCapture] ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 
   emitDestroy() {

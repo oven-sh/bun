@@ -155,7 +155,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 test/js/node/test/parallel/test-diagnostics-channel-http2-server-stream-close.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-allow-http1-upgrade-ws.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-alpn.js [ FAIL ] # not yet passing
-test/js/node/test/parallel/test-http2-async-local-storage.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-backpressure.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-binding.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-buffersize.js [ FAIL ] # not yet passing

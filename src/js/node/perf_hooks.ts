@@ -5,6 +5,7 @@ const {
   NodeEntryObserver,
   enqueueNodeEntry,
   hasObserver,
+  PerformanceNodeEntry,
 } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
@@ -120,45 +121,6 @@ class PerformanceResourceTiming {
 }
 $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
-// 'function' entries (perf_hooks timerify) are routed through the same
-// node-only registry as net/dns/http. The entry object is its own class so
-// it is `instanceof PerformanceEntry` (the WebCore constructor throws when
-// called directly, so the prototype chain is linked instead of subclassing).
-class PerformanceNodeEntry {
-  name;
-  entryType;
-  startTime;
-  duration;
-  detail;
-
-  constructor(name, entryType, startTime, duration, detail) {
-    this.name = name;
-    this.entryType = entryType;
-    this.startTime = startTime;
-    this.duration = duration;
-    this.detail = detail;
-  }
-
-  toJSON() {
-    return {
-      name: this.name,
-      entryType: this.entryType,
-      startTime: this.startTime,
-      duration: this.duration,
-      detail: this.detail,
-    };
-  }
-}
-// Link the prototype chain so entries are `instanceof PerformanceEntry` like
-// node's PerformanceNodeEntry. `extends PerformanceEntry` can't work (the
-// WebCore constructor throws "Illegal constructor"), and $toClass would
-// replace the prototype object, losing the class's own toJSON; instances
-// carry own data fields, so the inherited brand-checked accessors are
-// shadowed and never invoked.
-Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
-Object.defineProperty(PerformanceNodeEntry, "name", { value: "PerformanceNodeEntry" });
-
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
 
@@ -250,6 +212,9 @@ function timerify(fn, options = {}) {
   validateFunction(fn, "fn");
   validateObject(options, "options");
   const { histogram } = options;
+  // Node brand-checks with isHistogram (kHandle presence); Bun duck-types on
+  // .record for now — a native brand-check helper on
+  // JSNodePerformanceHooksHistogram would tighten this if it ever matters.
   if (
     histogram !== undefined &&
     (histogram === null || typeof histogram !== "object" || typeof histogram.record !== "function")
@@ -292,7 +257,9 @@ function processTimerifyComplete(name, start, args, histogram) {
     histogram.record(Math.ceil(duration * 1e6));
   }
   if (hasObserver("function")) {
-    enqueueNodeEntry(new PerformanceNodeEntry(name, "function", start, duration, args));
+    const entry = new PerformanceNodeEntry(name, "function", start, duration, args);
+    for (let n = 0; n < args.length; n++) entry[n] = args[n];
+    enqueueNodeEntry(entry);
   }
 }
 

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -36,6 +37,47 @@ describe("AsyncLocalStorage", () => {
       }),
     ).toBe(9);
     expect(s3.getStore()).toBeUndefined();
+  });
+
+  // Behaviour verified against Node v26.4.0.
+  test("run() short-circuits when the store value is unchanged (Object.is)", () => {
+    // enterWith inside a same-value run survives past the run
+    const als1 = new AsyncLocalStorage();
+    als1.enterWith("A");
+    als1.run("A", () => als1.enterWith("B"));
+    expect(als1.getStore()).toBe("B");
+
+    // exit() on a fresh storage is a same-value (undefined) run
+    const als2 = new AsyncLocalStorage();
+    als2.exit(() => als2.enterWith("C"));
+    expect(als2.getStore()).toBe("C");
+
+    // defaultValue counts as the "current" store
+    const als3 = new AsyncLocalStorage({ defaultValue: "d" });
+    als3.run("d", () => als3.enterWith("X"));
+    expect(als3.getStore()).toBe("X");
+  });
+
+  // Reaches the else-if(hasPrevious) re-enable branch in run()'s finally.
+  test("disable() mid-run then finally restores the previous value", () => {
+    const als = new AsyncLocalStorage();
+    als.run("outer", () => {
+      als.run("inner", () => als.disable());
+      // Node v26: run's finally re-enters the previous value.
+      expect(als.getStore()).toBe("outer");
+    });
+    expect(als.getStore()).toBeUndefined();
+
+    // hasPrevious=true via enterWith, disable() mid-run of ANOTHER storage's callback.
+    const alsA = new AsyncLocalStorage();
+    const alsB = new AsyncLocalStorage();
+    alsA.enterWith("prev");
+    alsA.run("a", () => {
+      alsB.run("b", () => alsA.disable());
+      // Still inside alsA.run: finally hasn't fired yet, alsA is disabled.
+      expect(alsA.getStore()).toBeUndefined();
+    });
+    expect(alsA.getStore()).toBe("prev");
   });
 });
 
@@ -572,6 +614,44 @@ describe("async context passes through", () => {
     });
     expect(s.getStore()).toBe(undefined);
     expect(v).toBe("value");
+  });
+  test("http2 client stream: native events see request-time context; user emit sees caller context", async () => {
+    const s = new AsyncLocalStorage<string>();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise<void>(r => server.listen(0, r));
+    const port = (server.address() as import("net").AddressInfo).port;
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    try {
+      const req = s.run("REQUEST", () => client.request({ ":path": "/" }));
+
+      // Native-driven events observe the context captured at request() time.
+      const responseStore = new Promise(r => req.on("response", () => r(s.getStore())));
+      const dataStore = new Promise(r => req.on("data", () => r(s.getStore())));
+      const endStore = new Promise(r => req.on("end", () => r(s.getStore())));
+      const closeStore = new Promise(r => req.on("close", () => r(s.getStore())));
+      req.end();
+      expect(await responseStore).toBe("REQUEST");
+      expect(await dataStore).toBe("REQUEST");
+      expect(await endStore).toBe("REQUEST");
+      expect(await closeStore).toBe("REQUEST");
+
+      // User-initiated emit() observes the CALLER's context (Node semantics —
+      // only native→JS callbacks re-enter the resource scope; Bun swaps the
+      // frame at the #Handlers seam, not by overriding emit()).
+      let customStore;
+      req.on("custom", () => {
+        customStore = s.getStore();
+      });
+      s.run("USER", () => req.emit("custom"));
+      expect(customStore).toBe("USER");
+    } finally {
+      client.close();
+      await new Promise(r => server.close(r));
+    }
   });
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();

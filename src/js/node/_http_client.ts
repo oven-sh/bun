@@ -89,6 +89,7 @@ class HTTPClientAsyncResource {
 // inside it. The raw frame is used directly so http.request() does not flip on
 // async-context tracking when no AsyncLocalStorage is in use.
 const kClientAsyncContext = Symbol("kClientAsyncContext");
+const runInFrame = require("internal/async_context_frame").run;
 
 function closeRequest(req) {
   if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
@@ -577,15 +578,7 @@ function socketErrorListener(err) {
 }
 
 function socketOnEnd() {
-  const frame = this._httpMessage?.[kClientAsyncContext];
-  if (frame === undefined) return socketOnEndInner.$call(this);
-  const prev = $getInternalField($asyncContext, 0);
-  $putInternalField($asyncContext, 0, frame);
-  try {
-    return socketOnEndInner.$call(this);
-  } finally {
-    $putInternalField($asyncContext, 0, prev);
-  }
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnEndInner, this);
 }
 
 function socketOnEndInner() {
@@ -607,15 +600,7 @@ function socketOnEndInner() {
 }
 
 function socketOnData(d) {
-  const frame = this._httpMessage?.[kClientAsyncContext];
-  if (frame === undefined) return socketOnDataInner.$call(this, d);
-  const prev = $getInternalField($asyncContext, 0);
-  $putInternalField($asyncContext, 0, frame);
-  try {
-    return socketOnDataInner.$call(this, d);
-  } finally {
-    $putInternalField($asyncContext, 0, prev);
-  }
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnDataInner, this, d);
 }
 
 function socketOnDataInner(d) {
@@ -899,8 +884,7 @@ function emitFreeNT(req) {
 function tickOnSocket(req, socket) {
   const parser = parsers.alloc();
   req.socket = socket;
-  const frame = $getInternalField($asyncContext, 0);
-  if (frame !== undefined) req[kClientAsyncContext] = frame;
+  req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
   const lenient = req.insecureHTTPParser === undefined ? isLenient() : req.insecureHTTPParser;
   parser.initialize(
     HTTPParser.RESPONSE,

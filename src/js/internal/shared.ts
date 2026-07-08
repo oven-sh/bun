@@ -180,6 +180,48 @@ function enqueueNodeEntry(entry) {
   }
 }
 
+// Node's PerformanceNodeEntry — the shape used by every JS-side entry type
+// ('function', 'net', 'dns', 'http'). Lives here (not in perf_hooks.ts) so
+// stopPerf can construct it without a circular require. The prototype chain
+// is linked lazily on first construction so the many importers of this file
+// do not eagerly materialize the WebCore PerformanceEntry constructor.
+let performanceNodeEntryLinked = false;
+class PerformanceNodeEntry {
+  name;
+  entryType;
+  startTime;
+  duration;
+  detail;
+
+  constructor(name, entryType, startTime, duration, detail) {
+    if (!performanceNodeEntryLinked) {
+      performanceNodeEntryLinked = true;
+      // `extends PerformanceEntry` can't work (the WebCore constructor throws
+      // "Illegal constructor"); instances carry own data fields, so the
+      // inherited brand-checked accessors are shadowed and never invoked.
+      const PerformanceEntry = globalThis.PerformanceEntry;
+      Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+      Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
+    }
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+    this.detail = detail;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
+}
+Object.defineProperty(PerformanceNodeEntry, "name", { value: "PerformanceNodeEntry" });
+
 function startPerf(target, key, context) {
   context.startTime = performance.now();
   target[key] = context;
@@ -192,17 +234,11 @@ function stopPerf(target, key, context) {
   }
   target[key] = undefined;
   const startTime = ctx.startTime;
-  const entry = {
-    name: ctx.name,
-    entryType: ctx.type,
-    startTime,
-    duration: performance.now() - startTime,
-    // Node.js merges the detail recorded at startPerf() with the detail
-    // passed to stopPerf() (e.g. http entries carry both req and res).
-    detail:
-      ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined,
-  };
-  enqueueNodeEntry(entry);
+  // Node.js merges the detail recorded at startPerf() with the detail
+  // passed to stopPerf() (e.g. http entries carry both req and res).
+  const detail =
+    ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined;
+  enqueueNodeEntry(new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail));
 }
 
 /**
@@ -298,6 +334,7 @@ export default {
   enqueueNodeEntry,
   kNodeEntryTypes,
   NodeEntryObserver,
+  PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),

@@ -175,6 +175,12 @@ class AsyncLocalStorage {
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
+    // Node short-circuits when the value is unchanged: no enterWith, no
+    // finally-restore. Observable when the callback calls enterWith() —
+    // the new value survives past run() (verified against Node v22/v26).
+    if (Object.is(this.getStore(), store_value)) {
+      return callback(...args);
+    }
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
     var previous_value;
@@ -219,8 +225,7 @@ class AsyncLocalStorage {
       if (!wasDisabled) {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
-          // Either unchanged, or disable() emptied it in place.
-          $assert(context2.length === 2 || context2.length === 0, "context was mutated without copy");
+          $assert(context2.length === 2, "context was mutated without copy");
           set(undefined);
         } else {
           // The context array can change shape during the callback (disable()
@@ -392,8 +397,7 @@ class AsyncResource {
     if (thisArg === undefined) {
       const resource = this;
       bound = function (this: unknown, ...args) {
-        args.unshift(fn, this);
-        return resource.runInAsyncScope.$apply(resource, args);
+        return resource.runInAsyncScope(fn, this, ...args);
       };
     } else {
       bound = this.runInAsyncScope.bind(this, fn, thisArg);

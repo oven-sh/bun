@@ -499,6 +499,14 @@ inline int lazyLoadSQLite()
         lazy_sqlite3_stmt_status = [](sqlite3_stmt*, int, int) -> int { return 0; };
     }
 
+    // sqlite3_changes64 was added in 3.37.0; macOS 12 ships 3.36.0. The
+    // 32-bit variant has been in the ABI since 3.0.0.
+    if (!lazy_sqlite3_changes64) {
+        lazy_sqlite3_changes64 = [](sqlite3* db) -> sqlite3_int64 {
+            return static_cast<sqlite3_int64>(lazy_sqlite3_changes(db));
+        };
+    }
+
     return 0;
 }
 

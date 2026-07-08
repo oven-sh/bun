@@ -189,6 +189,24 @@ describe("DatabaseSync", () => {
     expect(() => new StatementSync()).toThrow(/Illegal constructor/);
   });
 
+  test("an Array first argument is treated as a named-parameter object", () => {
+    // Node's test is IsObject() && !IsArrayBufferView(); Arrays are not
+    // special-cased. Their own-enumerable keys ("0", "1", …) go through the
+    // named-parameter path, so the default behaviour is ERR_INVALID_STATE
+    // for the unknown name, and allowUnknownNamedParameters makes it a no-op.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x)");
+    const s1 = db.prepare("INSERT INTO t VALUES (?)");
+    expect(() => s1.run([99])).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "Unknown named parameter '0'" }),
+    );
+    const s2 = db.prepare("INSERT INTO t VALUES (?)");
+    s2.setAllowUnknownNamedParameters(true);
+    expect(s2.run([99])).toEqual({ changes: 1, lastInsertRowid: 1 });
+    expect(db.prepare("SELECT x FROM t").all()).toEqual([{ x: null }]);
+    db.close();
+  });
+
   test("prepare() with empty / comment-only SQL returns a finalized StatementSync", () => {
     const db = new DatabaseSync(":memory:");
     for (const sql of ["", "   ", "-- a comment", "/* block */"]) {
@@ -470,6 +488,73 @@ describe("DatabaseSync.prototype.function()", () => {
       expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
     );
     db.close();
+  });
+
+  test("re-entering a statement from its own UDF throws instead of crashing", () => {
+    // sqlite3_reset on a VDBE that is mid-sqlite3_step corrupts the running
+    // state; Node v26.3.0 segfaults on this shape. Bun refuses with
+    // ERR_INVALID_STATE via isStepping() before touching the handle.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x)");
+    let stmt: StatementSync;
+    db.function("reenter", () => {
+      try {
+        stmt.run();
+        return "ran";
+      } catch (e: any) {
+        return e.code;
+      }
+    });
+    stmt = db.prepare("INSERT INTO t VALUES (reenter())");
+    stmt.run();
+    expect(db.prepare("SELECT x FROM t").all()).toEqual([{ x: "ERR_INVALID_STATE" }]);
+    // get()/all()/iterate() on the same statement are guarded the same way.
+    let caught: string[] = [];
+    db.function("reenter2", () => {
+      for (const fn of ["run", "get", "all", "iterate"] as const) {
+        try {
+          (stmt2[fn] as () => void)();
+          caught.push("ran");
+        } catch (e: any) {
+          caught.push(e.code);
+        }
+      }
+      return null;
+    });
+    const stmt2 = db.prepare("SELECT reenter2()");
+    stmt2.get();
+    expect(caught).toEqual(["ERR_INVALID_STATE", "ERR_INVALID_STATE", "ERR_INVALID_STATE", "ERR_INVALID_STATE"]);
+    db.close();
+  });
+
+  test("closing the database from a UDF keeps the callbacks rooted until the scan completes", async () => {
+    // closeInternal() clears m_registeredCallbacks; with close() no longer
+    // refusing while busy, doing so mid-step would unroot every UDF callback
+    // while the zombified connection still invokes them. Force system malloc
+    // so ASAN surfaces the use-after-free if the guard regresses.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { DatabaseSync } = require("node:sqlite");
+          const db = new DatabaseSync(":memory:");
+          db.exec("CREATE TABLE t (x)");
+          for (let i = 0; i < 30; i++) db.prepare("INSERT INTO t VALUES (?)").run(i);
+          let n = 0;
+          db.function("gcer", v => { Bun.gc(true); return v; });
+          db.function("target", v => { if (++n === 3) db.close(); return v; });
+          const rows = db.prepare("SELECT target(x) AS t, gcer(x) AS g FROM t").all();
+          console.log(JSON.stringify({ rows: rows.length, calls: n, isOpen: db.isOpen }));
+        `,
+      ],
+      env: { ...bunEnv, Malloc: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stdout.trim()).toBe(JSON.stringify({ rows: 30, calls: 30, isOpen: false }));
+    expect(exitCode).toBe(0);
   });
 });
 

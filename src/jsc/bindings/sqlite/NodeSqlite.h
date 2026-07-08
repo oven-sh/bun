@@ -361,6 +361,22 @@ public:
     unsigned resetGeneration() const { return m_resetGeneration; }
     void bumpResetGeneration() { ++m_resetGeneration; }
 
+    // True while a sqlite3_step on this statement is on the C stack. A UDF
+    // that re-enters run()/get()/all()/iterate() on the same statement would
+    // sqlite3_reset a running VDBE and segfault; REQUIRE_STMT_IDLE checks
+    // this. Not sqlite3_stmt_busy(): that also reports a parked iterator
+    // (stepped, yielded SQLITE_ROW, returned to JS), which is safe to reset.
+    bool isStepping() const { return m_steppingDepth > 0; }
+    struct SteppingScope {
+        JSStatementSync* stmt;
+        explicit SteppingScope(JSStatementSync* s)
+            : stmt(s)
+        {
+            ++stmt->m_steppingDepth;
+        }
+        ~SteppingScope() { --stmt->m_steppingDepth; }
+    };
+
     // Bind callFrame->argument(anon_start..) to the statement using Node.js
     // semantics. Returns false and throws on failure.
     bool bindParams(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::CallFrame*);
@@ -421,6 +437,7 @@ private:
     // `errcode: 0 "not an error"` from the new connection.
     unsigned m_originGeneration = 0;
     unsigned m_resetGeneration = 0;
+    unsigned m_steppingDepth = 0;
     bool m_useBigInts : 1 = false;
     bool m_returnArrays : 1 = false;
     bool m_allowBareNamedParams : 1 = true;

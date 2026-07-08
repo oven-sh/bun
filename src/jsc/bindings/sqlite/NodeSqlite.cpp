@@ -179,6 +179,16 @@ static EncodedJSValue throwNodeState(JSGlobalObject* globalObject, ThrowScope& s
         }                                                                                 \
     } while (0)
 
+// run()/get()/all()/iterate() call sqlite3_reset before stepping. If a UDF
+// invoked from this statement's own step() re-enters that path,
+// sqlite3_reset corrupts the running VDBE and sqlite3_step segfaults (Node
+// v26.3.0 crashes here too). Refuse before touching the handle.
+#define REQUIRE_STMT_IDLE(self)                                                               \
+    do {                                                                                      \
+        if ((self)->isStepping()) [[unlikely]]                                                \
+            return throwNodeState(globalObject, scope, "statement is currently executing"_s); \
+    } while (0)
+
 // Pin the owning database for the duration of a StatementSync call that
 // may re-enter JS (bindParams getters, UDFs, aggregate callbacks). Must
 // follow REQUIRE_STMT so database() is known live.
@@ -836,13 +846,18 @@ void JSDatabaseSync::closeInternal()
         sqlite3_close_v2(m_db);
         m_db = nullptr;
         unregisterOpenDatabase(this);
-        // The connection (and with it every registered function context)
-        // is gone; drop the callback roots so explicitly-closed databases
-        // don't retain their callbacks for the rest of the cell's lifetime.
-        // Plain clear (no JS access), so this is safe from the destructor.
-        m_namedRegistrations.clear();
-        Locker locker { cellLock() };
-        m_registeredCallbacks.clear();
+        // Drop the callback roots so an explicitly-closed database doesn't
+        // retain them for the rest of the cell's lifetime — but only when
+        // no step() is on the stack. With a live step() close_v2 only
+        // zombified the connection: UDF/aggregate contexts (which hold
+        // raw JSObject* rooted by m_registeredCallbacks) are still
+        // registered and will be invoked again, so clearing now would
+        // leave those pointers dangling for GC to collect mid-scan.
+        if (!isBusy()) {
+            m_namedRegistrations.clear();
+            Locker locker { cellLock() };
+            m_registeredCallbacks.clear();
+        }
     }
 }
 
@@ -1185,7 +1200,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
     auto utf8 = sql.utf8();
     sqlite3_stmt* stmt = nullptr;
-    int r = sqlite3_prepare_v2(self->connection(), utf8.data(), static_cast<int>(utf8.length()), &stmt, nullptr);
+    // utf8.data() is NUL-terminated (CString); -1 lets SQLite compute the
+    // length and avoids narrowing a size_t into int.
+    int r = sqlite3_prepare_v2(self->connection(), utf8.data(), -1, &stmt, nullptr);
     // prepare() runs the authorizer callback (if any), which may
     // throw — surface that over SQLite's generic "not authorized".
     CHECK_UDF_EXCEPTION(scope);
@@ -2501,11 +2518,13 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
     size_t argc = callFrame->argumentCount();
     int paramCount = sqlite3_bind_parameter_count(m_stmt);
 
-    // Named parameters: first argument is a plain object (not ArrayBufferView, not Array).
+    // Named parameters: Node treats any non-ArrayBufferView object in the
+    // first slot as a named-params bag (V8's IsObject() && !IsArrayBufferView()).
+    // Arrays are NOT special-cased — Node walks their own-enumerable keys
+    // ("0", "1", …) through the named-param path.
     if (argc > 0) {
         JSValue arg0 = callFrame->argument(0);
-        if (arg0.isObject() && !dynamicDowncast<JSArrayBufferView>(arg0) && !isArray(globalObject, arg0)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (arg0.isObject() && !dynamicDowncast<JSArrayBufferView>(arg0)) {
             JSObject* named = arg0.getObject();
             if (m_allowBareNamedParams && !m_bareNamedParams.has_value()) {
                 // Build into a local first so a mid-loop failure (conflicting
@@ -2623,6 +2642,7 @@ struct StatementResetter {
 static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
     StatementResetter resetter { self->statement() };
+    JSStatementSync::SteppingScope stepping { self };
     int r = sqlite3_step(self->statement());
     while (r == SQLITE_ROW)
         r = sqlite3_step(self->statement());
@@ -2657,6 +2677,7 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
 static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
     StatementResetter resetter { self->statement() };
+    JSStatementSync::SteppingScope stepping { self };
     int r = sqlite3_step(self->statement());
     CHECK_UDF_EXCEPTION(scope);
     if (r == SQLITE_DONE) return JSValue::encode(jsUndefined());
@@ -2676,6 +2697,7 @@ static EncodedJSValue statementStepGet(JSGlobalObject* globalObject, ThrowScope&
 static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope& scope, JSStatementSync* self)
 {
     StatementResetter resetter { self->statement() };
+    JSStatementSync::SteppingScope stepping { self };
     JSArray* rows = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
     int r;
@@ -2706,6 +2728,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
@@ -2717,6 +2740,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, Cal
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
@@ -2728,6 +2752,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
@@ -2739,6 +2764,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIterate, (JSGlobalObject * globalObject,
 {
     THIS_STATEMENT();
     REQUIRE_STMT(self);
+    REQUIRE_STMT_IDLE(self);
     BUSY_SCOPE_STMT(self);
     sqlite3_reset(self->statement());
     self->bumpResetGeneration();
@@ -2952,6 +2978,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         return throwNodeState(globalObject, scope, "iterator was invalidated by calling run(), get(), all(), or iterate() on the backing statement"_s);
     }
     JSDatabaseSync::BusyScope busy { stmt->database() };
+    JSStatementSync::SteppingScope stepping { stmt };
 
     int r = sqlite3_step(stmt->statement());
     if (r != SQLITE_ROW && r != SQLITE_DONE) {
@@ -3467,7 +3494,7 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         // the flag is documented for; it keeps them out of lookaside memory.
         // Intentional divergence from Node (which uses prepare_v2) — the
         // hint is allocator-only, not observable behavior.
-        int r = sqlite3_prepare_v3(db->connection(), utf8.data(), static_cast<int>(utf8.length()), SQLITE_PREPARE_PERSISTENT, &stmt, nullptr);
+        int r = sqlite3_prepare_v3(db->connection(), utf8.data(), -1, SQLITE_PREPARE_PERSISTENT, &stmt, nullptr);
         // prepare() runs the authorizer callback (if any), which may
         // throw — surface that over SQLite's generic "not authorized"
         // so we don't overwrite the user's exception. Mirrors
@@ -3501,6 +3528,14 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
             e.stmt.set(vm, this, stmtObj);
             m_order.insert(0, std::move(e));
         }
+    }
+
+    // A UDF re-entering the same tagged template hits the cached statement
+    // whose step() is on the C stack; resetting it would segfault the VDBE
+    // (see REQUIRE_STMT_IDLE).
+    if (stmtObj->isStepping()) [[unlikely]] {
+        throwNodeState(globalObject, scope, "statement is currently executing"_s);
+        return nullptr;
     }
 
     // Reset + bind positional values. Named-parameter handling is not

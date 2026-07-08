@@ -28,17 +28,21 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-// The tee state's branches always carry the controller kind their tee installed.
-static JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
+// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
+// stream's controller slot in their finally step, so a tee reaction queued before that
+// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
+static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
 {
-    ASSERT(stream->m_controllerKind == ControllerKind::Default);
-    return uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    if (branch->m_controllerKind != ControllerKind::Default)
+        return nullptr;
+    return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
 }
 
-static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
+static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
-    ASSERT(stream->m_controllerKind == ControllerKind::Byte);
-    return uncheckedDowncast<JSReadableByteStreamController>(stream->m_controller.get());
+    if (branch->m_controllerKind != ControllerKind::Byte)
+        return nullptr;
+    return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
 }
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
@@ -146,12 +150,14 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     case ReadRequestKind::DefaultTee: {
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(m_context.get());
         teeState->m_reading = false;
-        if (!teeState->m_canceled1) {
-            readableStreamDefaultControllerClose(globalObject, defaultControllerOf(teeState->m_branch1.get()));
+        auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get());
+        auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get());
+        if (!teeState->m_canceled1 && controller1) {
+            readableStreamDefaultControllerClose(globalObject, controller1);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!teeState->m_canceled2) {
-            readableStreamDefaultControllerClose(globalObject, defaultControllerOf(teeState->m_branch2.get()));
+        if (!teeState->m_canceled2 && controller2) {
+            readableStreamDefaultControllerClose(globalObject, controller2);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (!teeState->m_canceled1 || !teeState->m_canceled2)
@@ -161,20 +167,22 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     case ReadRequestKind::ByteTee: {
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(m_context.get());
         teeState->m_reading = false;
-        if (!teeState->m_canceled1) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(teeState->m_branch1.get()));
+        auto* controller1 = teeBranchByteController(teeState->m_branch1.get());
+        auto* controller2 = teeBranchByteController(teeState->m_branch2.get());
+        if (!teeState->m_canceled1 && controller1) {
+            readableByteStreamControllerClose(globalObject, controller1);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!teeState->m_canceled2) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(teeState->m_branch2.get()));
+        if (!teeState->m_canceled2 && controller2) {
+            readableByteStreamControllerClose(globalObject, controller2);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!byteControllerOf(teeState->m_branch1.get())->m_pendingPullIntos.isEmpty()) {
-            readableByteStreamControllerRespond(globalObject, byteControllerOf(teeState->m_branch1.get()), 0);
+        if (controller1 && !controller1->m_pendingPullIntos.isEmpty()) {
+            readableByteStreamControllerRespond(globalObject, controller1, 0);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!byteControllerOf(teeState->m_branch2.get())->m_pendingPullIntos.isEmpty()) {
-            readableByteStreamControllerRespond(globalObject, byteControllerOf(teeState->m_branch2.get()), 0);
+        if (controller2 && !controller2->m_pendingPullIntos.isEmpty()) {
+            readableByteStreamControllerRespond(globalObject, controller2, 0);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (!teeState->m_canceled1 || !teeState->m_canceled2)
@@ -307,24 +315,26 @@ void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferVi
         teeState->m_reading = false;
         auto* byobBranch = forBranch2 ? teeState->m_branch2.get() : teeState->m_branch1.get();
         auto* otherBranch = forBranch2 ? teeState->m_branch1.get() : teeState->m_branch2.get();
+        auto* byobController = teeBranchByteController(byobBranch);
+        auto* otherController = teeBranchByteController(otherBranch);
         bool byobCanceled = forBranch2 ? teeState->m_canceled2 : teeState->m_canceled1;
         bool otherCanceled = forBranch2 ? teeState->m_canceled1 : teeState->m_canceled2;
-        if (!byobCanceled) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(byobBranch));
+        if (!byobCanceled && byobController) {
+            readableByteStreamControllerClose(globalObject, byobController);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!otherCanceled) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(otherBranch));
+        if (!otherCanceled && otherController) {
+            readableByteStreamControllerClose(globalObject, otherController);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (chunkOrNull) {
             ASSERT(!chunkOrNull->byteLength());
-            if (!byobCanceled) {
-                readableByteStreamControllerRespondWithNewView(globalObject, byteControllerOf(byobBranch), chunkOrNull);
+            if (!byobCanceled && byobController) {
+                readableByteStreamControllerRespondWithNewView(globalObject, byobController, chunkOrNull);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            if (!otherCanceled && !byteControllerOf(otherBranch)->m_pendingPullIntos.isEmpty()) {
-                readableByteStreamControllerRespond(globalObject, byteControllerOf(otherBranch), 0);
+            if (!otherCanceled && otherController && !otherController->m_pendingPullIntos.isEmpty()) {
+                readableByteStreamControllerRespond(globalObject, otherController, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
         }

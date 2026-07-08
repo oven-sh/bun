@@ -214,6 +214,92 @@ describe("node:test mock tracker semantics", () => {
   });
 });
 
+describe("node:test mock.fn is a transparent Proxy", () => {
+  const { mock } = require("node:test");
+
+  class Service {
+    url: string;
+    static kind = "svc";
+    constructor(url: string) {
+      this.url = url;
+    }
+    fetch() {
+      return "real:" + this.url;
+    }
+  }
+
+  test("mocking a constructor preserves prototype, statics and instanceof", () => {
+    const MockedService = mock.fn(Service);
+    const s = new MockedService("http://x");
+    expect({
+      instanceOf: s instanceof Service,
+      protoMethod: typeof s.fetch,
+      fetchResult: s.fetch(),
+      prototypeIdentity: MockedService.prototype === Service.prototype,
+      staticKind: MockedService.kind,
+      callCount: MockedService.mock.callCount(),
+    }).toEqual({
+      instanceOf: true,
+      protoMethod: "function",
+      fetchResult: "real:http://x",
+      prototypeIdentity: true,
+      staticKind: "svc",
+      callCount: 1,
+    });
+    mock.reset();
+  });
+
+  test("construct call record has target=original and this=result, like node", () => {
+    const MockedService = mock.fn(Service);
+    const s = new MockedService("http://y");
+    const call = MockedService.mock.calls[0];
+    expect({
+      targetIsOriginal: call.target === Service,
+      thisIsResult: call.this === s,
+      resultIsInstance: call.result === s,
+      args: call.arguments,
+    }).toEqual({
+      targetIsOriginal: true,
+      thisIsResult: true,
+      resultIsInstance: true,
+      args: ["http://y"],
+    });
+    mock.reset();
+  });
+
+  test("name and length pass through from the original", () => {
+    function orig(a: number, b: number, c: number) {
+      return a + b + c;
+    }
+    const m = mock.fn(orig);
+    expect({ name: m.name, length: m.length, proto: typeof m.prototype }).toEqual({
+      name: "orig",
+      length: 3,
+      proto: "object",
+    });
+    mock.reset();
+  });
+
+  test("a mocked arrow function is not constructible and records no call", () => {
+    const arrow = (a: number, b: number) => a + b;
+    const m = mock.fn(arrow);
+    expect(typeof m.prototype).toBe("undefined");
+    expect(() => new (m as any)(1, 2)).toThrow(TypeError);
+    expect(m.mock.callCount()).toBe(0);
+    expect(m(1, 2)).toBe(3);
+    expect(m.mock.callCount()).toBe(1);
+    mock.reset();
+  });
+
+  test("properties pass through to the original function", () => {
+    function original() {}
+    const m = mock.fn(original);
+    (original as any).custom = 42;
+    expect((m as any).custom).toBe(42);
+    mock.reset();
+  });
+});
+
 test("the call record is pushed after the implementation runs, like node", () => {
   const { mock } = require("node:test");
   let inside = -1;

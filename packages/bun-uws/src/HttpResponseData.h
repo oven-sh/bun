@@ -116,27 +116,23 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Current state (content-length sent, status sent, write called, etc */
     uint8_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
-    bool fromAncientRequest = false;
+    /* The parser writes this through a bool& (getHeaders / consumePostPadded),
+     * so it cannot be a bit-field. */
     bool isConnectRequest = false;
+
+    /* Single-bit flags. The node* flags stay in the base (rather than in
+     * NodeHttpResponseData below) because they are read on shared code paths
+     * (request reset, response end, shouldCloseConnection); as bit-fields they
+     * cost Bun.serve two bytes total. */
+    bool fromAncientRequest : 1 = false;
     /* When set, the response carries no body framing at all: no Content-Length,
      * no chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
      * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */
-    bool noBodyStatus = false;
+    bool noBodyStatus : 1 = false;
     /* The response body is delimited by connection close: write it raw with
      * no Content-Length and no chunked framing, then close. Used by node:http
      * when the user removed the framing headers. */
-    bool closeDelimited = false;
-
-    /* node:http server compat (HttpFlags::usingNodeHttpCompat only).
-     * lastMessageStartMs: when the request currently being received started
-     * arriving (or when the connection was accepted, before its first
-     * request); 0 once the message has been fully received (idle).
-     * headersCompleted: whether that request's head has been fully parsed.
-     * Mirrors last_message_start_/headers_completed_ in Node's http parser
-     * ConnectionsList, which back server.headersTimeout/requestTimeout. */
-    uint64_t lastMessageStartMs = 0;
-    bool headersCompleted = false;
-
+    bool closeDelimited : 1 = false;
     /* node:http server compat: the request currently being routed arrived
      * while an earlier response on this connection is still in flight
      * (HTTP/1.1 pipelining). NodeHTTP.cpp queues it on the server socket
@@ -144,39 +140,39 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * state reset is applied later by
      * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
      * the request handler dispatch is on the stack. */
-    bool isNodeHttpPipelinedDispatch = false;
+    bool isNodeHttpPipelinedDispatch : 1 = false;
     /* node:http server compat: the JS layer stopped HTTP processing on this
      * connection (Node frees the parser when 'close' is emitted on the
      * socket); any further request data in the buffer is not parsed. */
-    bool nodeHttpParsingStopped = false;
+    bool nodeHttpParsingStopped : 1 = false;
+    /* node:http server compat: socket reads were paused because pipelined
+     * responses are (or were) queued. Reads resume once the queue has drained
+     * AND the socket has no outgoing backpressure left (Node's flood
+     * prevention pauses the socket while responses back up). */
+    bool nodeHttpReadsPaused : 1 = false;
+    /* node:http server compat: an accepted Upgrade request with a body. The
+     * body is parsed and delivered through the request as usual; once it
+     * completes, the connection switches into CONNECT-style tunnel mode
+     * (isConnectRequest) and everything after the end of the message is
+     * opaque data for the 'upgrade' listener's socket. */
+    bool nodeHttpTunnelAfterBody : 1 = false;
+    /* node:http server compat: the peer half-closed (FIN) while pipelined
+     * responses were still queued behind the in-flight one. Like Node's http
+     * server, the connection stays open so those responses can still be
+     * written; it is shut down once the pipeline has drained (see
+     * shouldCloseConnection()). */
+    bool nodeHttpReceivedFIN : 1 = false;
+    /* node:http server compat: NodeHttpResponseData::nodeHttpResponseTrailers
+     * is non-empty. Mirrored into the base so the shared response-end path
+     * (internalEnd) never has to touch the node-only field. */
+    bool hasNodeHttpResponseTrailers : 1 = false;
+
     /* node:http server compat: number of pipelined responses dispatched to JS
      * that have not yet become this connection's current response. While
      * non-zero, newly parsed requests keep being queued (preserving response
      * order) and socket reads stay paused (bounding memory under a pipeline
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
-    /* node:http server compat: socket reads were paused because pipelined
-     * responses are (or were) queued. Reads resume once the queue has drained
-     * AND the socket has no outgoing backpressure left (Node's flood
-     * prevention pauses the socket while responses back up). */
-    bool nodeHttpReadsPaused = false;
-    /* node:http server compat: an accepted Upgrade request with a body. The
-     * body is parsed and delivered through the request as usual; once it
-     * completes, the connection switches into CONNECT-style tunnel mode
-     * (isConnectRequest) and everything after the end of the message is
-     * opaque data for the 'upgrade' listener's socket. */
-    bool nodeHttpTunnelAfterBody = false;
-    /* node:http server compat: trailer fields set via response.addTrailers(),
-     * pre-rendered as "name: value\r\n" lines. Written between the terminating
-     * 0 chunk and the final CRLF of a chunked response (RFC 9112 7.1.2);
-     * non-empty also forces chunked framing for the response body. */
-    std::string nodeHttpResponseTrailers;
-    /* node:http server compat: the peer half-closed (FIN) while pipelined
-     * responses were still queued behind the in-flight one. Like Node's http
-     * server, the connection stays open so those responses can still be
-     * written; it is shut down once the pipeline has drained (see
-     * shouldCloseConnection()). */
-    bool nodeHttpReceivedFIN = false;
 
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
@@ -188,6 +184,41 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;
 #endif
+};
+
+/* Per-connection state that only node:http compat servers need. A context with
+ * HttpFlags::usingNodeHttpCompat set (which happens before listen()) sizes its
+ * sockets' ext block as sizeof(NodeHttpResponseData<SSL>) and placement-news
+ * this type in onOpen, so plain Bun.serve connections never allocate or touch
+ * any of it. Every access must therefore be dominated by that flag (or sit on
+ * a node-only code path) and downcast from HttpResponseData<SSL>. */
+template <bool SSL>
+struct NodeHttpResponseData : HttpResponseData<SSL> {
+    /* lastMessageStartMs: when the request currently being received started
+     * arriving (or when the connection was accepted, before its first
+     * request); 0 once the message has been fully received (idle).
+     * headersCompleted: whether that request's head has been fully parsed.
+     * Mirrors last_message_start_/headers_completed_ in Node's http parser
+     * ConnectionsList, which back server.headersTimeout/requestTimeout. */
+    uint64_t lastMessageStartMs = 0;
+    /* Bytes of chunk extensions consumed on the current chunk-size line of the
+     * request body, matching llhttp/Node which resets the counter in
+     * on_chunk_header (per chunk, not per message). The parser gets it as a
+     * nullable pointer (see HttpParser::consumePostPadded). */
+    uint64_t chunkedExtensionsByteCount = 0;
+    /* Trailer fields set via response.addTrailers(), pre-rendered as
+     * "name: value\r\n" lines. Written between the terminating 0 chunk and the
+     * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces
+     * chunked framing for the response body. hasNodeHttpResponseTrailers in
+     * the base mirrors !empty(). */
+    std::string nodeHttpResponseTrailers;
+    /* Raw bytes of the trailer section received after the final 0-size chunk
+     * of the current request's chunked body, including its terminating CRLF.
+     * Cleared when a new request is dispatched; consumed by the JS layer when
+     * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
+     * as a nullable pointer (see HttpParser::consumePostPadded). */
+    std::string nodeHttpRequestTrailers;
+    bool headersCompleted = false;
 };
 
 }

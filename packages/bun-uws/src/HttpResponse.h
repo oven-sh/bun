@@ -142,7 +142,7 @@ public:
         /* if write was called and there was previously no Content-Length header set.
          * node:http compat: pending response trailers (addTrailers) also force chunked
          * framing, since trailer fields can only be sent on a chunked body. */
-        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED || !httpResponseData->nodeHttpResponseTrailers.empty()) && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED || httpResponseData->hasNodeHttpResponseTrailers) && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -163,11 +163,15 @@ public:
 
             /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
              * between it and the final CRLF. */
-            if (!httpResponseData->nodeHttpResponseTrailers.empty()) [[unlikely]] {
+            if (httpResponseData->hasNodeHttpResponseTrailers) [[unlikely]] {
+                /* Only a node:http compat connection can set the flag, so the
+                 * downcast to the bigger ext block is safe. */
+                auto *nodeHttpResponseData = (NodeHttpResponseData<SSL> *) httpResponseData;
                 Super::write("0\r\n", 3);
-                Super::write(httpResponseData->nodeHttpResponseTrailers.data(), (int) httpResponseData->nodeHttpResponseTrailers.length());
+                Super::write(nodeHttpResponseData->nodeHttpResponseTrailers.data(), (int) nodeHttpResponseData->nodeHttpResponseTrailers.length());
                 Super::write("\r\n", 2);
-                httpResponseData->nodeHttpResponseTrailers.clear();
+                nodeHttpResponseData->nodeHttpResponseTrailers.clear();
+                httpResponseData->hasNodeHttpResponseTrailers = false;
             } else {
                 Super::write("0\r\n\r\n", 5);
             }
@@ -360,8 +364,12 @@ public:
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
-        /* Destroy HttpResponseData */
-        responseData->~HttpResponseData();
+        /* Destroy HttpResponseData (the derived type on node:http compat contexts) */
+        if (httpContextData->flags.usingNodeHttpCompat) {
+            ((NodeHttpResponseData<SSL> *) responseData)->~NodeHttpResponseData<SSL>();
+        } else {
+            responseData->~HttpResponseData();
+        }
 
         /* Before we adopt and potentially change socket, check which cork slot
          * we occupy so we can transfer it to the new WebSocket. */
@@ -369,6 +377,12 @@ public:
         int corkedSlot = loopData->findCorkSlot(this);
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
+        /* The old ext size is only used as an upper bound to keep the block in
+         * place (and as the copy length when it cannot be). The base size is
+         * always correct here: a node:http compat socket's block is bigger, so
+         * under-stating it is an in-bounds under-copy of an already-destructed
+         * ext, while over-stating it for a Bun.serve socket would read out of
+         * bounds. */
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
             WebSocketContext<SSL, true, UserData>::socketKind(),
             sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));

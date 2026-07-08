@@ -239,10 +239,9 @@ describe("parseArgs", () => {
     });
 
     test("allowPositionals: false with -a-b throws for positional, not unknown option", () => {
-      expectToThrowErrorMatching(
-        () => parseArgs({ args: ["-a-b"], strict: false, allowPositionals: false }),
-        { code: "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL" },
-      );
+      expectToThrowErrorMatching(() => parseArgs({ args: ["-a-b"], strict: false, allowPositionals: false }), {
+        code: "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL",
+      });
     });
   });
 

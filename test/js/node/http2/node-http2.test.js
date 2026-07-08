@@ -3976,3 +3976,34 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+// close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
+// waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
+// ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().
+it("close() completes when the peer never ACKs an outstanding SETTINGS", async () => {
+  // Raw-socket h2 server: preface handshake + ACK the initial SETTINGS, then
+  // ignore any further SETTINGS frames (never ACK the second one).
+  const server = net.createServer(socket => {
+    let buf = Buffer.alloc(0);
+    let ackedInitial = false;
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!ackedInitial && buf.length >= 24) {
+        // Send server SETTINGS + ACK the client's initial SETTINGS.
+        socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0])); // empty SETTINGS
+        socket.write(Buffer.from([0, 0, 0, 4, 1, 0, 0, 0, 0])); // SETTINGS ACK
+        ackedInitial = true;
+      }
+      // Never ACK any subsequent SETTINGS.
+    });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  await new Promise(resolve => client.once("localSettings", resolve));
+  client.settings({ enablePush: false }); // second SETTINGS the server will never ACK
+  expect(client.pendingSettingsAck).toBeTrue();
+  const closed = new Promise(resolve => client.on("close", resolve));
+  client.close();
+  await closed; // hangs before this fix
+  server.close();
+});

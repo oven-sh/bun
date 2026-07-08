@@ -1225,6 +1225,21 @@ extern "C"
     }
   }
 
+  void uws_res_write_informational(int ssl, uws_res_r res, const char *data,
+                                   size_t length)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->writeRawInformational(stringViewFromC(data, length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->writeRawInformational(stringViewFromC(data, length));
+    }
+  }
+
   void uws_res_write_status(int ssl, uws_res_r res, const char *status,
                             size_t length)
   {

@@ -215,7 +215,7 @@ test/js/node/http2/node-http2-invalid-padding.test.ts [ FAIL ] # legacy-parser e
 [ WINDOWS ] test/js/node/test/parallel/test-http2-too-many-settings.js [ FAIL ] # server 'listening' mustCall misses under Windows runner load
 [ WINDOWS ] test/js/node/test/parallel/test-http2-reset-flood.js [ FAIL ] # flood test times out on slow Windows runners
 [ WINDOWS ] test/js/node/test/parallel/test-http2-max-invalid-frames.js [ FAIL ] # times out on slow Windows runners
-[ WINDOWS ] test/js/node/test/sequential/test-http2-ping-flood.js [ FAIL ] # flood test times out on slow Windows runners
+[ WINDOWS ] test/js/node/test/sequential/test-http2-ping-flood.js [ FAIL ] # obq_ack_pending was reset per receive() (fixed — may pass now); settings-flood (9B/frame) passed while ping-flood (17B/frame) failed, pointing at recv-chunk-size, not runner speed
 
 # The connect-race socket-lifetime report can surface in any http2 test on the ASan pipeline;
 # skip the family there until the socket-layer fix lands (prefix entries — the runner matches by substring).

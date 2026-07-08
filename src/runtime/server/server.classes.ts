@@ -112,6 +112,10 @@ export default [
       writeContinue: {
         fn: "writeContinue",
       },
+      writeInformational: {
+        fn: "writeInformational",
+        length: 1,
+      },
       write: {
         fn: "write",
         length: 3,
@@ -149,6 +153,10 @@ export default [
       },
       drainRequestBody: {
         fn: "drainRequestBody",
+        length: 0,
+      },
+      takeRequestTrailers: {
+        fn: "takeRequestTrailers",
         length: 0,
       },
       dumpRequestBody: {

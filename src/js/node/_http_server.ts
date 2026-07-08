@@ -60,6 +60,7 @@ const {
   runSymbol,
   drainMicrotasks,
   setServerCustomOptions,
+  setServerAppFlags,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   noBodySymbol,
@@ -86,6 +87,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -304,7 +306,7 @@ function Server(options, callback): void {
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
-  this.httpAllowHalfOpen = false;
+  defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
   this[tlsSymbol] = null;
@@ -1104,17 +1106,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
-    // always set strict method validation to true for node.js compatibility
-    setServerCustomOptions(
-      this[serverSymbol],
-      this.requireHostHeader,
-      true,
-      !!this.insecureHTTPParser,
-      typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
-      onServerClientError.bind(this),
-      onServerConnection.bind(this),
-      !!this.httpAllowHalfOpen,
-    );
+    applyServerCustomOptions(this);
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
@@ -1128,6 +1120,51 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
   }
 };
 
+// Pushes the per-server parser/handler options down to the native listener.
+// Always sets strict method validation, for node.js compatibility.
+function applyServerCustomOptions(server: Server) {
+  const handle = server[serverSymbol];
+  if (!handle) return;
+  setServerCustomOptions(
+    handle,
+    server.requireHostHeader,
+    true,
+    !!server.insecureHTTPParser,
+    typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
+    onServerClientError.bind(server),
+    onServerConnection.bind(server),
+    !!server.httpAllowHalfOpen,
+  );
+}
+
+function httpAllowHalfOpenGet(this: Server) {
+  return this[kHttpAllowHalfOpen];
+}
+
+// Node reads `server.httpAllowHalfOpen` when the peer's FIN arrives (socketOnEnd), so
+// assigning it after listen() has to reach the native listener too. Push the flags
+// alone: setServerCustomOptions() would also re-register the connection filter, which
+// appends rather than replaces and can reallocate the vector uWS is iterating.
+function httpAllowHalfOpenSet(this: Server, value) {
+  const previous = !!this[kHttpAllowHalfOpen];
+  this[kHttpAllowHalfOpen] = value;
+  const next = !!value;
+  if (previous === next) return;
+  const handle = this[serverSymbol];
+  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, !!this.insecureHTTPParser, next);
+}
+
+// Node.js keeps httpAllowHalfOpen as an own enumerable property of the server.
+function defineHttpAllowHalfOpen(server: Server) {
+  server[kHttpAllowHalfOpen] = false;
+  Object.defineProperty(server, "httpAllowHalfOpen", {
+    configurable: true,
+    enumerable: true,
+    get: httpAllowHalfOpenGet,
+    set: httpAllowHalfOpenSet,
+  });
+}
+
 // Native callback fired when the server accepts a connection (for TLS, when
 // its handshake completes), before any request bytes - like Node.js's
 // net.Server 'connection' / tls.Server 'secureConnection' events.
@@ -1138,6 +1175,9 @@ function onServerConnection(this: Server, socketHandle) {
   }
   const isTLS = !!this[tlsSymbol];
   const socket = new NodeHTTPServerSocket(this, socketHandle, isTLS);
+  // Node's connectionListener attaches the HTTPParser (socket.parser) before
+  // emitting 'connection'; expose the shim here so listeners see it populated.
+  socket.parser = createServerParserShim(socket);
   this.emit("connection", socket);
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
@@ -1252,6 +1292,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   const existingDuplex = (socket as any).duplex;
   const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
   if (!existingDuplex) {
+    nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
   }
   socketOnError.$call(nodeSocket, err);
@@ -1859,9 +1900,27 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 } as unknown as typeof import("node:net").Socket;
 
+// Node validates the `Trailer` header inside _storeHeader, after the body framing has
+// been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
+// and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
+function willBeChunked(response) {
+  if (response.hasHeader("transfer-encoding")) {
+    return chunkExpression.test(String(response.getHeader("transfer-encoding")));
+  }
+  if (response.hasHeader("content-length")) return false;
+  if (response._hasBody === false) return false;
+  if (response._removedTE) return false;
+  return response.useChunkedEncodingByDefault === true;
+}
+
+// A non-chunked message is terminated by the first empty line after the header
+// fields, so it can carry neither a body nor trailers.
+function hasInvalidTrailer(response) {
+  return !willBeChunked(response) && (response._trailer || response.hasHeader("trailer"));
+}
+
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
-  let hasContentLength = response.hasHeader("content-length");
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
@@ -1878,6 +1937,9 @@ function _writeHead(statusCode, reason, obj, response) {
   if (checkInvalidHeaderChar(response.statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
 
   response.statusCode = statusCode;
+  // Before the Trailer checks below, like Node's writeHead: a 204/304/1xx status
+  // clears _hasBody, and a body-less message can never carry trailers.
+  updateHasBody(response, statusCode);
 
   {
     // Slow-case: when progressive API and header fields are passed.
@@ -1899,10 +1961,7 @@ function _writeHead(statusCode, reason, obj, response) {
         // message will be terminated by the first empty line after the
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
-        if (
-          (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-          (response._trailer || response.hasHeader("trailer"))
-        ) {
+        if (hasInvalidTrailer(response)) {
           throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
         }
         // Headers in obj should override previous headers but still
@@ -1929,21 +1988,13 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
-    if (
-      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-      (response._trailer || response.hasHeader("trailer"))
-    ) {
-      // remove the invalid content-length or trailer header
-      if (hasContentLength) {
-        response.removeHeader("trailer");
-      } else {
-        response.removeHeader("content-length");
-      }
+    if (hasInvalidTrailer(response)) {
+      // The message is not chunk-framed, so `Trailer` is the offending header; drop it
+      // so a caller that swallows the throw cannot put it on the wire.
+      response.removeHeader("trailer");
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
-
-  updateHasBody(response, statusCode);
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
@@ -2286,7 +2337,10 @@ function advanceResponsePipeline(server, socket) {
         const op = ops[i];
         const kind = op[0];
         if (kind === "raw") {
-          lastWriteResult = socket.write(op[1], op[2], op[3]);
+          // Buffered 1xx bytes: route through the same AsyncSocket buffer the
+          // response's own writeHead/end use so they precede the final response.
+          handle.writeInformational(op[1], op[2]);
+          if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
           lastWriteResult = res.write(op[1], op[2], op[3]);
         } else {
@@ -2562,7 +2616,12 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     this.outputSize += bytes;
     return queued.bytes < this.writableHighWaterMark;
   }
-  return this.socket.write(chunk, encoding, callback);
+  // Write through the response handle's AsyncSocket buffer (same path as
+  // writeHead/end) so 1xx lines share ordering with the final response bytes;
+  // socket.write() would land in the socket handle's separate stream buffer.
+  this[kHandle].writeInformational(chunk, encoding);
+  if (typeof callback === "function") process.nextTick(callback);
+  return true;
 };
 
 ServerResponse.prototype.writeEarlyHints = function (hints, cb) {

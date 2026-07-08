@@ -9,6 +9,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
+  setServerAppFlags,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -28,6 +29,13 @@ const {
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
     onConnection?: (socketHandle: any) => undefined,
+  ) => void;
+  setServerAppFlags: (
+    server: any,
+    requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
+    httpAllowHalfOpen: boolean,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
@@ -189,15 +197,20 @@ function emitEOFIncomingMessageOuter(self) {
   self.complete = true;
   // node:http server: trailer fields received after a chunked request body
   // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
-  // parserOnMessageComplete. The native parser captures them on the
-  // connection's socket handle.
+  // parserOnMessageComplete. Native moved the section onto THIS request's
+  // handle at its body fin, so pipelined requests can neither inherit nor
+  // overwrite another request's trailers.
   if (self[kHandle] !== undefined) {
-    const socketHandle = self.socket?.[kHandle];
-    if (socketHandle != null) {
-      const rawTrailers = socketHandle.takeRequestTrailers();
-      if (rawTrailers !== undefined) {
-        self._addHeaderLines(rawTrailers, rawTrailers.length);
+    let rawTrailers = self[kHandle].takeRequestTrailers();
+    if (rawTrailers !== undefined) {
+      // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
+      // does (the same maxHeaderPairs limit covers both). The parser hard-caps
+      // at 199 fields; Node's C++ imposes no count limit, only this JS clamp.
+      const maxHeadersCount = self.socket?.server?.maxHeadersCount;
+      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawTrailers.length > maxHeadersCount * 2) {
+        rawTrailers.length = maxHeadersCount * 2;
       }
+      self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
   }
   // The parser shim must not retain the request once it has ended. Node clears
@@ -613,6 +626,7 @@ export {
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
   setRequestTimeout,
+  setServerAppFlags,
   setServerCustomOptions,
   setServerIdleTimeout,
   statusCodeSymbol,

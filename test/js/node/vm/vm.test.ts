@@ -1177,3 +1177,115 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("node:vm nested evaluation under outer timeout/breakOnSigint", () => {
+  test("outer timeout fires while an inner untimed runInNewContext is running", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const inner = () => {
+        try {
+          return vm.runInNewContext(
+            "const t0 = Date.now(); while (Date.now() - t0 < 2000); 'inner-done'",
+            {},
+          );
+        } catch (e) {
+          return "inner-threw:" + (e && e.code);
+        }
+      };
+      try {
+        console.log("outer-ret:" + vm.runInNewContext("inner()", { inner }, { timeout: 70 }));
+      } catch (e) {
+        console.log("outer-threw:" + (e && e.code));
+      }
+      console.log("alive");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "outer-threw:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("outer timeout fires while an inner untimed runInThisContext is running", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      globalThis.__inner = () => {
+        try {
+          return new vm.Script(
+            "const t0 = Date.now(); while (Date.now() - t0 < 2000); 'inner-done'",
+          ).runInThisContext();
+        } catch (e) {
+          return "inner-threw:" + (e && e.code);
+        }
+      };
+      try {
+        console.log("outer-ret:" + new vm.Script("__inner()").runInThisContext({ timeout: 70 }));
+      } catch (e) {
+        console.log("outer-threw:" + (e && e.code));
+      }
+      delete globalThis.__inner;
+      console.log("alive");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "outer-threw:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "outer breakOnSigint fires while an inner evaluation without breakOnSigint is running",
+    async () => {
+      const fixture = `
+        const vm = require("node:vm");
+        const inner = () => {
+          try {
+            return vm.runInNewContext(
+              "kill(); const t0 = Date.now(); while (Date.now() - t0 < 5000); 'inner-done'",
+              { kill: () => process.kill(process.pid, "SIGINT") },
+            );
+          } catch (e) {
+            return "inner-threw:" + (e && e.code);
+          }
+        };
+        try {
+          console.log(
+            "outer-ret:" + vm.runInNewContext("inner()", { inner }, { breakOnSigint: true }),
+          );
+        } catch (e) {
+          console.log("outer-threw:" + (e && e.code));
+        }
+        console.log("alive");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "outer-threw:ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+});

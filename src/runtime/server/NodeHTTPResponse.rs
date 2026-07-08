@@ -375,7 +375,7 @@ impl NodeHTTPResponse {
         let length = Bun__NodeHTTP__takeRequestTrailerBytes(
             any_response_is_ssl(&raw),
             raw.socket().cast(),
-            &mut ptr,
+            &raw mut ptr,
         );
         if length == 0 {
             return;

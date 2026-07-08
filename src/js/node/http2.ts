@@ -382,6 +382,7 @@ const bunHTTP2WaitForTrailers = Symbol("::bunhttp2waitfortrailers::");
 const bunHTTP2StreamAsyncContext = Symbol("::bunhttp2streamasynccontext::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
+const bunHTTP2StreamReadStop = Symbol("::bunhttp2StreamReadStop::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
@@ -2278,12 +2279,18 @@ function rstNextTick(id: number, rstCode: number) {
 function streamOnPause(this: Http2Stream) {
   const session = this[bunHTTP2Session];
   const id = this.id;
-  if (session && id) session[bunHTTP2Native]?.setStreamReading(id, false);
+  if (session && id) {
+    this[bunHTTP2StreamReadStop] = true;
+    session[bunHTTP2Native]?.setStreamReading(id, false);
+  }
 }
 function streamOnResume(this: Http2Stream) {
   const session = this[bunHTTP2Session];
   const id = this.id;
-  if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
+  if (session && id) {
+    this[bunHTTP2StreamReadStop] = false;
+    session[bunHTTP2Native]?.setStreamReading(id, true);
+  }
 }
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
@@ -2356,6 +2363,7 @@ class Http2Stream extends Duplex {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  [bunHTTP2StreamReadStop]: boolean = false;
   // Async-context snapshot for native dispatches (see enterStreamAsyncContext); only client
   // streams capture one (possibly an empty context, i.e. undefined).
   [bunHTTP2StreamAsyncContext] = kNoAsyncContextSwap;
@@ -2805,7 +2813,12 @@ class Http2Stream extends Duplex {
   }
 
   _read(_size) {
-    // we always use the internal stream queue now
+    // Pull-mode read() must reopen the receive window that a prior pause() gated.
+    // Only touch the native side when streamOnPause actually stopped it — the common
+    // (never-paused) path stays a no-op.
+    if (this[bunHTTP2StreamReadStop] === true && !this.destroyed) {
+      streamOnResume.$call(this);
+    }
   }
 
   end(chunk, encoding, callback) {
@@ -3335,6 +3348,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
+    // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
+    // on the same stream so doSendFileFD will not close it (node semantics).
+    this[kOwnsFd] = false;
     if (options.statCheck === undefined) {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the
       // user-facing writable side is already closed by the time respondWithFD() returns, so a

@@ -1144,6 +1144,23 @@ impl Request {
             ))));
         }
 
+        // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
+        // Checked after the first-argument `BunString::from_js` call above so that a
+        // throwing `toString` on that argument surfaces first, matching WebIDL
+        // left-to-right argument conversion. (URL validity is checked much later,
+        // after `init` has been consumed.)
+        if arguments.len() > 1 && !arguments[1].is_undefined_or_null() && !arguments[1].is_object()
+        {
+            bail!(Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!(
+                        "Failed to construct 'Request': The \"init\" argument must be of type object, undefined, or null."
+                    ),
+                )
+                .throw()));
+        }
+
         let values_to_try_: [JSValue; 2] = [
             if arguments.len() > 1 && arguments[1].is_object() {
                 arguments[1]

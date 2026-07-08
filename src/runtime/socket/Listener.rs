@@ -822,13 +822,13 @@ impl Listener {
         this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
 
-        // Accepted sockets reach back here through `Handlers::listener` while
-        // they are open. Force-close them, then clear the back-pointer before
-        // the free — their `Handlers` `Rc` can outlive this allocation.
+        // Clear the back-pointer before force-closing: this listener is already
+        // releasing its own `poll_ref`/`this_value`, so an accepted socket's
+        // `on_close` must not reach back in and release them a second time.
+        this_ref.handlers.set_listener(None);
         if this_ref.handlers.active_connections.get() > 0 {
             this_ref.group.with_mut(|g| g.close_all());
         }
-        this_ref.handlers.set_listener(None);
         bun_core::asan::unregister_root_region(
             this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
@@ -1077,8 +1077,8 @@ impl Listener {
 
                 if ssl_enabled {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
-                        // SAFETY: caller passes a live TLSSocket
-                        let prev = unsafe { &*prev_ptr };
+                        // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
+                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(global, Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1119,8 +1119,10 @@ impl Listener {
                             twin: JsCell::new(None),
                         })
                     };
-                    // SAFETY: tls is a valid heap pointer
-                    let tls_ref = unsafe { &*tls };
+                    // SAFETY: `tls` is either the caller's live JS-owned socket or
+                    // the allocation created just above; both are intrusively
+                    // refcounted and live for this call.
+                    let tls_ref = unsafe { bun_ptr::ThisPtr::new(tls) };
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1163,8 +1165,8 @@ impl Listener {
                     });
                 } else {
                     let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
-                        // SAFETY: caller passes a live TCPSocket
-                        let prev = unsafe { &*prev_ptr };
+                        // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
+                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(global, Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1200,8 +1202,10 @@ impl Listener {
                             twin: JsCell::new(None),
                         })
                     };
-                    // SAFETY: tcp is a valid heap pointer
-                    let tcp_ref = unsafe { &*tcp };
+                    // SAFETY: `tcp` is either the caller's live JS-owned socket or
+                    // the allocation created just above; both are intrusively
+                    // refcounted and live for this call.
+                    let tcp_ref = unsafe { bun_ptr::ThisPtr::new(tcp) };
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(
                         tcp_ref.get_this_value(global),
@@ -1392,8 +1396,8 @@ fn connect_finish<const IS_SSL: bool>(
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
     let socket: *mut NewSocket<IS_SSL> = if let Some(prev_ptr) = maybe_previous {
-        // SAFETY: caller passes a live NewSocket<IS_SSL>
-        let prev = unsafe { &*prev_ptr };
+        // SAFETY: caller passes a live NewSocket<IS_SSL>, owned by its JS wrapper.
+        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
         debug_assert!(prev.this_value.get().is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
@@ -1441,10 +1445,10 @@ fn connect_finish<const IS_SSL: bool>(
             twin: JsCell::new(None),
         })
     };
-    // Ownership moved into `socket`; disarm the guard.
-    // (owned_ssl_ctx consumed above)
-    // SAFETY: socket is a valid heap pointer
-    let socket_ref = unsafe { &*socket };
+    // SAFETY: `socket` is either the caller's live JS-owned socket (the
+    // reconnect path) or the allocation created just above; both are
+    // intrusively refcounted and live for this call.
+    let socket_ref = unsafe { bun_ptr::ThisPtr::new(socket) };
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
     // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
@@ -1532,15 +1536,8 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
         return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len));
     }
     let listener = arguments.ptr[0];
-    if let Some(this) = Listener::from_js(listener) {
-        // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
-        // R-2: deref as shared (`&*`) — `add_server_name` takes `&Self`.
-        return Listener::add_server_name(
-            unsafe { &*this },
-            global,
-            arguments.ptr[1],
-            arguments.ptr[2],
-        );
+    if let Some(this) = listener.as_class_ref::<Listener>() {
+        return Listener::add_server_name(this, global, arguments.ptr[1], arguments.ptr[2]);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
@@ -1796,8 +1793,9 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     if listener_ptr.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: see above.
-    let listener: &Listener = unsafe { &*listener_ptr };
+    // SAFETY: see above — the listen socket keeps the `Listener` alive for the
+    // duration of this synchronous handshake dispatch.
+    let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
     if handlers.vm.is_shutting_down() {
         return core::ptr::null_mut();
@@ -1842,7 +1840,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
                 JSValue::UNDEFINED
             } else {
                 // SAFETY: ext slot holds a live TLSSocket; single-threaded dispatch.
-                unsafe { &*tls_ptr }.get_this_value(&global)
+                unsafe { bun_ptr::ThisPtr::new(tls_ptr) }.get_this_value(&global)
             }
         } else {
             JSValue::UNDEFINED

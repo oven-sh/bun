@@ -118,7 +118,7 @@ extern "C" fn select_alpn_callback(
             let buffer = match JSValue::create_buffer_from_length(&global, wire_len) {
                 Ok(b) => b,
                 Err(_) => {
-                    this.exit_scope(scope, &handlers);
+                    this.exit_scope(scope);
                     return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
                 }
             };
@@ -159,13 +159,13 @@ extern "C" fn select_alpn_callback(
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
                 );
-                this.exit_scope(scope, &handlers);
+                this.exit_scope(scope);
                 return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
             }
             tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                 saved_loop_state.as_mut_ptr(),
             );
-            this.exit_scope(scope, &handlers);
+            this.exit_scope(scope);
             if !result.is_boolean() || result.to_boolean() {
                 // The server has an ALPNCallback and it answered: a string
                 // selects that protocol for this connection; anything else
@@ -305,6 +305,68 @@ impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
         // SAFETY: refcount reached zero; we are the unique owner of the
         // `heap::alloc` allocation and `this` is not used after.
         unsafe { Self::deinit_and_destroy(this) };
+    }
+}
+
+/// Settles `IS_ACTIVE` against the `Handlers` the close callback entered with —
+/// it may have synchronously reconnected onto a fresh set — then consumes the
+/// +1 the caller transferred into `on_close`.
+struct CloseTeardown<const SSL: bool> {
+    socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
+    entered: Rc<Handlers>,
+}
+
+impl<const SSL: bool> Drop for CloseTeardown<SSL> {
+    fn drop(&mut self) {
+        let this = self.socket;
+        if this.handlers_are(&self.entered) {
+            this.mark_inactive();
+        } else if this.flags.get().contains(Flags::IS_ACTIVE) {
+            // Reconnected: `connect_finish` re-armed `this_value`/`poll_ref`, so
+            // skip the idle teardown and only release what we took.
+            this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            if !VirtualMachine::get().is_shutting_down() {
+                self.entered.mark_inactive();
+            }
+        }
+        this.deref();
+    }
+}
+
+/// `needs_deref` releases the ref the now-detached native socket held. The idle
+/// teardown is gated on the socket still holding the `Handlers` we entered with:
+/// `onConnectError` can reconnect, and we must not tear that connection down.
+struct ConnectErrorTeardown<const SSL: bool> {
+    socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
+    entered: Rc<Handlers>,
+    needs_deref: bool,
+}
+
+impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
+    fn drop(&mut self) {
+        let this = self.socket;
+        if self.needs_deref {
+            this.deref();
+        }
+        if this.handlers_are(&self.entered) {
+            this.mark_inactive();
+        }
+    }
+}
+
+/// Balances a [`Handlers::enter`] on every exit path, including `?` returns.
+/// Bind it to a named local — `let _ = ...` drops at the end of the statement,
+/// running the exit before the user's callback.
+struct ScopeExit<const SSL: bool> {
+    socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
+    scope: Option<super::handlers::Scope>,
+}
+
+impl<const SSL: bool> Drop for ScopeExit<SSL> {
+    fn drop(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            self.socket.exit_scope(scope);
+        }
     }
 }
 
@@ -774,7 +836,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
-        self.exit_scope(scope, &handlers);
+        self.exit_scope(scope);
     }
 
     /// Noalias re-entrancy: takes `this: *mut Self`, NOT
@@ -792,10 +854,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// slot holds the unique heap allocation); JS-thread only.
     pub unsafe fn on_writable(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; R-2 — every field is
-        // `Cell`/`JsCell`, so a single shared reborrow is sufficient and no
-        // borrow spans `callback.call`.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -819,8 +879,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if vm.is_shutting_down() {
             return;
         }
-        this.ref_();
-        // reshaped for borrowck — explicit deref at end instead of a scope guard.
+        // Hold the socket alive for the rest of the dispatch: `internal_flush`
+        // and the drain callback can both re-enter JS and close it.
+        let _keepalive = this.ref_guard();
         // NOTE: the drain dispatch deliberately does not depend on whether the
         // flush hit a fatal send error. Skipping it on fatal (tried in
         // f0325bddf2) made Windows servers reset FIN-terminated responses:
@@ -836,7 +897,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // is not writable if we have buffered data or if we are already detached
         if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
-            this.deref();
             return;
         }
 
@@ -849,8 +909,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        this.exit_scope(scope, &handlers);
-        this.deref();
+        this.exit_scope(scope);
     }
 
     /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
@@ -859,8 +918,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_timeout(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -897,7 +956,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        this.exit_scope(scope, &handlers);
+        this.exit_scope(scope);
     }
 
     /// This socket's callbacks. Panics if it has none — every dispatch entry
@@ -933,13 +992,14 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// The event-loop exit drains microtasks, during which a synchronous
-    /// reconnect may repoint `self.handlers` at a fresh `Handlers` or
-    /// `upgradeTLS` may transfer them to the raw TLS twin — only release the
-    /// socket's own reference when it still holds the one we entered with.
+    /// reconnect may repoint `self.handlers` at a fresh `Handlers` — only
+    /// release the socket's own reference when it still holds the one we
+    /// entered with, which the `Scope` itself carries.
     #[inline]
-    fn exit_scope(&self, scope: super::handlers::Scope, entered: &Rc<Handlers>) {
+    fn exit_scope(&self, scope: super::handlers::Scope) {
+        let entered = Rc::clone(&scope.handlers);
         scope.exit_event_loop();
-        if scope.mark_inactive() && self.handlers_are(entered) {
+        if scope.mark_inactive() && self.handlers_are(&entered) {
             self.handlers.set(None);
         }
     }
@@ -960,9 +1020,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
-        // SAFETY: per fn contract; R-2 — shared reborrow, all
-        // mutated fields are `Cell`/`JsCell`.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -974,15 +1033,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             errno,
             this.ref_count.get()
         );
-        // Ensure the socket is still alive for any defer's we have
-        this.ref_();
-        // Declared before clear_and_free/unrefOnNextTick — its own guard so the
-        // ref_() above is balanced even if those calls unwind.
-        let _outer_deref = scopeguard::guard(this.as_ctx_ptr(), |p| {
-            // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            unsafe { (*p).deref() };
-        });
-        // reshaped for borrowck — explicit cleanup at end of fn.
+        // Ensure the socket is still alive for any defer's we have. Declared
+        // before clear_and_free/unrefOnNextTick so the ref is balanced even if
+        // those calls unwind.
+        let _keepalive = this.ref_guard();
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
@@ -990,7 +1044,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         let vm = handlers.vm;
-        let _ = vm;
         this.poll_ref
             .with_mut(|p| p.unref_on_next_tick(js_loop_ctx()));
 
@@ -1002,20 +1055,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `mark_inactive()` would tear down that newly activated connection.
         // When no reconnect happened the socket never opened, so `IS_ACTIVE`
         // is unset and the call is a no-op either way.
-        let cleanup = scopeguard::guard(
-            (this.as_ctx_ptr(), needs_deref, Rc::clone(&handlers)),
-            |(p, nd, h)| {
-                // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-                let this_ref = unsafe { &*p };
-                // Order: needs_deref → markInactive.
-                if nd {
-                    this_ref.deref();
-                }
-                if this_ref.handlers_are(&h) {
-                    this_ref.mark_inactive();
-                }
-            },
-        );
+        let cleanup = ConnectErrorTeardown {
+            socket: this,
+            entered: Rc::clone(&handlers),
+            needs_deref,
+        };
 
         if vm.is_shutting_down() {
             drop(cleanup);
@@ -1098,30 +1142,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
 
-        let scope = handlers.enter();
-        // `let _ = guard` would drop *immediately* (end of
-        // statement, not end of scope) and run `scope.exit()` before the
-        // user's onConnectError callback. Bind to a named `_`-prefixed
-        // local so it lives to end of scope.
-        let _scope_guard = scopeguard::guard(
-            (this.as_ctx_ptr(), scope, Rc::clone(&handlers)),
-            |(p, sc, h)| {
-                if sc.exit() {
-                    // Connection never opened (`is_active == false`), so the
-                    // scope's decrement is the last one. Release the socket's
-                    // reference — but only if it still holds the `Handlers` we
-                    // entered with: the `connectError` callback may have
-                    // synchronously re-entered `connect()` (node:net
-                    // `autoSelectFamily` retries) and repointed the field, and
-                    // clearing it here would make the retry's `on_open` panic.
-                    // SAFETY: `p` is the live `*mut Self`.
-                    let this_ref = unsafe { &*p };
-                    if this_ref.handlers_are(&h) {
-                        this_ref.handlers.set(None);
-                    }
-                }
-            },
-        );
+        let _scope_guard = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
 
         if callback.is_empty() {
             // Connection failed before open; allow the wrapper to be GC'd
@@ -1309,10 +1333,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_open(this: *mut Self, socket: SocketHandler<SSL>) {
-        let this_ptr = this;
-        // SAFETY: per fn contract; R-2 — shared reborrow, all
-        // mutated fields are `Cell`/`JsCell`.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        let this_ptr = this.as_ptr();
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1327,9 +1350,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.socket.get().is_detached(),
             this.ref_count.get()
         );
-        // Ensure the socket remains alive until this is finished
-        this.ref_();
-        // reshaped for borrowck — explicit deref at end.
+        // Ensure the socket remains alive: the callbacks below re-enter JS.
+        let _keepalive = this.ref_guard();
 
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
@@ -1437,12 +1459,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             // If handshake is provided, open is called on connection open
             // If is not provided, open is called after handshake
             if callback.is_empty() || handshake_callback.is_empty() {
-                this.deref();
                 return;
             }
         } else {
             if callback.is_empty() {
-                this.deref();
                 return;
             }
         }
@@ -1495,8 +1515,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
-        this.exit_scope(scope, &handlers);
-        this.deref();
+        this.exit_scope(scope);
     }
 
     pub fn get_this_value(&self, global: &JSGlobalObject) -> JSValue {
@@ -1540,8 +1559,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_end(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1562,7 +1581,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         // Ensure the socket remains alive until this is finished
-        this.ref_();
+        let _keepalive = this.ref_guard();
 
         let callback = handlers.on_end();
         let vm = handlers.vm;
@@ -1571,7 +1590,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
             // If you don't handle TCP fin, we assume you're done.
             this.mark_inactive();
-            this.deref();
             return;
         }
 
@@ -1584,8 +1602,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        this.exit_scope(scope, &handlers);
-        this.deref();
+        this.exit_scope(scope);
     }
 
     /// `*mut Self` for the same noalias-reentry reason as `on_writable`.
@@ -1599,8 +1616,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1704,7 +1721,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     Err(e) => {
                         // `Scope` has no Drop — balance event_loop().enter() and
                         // active_connections before propagating.
-                        this.exit_scope(scope, &handlers);
+                        this.exit_scope(scope);
                         return Err(e);
                     }
                 }
@@ -1723,7 +1740,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        this.exit_scope(scope, &handlers);
+        this.exit_scope(scope);
         Ok(())
     }
 
@@ -1737,8 +1754,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_session(this: *mut Self, session: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; shared reborrow only.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         if this.socket.get().is_detached() {
             return Ok(());
         }
@@ -1761,7 +1778,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match JSValue::create_buffer_from_length(&global, session.len()) {
             Ok(b) => b,
             Err(e) => {
-                this.exit_scope(scope, &handlers);
+                this.exit_scope(scope);
                 return Err(e);
             }
         };
@@ -1779,7 +1796,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        this.exit_scope(scope, &handlers);
+        this.exit_scope(scope);
         Ok(())
     }
 
@@ -1789,8 +1806,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_keylog(this: *mut Self, line: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; shared reborrow only.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         if this.socket.get().is_detached() {
             return Ok(());
         }
@@ -1813,7 +1830,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match JSValue::create_buffer_from_length(&global, line.len()) {
             Ok(b) => b,
             Err(e) => {
-                this.exit_scope(scope, &handlers);
+                this.exit_scope(scope);
                 return Err(e);
             }
         };
@@ -1831,7 +1848,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        this.exit_scope(scope, &handlers);
+        this.exit_scope(scope);
         Ok(())
     }
 
@@ -1846,8 +1863,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late close on a socket whose Handlers were already torn down
         // (mark_inactive freed them through a path that did not route back
         // through this dispatch - e.g. a JS-side destroy on a TLS socket
@@ -1885,38 +1902,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             // letting `IntrusiveRc::drop` release a *second* time.
             unsafe { Self::on_close(raw, socket, err, reason).ok() };
         }
-        // reshaped for borrowck — deref + markInactive run explicitly at the end.
-        // Capture the `Handlers` pointer that was paired with the
-        // `IS_ACTIVE` flag *before* the user's close callback runs. The
-        // callback may synchronously re-enter `Bun.connect({ socket: this })`
-        // (the documented MongoDB-driver reconnect path), which makes
-        // `connect_finish` repoint `self.handlers` at a fresh allocation
-        // while keeping the old one alive for the in-flight `Scope`. If the
-        // deferred `mark_inactive()` re-read the cell at that point it would
-        // (a) underflow the new `Handlers`' counter (created with
-        // `active_connections == 0`) and (b) leave the old one at count 1.
-        let cleanup = scopeguard::guard((this.as_ctx_ptr(), Rc::clone(&handlers)), |(p, h)| {
-            // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            let this_ref = unsafe { &*p };
-            if this_ref.handlers_are(&h) {
-                // Normal close: the socket still holds the Handlers we
-                // captured; do the full idle teardown.
-                this_ref.mark_inactive();
-            } else if this_ref.flags.get().contains(Flags::IS_ACTIVE) {
-                // The close callback synchronously reconnected. The socket is
-                // not going idle — `connect_finish` already re-upgraded
-                // `this_value` and re-armed `poll_ref` for the in-flight
-                // connect — so skip the idle teardown. Just clear `IS_ACTIVE`
-                // (the next `on_open` re-arms it against the new Handlers) and
-                // release the lifecycle ref `mark_active` took on the
-                // *captured* Handlers.
-                this_ref.update_flags(|f| f.remove(Flags::IS_ACTIVE));
-                if !VirtualMachine::get().is_shutting_down() {
-                    h.mark_inactive();
-                }
-            }
-            this_ref.deref();
-        });
+        let cleanup = CloseTeardown {
+            socket: this,
+            entered: Rc::clone(&handlers),
+        };
 
         if this.flags.get().contains(Flags::FINALIZING) {
             drop(cleanup);
@@ -1964,13 +1953,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(e)]);
         }
-        if scope.exit() && this.handlers_are(&handlers) {
-            // Only release the socket's reference if a synchronous reconnect
-            // from inside the close callback has not already repointed it —
-            // clearing it then would make the pending `on_open`'s
-            // `get_handlers()` panic on `None`.
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope);
         drop(cleanup);
         Ok(())
     }
@@ -1981,8 +1964,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_data(this: *mut Self, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
-        // SAFETY: per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        // SAFETY: per fn contract — uws hands us the live socket from its ext slot.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2034,7 +2017,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        this.exit_scope(scope, &handlers);
+        this.exit_scope(scope);
     }
 
     #[bun_jsc::host_fn(getter)]

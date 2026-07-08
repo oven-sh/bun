@@ -1,10 +1,10 @@
 // node:net defaults to Nagle enabled (TCP_NODELAY=0); setNoDelay(false) and
 // {noDelay:false} must actually reach the kernel. Bun's uSockets layer forces
 // TCP_NODELAY=1 on every fd, so the node:net layer has to undo that.
-import { test, expect, describe } from "bun:test";
+import { dlopen, FFIType, ptr } from "bun:ffi";
+import { describe, expect, test } from "bun:test";
 import { isWindows, libcPathForDlopen } from "harness";
 import net from "node:net";
-import { dlopen, FFIType, ptr } from "bun:ffi";
 
 // POSIX getsockopt; Windows uses SOCKET handles rather than fds for this path.
 const { getsockopt } = isWindows

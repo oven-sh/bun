@@ -3186,3 +3186,126 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+describe.concurrent("http2 client: stream error identity when the peer closes with a nonzero code", () => {
+  // Raw h2c server that completes the SETTINGS handshake and, on the first HEADERS, sends the
+  // requested frame (GOAWAY or RST_STREAM) with ENHANCE_YOUR_CALM. The client opens one request;
+  // with no 'error' listener on the stream, node surfaces the error as an uncaught exception with
+  // a code that identifies WHAT closed (session vs. stream). An 'error' listener observes the same
+  // error and the stream's rstCode is stamped from the frame's code either way.
+  function fixture({ mode, withListener }) {
+    const reply =
+      mode === "goaway"
+        ? `
+          const goaway = Buffer.alloc(8);
+          goaway.writeUInt32BE(1, 0);
+          goaway.writeUInt32BE(0xb, 4);
+          socket.write(frame(0x7, 0, 0, goaway));`
+        : `
+          const rst = Buffer.alloc(4);
+          rst.writeUInt32BE(0xb, 0);
+          socket.write(frame(0x3, 0, 1, rst));
+          setImmediate(() => socket.end());`;
+    return `
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header.writeUInt8(type, 3);
+        header.writeUInt8(flags, 4);
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+      const server = net.createServer(socket => {
+        socket.write(frame(0x4, 0, 0));
+        let buf = Buffer.alloc(0), sawPreface = false, done = false;
+        socket.on("data", chunk => {
+          if (done) return;
+          buf = Buffer.concat([buf, chunk]);
+          if (!sawPreface) {
+            if (buf.length < 24) return;
+            buf = buf.subarray(24);
+            sawPreface = true;
+          }
+          let off = 0;
+          while (buf.length - off >= 9) {
+            const len = buf.readUIntBE(off, 3), type = buf.readUInt8(off + 3);
+            if (buf.length - off < 9 + len) break;
+            if (type === 0x4 && (buf.readUInt8(off + 4) & 0x1) === 0) socket.write(frame(0x4, 0x1, 0));
+            if (type === 0x1) {
+              done = true;${reply}
+              return;
+            }
+            off += 9 + len;
+          }
+          buf = buf.subarray(off);
+        });
+      });
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code + ": " + e.message);
+        process.exit(42);
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const session = http2.connect("http://127.0.0.1:" + server.address().port);
+        session.on("error", e => console.log("session error: " + e.code));
+        session.on("close", () => { console.log("session close"); server.close(); });
+        const req = session.request({ ":path": "/" });
+        ${withListener ? `req.on("error", e => console.log("req error: " + e.code + " rstCode=" + req.rstCode));` : ``}
+        req.on("close", () => console.log("req close rstCode=" + req.rstCode));
+      });
+    `;
+  }
+
+  async function run(opts) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(opts)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("GOAWAY without a stream 'error' listener raises uncaught ERR_HTTP2_SESSION_ERROR", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "goaway", withListener: false });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("UNCAUGHT ERR_HTTP2_SESSION_ERROR: Session closed with error code 11"),
+      stderr: "",
+    });
+    expect(stdout).not.toContain("ERR_HTTP2_STREAM_ERROR");
+    expect(exitCode).toBe(42);
+  });
+
+  it("GOAWAY with a stream 'error' listener delivers ERR_HTTP2_SESSION_ERROR and stamps rstCode", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "goaway", withListener: true });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("req error: ERR_HTTP2_SESSION_ERROR rstCode=11"),
+      stderr: "",
+    });
+    expect(stdout).toContain("req close rstCode=11");
+    expect(exitCode).toBe(0);
+  });
+
+  it("RST_STREAM without a stream 'error' listener raises uncaught ERR_HTTP2_STREAM_ERROR", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "rst", withListener: false });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining(
+        "UNCAUGHT ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_ENHANCE_YOUR_CALM",
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(42);
+  });
+
+  it("RST_STREAM with a stream 'error' listener delivers ERR_HTTP2_STREAM_ERROR and stamps rstCode", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "rst", withListener: true });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("req error: ERR_HTTP2_STREAM_ERROR rstCode=11"),
+      stderr: "",
+    });
+    expect(stdout).toContain("req close rstCode=11");
+    expect(exitCode).toBe(0);
+  });
+});

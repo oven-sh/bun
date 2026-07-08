@@ -2373,7 +2373,7 @@ class Http2Stream extends Duplex {
     // RST code 8 not emitted as an error as its used by clients to signify
     // abort and is already covered by aborted event, also allows more
     // seamless compatibility with http1
-    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
+    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL && !this[kNeverAnnounced])
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     this[bunHTTP2Session] = null;
@@ -3184,16 +3184,18 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       if (error !== 0 && !stream.rstCode) stream.rstCode = error;
       error = self[kSessionDestroyError];
     }
-    let error_instance: Error | number | undefined = undefined;
-    if (stream.listenerCount("error") > 0) {
-      if (typeof error === "number") {
-        stream.rstCode = error;
-        if (error != 0) {
-          error_instance = streamErrorFromCode(error);
-        }
-      } else {
-        error_instance = error;
+    // The resolved error is passed to stream.destroy() unconditionally: node surfaces the same
+    // error whether or not an 'error' listener is attached (absent a listener it becomes an
+    // uncaught exception, like any Duplex). Gating on listenerCount here dropped the resolved
+    // session error and let _destroy synthesize a misleading ERR_HTTP2_STREAM_ERROR from rstCode.
+    let error_instance: Error | undefined;
+    if (typeof error === "number") {
+      stream.rstCode = error;
+      if (error != 0 && !stream[kNeverAnnounced]) {
+        error_instance = streamErrorFromCode(error);
       }
+    } else if (!stream[kNeverAnnounced]) {
+      error_instance = error;
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
@@ -3483,6 +3485,10 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
+      // Until the request HEADERS are accepted and the 'stream' event fires, user code has no
+      // reference to this object and cannot attach an 'error' listener; node never surfaces a
+      // JS stream for a request it rejects at the header layer.
+      stream[kNeverAnnounced] = true;
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
       return stream;
@@ -3589,6 +3595,7 @@ class ServerHttp2Session extends Http2Session {
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
         stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+        stream[kNeverAnnounced] = false;
         if (onServerStreamCreatedChannel.hasSubscribers) {
           onServerStreamCreatedChannel.publish({ stream, headers });
         }

@@ -865,6 +865,9 @@ impl Request {
                     // runs once per request via JSC extra-memory accounting.
                     return self.get_protocol().len() + host.len() + req_url.len();
                 }
+                if let Some(base) = self.request_context.fallback_base_url() {
+                    return base.len() + req_url.len();
+                }
             }
             return req_url.len();
         }
@@ -906,9 +909,11 @@ impl Request {
         }
     }
 
-    /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
-    /// one, cannot form a URL authority, so `request.url` synthesis falls back to the
-    /// configured host instead of pasting the client bytes into the URL.
+    /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. Rejects Host values that
+    /// cannot possibly form a URL authority so the fast path skips straight to
+    /// the server-authority fallback; values that pass here may still be
+    /// structurally invalid (port out of range, unclosed `[`, bad percent
+    /// escape), which `href_from_string` then catches.
     fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {
@@ -947,80 +952,8 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
-                    .filter(|host| Self::is_valid_host_header(host))
-                {
-                    // With `port: None`, HostFormatter always emits exactly `host`. Compute the
-                    // length and assemble the URL with straight slice copies instead of going
-                    // through `core::fmt::write` (which is not monomorphized and shows up in
-                    // per-request profiles).
-                    let protocol = self.get_protocol();
-                    let url_bytelength = protocol.len() + host.len() + req_url.len();
-
-                    #[cfg(debug_assertions)]
-                    debug_assert!(self.size_of_url() == url_bytelength);
-
-                    if url_bytelength < 128 {
-                        let mut buffer = [0u8; 128];
-                        let url = {
-                            let mut at = 0;
-                            buffer[at..at + protocol.len()].copy_from_slice(protocol);
-                            at += protocol.len();
-                            buffer[at..at + host.len()].copy_from_slice(host);
-                            at += host.len();
-                            buffer[at..at + req_url.len()].copy_from_slice(&req_url);
-                            at += req_url.len();
-                            &buffer[..at]
-                        };
-
-                        #[cfg(debug_assertions)]
-                        debug_assert!(self.size_of_url() == url.len());
-
-                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
-                        if !href.is_empty() {
-                            if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
-                                self.url.set(BunString::clone_latin1(&url[..href.length()]));
-                                href.deref();
-                            } else {
-                                self.url.set(href);
-                            }
-                        } else {
-                            // TODO: what is the right thing to do for invalid URLS?
-                            self.url.set(BunString::clone_utf8(url));
-                        }
-
-                        return Ok(());
-                    }
-
-                    if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
-                        let (new_url, bytes) =
-                            BunString::create_uninitialized_latin1(url_bytelength);
-                        self.url.set(new_url);
-                        // exact space was counted above
-                        let (a, rest) = bytes.split_at_mut(protocol.len());
-                        let (b, c) = rest.split_at_mut(host.len());
-                        a.copy_from_slice(protocol);
-                        b.copy_from_slice(host);
-                        c.copy_from_slice(&req_url);
-                    } else {
-                        // slow path
-                        let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
-                        temp_url.extend_from_slice(protocol);
-                        temp_url.extend_from_slice(host);
-                        temp_url.extend_from_slice(&req_url);
-                        // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
-                        self.url.set(BunString::clone_utf8(&temp_url));
-                    }
-
-                    let href = bun_url::href_from_string(&self.url.get());
-                    // TODO: what is the right thing to do for invalid URLS?
-                    if !href.is_empty() {
-                        self.url.set(href);
-                    }
-
-                    return Ok(());
-                }
+                self.set_url_for_origin_form(req.header(b"host"), &req_url);
+                return Ok(());
             }
 
             #[cfg(debug_assertions)]
@@ -1028,6 +961,101 @@ impl Request {
             self.url.set(BunString::clone_utf8(&req_url));
         }
         Ok(())
+    }
+
+    /// Synthesize and set `self.url` for an origin-form request target
+    /// (`req_url` starts with `/`). Uses `host` as the authority when it
+    /// yields a valid WHATWG URL, else falls back to the server's configured
+    /// authority (RFC 9112 §3.3) so the result is always a valid absolute URL
+    /// that `new URL(req.url)` and `new Request(req)` accept.
+    pub(crate) fn set_url_for_origin_form(&self, host: Option<&[u8]>, req_url: &[u8]) {
+        debug_assert!(!req_url.is_empty() && req_url[0] == b'/');
+
+        if let Some(host) = host.filter(|h| Self::is_valid_host_header(h)) {
+            // With `port: None`, HostFormatter always emits exactly `host`. Compute the
+            // length and assemble the URL with straight slice copies instead of going
+            // through `core::fmt::write` (which is not monomorphized and shows up in
+            // per-request profiles).
+            let protocol = self.get_protocol();
+            let url_bytelength = protocol.len() + host.len() + req_url.len();
+
+            if url_bytelength < 128 {
+                let mut buffer = [0u8; 128];
+                let url = {
+                    let mut at = 0;
+                    buffer[at..at + protocol.len()].copy_from_slice(protocol);
+                    at += protocol.len();
+                    buffer[at..at + host.len()].copy_from_slice(host);
+                    at += host.len();
+                    buffer[at..at + req_url.len()].copy_from_slice(req_url);
+                    at += req_url.len();
+                    &buffer[..at]
+                };
+
+                let href = bun_url::href_from_string(&BunString::from_bytes(url));
+                if !href.is_empty() {
+                    if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
+                        self.url.set(BunString::clone_latin1(&url[..href.length()]));
+                        href.deref();
+                    } else {
+                        self.url.set(href);
+                    }
+                    return;
+                }
+            } else {
+                if strings::is_all_ascii(host) && strings::is_all_ascii(req_url) {
+                    let (new_url, bytes) = BunString::create_uninitialized_latin1(url_bytelength);
+                    self.url.set(new_url);
+                    // exact space was counted above
+                    let (a, rest) = bytes.split_at_mut(protocol.len());
+                    let (b, c) = rest.split_at_mut(host.len());
+                    a.copy_from_slice(protocol);
+                    b.copy_from_slice(host);
+                    c.copy_from_slice(req_url);
+                } else {
+                    // slow path
+                    let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
+                    temp_url.extend_from_slice(protocol);
+                    temp_url.extend_from_slice(host);
+                    temp_url.extend_from_slice(req_url);
+                    // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
+                    self.url.set(BunString::clone_utf8(&temp_url));
+                }
+
+                let href = bun_url::href_from_string(&self.url.get());
+                if !href.is_empty() {
+                    self.url.set(href);
+                    return;
+                }
+            }
+        }
+
+        self.set_url_from_fallback_authority(req_url);
+    }
+
+    /// Cold path for [`set_url_for_origin_form`]: the client sent no Host, a
+    /// Host outside the RFC 3986 authority byte set, or one that parsed to an
+    /// invalid URL (port > 65535, unclosed IPv6 bracket, bad percent escape).
+    /// RFC 9112 §3.3 directs the server to substitute its own authority.
+    #[cold]
+    fn set_url_from_fallback_authority(&self, req_url: &[u8]) {
+        if let Some(base) = self.request_context.fallback_base_url() {
+            let origin = bun_url::origin_from_slice(base).unwrap_or(base);
+            let mut buf = Vec::with_capacity(origin.len() + req_url.len());
+            buf.extend_from_slice(origin);
+            buf.extend_from_slice(req_url);
+            let href = bun_url::href_from_string(&BunString::from_bytes(&buf));
+            if !href.is_empty() {
+                if core::ptr::eq(href.byte_slice().as_ptr(), buf.as_ptr()) {
+                    self.url.set(BunString::clone_latin1(&buf[..href.length()]));
+                    href.deref();
+                } else {
+                    self.url.set(href);
+                }
+                return;
+            }
+        }
+        self.url.set(BunString::clone_utf8(req_url));
     }
 }
 

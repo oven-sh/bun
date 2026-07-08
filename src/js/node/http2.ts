@@ -3178,10 +3178,6 @@ function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
-function closeUnreadRespondedStreamNT(stream) {
-  if (stream.destroyed || stream.closed) return;
-  stream.close();
-}
 // node's Http2Stream[kMaybeDestroy]: once a server stream's response has finished, if user code
 // never read the request (didRead false, flowing null) and no trailers are pending, node closes
 // the stream gracefully instead of leaving it open until the request side ends.
@@ -3194,7 +3190,7 @@ function onServerStreamFinishMaybeClose(this: ServerHttp2Stream) {
     !this[kDidRead] &&
     this.readableFlowing === null
   ) {
-    setImmediate(closeUnreadRespondedStreamNT, this);
+    this.close();
   }
 }
 function emitStreamErrorFromCodeNT(stream, rstCode) {

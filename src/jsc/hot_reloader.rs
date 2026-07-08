@@ -1195,8 +1195,13 @@ where
                                         {
                                             // reset the file descriptor
                                             let ent = file_ent.entry();
-                                            ent.set_cache_fd(Fd::INVALID);
-                                            ent.need_stat.set(true);
+                                            {
+                                                // Every cached-`Entry` rewrite takes
+                                                // the per-entry mutex.
+                                                let _entry_guard = ent.mutex.lock_guard();
+                                                ent.set_cache_fd(Fd::INVALID);
+                                                ent.need_stat.set(true);
+                                            }
                                             path_string = ent.abs_path;
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {

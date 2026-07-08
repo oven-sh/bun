@@ -54,7 +54,7 @@ const EXPECTED_VERSION: u32 = 22;
 const MINIMUM_CACHE_SIZE: usize = 4 * 1024;
 
 // When making parser changes, it gets extremely confusing.
-#[cfg(debug_assertions)]
+#[cfg(bun_debug)]
 static BUN_DEBUG_RESTORE_FROM_CACHE: AtomicBool = AtomicBool::new(false);
 
 const SEED: u64 = 42;
@@ -642,7 +642,7 @@ impl RuntimeTranspilerCache {
     pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> Result<usize, bun_core::Error> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
-        let suffix: &[u8] = if cfg!(debug_assertions) {
+        let suffix: &[u8] = if bun_core::env::IS_DEBUG {
             b".debug.pile"
         } else {
             b".pile"
@@ -674,7 +674,7 @@ impl RuntimeTranspilerCache {
     /// Writes the resolved cache directory into `buf` (NUL-terminated) and
     /// returns its byte length. Returns 0 to mean "cache disabled".
     fn really_get_cache_dir(buf: &mut PathBuffer) -> usize {
-        #[cfg(debug_assertions)]
+        #[cfg(bun_debug)]
         {
             BUN_DEBUG_RESTORE_FROM_CACHE.store(
                 env_var::BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE
@@ -972,7 +972,7 @@ impl RuntimeTranspilerCache {
                 return false;
             }
         };
-        #[cfg(debug_assertions)]
+        #[cfg(bun_debug)]
         {
             if BUN_DEBUG_RESTORE_FROM_CACHE.load(Ordering::Relaxed) {
                 bun_core::scoped_log!(
@@ -992,7 +992,7 @@ impl RuntimeTranspilerCache {
         }
         bun_analytics::features::transpiler_cache.fetch_add(1, Ordering::Relaxed);
 
-        #[cfg(debug_assertions)]
+        #[cfg(bun_debug)]
         {
             if !BUN_DEBUG_RESTORE_FROM_CACHE.load(Ordering::Relaxed) {
                 if let Some(mut entry) = self.entry.take() {

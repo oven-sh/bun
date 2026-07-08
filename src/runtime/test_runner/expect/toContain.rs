@@ -35,10 +35,12 @@ impl Expect {
             pass: *mut bool,
         }
 
+        // Jest's toContain uses `===` (Array.prototype.indexOf), not Object.is:
+        // `[-0]` contains `0`, `[NaN]` does not contain `NaN`.
         if value.js_type_loose().is_array_like() {
             let mut itr = value.array_iterator(global)?;
             while let Some(item) = itr.next()? {
-                if item.is_same_value(expected, global)? {
+                if item.is_strict_equal(expected, global)? {
                     pass = true;
                     break;
                 }
@@ -63,7 +65,7 @@ impl Expect {
                 pass: &raw mut pass,
             };
 
-            extern "C" fn same_value_iterator(
+            extern "C" fn strict_equal_iterator(
                 _: *mut VM,
                 _: &JSGlobalObject,
                 entry_: *mut c_void,
@@ -76,7 +78,7 @@ impl Expect {
                 // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
                 // stack frame, which outlives the synchronous for_each this callback runs inside.
                 let global = unsafe { &*entry.global };
-                let Ok(same) = item.is_same_value(entry.expected, global) else {
+                let Ok(same) = item.is_strict_equal(entry.expected, global) else {
                     return;
                 };
                 if same {
@@ -90,7 +92,7 @@ impl Expect {
             value.for_each(
                 global,
                 (&raw mut expected_entry).cast::<c_void>(),
-                same_value_iterator,
+                strict_equal_iterator,
             )?;
         } else {
             return Err(global.throw(format_args!(

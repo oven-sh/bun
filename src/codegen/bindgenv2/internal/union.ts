@@ -132,54 +132,5 @@ export function union(
         }
       `);
     }
-
-    get hasZigSource() {
-      return true;
-    }
-    get zigSource() {
-      return reindent(`
-        pub const ${name} = union(enum) {
-          ${joinIndented(
-            10,
-            Object.entries(namedAlternatives).map(([altName, altType]) => {
-              return `${altName}: ${altType.zigType("pretty")},`;
-            }),
-          )}
-
-          pub fn deinit(self: *@This()) void {
-            switch (std.meta.activeTag(self.*)) {
-              inline else => |tag| bun.memory.deinit(&@field(self, @tagName(tag))),
-            }
-            self.* = undefined;
-          }
-        };
-
-        pub const Bindgen${name} = struct {
-          const Self = @This();
-          pub const ZigType = ${name};
-          pub const ExternType = bindgen.ExternTaggedUnion(&.{ ${alternatives
-            .map(a => a.bindgenType + ".ExternType")
-            .join(", ")} });
-          pub fn convertFromExtern(extern_value: Self.ExternType) Self.ZigType {
-            return switch (extern_value.tag) {
-              ${joinIndented(
-                14,
-                Object.entries(namedAlternatives).map(([altName, altType], i) => {
-                  const bindgenType = altType.bindgenType;
-                  const innerRhs = `${bindgenType}.convertFromExtern(extern_value.data.@"${i}")`;
-                  return `${i} => .{ .${altName} = ${innerRhs} },`;
-                }),
-              )}
-              else => unreachable,
-            };
-          }
-        };
-
-        const bindgen_generated = @import("bindgen_generated");
-        const std = @import("std");
-        const bun = @import("bun");
-        const bindgen = bun.bun_js.bindgen;
-      `);
-    }
   })();
 }

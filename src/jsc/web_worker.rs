@@ -1175,6 +1175,8 @@ impl WebWorker {
     ///                                  null and skips wakeup() instead of touching
     ///                                  memory freed in step 5.
     ///   2. `vm.onExit()`             — user 'exit' handlers run; needs the JSC VM.
+    ///      `release_strong_refs_before_teardown()` — drop every Rust-side
+    ///                                  `Strong` while the HandleSet is live.
     ///   3. `teardownJSCVM()`         — collectNow + vm.deref (single — the
     ///                                  API-lock path takes no extra
     ///                                  `RefPtr<VM>`, see the `thread_main`

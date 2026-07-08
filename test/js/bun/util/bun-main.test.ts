@@ -29,9 +29,11 @@ describe("Bun.main", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("ok");
-    expect(stderr).not.toContain("AddressSanitizer");
-    expect(proc.signalCode).toBeNull();
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: "ok",
+      stderr: expect.not.stringContaining("AddressSanitizer"),
+      signalCode: null,
+    });
     expect(exitCode).toBe(0);
   });
 });

@@ -1285,6 +1285,14 @@ where
         return T::from(oklch);
     }
 
+    // Per CSS Color 4, if clipping the origin is already within the JND, use
+    // the clip directly. Without this, colors sitting essentially on the gamut
+    // boundary (e.g. sRGB blue) get desaturated by the chroma search below.
+    let clipped = T::from(current).clip();
+    if delta_eok(clipped, current) < JND {
+        return clipped;
+    }
+
     let mut min: f32 = 0.0;
     let mut max = current.c;
 

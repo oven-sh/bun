@@ -732,7 +732,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         empty = false;
     }
 
-    if parse_type_selector::<Impl>(parser, input, *state, builder).is_ok() {
+    if parse_type_selector::<Impl>(parser, input, *state, builder)? {
         empty = false;
     }
 
@@ -1211,11 +1211,6 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        // blocked_on: `Parser::add_symbol_for_name` (gated in css_parser.rs on
-        // ArrayHashMap::entry + SymbolList::push). The CSS-modules branch
-        // returns the symbol-table ref; until that un-gates, fall through to
-        // the ident arm so non-modules parsing is correct.
-
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
@@ -1303,19 +1298,12 @@ impl<'a> SelectorParser<'a> {
             );
         }
 
-        // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
-        // The stub `properties::custom::TokenList` is a unit struct with no `.v`
-        // field and no `parse_raw`; consume the function args as opaque tokens
-        // until the real `custom.rs` un-gates.
-
-        {
-            let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-            TokenList::parse_raw(input, &mut args, self.options, 0)?;
-            return Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList { v: args },
-            });
-        }
+        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+        TokenList::parse_raw(input, &mut args, self.options, 0)?;
+        Ok(PseudoElement::CustomFunction {
+            name,
+            arguments: TokenList { v: args },
+        })
     }
 
     fn parse_is_and_where(&self) -> bool {
@@ -3929,11 +3917,14 @@ pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
         s
     };
 
+    // The of-list is a <complex-real-selector-list>, which is not forgiving: one
+    // invalid selector invalidates the whole pseudo-class. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:nth-child(2n of )`).
     let selectors = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
         &mut child_state,
-        ParseErrorRecovery::IgnoreInvalidSelector,
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 
@@ -3992,11 +3983,14 @@ pub fn parse_has<Impl: BunSelectorImpl>(
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     let mut child_state = *state;
+    // Since https://github.com/w3c/csswg-drafts/issues/7676, :has() takes a
+    // <relative-selector-list>, which is not forgiving. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:has()`).
     let inner = GenericSelectorList::<Impl>::parse_relative_with_state(
         parser,
         input,
         &mut child_state,
-        parser.is_and_where_error_recovery(),
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 

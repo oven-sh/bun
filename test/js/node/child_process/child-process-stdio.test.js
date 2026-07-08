@@ -134,6 +134,7 @@ describe("short stdio arrays", () => {
     let out = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", d => (out += d));
+    child.stderr?.resume();
     const [code, signal] = await once(child, "close");
     expect(out).toBe("ok");
     expect(child.stdout.readable).toBe(false);

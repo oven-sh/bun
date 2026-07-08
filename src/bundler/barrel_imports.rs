@@ -540,6 +540,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Build work queue from this file's named_imports, then propagate
     // through chains of barrels. Only runs real work when barrels exist
     // (targets with deferred records).
+    let mut seeded_partial_aliases: Vec<Box<[u8]>> = Vec::new();
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
@@ -632,18 +633,17 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }),
             RequestedExports::Partial(partial) => {
                 for key in partial.keys() {
-                    // SAFETY: arena-backed key slices live for the bundler
-                    // arena lifetime; raw-ptr round-trip to detach from the
-                    // `&this.requested_exports` borrow before BFS mutates it.
-                    let alias: &[u8] = unsafe { bun_ptr::detach_lifetime_ref(&**key) };
-                    queue.push(BarrelWorkItem {
-                        barrel_source_index: this_source_index,
-                        alias,
-                        is_star: false,
-                    });
+                    seeded_partial_aliases.push(key.to_vec().into_boxed_slice());
                 }
             }
         }
+    }
+    for alias in &seeded_partial_aliases {
+        queue.push(BarrelWorkItem {
+            barrel_source_index: this_source_index,
+            alias: &alias[..],
+            is_star: false,
+        });
     }
 
     if queue.is_empty() {

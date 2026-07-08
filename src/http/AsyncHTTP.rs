@@ -213,6 +213,9 @@ fn make_client<'a>(
         async_http_id,
         hostname,
         unix_socket_path: ZigStringSlice::EMPTY,
+        compress: None,
+        compressed_request_body: Vec::new(),
+        compressed_body_len: 0,
     }
 }
 
@@ -270,6 +273,7 @@ pub struct Options<'a> {
     pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
+    pub compress: Option<crate::compress_body::CompressOption>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -530,6 +534,7 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.tls_props {
             this.client.tls_props = Some(val);
         }
+        this.client.compress = options.compress;
 
         if let Some(proxy) = &this.http_proxy {
             if let Some(auth) = build_proxy_authorization(proxy) {
@@ -764,10 +769,37 @@ impl<'a> AsyncHTTP<'a> {
                 // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
                 // built up itself during request processing is torn down.
                 {
+                    // `handle_response_metadata` rewrites per-hop request state in
+                    // place: `client.url`/`connected_url` become self-borrows into
+                    // `client.redirect` (freed just below), the method may be
+                    // downgraded to GET, and a cross-origin hop strips auth headers
+                    // from `client.header_entries`. The copy-back into the JS-thread
+                    // original must not hand a re-scheduled attempt any of that.
+                    //
+                    // `header_entries` is bitwise-shared with the original (see the
+                    // comment above), so it must never be dropped or reallocated
+                    // here. It was cloned from `request_headers` at init and only
+                    // ever shrinks (`ordered_remove`), so its capacity is enough;
+                    // the unchecked append below would corrupt the shared heap
+                    // allocation otherwise, so keep this assertion in release too.
+                    assert!(
+                        (*this).client.header_entries.capacity() >= (*this).request_headers.len()
+                    );
+                    (*this).client.header_entries.clear_retaining_capacity();
+                    (*this)
+                        .client
+                        .header_entries
+                        .append_list_assume_capacity(&(*this).request_headers);
+                    let original_url = (*this).url.clone();
+                    let original_method = (*this).method;
                     let client = &mut (*this).client;
+                    client.url = original_url;
+                    client.connected_url = URL::default();
+                    client.method = original_method;
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
+                    drop(core::mem::take(&mut client.compressed_request_body));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start
                         // (heap::alloc) and is refcounted; detach the socket

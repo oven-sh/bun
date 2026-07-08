@@ -84,9 +84,10 @@ describe.concurrent("http server: per-connection setTimeout", () => {
         timeoutFired: true,
         chainsCorrectly: true,
       });
-      // Node.js writes back the msecs value to socket.timeout for the socket
-      // and response spellings (request.setTimeout does not forward to the
-      // socket in Node, so that entry is allowed to read 0).
+      // Bun's server-side IncomingMessage.setTimeout currently calls the
+      // native setRequestTimeout(handle, ...) directly rather than routing
+      // through this.socket.setTimeout as Node does, so socket.timeout is not
+      // updated for the request spelling (pre-existing).
       if (_name !== "request.setTimeout(msecs, cb)") {
         expect(timeoutReadback).toBe(1000);
       }

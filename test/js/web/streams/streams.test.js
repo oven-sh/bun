@@ -768,6 +768,27 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect(total).toBe(N);
     });
 
+    it("for-await receives the final chunk when end() follows a write without a flush", async () => {
+      // end() runs while no reader is waiting, so onClose arms m_finalChunk; the next
+      // for-await/tee read must receive it via its readRequest, not a dropped promise.
+      const mk = () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write(new Uint8Array(10));
+            await c.flush();
+            c.write(new Uint8Array(20));
+            c.end();
+          },
+        });
+      let total = 0;
+      for await (const chunk of mk()) total += chunk.byteLength;
+      expect(total).toBe(30);
+      const [a, b] = mk().tee();
+      const [na, nb] = await Promise.all([readAll(a), readAll(b)]);
+      expect({ a: na.length, b: nb.length }).toEqual({ a: 30, b: 30 });
+    });
+
     it("via readMany()", async () => {
       const counter = { pulls: 0 };
       const reader = new ReadableStream(makeSource(counter)).getReader();

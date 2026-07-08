@@ -100,6 +100,7 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_stream);
     visitor.append(thisObject->m_underlyingSource);
+    visitor.append(thisObject->m_pull);
     visitor.append(thisObject->m_pendingRead);
     visitor.append(thisObject->m_deferCloseReason);
     visitor.append(thisObject->m_arrayBufferSink);
@@ -437,17 +438,15 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
 static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
+    JSObject* pullFunction = controller->m_pull.get();
     JSObject* underlyingSource = controller->m_underlyingSource.get();
     JSValue result;
     JSValue abrupt;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue pullFunction = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-        if (!catchScope.exception()) [[likely]] {
-            MarkedArgumentBuffer args;
-            args.append(controller);
-            result = JSC::call(globalObject, pullFunction, underlyingSource, args, "underlyingSource.pull is not a function"_s);
-        }
+        MarkedArgumentBuffer args;
+        args.append(controller);
+        result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), underlyingSource, args, "underlyingSource.pull is not a function"_s);
         if (catchScope.exception()) [[unlikely]]
             abrupt = takeAbruptCompletion(globalObject, catchScope);
     }
@@ -471,12 +470,22 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
         m_finalChunkArmed = false;
         JSValue chunk = m_finalChunk.get();
         m_finalChunk.clear();
+        auto* stream = m_stream.get();
+        // Non-Promise readers (for-await/tee/pipeTo) queue the request BEFORE this call and
+        // drop the returned promise; deliver through chunkSteps instead of a wrapped promise.
+        if (stream && readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0) {
+            readableStreamFulfillReadRequest(globalObject, stream, chunk, false);
+            RETURN_IF_EXCEPTION(scope, {});
+            readableStreamCloseIfPossible(globalObject, stream);
+            RETURN_IF_EXCEPTION(scope, {});
+            return jsUndefined();
+        }
         JSObject* result = createIteratorResultObject(globalObject, chunk, false);
         RETURN_IF_EXCEPTION(scope, {});
         auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->fulfill(vm, result);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* stream = m_stream.get()) {
+        if (stream) {
             readableStreamCloseIfPossible(globalObject, stream);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -876,8 +885,13 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* controller = JSDirectStreamController::create(vm, runtime->directStreamControllerStructure(zigGlobalObject), sinkKind);
     controller->m_stream.set(vm, controller, stream);
-    if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get())
+    if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get()) {
         controller->m_underlyingSource.set(vm, controller, underlyingSource);
+        JSValue pull = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
+        RETURN_IF_EXCEPTION(scope, );
+        if (auto* pullObject = pull.getObject())
+            controller->m_pull.set(vm, controller, pullObject);
+    }
 
     switch (sinkKind) {
     case DirectSinkKind::ArrayBuffer: {

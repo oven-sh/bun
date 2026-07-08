@@ -272,6 +272,11 @@ fn glob_match_impl(
                         }
                         b'[' => {
                             if (state.path_index as usize) < path.len() {
+                                // A bracket expression, like `?` and `*`, never matches a path
+                                // separator (POSIX fnmatch FNM_PATHNAME, git wildmatch).
+                                if is_separator(path[state.path_index as usize]) {
+                                    break 'fallthrough;
+                                }
                                 state.glob_index += 1;
 
                                 let mut negated = false;

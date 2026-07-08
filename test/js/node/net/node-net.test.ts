@@ -1022,7 +1022,10 @@ it("paused socket whose peer wrote >LIBUS_RECV_BUFFER_LENGTH then closed deliver
       if (ended) dataAfterEnd += chunk.length;
       received += chunk.length;
       c.pause();
-      queueMicrotask(() => c.resume());
+      // setImmediate, not a microtask: on_data's exit_scope drains microtasks
+      // before returning to loop.c, so a microtask resume would clear is_paused
+      // before loop.c reads it and the branch under test would never run.
+      setImmediate(() => c.resume());
     });
     c.on("end", () => {
       ended = true;

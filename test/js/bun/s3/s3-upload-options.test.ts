@@ -1,5 +1,7 @@
 import { S3Client, type S3Options } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
+import path from "node:path";
 
 // The S3 client does not honor NO_PROXY (#32046), so an HTTP_PROXY inherited
 // from the environment would hijack the request to the stub server. An empty
@@ -59,6 +61,7 @@ describe("s3 - upload options", () => {
   function recordingServer() {
     let put: Headers | undefined;
     let createMultipartUpload: Headers | undefined;
+    const partSizes: number[] = [];
 
     const server = Bun.serve({
       port: 0,
@@ -74,7 +77,9 @@ describe("s3 - upload options", () => {
           await req.arrayBuffer();
           return new Response(`<CompleteMultipartUploadResult><ETag>"an-etag"</ETag></CompleteMultipartUploadResult>`);
         }
-        if (req.method === "PUT" && !req.url.includes("partNumber=")) {
+        if (req.method === "PUT" && req.url.includes("partNumber=")) {
+          partSizes.push(Number(req.headers.get("content-length")));
+        } else if (req.method === "PUT") {
           put = req.headers;
         }
         await req.arrayBuffer();
@@ -94,6 +99,8 @@ describe("s3 - upload options", () => {
         if (!createMultipartUpload) throw new Error("no CreateMultipartUpload was sent");
         return headersOf(createMultipartUpload);
       },
+      /** Content-Length of each PUT ?partNumber= request, for a multipart upload. */
+      partSizes,
       [Symbol.dispose]: () => server.stop(true),
     };
   }
@@ -167,6 +174,23 @@ describe("s3 - upload options", () => {
     await writer.end();
 
     expect(recording.createMultipartUpload).toEqual(sent);
+  });
+
+  it("honors a per-call partSize when the source is a Bun.file", async () => {
+    using recording = recordingServer();
+    const client = new S3Client({ ...s3Options, endpoint: recording.url });
+
+    // A local-file source goes through `write_file_with_source_destination`'s
+    // File→S3 branch, which would otherwise read partSize from the handle.
+    using dir = tempDir("s3-upload-partsize", {
+      "source.bin": Buffer.alloc(14 * 1024 * 1024),
+    });
+    const partSize = 7 * 1024 * 1024;
+    await client.file("a_file").write(Bun.file(path.join(String(dir), "source.bin")), { ...uploadOptions, partSize });
+
+    // 14 MiB in 7 MiB parts is exactly two parts; the default 5 MiB would send three.
+    expect(recording.createMultipartUpload).toEqual(sent);
+    expect(recording.partSizes).toEqual([partSize, partSize]);
   });
 
   it("lets per-call options override the handle's options", async () => {

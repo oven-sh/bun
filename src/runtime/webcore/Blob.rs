@@ -4859,7 +4859,7 @@ pub fn write_file_with_source_destination(
                         ReadableStream::from_blob_copy_ref(
                             ctx,
                             source_blob,
-                            s3.options.part_size as crate::webcore::blob::SizeType,
+                            aws_options.options.part_size as crate::webcore::blob::SizeType,
                         )?,
                         ctx,
                     )? {
@@ -4959,7 +4959,7 @@ pub fn write_file_with_source_destination(
                     ReadableStream::from_blob_copy_ref(
                         ctx,
                         source_blob,
-                        s3.options.part_size as crate::webcore::blob::SizeType,
+                        aws_options.options.part_size as crate::webcore::blob::SizeType,
                     )?,
                     ctx,
                 )? {
@@ -4972,7 +4972,7 @@ pub fn write_file_with_source_destination(
                         s3.path(),
                         stream,
                         ctx,
-                        s3.options,
+                        aws_options.options,
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),

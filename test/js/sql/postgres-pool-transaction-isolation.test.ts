@@ -139,6 +139,58 @@ test("concurrent sql.begin() stays serialized after a server-side disconnect wit
   }
 });
 
+test("a pool slot is reusable after a server-side disconnect during sql.reserve()", async () => {
+  const received: Received[] = [];
+  const { port, server } = await pgMockServer(received);
+  const sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, tls: false, idleTimeout: 5 });
+  try {
+    // Poison: the slot dies while reserve() owns it. The reservation's paired
+    // release must still reach the pool exactly once so queryCount returns to 0.
+    const err = await (async () => {
+      await using r = await sql.reserve();
+      await r.unsafe("SELECT 'KILL'");
+    })().then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+
+    // The slot must be reusable: a stale queryCount=1 would make the next
+    // reserved connect() wait forever on reservedQueue.
+    await sql.unsafe("SELECT 'revive'");
+    const t1 = await sql.begin(async tx => {
+      await tx.unsafe("SELECT 'T1a'");
+      return "t1";
+    });
+    expect(t1).toBe("t1");
+    expect(firstInterleaving(received)).toBeNull();
+  } finally {
+    await sql.close({ timeout: 0 }).catch(() => {});
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+test("a pool slot is reusable after sql.reserve() is closed explicitly", async () => {
+  const received: Received[] = [];
+  const { port, server } = await pgMockServer(received);
+  const sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, tls: false, idleTimeout: 5 });
+  try {
+    const r = await sql.reserve();
+    await r.unsafe("SELECT 'inside'");
+    await r.close();
+
+    // The slot reconnects; a stale queryCount=1 would make connect() wait forever.
+    const t1 = await sql.begin(async tx => {
+      await tx.unsafe("SELECT 'T1a'");
+      return "t1";
+    });
+    expect(t1).toBe("t1");
+  } finally {
+    await sql.close({ timeout: 0 }).catch(() => {});
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
 test("concurrent sql.begin() stays serialized after a server-side disconnect during a transaction", async () => {
   const received: Received[] = [];
   const { port, server } = await pgMockServer(received);

@@ -918,6 +918,18 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
           c.flush();
         };
       },
+      "first call async, later calls sync without flush": () => {
+        let n = 0;
+        return c => {
+          n++;
+          if (n === 1)
+            return Promise.resolve().then(() => {
+              c.write(new Uint8Array([1]));
+              c.flush();
+            });
+          c.write(new Uint8Array([n]));
+        };
+      },
     };
     it.each(Object.keys(perCallShapes))(
       "three concurrent reads are each serviced by a per-call pull (%s)",

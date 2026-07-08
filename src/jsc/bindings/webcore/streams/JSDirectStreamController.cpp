@@ -779,14 +779,23 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
             JSValue reason = controller->m_deferCloseReason.get();
             controller->m_deferCloseReason.clear();
             controller->onClose(globalObject, reason);
-        } else if (deferredFlush == 1) {
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            // An async re-pull left m_pullInFlight set: its own fulfillment reaction drains
+            // and picks up m_pullAgain.
+            if (controller->m_pullInFlight) {
+                if (deferredFlush == 1)
+                    controller->onFlush(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                break;
+            }
+            // Sync re-pull: drain with m_pullInFlight bracketed so onFlush's delivery-branch
+            // re-arm fires regardless of whether the pull called c.flush() itself.
+            controller->m_pullInFlight = true;
             controller->onFlush(globalObject);
+            controller->m_pullInFlight = false;
+            RETURN_IF_EXCEPTION(scope, {});
         }
-        RETURN_IF_EXCEPTION(scope, {});
-        // An async re-pull left m_pullInFlight set: leave m_pullAgain on the controller for
-        // that pull's own fulfillment reaction instead of consuming it into a dead local.
-        if (controller->m_pullInFlight)
-            break;
         pullAgain = takeDirectPullAgain(controller);
     }
     return JSValue::encode(jsUndefined());

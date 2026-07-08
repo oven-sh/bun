@@ -3188,11 +3188,9 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
 });
 
 describe.concurrent("http2 client: stream error identity when the peer closes with a nonzero code", () => {
-  // Raw h2c server that completes the SETTINGS handshake and, on the first HEADERS, sends the
-  // requested frame (GOAWAY or RST_STREAM) with ENHANCE_YOUR_CALM. The client opens one request;
-  // with no 'error' listener on the stream, node surfaces the error as an uncaught exception with
-  // a code that identifies WHAT closed (session vs. stream). An 'error' listener observes the same
-  // error and the stream's rstCode is stamped from the frame's code either way.
+  // Raw h2c server: after the SETTINGS handshake it answers the first HEADERS with the requested
+  // frame (GOAWAY or RST_STREAM) carrying ENHANCE_YOUR_CALM. Node surfaces the error (uncaught
+  // without a stream 'error' listener) with a code identifying what closed: session vs stream.
   function fixture({ mode, withListener }) {
     const reply =
       mode === "goaway"
@@ -3306,6 +3304,61 @@ describe.concurrent("http2 client: stream error identity when the peer closes wi
       stderr: "",
     });
     expect(stdout).toContain("req close rstCode=11");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("http2 server: pushed stream error surfacing", () => {
+  // A pushed stream is handed to user code through the pushStream() callback (it has no 'stream'
+  // event), so a peer reset must reach its 'error' listener like node: ERR_HTTP2_STREAM_ERROR with
+  // the RST_STREAM code stamped as rstCode (verified against node v26.3.0).
+  it("a pushed stream refused by the peer emits ERR_HTTP2_STREAM_ERROR with the peer's code", async () => {
+    const fixture = `
+      const http2 = require("node:http2");
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code);
+        process.exit(42);
+      });
+      const server = http2.createServer();
+      server.on("stream", (stream, headers) => {
+        stream.respond({ ":status": 200 });
+        stream.pushStream({ ":path": "/push" }, (err, pushStream) => {
+          if (err) {
+            console.log("pushErr " + err.code);
+            process.exit(43);
+          }
+          pushStream.on("error", e => console.log("push error: " + e.code + " " + e.message));
+          pushStream.on("close", () => {
+            console.log("push close rstCode=" + pushStream.rstCode);
+            process.exit(0);
+          });
+          pushStream.respond({ ":status": 200 });
+          pushStream.write("pushed");
+        });
+        stream.end("main");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("stream", pushed => {
+          pushed.on("error", () => {});
+          pushed.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+        });
+        const req = client.request({ ":path": "/" });
+        req.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("push error: ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_REFUSED_STREAM"),
+      stderr: "",
+    });
+    expect(stdout).toContain("push close rstCode=7");
     expect(exitCode).toBe(0);
   });
 });

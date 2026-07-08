@@ -579,11 +579,11 @@ const SQL: typeof Bun.SQL = function SQL(
         ? null
         : () => (needs_rollback && !transaction_still_open() ? transaction_aborted_error() : null);
 
-    function run_internal_transaction_sql(string) {
+    function run_internal_transaction_sql(string, guarded = false) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries, guarded ? preRunGuard : null);
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -743,7 +743,7 @@ const SQL: typeof Bun.SQL = function SQL(
       transactionSavepoints.delete(savepoint_promise);
     }
     async function run_internal_savepoint(save_point_name: string, savepoint_callback: TransactionCallback) {
-      await run_internal_transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
+      await run_internal_transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`, true);
 
       try {
         let result = await savepoint_callback(transaction_sql);

@@ -1682,36 +1682,32 @@ impl<'a> CopyFileWindows<'a> {
     /// many bytes were written before resolving the promise.
     fn stat_destination_after_copy(&mut self) {
         let mut pathbuf = PathBuffer::uninit();
-        let path_ptr: *const core::ffi::c_char = match &self
-            .destination_file_store
-            .data
-            .as_file()
-            .pathlike
-        {
-            PathOrFileDescriptor::Path(_) => self
-                .destination_file_store
-                .data
-                .as_file()
-                .pathlike
-                .path()
-                .slice_z(&mut pathbuf)
-                .as_ptr(),
-            PathOrFileDescriptor::Fd(fd) => {
-                // copyfile() already resolved this fd to a path; re-derive it.
-                match bun_sys::get_fd_path(*fd, &mut pathbuf) {
-                    Ok(out) => {
-                        let len = out.len();
-                        pathbuf[len] = 0;
-                        // SAFETY: pathbuf[len] == 0 written above
-                        bun_core::ZStr::from_buf(&pathbuf[..], len).as_ptr()
-                    }
-                    Err(_) => {
-                        self.on_complete(0);
-                        return;
+        let path_ptr: *const core::ffi::c_char =
+            match &self.destination_file_store.data.as_file().pathlike {
+                PathOrFileDescriptor::Path(_) => self
+                    .destination_file_store
+                    .data
+                    .as_file()
+                    .pathlike
+                    .path()
+                    .slice_z(&mut pathbuf)
+                    .as_ptr(),
+                PathOrFileDescriptor::Fd(fd) => {
+                    // copyfile() already resolved this fd to a path; re-derive it.
+                    match bun_sys::get_fd_path(*fd, &mut pathbuf) {
+                        Ok(out) => {
+                            let len = out.len();
+                            pathbuf[len] = 0;
+                            // SAFETY: pathbuf[len] == 0 written above
+                            bun_core::ZStr::from_buf(&pathbuf[..], len).as_ptr()
+                        }
+                        Err(_) => {
+                            self.on_complete(0);
+                            return;
+                        }
                     }
                 }
-            }
-        };
+            };
 
         let loop_ = self.event_loop.uv_loop();
         self.io_request.deinit();

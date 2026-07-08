@@ -635,25 +635,24 @@ impl ClientSession {
             self.write_window_update(0, self.conn_unacked_bytes);
             self.conn_unacked_bytes = 0;
         }
-        // Collect (id, unacked) pairs before mutating self.
-        let mut updates: Vec<(u32, u32)> = Vec::new();
-        for &s in self.streams.values() {
-            let s = stream_mut(s);
-            if s.unacked_bytes < threshold || s.remote_closed() {
-                continue;
-            }
-            if s.client_ref()
-                .is_some_and(|c| c.signals.is_receive_paused())
-            {
-                continue;
-            }
-            updates.push((s.id, s.unacked_bytes));
-            s.unacked_bytes = 0;
-        }
-        for (id, unacked) in updates {
+        for i in 0..self.streams.count() {
+            let s = self.streams.values()[i];
+            let (id, unacked) = {
+                let s = stream_mut(s);
+                if s.unacked_bytes < threshold || s.remote_closed() {
+                    continue;
+                }
+                if s.client_ref()
+                    .is_some_and(|c| c.signals.is_receive_paused())
+                {
+                    continue;
+                }
+                let update = (s.id, s.unacked_bytes);
+                s.unacked_bytes = 0;
+                update
+            };
             self.write_window_update(id, unacked);
         }
-        // PERF: could iterate and write in one pass; profile if extra Vec matters.
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {

@@ -1,20 +1,20 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunExe, bunEnv as env, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness.js";
+import { bunExe, bunEnv as env, nodeModulesPackages, tempDir, TestRegistry } from "harness.js";
 import { join } from "path";
 
-let verdaccio = new VerdaccioRegistry();
+let registry = new TestRegistry();
 
 beforeAll(async () => {
-  await verdaccio.start();
+  await registry.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
+  registry.stop();
 });
 
 test("basic", async () => {
-  const { packageDir } = await verdaccio.createTestDir({
+  const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "hoisted" },
     files: join(import.meta.dir, "pnpm/basic"),
   });
@@ -58,7 +58,7 @@ test("basic", async () => {
 });
 
 test("version is number with dot", async () => {
-  const { packageDir } = await verdaccio.createTestDir({
+  const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "hoisted" },
     files: join(import.meta.dir, "pnpm/version-number-dot"),
   });
@@ -79,7 +79,7 @@ test("version is number with dot", async () => {
 
 describe.todo("bin", () => {
   test("manifests are fetched for bins", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/bin-manifest-fetching"),
     });
@@ -88,13 +88,13 @@ describe.todo("bin", () => {
 
 describe.todo("peers", () => {
   test("peers basic", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/peers-basic"),
     });
   });
   test("workspaces with peers", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/peers-workspaces"),
     });
@@ -103,7 +103,7 @@ describe.todo("peers", () => {
 
 describe.todo("patched packages", () => {
   test("patches are detected and migrated correctly", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/patched-packages"),
     });
@@ -112,13 +112,13 @@ describe.todo("patched packages", () => {
 
 describe("folder dependencies", () => {
   test.todo("basic", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/folder-dependencies-basic"),
     });
   });
   test("links to the root package are resolved correctly", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/root-package-link-resolution"),
     });
@@ -164,13 +164,13 @@ describe("folder dependencies", () => {
 
 describe.todo("overrides", () => {
   test("basic", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/overrides-basic"),
     });
   });
   test("accross workspaces", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/overrides-workspaces"),
     });
@@ -183,19 +183,19 @@ test.todo("from npm", async () => {
 
 describe.todo("workspaces", async () => {
   test("basic", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/workspaces-basic"),
     });
   });
   test("workspace dependencies", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/workspaces-dependencies"),
     });
   });
   test("catalogs, peers, and workspaces", async () => {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({
+    const { packageDir, packageJson } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/workspaces-catalogs-peers"),
     });

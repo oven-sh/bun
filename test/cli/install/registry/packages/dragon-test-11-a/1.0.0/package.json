@@ -1,0 +1,12 @@
+{
+    "name": "dragon-test-11-a",
+    "version": "1.0.0",
+    "dependencies": {
+        "dragon-test-11-b": "1.0.0"
+    },
+    "peerDependenciesMeta": {
+      "does-not-matter": {
+        "optional": true
+      }
+    }
+}

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
-  VerdaccioRegistry,
+  TestRegistry,
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
@@ -14,16 +14,16 @@ import {
 } from "harness";
 import { join, sep } from "path";
 
-var verdaccio = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  await verdaccio.start();
+  await registry.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
+  registry.stop();
 });
 
 function splitErrLines(err: string): string[] {
@@ -65,7 +65,7 @@ async function setupTest(): Promise<TestCtx> {
   await acquireSlot();
   let released = false;
   try {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
     const env: Record<string, string> = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
@@ -295,13 +295,13 @@ test.concurrent("default trusted dependencies require the canonical registry tar
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
+      return fetch(`http://localhost:${registry.port}${url.pathname}${url.search}`, {
         method: req.method,
         headers: req.headers,
       });
     },
   });
-  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+  const canonicalUrl = `http://localhost:${registry.port}/electron/-/electron-1.0.0.tgz`;
   expect(lockfile).toContain(canonicalUrl);
   await writeFile(
     lockfilePath,
@@ -343,7 +343,7 @@ test.concurrent("binary lockfile trusted dependency entries require an exact nam
   const trustedName = "pkg-xjd";
   const colliderName = "pkg-ztd";
 
-  await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+  await registry.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
 
   const colliderPath = join(packageDir, "collider");
   await mkdir(colliderPath, { recursive: true });
@@ -559,7 +559,7 @@ test.concurrent(
     // that happens to match an entry in the root's `trustedDependencies` must not
     // grant lifecycle-script trust to a tarball/git/folder package the root never
     // declared itself.
-    const tarballUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+    const tarballUrl = `http://localhost:${registry.port}/electron/-/electron-1.0.0.tgz`;
     const middleDir = join(packageDir, "middle");
     await mkdir(middleDir, { recursive: true });
     await writeFile(
@@ -704,7 +704,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
@@ -762,7 +762,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall exists!");
       expect(await file(join(packageDir, "install.txt")).text()).toBe("install exists!");
@@ -804,7 +804,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       err = await stderr.text();
       out = await stdout.text();
@@ -908,7 +908,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
@@ -974,7 +974,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("install a dependency with lifecycle scripts, then add to trusted dependencies and install again", async () => {
@@ -1019,7 +1019,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
       expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
@@ -1063,7 +1063,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("Checked 1 install across 2 packages (no changes)"),
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
@@ -1112,7 +1112,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       const what_bin_bins = !isWindows ? ["what-bin"] : ["what-bin.bunx", "what-bin.exe"];
@@ -1139,7 +1139,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lock"));
@@ -1175,7 +1175,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
@@ -1200,7 +1200,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
@@ -1238,7 +1238,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
@@ -1283,7 +1283,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       await rm(join(packageDir, "node_modules"), { force: true, recursive: true });
       await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
@@ -1309,7 +1309,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("INIT_CWD is set to the correct directory", async () => {
@@ -1369,7 +1369,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir);
       expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir);
@@ -1405,7 +1405,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = await stderr.text();
       expect(err).toContain("hello");
       expect(await exited).toBe(1);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       const out = await stdout.text();
       expect(out).toEqual(expect.stringContaining("bun install v1."));
@@ -1436,7 +1436,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       expect(await exited).toBe(1);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await stdout.text()).toEqual(expect.stringContaining("bun install v1."));
       const err = await stderr.text();
@@ -1483,7 +1483,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("--ignore-scripts should skip lifecycle scripts", async () => {
@@ -1525,7 +1525,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
@@ -1567,7 +1567,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules/binding-gyp-scripts/build.node"))).toBeTrue();
     });
@@ -1611,7 +1611,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeFalse();
 
@@ -1634,7 +1634,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
 
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
     });
@@ -1679,7 +1679,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
 
@@ -1695,7 +1695,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }));
 
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
@@ -1745,7 +1745,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
@@ -1791,7 +1791,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "1 package installed",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await exists(join(packageDir, "build.node"))).toBeFalse();
       });
@@ -1838,7 +1838,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "prepare.txt"))).toBeFalse();
@@ -1875,7 +1875,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
 
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "prepare.txt"))).toBeTrue();
@@ -1932,7 +1932,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     async function createPackagesWithScripts(
@@ -2012,7 +2012,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "4 packages installed",
       ]);
       expect(exitCode).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("stress test", async () => {
@@ -2049,7 +2049,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
 
       expect(exitCode).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("it should install and use correct binary version", async () => {
@@ -2100,7 +2100,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
         "what-bin@1.5.0",
@@ -2147,7 +2147,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const firstLockfile = await (
         await file(join(packageDir, "bun.lock")).text()
       ).replaceAll(/localhost:\d+/g, "localhost:1234");
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
         "what-bin@1.0.0",
@@ -2185,7 +2185,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         await file(join(packageDir, "bun.lock")).text()
       ).replaceAll(/localhost:\d+/g, "localhost:1234");
       expect(firstLockfile).toEqual(secondLockfile);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("node-gyp should always be available for lifecycle scripts", async () => {
@@ -2221,7 +2221,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // if node-gyp isn't available, it would return a non-zero exit code
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -2265,7 +2265,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).not.toContain("Blocked");
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("bun pm ls --trusted uses default trusted list when trustedDependencies is not set", async () => {
@@ -2410,7 +2410,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
@@ -2460,7 +2460,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
@@ -2510,7 +2510,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
@@ -2739,7 +2739,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
-      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+      await registry.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
 
       await writeFile(
         packageJson,
@@ -2780,7 +2780,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
 
@@ -2817,7 +2817,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     });
@@ -2852,7 +2852,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         ]);
 
         await runBunInstall(testEnv, packageDir);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         const results = await Promise.all([
           exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin")),
@@ -3241,7 +3241,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "2 packages installed",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
         expect(await file(packageJson).json()).toEqual({
@@ -3274,7 +3274,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
       });
 
       test("existing trustedDependencies, removing trustedDependencies", async () => {
@@ -3316,7 +3316,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "2 packages installed",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
         expect(await file(packageJson).json()).toEqual({
@@ -3361,7 +3361,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await file(packageJson).json()).toEqual({
           name: "foo",
@@ -3410,7 +3410,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "1 package installed",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
         expect(await file(packageJson).json()).toEqual({
@@ -3457,7 +3457,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "Checked 1 install across 2 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
@@ -3499,7 +3499,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
@@ -3540,7 +3540,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("bun pm trust and untrusted on missing package", async () => {
@@ -3583,7 +3583,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       // remove uses-what-bin from node_modules, bun pm trust and untrusted should handle missing package
       await rm(join(packageDir, "node_modules", "uses-what-bin"), { recursive: true, force: true });
@@ -3629,7 +3629,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           const { packageDir, packageJson, env } = ctx;
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-          await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+          await registry.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
           await writeFile(
             packageJson,
             JSON.stringify({
@@ -3667,7 +3667,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             "",
           ]);
           expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+          assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
           expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
 
@@ -3834,7 +3834,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
 
         expect(await proc.exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
@@ -3866,7 +3866,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
 
         expect(await exited).toBe(0);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
 
@@ -3937,7 +3937,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
 
     test("with a package", async () => {
@@ -3995,7 +3995,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
   });
 }

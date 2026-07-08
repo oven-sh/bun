@@ -1,0 +1,7 @@
+{
+  "name": "one-fixed-dep-with-types",
+  "version": "1.0.0",
+  "dependencies": {
+      "is-number": "1.0.0"
+  }
+}

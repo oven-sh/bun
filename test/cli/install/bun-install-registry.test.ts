@@ -16,12 +16,12 @@ import {
   runBunUpdate,
   stderrForInstall,
   tempDirWithFiles,
+  TestRegistry,
   tls,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
   toMatchNodeModulesAt,
-  VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
 import { join, resolve } from "path";
@@ -33,7 +33,7 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var registry: VerdaccioRegistry;
+var registry: TestRegistry;
 var port: number;
 var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
@@ -42,12 +42,14 @@ var packageJson: string;
 let users: Record<string, string> = {};
 
 setDefaultTimeout(1000 * 60 * 5);
-registry = new VerdaccioRegistry();
-port = registry.port;
+registry = new TestRegistry();
 await registry.start();
+port = registry.port;
+// The packument lists 1.0.0 but the registry cannot serve its tarball,
+// like a registry whose object store lost the blob.
+registry.define("missing-tarball", { "1.0.0": { tarball: null } });
 
-afterAll(async () => {
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+afterAll(() => {
   registry.stop();
 });
 
@@ -55,8 +57,6 @@ beforeEach(async () => {
   ({ packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
   }));
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
@@ -519,7 +519,8 @@ describe("whoami", async () => {
     expect(await exited).toBe(1);
   });
   test("invalid token", async () => {
-    // create the user and provide an invalid token
+    // create the user and provide an invalid token. registry.npmjs.org
+    // answers `/-/whoami` with a 401 when the credentials are bad.
     const token = await generateRegistryUser("invalid-token", "invalid-token");
     const bunfig = `
     [install]
@@ -540,7 +541,34 @@ describe("whoami", async () => {
     const out = await stdout.text();
     expect(out).toBeEmpty();
     const err = await stderr.text();
-    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
+    expect(err).toBe(
+      `\n401 Unauthorized: http://localhost:${port}/-/whoami\n\n - unauthorized: invalid bearer token\n`,
+    );
+    expect(await exited).toBe(1);
+  });
+  test("a 200 with no username means the registry did not authenticate us", async () => {
+    // Some registries (verdaccio) answer `/-/whoami` with a 200 and an
+    // empty document instead of a 401 when the token is invalid.
+    const token = await generateRegistryUser("whoami-empty-200", "whoami-empty-200");
+    using _ = registry.intercept(req => (new URL(req.url).pathname === "/-/whoami" ? Response.json({}) : undefined));
+    const bunfig = `
+    [install]
+    cache = false
+    registry = { url = "http://localhost:${port}/", token = "${token}" }`;
+    await rm(join(packageDir, "bunfig.toml"));
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await stdout.text()).toBeEmpty();
+    expect(await stderr.text()).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
     expect(await exited).toBe(1);
   });
 });

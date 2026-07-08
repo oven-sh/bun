@@ -1,0 +1,7 @@
+{
+    "name": "@another-scope/file-dep",
+    "version": "1.0.0",
+    "dependencies": {
+        "@scoped/files": "file:./the-files"
+    }
+}

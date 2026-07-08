@@ -1,0 +1,10 @@
+{
+    "name": "one-dep-scripted",
+    "version": "1.0.0",
+    "dependencies": {
+        "has-bin-entries": "1.0.0"
+    },
+    "scripts": {
+        "install": "has-bin-entries"
+    }
+}

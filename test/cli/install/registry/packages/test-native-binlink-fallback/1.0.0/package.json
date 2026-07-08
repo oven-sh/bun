@@ -1,0 +1,10 @@
+{
+  "name": "test-native-binlink-fallback",
+  "version": "1.0.0",
+  "bin": {
+    "fallback-cmd": "cli.js"
+  },
+  "optionalDependencies": {
+    "test-native-binlink-fallback-target": "1.0.0"
+  }
+}

@@ -1,36 +1,38 @@
-import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env } from "harness";
+import { spawn, write } from "bun";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+import { access } from "fs/promises";
+import { NpmRegistry, bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  requested,
-  root_url,
-  setHandler,
-} from "./dummy.registry.js";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+let registry: NpmRegistry;
+let root_url: string;
+let package_dir: string;
+
 beforeEach(async () => {
-  await dummyBeforeEach();
+  registry = await new NpmRegistry().start();
+  root_url = registry.url.slice(0, -1);
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+`,
+  );
 });
-afterEach(dummyAfterEach);
+
+afterEach(() => {
+  registry.stop();
+});
 
 it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile-only using %s", async lockfile => {
   const isLockb = lockfile === "bun.lockb";
 
-  const urls: string[] = [];
-  const registry = { "0.0.1": { as: "0.0.1" }, latest: "0.0.1" };
+  registry.define("baz", { "0.0.1": {} });
 
-  setHandler(dummyRegistry(urls, registry));
-
-  await writeFile(
+  await write(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "foo",
@@ -43,14 +45,14 @@ it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile
   const cmd = [bunExe(), "install", "--lockfile-only"];
 
   if (!isLockb) {
-    // the default beforeEach disables --save-text-lockfile in the dummy registry, so we should restore
-    // default behaviour
-    await writeFile(
+    // the default bunfig above disables --save-text-lockfile, so restore
+    // default behaviour for the bun.lock case
+    await write(
       join(package_dir, "bunfig.toml"),
       `
       [install]
       cache = false
-      registry = "${root_url}/"
+      registry = "${registry.url}"
       `,
     );
   }
@@ -76,8 +78,8 @@ it.each(["bun.lockb", "bun.lock"])("should not download tarballs with --lockfile
     expect.stringContaining(`Saved ${lockfile}`),
   ]);
 
-  expect(urls.sort()).toEqual([`${root_url}/baz`]);
-  expect(requested).toBe(1);
+  expect(registry.urls.sort()).toEqual([`${root_url}/baz`]);
+  expect(registry.requestCount).toBe(1);
 
   await access(join(package_dir, lockfile));
 });

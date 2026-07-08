@@ -1,0 +1,7 @@
+{
+    "name": "dep-loop-entry",
+    "version": "1.0.0",
+    "dependencies": {
+        "dep-loop-exit": "1.0.0"
+    }
+}

@@ -1,44 +1,21 @@
 import { file } from "bun";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunEnv as env, runBunInstall } from "harness";
+import { TestRegistry, bunEnv, bunEnv as env, runBunInstall } from "harness";
 import { join } from "path";
 
-var registry = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
-// Two tests below resolve a real package (`no-deps`) from Verdaccio. The
-// registry runs as a forked child and, in some sandboxed CI environments, can
-// fail to actually serve packages even after `start()` returns. Gate those two
-// on whether the registry can serve the `no-deps` manifest — the exact thing
-// they install — so they run wherever the registry works and skip (rather than
-// fail with `ConnectionRefused`) where it doesn't. The third test is offline
-// (workspace-only) and always runs.
-// Start fire-and-forget: `start()` only settles on its IPC "ready" message (or
-// a spawn error), so a child that exits without signalling — the sandbox case
-// this gating handles — would leave an awaited `start()` hanging forever and
-// drop every test in this file. The bounded poll below is the sole readiness
-// signal.
-let registryCanServe = false;
-registry.start().catch(() => {});
-const registryDeadline = Date.now() + 30_000;
-while (Date.now() < registryDeadline) {
-  try {
-    const res = await fetch(`${registry.registryUrl()}no-deps`, { signal: AbortSignal.timeout(2_000) });
-    await res.arrayBuffer();
-    if (res.ok) {
-      registryCanServe = true;
-      break;
-    }
-  } catch {}
-  await Bun.sleep(250);
-}
+beforeAll(async () => {
+  await registry.start();
+});
 
 afterAll(() => {
   registry.stop();
 });
 
 describe("configVersion", () => {
-  test.skipIf(!registryCanServe)("new projects use current config version", async () => {
+  test("new projects use current config version", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -82,7 +59,7 @@ describe("configVersion", () => {
     `);
   });
 
-  test.skipIf(!registryCanServe)("new monorepos use isolated linker", async () => {
+  test("new monorepos use isolated linker", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": JSON.stringify({

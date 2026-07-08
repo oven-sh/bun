@@ -1,0 +1,8 @@
+{
+    "name": "no-deps-nested-postinstall",
+    "version": "1.0.0",
+    "scripts": {
+        "my-own-script": "node scripts/postinstall",
+        "postinstall": "run my-own-script"
+    }
+}

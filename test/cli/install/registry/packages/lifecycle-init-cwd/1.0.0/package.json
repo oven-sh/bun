@@ -1,0 +1,7 @@
+{
+  "name": "lifecycle-init-cwd",
+  "version": "1.0.0",
+  "scripts": {
+    "install": "bun install.js"
+  }
+}

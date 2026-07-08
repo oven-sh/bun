@@ -1,10 +1,10 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, TestRegistry } from "harness";
 import { join } from "path";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

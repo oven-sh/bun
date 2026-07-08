@@ -1,0 +1,14 @@
+{
+  "name": "npm-registry",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An in-process, spec-compliant npm registry for bun's test suite.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "start": "bun ./cli.ts"
+  }
+}

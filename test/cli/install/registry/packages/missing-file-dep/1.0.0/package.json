@@ -1,0 +1,7 @@
+{
+    "name": "missing-file-dep",
+    "version": "1.0.0",
+    "dependencies": {
+        "files": "file:./missing-folder"
+    }
+}

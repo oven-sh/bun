@@ -1,0 +1,9 @@
+{
+  "name": "bundled-true",
+  "version": "1.0.0",
+  "dependencies": {
+    "no-deps": "1.0.0",
+    "one-dep": "1.0.0"
+  },
+  "bundleDependencies": true
+}

@@ -1,0 +1,1 @@
+require('fs').writeFileSync('postinstall.txt', 'success');

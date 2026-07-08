@@ -1,0 +1,9 @@
+{
+  "name": "optional-peer-deps-implicit",
+  "version": "1.0.0",
+  "peerDependenciesMeta": {
+    "no-deps": {
+      "optional": true
+    }
+  }
+}

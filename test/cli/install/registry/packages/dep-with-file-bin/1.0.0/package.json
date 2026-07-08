@@ -1,0 +1,5 @@
+{
+  "name": "dep-with-file-bin",
+  "version": "1.0.0",
+  "bin": "./file-bin"
+}

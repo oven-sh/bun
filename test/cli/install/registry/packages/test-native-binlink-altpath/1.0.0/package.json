@@ -1,0 +1,13 @@
+{
+  "name": "test-native-binlink-altpath",
+  "version": "1.0.0",
+  "bin": {
+    "altpath-cmd": "bin/altpath-cmd.exe"
+  },
+  "optionalDependencies": {
+    "test-native-binlink-altpath-target": "1.0.0"
+  },
+  "scripts": {
+    "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+  }
+}

@@ -1,0 +1,10 @@
+{
+    "name": "dragon-test-3-a",
+    "version": "1.0.0",
+    "dependencies": {
+        "dragon-test-3-b": "1.0.0"
+    },
+    "peerDependencies": {
+        "no-deps": "*"
+    }
+}

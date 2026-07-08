@@ -1,0 +1,10 @@
+{
+  "name": "mismatched-peer-deps-lvl1",
+  "version": "1.0.0",
+  "dependencies": {
+    "mismatched-peer-deps-lvl2": "*"
+  },
+  "peerDependencies": {
+    "no-deps": "<=1.0.1"
+  }
+}

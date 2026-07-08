@@ -1,0 +1,7 @@
+{
+    "name": "one-deep1-dep-bins",
+    "version": "1.0.0",
+    "dependencies": {
+        "one-fixed-dep-bins": "1.0.0"
+    }
+}

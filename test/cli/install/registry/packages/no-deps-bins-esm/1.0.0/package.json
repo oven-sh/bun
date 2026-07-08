@@ -1,0 +1,6 @@
+{
+    "name": "no-deps-bins-esm",
+    "version": "1.0.0",
+    "type": "module",
+    "bin": "./index.mjs"
+}

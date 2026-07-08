@@ -1,31 +1,37 @@
-import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { spawn, write } from "bun";
+import { afterEach, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { NpmRegistry, bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  requested,
-  root_url,
-  setHandler,
-} from "./dummy.registry";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+let registry: NpmRegistry;
+let root_url: string;
+let package_dir: string;
+
 beforeEach(async () => {
-  await dummyBeforeEach();
+  registry = await new NpmRegistry().start();
+  root_url = registry.url.slice(0, -1);
+  package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+`,
+  );
 });
-afterEach(dummyAfterEach);
+
+afterEach(() => {
+  registry.stop();
+});
 
 it("should list top-level dependency", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -61,8 +67,8 @@ it("should list top-level dependency", async () => {
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
   }
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls"],
@@ -78,12 +84,13 @@ it("should list top-level dependency", async () => {
 `);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
-  expect(requested).toBe(2);
+  expect(registry.requestCount).toBe(2);
 });
 
 it("should list all dependencies", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -119,8 +126,8 @@ it("should list all dependencies", async () => {
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
   }
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all"],
@@ -137,12 +144,13 @@ it("should list all dependencies", async () => {
 `);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
-  expect(requested).toBe(2);
+  expect(registry.requestCount).toBe(2);
 });
 
 it("should list top-level aliased dependency", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -178,8 +186,8 @@ it("should list top-level aliased dependency", async () => {
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
   }
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls"],
@@ -195,12 +203,13 @@ it("should list top-level aliased dependency", async () => {
 `);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
-  expect(requested).toBe(2);
+  expect(registry.requestCount).toBe(2);
 });
 
 it("should list aliased dependencies", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -236,8 +245,8 @@ it("should list aliased dependencies", async () => {
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
   }
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all"],
@@ -254,12 +263,13 @@ it("should list aliased dependencies", async () => {
 `);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
-  expect(requested).toBe(2);
+  expect(registry.requestCount).toBe(2);
 });
 
 it("should list only trusted dependencies with --trusted", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
   await writeFile(
     join(package_dir, "package.json"),
@@ -335,7 +345,8 @@ it("should list only trusted dependencies with --trusted", async () => {
 
 it("should list only trusted dependencies with --all --trusted", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
   await writeFile(
     join(package_dir, "package.json"),
@@ -395,7 +406,8 @@ it("should list only trusted dependencies with --all --trusted", async () => {
 
 it("should list trusted transitive dependencies under untrusted parents with --all --trusted (isolated)", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   // Isolated linker gives every package its own nested node_modules, so the
   // trusted transitive dep lives under an untrusted parent folder.
   await writeFile(
@@ -457,7 +469,8 @@ it("should list trusted transitive dependencies under untrusted parents with --a
 
 it("should list nothing with --trusted when no dependencies are trusted", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
   await writeFile(
     join(package_dir, "package.json"),
@@ -502,7 +515,8 @@ it("should list nothing with --trusted when no dependencies are trusted", async 
 
 it("should remove all cache", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -542,8 +556,8 @@ it("should remove all cache", async () => {
     expect(err).toContain("Saved lockfile");
     expect(await exited).toBe(0);
   }
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar/-/bar-0.0.2.tgz`]);
+  expect(registry.requestCount).toBe(2);
   expect(await readdirSorted(cache_dir)).toContain("bar");
 
   const {
@@ -591,20 +605,23 @@ it("bun pm migrate", async () => {
 
   cpSync(join(import.meta.dir, "migration/contoso-test"), test_dir, { recursive: true });
 
-  const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "pm", "migrate", "--force"],
-    cwd: test_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  expect(exitCode).toBe(0);
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "migrate", "--force"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(exitCode).toBe(0);
 
-  expect(stdout.toString("utf-8")).toBe("");
-  expect(stderr.toString("utf-8")).toEndWith("migrated lockfile from package-lock.json\n");
+    expect(out).toBe("");
+    expect(err).toEndWith("migrated lockfile from package-lock.json\n");
+  }
 
-  const hashExec = Bun.spawnSync({
+  const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "hash"],
     cwd: test_dir,
     stdout: "pipe",
@@ -612,8 +629,9 @@ it("bun pm migrate", async () => {
     stderr: "pipe",
     env: bunEnv,
   });
-  expect(hashExec.exitCode).toBe(0);
-  const hash = hashExec.stdout.toString("utf-8").trim();
+  const [hashOut, , hashExitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(hashExitCode).toBe(0);
+  const hash = hashOut.trim();
 
   expect(hash).toMatchSnapshot();
 });
@@ -715,7 +733,8 @@ test.each([
   },
 ])("$name", async ({ cmd, packageName, dependencies, expectedOutput, checkReservationMessage }) => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -767,7 +786,8 @@ test.each([
 
 test("bun list --all shows full dependency tree", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  registry.intercept(req => void urls.push(req.url));
+  registry.define("bar", { "0.0.2": {} });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({

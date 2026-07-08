@@ -1,0 +1,7 @@
+{
+  "name": "has-missing-optional-dep",
+  "version": "1.0.0",
+  "optionalDependencies": {
+    "this-package-does-not-exist-in-the-registry": "||"
+  }
+}

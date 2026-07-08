@@ -1,0 +1,9 @@
+{
+  "name": "no-deps-scripted-empty",
+  "version": "1.0.0",
+  "scripts": {
+      "preinstall": "",
+      "install": "",
+      "postinstall": ""
+  }
+}

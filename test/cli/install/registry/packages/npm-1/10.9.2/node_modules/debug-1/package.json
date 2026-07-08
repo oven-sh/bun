@@ -1,0 +1,7 @@
+{
+    "name": "debug-1",
+    "version": "4.4.0",
+    "dependencies": {
+        "ms-1": "^2.1.3"
+    }
+}

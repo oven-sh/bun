@@ -4,7 +4,7 @@ exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0001 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -16,7 +16,7 @@ exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0003 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -36,7 +36,7 @@ exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0006 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -56,7 +56,7 @@ exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0008 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -80,8 +80,8 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0011 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -89,7 +89,7 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0012 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -97,8 +97,8 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0013 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -106,7 +106,7 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0014 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -114,7 +114,7 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0015 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -127,8 +127,8 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0016 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -141,7 +141,7 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0017 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -154,8 +154,8 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0018 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -168,7 +168,7 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0019 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -181,7 +181,7 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0020 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -249,7 +249,7 @@ exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0031 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -261,7 +261,7 @@ exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0033 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -281,7 +281,7 @@ exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0036 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -301,7 +301,7 @@ exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0038 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -325,8 +325,8 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0041 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -334,7 +334,7 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0042 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -342,8 +342,8 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0043 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -351,7 +351,7 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0044 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -359,7 +359,7 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0045 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -372,8 +372,8 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0046 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -386,7 +386,7 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0047 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -399,8 +399,8 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0048 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -413,7 +413,7 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0049 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -426,7 +426,7 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0050 (without modules): requested-tarballs: install without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -499,9 +499,9 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0061 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -523,9 +523,9 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0063 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -557,9 +557,9 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0066 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -583,9 +583,9 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0068 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -618,10 +618,10 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0071 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -634,7 +634,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0072 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -647,10 +647,10 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0073 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -663,7 +663,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0074 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -676,7 +676,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0075 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -691,10 +691,10 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0076 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -709,7 +709,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0077 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -724,10 +724,10 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0078 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -742,7 +742,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0079 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -757,7 +757,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 
 exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0080 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -865,9 +865,9 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0091 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -889,9 +889,9 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0093 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -923,9 +923,9 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0096 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -949,9 +949,9 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0098 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -984,10 +984,10 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0101 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1000,7 +1000,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0102 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1013,10 +1013,10 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0103 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1029,7 +1029,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0104 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1042,7 +1042,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0105 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1057,10 +1057,10 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0106 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1075,7 +1075,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0107 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1090,10 +1090,10 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0108 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1108,7 +1108,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0109 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1123,7 +1123,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0110 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1232,9 +1232,9 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0121 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1258,9 +1258,9 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0123 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1294,9 +1294,9 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0126 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1320,9 +1320,9 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0128 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1356,10 +1356,10 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0131 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1373,7 +1373,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0132 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1387,10 +1387,10 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0133 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1404,7 +1404,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0134 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1418,7 +1418,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0135 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1433,10 +1433,10 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0136 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1451,7 +1451,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0137 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1466,10 +1466,10 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0138 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1484,7 +1484,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0139 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1499,7 +1499,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 
 exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0140 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1613,9 +1613,9 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0151 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1639,9 +1639,9 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0153 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1675,9 +1675,9 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0156 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1701,9 +1701,9 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0158 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -1737,10 +1737,10 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0161 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1754,7 +1754,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0162 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1768,10 +1768,10 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0163 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1785,7 +1785,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0164 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1799,7 +1799,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0165 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1814,10 +1814,10 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0166 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1832,7 +1832,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0167 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1847,10 +1847,10 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0168 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1865,7 +1865,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0169 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1880,7 +1880,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 
 exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0170 (without modules): requested-tarballs: install with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -1992,7 +1992,7 @@ exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0181 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2012,7 +2012,7 @@ exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0183 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2040,7 +2040,7 @@ exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0186 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2060,7 +2060,7 @@ exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0188 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2089,8 +2089,8 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0191 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2103,7 +2103,7 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0192 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2116,8 +2116,8 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0193 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2130,7 +2130,7 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0194 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2143,7 +2143,7 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0195 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2156,8 +2156,8 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0196 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2170,7 +2170,7 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0197 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2183,8 +2183,8 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0198 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2197,7 +2197,7 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0199 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2210,7 +2210,7 @@ exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0200 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2302,7 +2302,7 @@ exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0211 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2322,7 +2322,7 @@ exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0213 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2350,7 +2350,7 @@ exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0216 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2370,7 +2370,7 @@ exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0218 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2399,8 +2399,8 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0221 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2413,7 +2413,7 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0222 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2426,8 +2426,8 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0223 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2440,7 +2440,7 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0224 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2453,7 +2453,7 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0225 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2466,8 +2466,8 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0226 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2480,7 +2480,7 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0227 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2493,8 +2493,8 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0228 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2507,7 +2507,7 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0229 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2520,7 +2520,7 @@ exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0230 (without modules): requested-tarballs: update without args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2613,9 +2613,9 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0241 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2637,9 +2637,9 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0243 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2671,9 +2671,9 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0246 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2697,9 +2697,9 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0248 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -2732,10 +2732,10 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0251 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2748,7 +2748,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0252 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2761,10 +2761,10 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0253 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2777,7 +2777,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0254 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2790,7 +2790,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0255 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2805,10 +2805,10 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0256 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2823,7 +2823,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0257 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2838,10 +2838,10 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0258 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2856,7 +2856,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0259 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2871,7 +2871,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0260 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -2979,9 +2979,9 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0271 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3003,9 +3003,9 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0273 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3037,9 +3037,9 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0276 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3063,9 +3063,9 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0278 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3098,10 +3098,10 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0281 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3114,7 +3114,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0282 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3127,10 +3127,10 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0283 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3143,7 +3143,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0284 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3156,7 +3156,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0285 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3171,10 +3171,10 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0286 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3189,7 +3189,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0287 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3204,10 +3204,10 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0288 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3222,7 +3222,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0289 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3237,7 +3237,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0290 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3346,9 +3346,9 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0301 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3372,9 +3372,9 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0303 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3408,9 +3408,9 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0306 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3434,9 +3434,9 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0308 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3470,10 +3470,10 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0311 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3487,7 +3487,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0312 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3501,10 +3501,10 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0313 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3518,7 +3518,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0314 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3532,7 +3532,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0315 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3547,10 +3547,10 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0316 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3565,7 +3565,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0317 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3580,10 +3580,10 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0318 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3598,7 +3598,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0319 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3613,7 +3613,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0320 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3727,9 +3727,9 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0331 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3753,9 +3753,9 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0333 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3789,9 +3789,9 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0336 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3815,9 +3815,9 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0338 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -3851,10 +3851,10 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0341 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3868,7 +3868,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0342 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3882,10 +3882,10 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0343 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3899,7 +3899,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0344 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3913,7 +3913,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0345 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3928,10 +3928,10 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0346 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3946,7 +3946,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0347 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3961,10 +3961,10 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0348 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3979,7 +3979,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0349 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -3994,7 +3994,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0350 (without modules): requested-tarballs: update with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4107,9 +4107,9 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: tru
 
 exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0361 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4131,9 +4131,9 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: tru
 
 exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0363 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4165,9 +4165,9 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 
 exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0366 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4191,9 +4191,9 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 
 exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0368 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4226,10 +4226,10 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true)
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0371 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4242,7 +4242,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true)
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0372 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4255,10 +4255,10 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true)
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0373 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4271,7 +4271,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true)
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0374 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4284,7 +4284,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true)
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0375 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4299,10 +4299,10 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0376 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4317,7 +4317,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0377 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4332,10 +4332,10 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0378 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4350,7 +4350,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0379 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4365,7 +4365,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 
 exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0380 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4473,9 +4473,9 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: tr
 
 exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0391 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4497,9 +4497,9 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: tr
 
 exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0393 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4531,9 +4531,9 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 
 exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0396 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4557,9 +4557,9 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 
 exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0398 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4592,10 +4592,10 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0401 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4608,7 +4608,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0402 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4621,10 +4621,10 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0403 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4637,7 +4637,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0404 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4650,7 +4650,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0405 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4665,10 +4665,10 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0406 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4683,7 +4683,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0407 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4698,10 +4698,10 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0408 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4716,7 +4716,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0409 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4731,7 +4731,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 
 exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0410 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4840,9 +4840,9 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0421 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4866,9 +4866,9 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0423 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4902,9 +4902,9 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0426 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4928,9 +4928,9 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0428 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -4964,10 +4964,10 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0431 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4981,7 +4981,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0432 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -4995,10 +4995,10 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0433 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5012,7 +5012,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0434 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5026,7 +5026,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0435 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5041,10 +5041,10 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0436 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5059,7 +5059,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0437 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5074,10 +5074,10 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0438 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5092,7 +5092,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0439 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5107,7 +5107,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 
 exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0440 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5221,9 +5221,9 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0451 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5247,9 +5247,9 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0453 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5283,9 +5283,9 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0456 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5309,9 +5309,9 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0458 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5345,10 +5345,10 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0461 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5362,7 +5362,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0462 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5376,10 +5376,10 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0463 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5393,7 +5393,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0464 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5407,7 +5407,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0465 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5422,10 +5422,10 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0466 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5440,7 +5440,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0467 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5455,10 +5455,10 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0468 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5473,7 +5473,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0469 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5488,7 +5488,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 
 exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0470 (without modules): requested-tarballs: add with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5600,9 +5600,9 @@ exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0483 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5634,9 +5634,9 @@ exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0488 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5664,7 +5664,7 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0492 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5672,10 +5672,10 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0493 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5683,7 +5683,7 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0494 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5691,7 +5691,7 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0495 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5706,7 +5706,7 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0497 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5721,10 +5721,10 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0498 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5739,7 +5739,7 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0499 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5754,7 +5754,7 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0500 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5836,9 +5836,9 @@ exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0513 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5870,9 +5870,9 @@ exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0518 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -5900,7 +5900,7 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0522 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5908,10 +5908,10 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0523 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5919,7 +5919,7 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0524 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5927,7 +5927,7 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0525 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5942,7 +5942,7 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0527 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5957,10 +5957,10 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0528 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5975,7 +5975,7 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0529 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -5990,7 +5990,7 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0530 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6072,8 +6072,8 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0543 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -6103,8 +6103,8 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0548 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -6130,7 +6130,7 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0552 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6138,9 +6138,9 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0553 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6148,7 +6148,7 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0554 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6156,7 +6156,7 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0555 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6170,7 +6170,7 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0557 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6184,9 +6184,9 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0558 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6200,7 +6200,7 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0559 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6214,7 +6214,7 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0560 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6291,8 +6291,8 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0573 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -6322,8 +6322,8 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0578 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -6349,7 +6349,7 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0582 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6357,9 +6357,9 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0583 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6367,7 +6367,7 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0584 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6375,7 +6375,7 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0585 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6389,7 +6389,7 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0587 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6403,9 +6403,9 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0588 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6419,7 +6419,7 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0589 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6433,7 +6433,7 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0590 (without modules): requested-tarballs: remove with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6510,9 +6510,9 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exist
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0603 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -6544,9 +6544,9 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exist
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0608 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -6574,7 +6574,7 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0612 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6582,10 +6582,10 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0613 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6593,7 +6593,7 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0614 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6601,7 +6601,7 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0615 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6616,7 +6616,7 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0617 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6631,10 +6631,10 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0618 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6649,7 +6649,7 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0619 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6664,7 +6664,7 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0620 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6746,9 +6746,9 @@ exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exis
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0633 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -6780,9 +6780,9 @@ exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exis
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0638 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
 ]
 `;
 
@@ -6810,7 +6810,7 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0642 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6818,10 +6818,10 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0643 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6829,7 +6829,7 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0644 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6837,7 +6837,7 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0645 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6852,7 +6852,7 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0647 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6867,10 +6867,10 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0648 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/left-pad-1.3.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/left-pad/-/left-pad-1.3.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6885,7 +6885,7 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0649 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6900,7 +6900,7 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0650 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -6982,8 +6982,8 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.l
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0663 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -7013,8 +7013,8 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.l
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0668 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -7040,7 +7040,7 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0672 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7048,9 +7048,9 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0673 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7058,7 +7058,7 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0674 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7066,7 +7066,7 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0675 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7080,7 +7080,7 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0677 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7094,9 +7094,9 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0678 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7110,7 +7110,7 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0679 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7124,7 +7124,7 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0680 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7201,8 +7201,8 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0693 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -7232,8 +7232,8 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0698 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
 ]
 `;
 
@@ -7259,7 +7259,7 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0702 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7267,9 +7267,9 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0703 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7277,7 +7277,7 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0704 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7285,7 +7285,7 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0705 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7299,7 +7299,7 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0707 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7313,9 +7313,9 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0708 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-  "/test-security-scanner-1.0.0.tgz",
+  "/is-even/-/is-even-1.0.0.tgz",
+  "/is-odd/-/is-odd-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7329,7 +7329,7 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0709 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 
@@ -7343,7 +7343,7 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0710 (without modules): requested-tarballs: uninstall with args 1`] = `
 [
-  "/test-security-scanner-1.0.0.tgz",
+  "/test-security-scanner/-/test-security-scanner-1.0.0.tgz",
 ]
 `;
 

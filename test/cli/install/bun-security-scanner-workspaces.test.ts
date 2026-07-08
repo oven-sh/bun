@@ -1,21 +1,21 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { NpmRegistry, bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "node:path";
-import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
+let registry: NpmRegistry;
 let registryUrl: string;
 
 beforeAll(async () => {
-  registryUrl = await startRegistry(false);
-  const registry = getRegistry();
-  if (!registry) {
-    throw new Error("Registry not found");
-  }
-  registry.setScannerBehavior("none");
+  registry = await new NpmRegistry().start();
+  // `registry.url` has a trailing slash; every interpolation below appends its own.
+  registryUrl = registry.url.slice(0, -1);
+  registry.define("left-pad", { "1.3.0": {} });
+  registry.define("is-even", { "1.0.0": { dependencies: { "is-odd": "^1.0.0" } } });
+  registry.define("is-odd", { "1.0.0": { dependencies: { "is-even": "^1.0.0" } } });
 });
 
 afterAll(() => {
-  stopRegistry();
+  registry.stop();
 });
 
 describe.concurrent("security scanner workspaces", () => {

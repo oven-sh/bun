@@ -1,0 +1,7 @@
+{
+    "name": "node-gyp",
+    "version": "1.0.0",
+    "bin": {
+        "node-gyp": "./node-gyp.js"
+    }
+}

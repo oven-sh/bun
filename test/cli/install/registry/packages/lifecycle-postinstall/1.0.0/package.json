@@ -1,0 +1,7 @@
+{
+    "name": "lifecycle-postinstall",
+    "version": "1.0.0",
+    "scripts": {
+      "postinstall": "bun postinstall.js"
+    }
+  }

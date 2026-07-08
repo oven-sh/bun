@@ -1,0 +1,10 @@
+{
+  "name": "with-postinstall-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "with-postinstall-b": "^1.0.0"
+  },
+  "scripts": {
+    "postinstall": "node -e \"process.stdout.write(Number(new Date()).toString())\" >> output.json"
+  }
+}

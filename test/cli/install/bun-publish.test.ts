@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { exists, rm } from "fs/promises";
 import {
-  VerdaccioRegistry,
+  TestRegistry,
   bunExe,
   bunEnv as env,
   isWindows,
@@ -13,7 +13,7 @@ import {
 } from "harness";
 import { join } from "path";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -43,174 +43,87 @@ export async function publish(
 }
 
 describe("otp", async () => {
-  const mockRegistryFetch = function (opts: {
-    token: string;
-    setAuthHeader?: boolean;
-    otpFail?: boolean;
-    npmNotice?: boolean;
-    xLocalCache?: boolean;
-    expectedCI?: string;
-  }) {
-    return async function (req: Request) {
-      const { token, setAuthHeader = true, otpFail = false, npmNotice = false, xLocalCache = false } = opts;
-      if (req.url.includes("otp-pkg")) {
-        if (opts.expectedCI) {
-          expect(req.headers.get("user-agent")).toContain("ci/" + opts.expectedCI);
-        }
-        if (req.headers.get("npm-otp") === token) {
-          if (otpFail) {
-            return new Response(
-              JSON.stringify({
-                error: "You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
-              }),
-              { status: 401 },
-            );
-          } else {
-            return new Response("OK", { status: 200 });
-          }
-        } else {
-          const headers = new Headers();
-          if (setAuthHeader) headers.set("www-authenticate", "OTP");
-
-          // `bun publish` won't request a url from a message in the npm-notice header, but we
-          // can test that it's displayed
-          if (npmNotice) headers.set("npm-notice", `visit http://localhost:${this.port}/auth to login`);
-
-          // npm-notice will be ignored
-          if (xLocalCache) headers.set("x-local-cache", "true");
-
-          return new Response(
-            JSON.stringify({
-              // this isn't accurate, but we just want to check that finding this string works
-              mock: setAuthHeader ? "" : "one-time password",
-
-              authUrl: `http://localhost:${this.port}/auth`,
-              doneUrl: `http://localhost:${this.port}/done`,
-            }),
-            {
-              status: 401,
-              headers,
-            },
-          );
-        }
-      } else if (req.url.endsWith("auth")) {
-        expect.unreachable("url given to user, bun publish should not request");
-      } else if (req.url.endsWith("done")) {
-        // send a fake response saying the user has authenticated successfully with the auth url
-        return new Response(JSON.stringify({ token: token }), { status: 200 });
-      }
-
-      expect.unreachable("unexpected url");
-    };
-  };
-
-  for (const setAuthHeader of [true, false]) {
-    test("mock web login" + (setAuthHeader ? "" : " (without auth header)"), async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
-      const token = await registry.generateUser("otp" + (setAuthHeader ? "" : "noheader"), "otp");
-
-      using mockRegistry = Bun.serve({
-        port: 0,
-        fetch: mockRegistryFetch({ token }),
-      });
-
-      const bunfig = `
+  /**
+   * A registry of its own (each test shapes the OTP challenge
+   * differently), a user with 2FA enabled on it, and a project whose
+   * bunfig carries that user's token. `bun publish` defaults to
+   * `--auth-type=web`, so it resolves the challenge by polling the
+   * `doneUrl` the registry's 401 hands out — no stdin involved.
+   */
+  async function setupOtp(name: string, pkg: string, version: string) {
+    const mockRegistry = await new TestRegistry().start();
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const token = mockRegistry.addUser({ name, password: "otp", otp: "123456" });
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
       [install]
       cache = false
-      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
-      await Promise.all([
-        rm(join(registry.packagesPath, "otp-pkg-1"), { recursive: true, force: true }),
-        write(join(packageDir, "bunfig.toml"), bunfig),
-        write(
-          packageJson,
-          JSON.stringify({
-            name: "otp-pkg-1",
-            version: "2.2.2",
-            dependencies: {
-              "otp-pkg-1": "2.2.2",
-            },
-          }),
-        ),
-      ]);
+      registry = { url = "${mockRegistry.url}", token = "${token}" }`,
+      ),
+      write(packageJson, JSON.stringify({ name: pkg, version, dependencies: { [pkg]: version } })),
+    ]);
+    return { mockRegistry, packageDir };
+  }
 
-      const { out, err, exitCode } = await publish(env, packageDir);
+  for (const setAuthHeader of [true, false]) {
+    test("web login" + (setAuthHeader ? "" : " (without auth header)"), async () => {
+      // With no `www-authenticate: OTP` header, the client must detect
+      // the challenge from the "one-time pass" error message alone.
+      const { mockRegistry, packageDir } = await setupOtp(
+        "otp" + (setAuthHeader ? "" : "noheader"),
+        "otp-pkg-1",
+        "2.2.2",
+      );
+      await using _ = mockRegistry;
+      mockRegistry.otpChallenge = { wwwAuthenticate: setAuthHeader };
+
+      const { exitCode } = await publish(env, packageDir);
       expect(exitCode).toBe(0);
+      // The flow went through doneUrl, never through the human authUrl.
+      expect(mockRegistry.paths.some(p => p.startsWith("/-/auth/done/"))).toBeTrue();
+      expect(mockRegistry.paths.some(p => p.startsWith("/-/auth/web/"))).toBeFalse();
+      expect(Object.keys((await mockRegistry.packument("otp-pkg-1"))!.versions)).toEqual(["2.2.2"]);
     });
   }
 
   test("otp failure", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-    const token = await registry.generateUser("otp-fail", "otp");
-    using mockRegistry = Bun.serve({
-      port: 0,
-      fetch: mockRegistryFetch({ token, otpFail: true }),
-    });
+    const { mockRegistry, packageDir } = await setupOtp("otp-fail", "otp-pkg-2", "1.1.1");
+    await using _ = mockRegistry;
+    // Reject even the correct code, like an expired or already-used one.
+    mockRegistry.otpChallenge = { acceptOtp: false };
 
-    const bunfig = `
-      [install]
-      cache = false
-      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
-
-    await Promise.all([
-      rm(join(registry.packagesPath, "otp-pkg-2"), { recursive: true, force: true }),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-      write(
-        packageJson,
-        JSON.stringify({
-          name: "otp-pkg-2",
-          version: "1.1.1",
-          dependencies: {
-            "otp-pkg-2": "1.1.1",
-          },
-        }),
-      ),
-    ]);
-
-    const { out, err, exitCode } = await publish(env, packageDir);
-    expect(exitCode).toBe(1);
+    const { err, exitCode } = await publish(env, packageDir);
     expect(err).toContain(" - Received invalid OTP");
+    expect(exitCode).toBe(1);
+    expect(await mockRegistry.packument("otp-pkg-2")).toBeUndefined();
   });
 
   for (const shouldIgnoreNotice of [false, true]) {
     test(`npm-notice with login url${shouldIgnoreNotice ? " (ignored)" : ""}`, async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
       // Situation: user has 2FA enabled account with faceid sign-in.
       // They run `bun publish` with --auth-type=legacy, prompting them
       // to enter their OTP. Because they have faceid sign-in, they don't
       // have a code to enter, so npm sends a message in the npm-notice
-      // header with a url for logging in.
-      const token = await registry.generateUser(`otp-notice${shouldIgnoreNotice ? "-ignore" : ""}`, "otp");
-      using mockRegistry = Bun.serve({
-        port: 0,
-        fetch: mockRegistryFetch({ token, npmNotice: true, xLocalCache: shouldIgnoreNotice }),
-      });
+      // header with a url for logging in. An `x-local-cache` header
+      // marks the response as served from the client's own HTTP cache,
+      // in which case the (stale) notice must be ignored.
+      const { mockRegistry, packageDir } = await setupOtp(
+        `otp-notice${shouldIgnoreNotice ? "-ignore" : ""}`,
+        "otp-pkg-3",
+        "3.3.3",
+      );
+      await using _ = mockRegistry;
+      const notice = `visit ${mockRegistry.url}auth to login`;
+      mockRegistry.otpChallenge = { notice, xLocalCache: shouldIgnoreNotice };
 
-      const bunfig = `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
-
-      await Promise.all([
-        rm(join(registry.packagesPath, "otp-pkg-3"), { recursive: true, force: true }),
-        write(join(packageDir, "bunfig.toml"), bunfig),
-        write(
-          packageJson,
-          JSON.stringify({
-            name: "otp-pkg-3",
-            version: "3.3.3",
-            dependencies: {
-              "otp-pkg-3": "3.3.3",
-            },
-          }),
-        ),
-      ]);
-
-      const { out, err, exitCode } = await publish(env, packageDir);
+      const { err, exitCode } = await publish(env, packageDir);
       expect(exitCode).toBe(0);
       if (shouldIgnoreNotice) {
-        expect(err).not.toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
+        expect(err).not.toContain(`note: ${notice}`);
       } else {
-        expect(err).toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
+        expect(err).toContain(`note: ${notice}`);
       }
     });
   }
@@ -222,38 +135,16 @@ describe("otp", async () => {
   ];
   for (const envInfo of fakeCIEnvs) {
     test(`CI user agent name: ${envInfo.ci}`, async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
-      const token = await registry.generateUser(`otp-${envInfo.ci}`, "otp");
-      using mockRegistry = Bun.serve({
-        port: 0,
-        fetch: mockRegistryFetch({ token, expectedCI: envInfo.ci }),
-      });
+      const { mockRegistry, packageDir } = await setupOtp(`otp-${envInfo.ci}`, "otp-pkg-4", "4.4.4");
+      await using _ = mockRegistry;
 
-      const bunfig = `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
-
-      await Promise.all([
-        rm(join(registry.packagesPath, "otp-pkg-4"), { recursive: true, force: true }),
-        write(join(packageDir, "bunfig.toml"), bunfig),
-        write(
-          packageJson,
-          JSON.stringify({
-            name: "otp-pkg-4",
-            version: "4.4.4",
-            dependencies: {
-              "otp-pkg-4": "4.4.4",
-            },
-          }),
-        ),
-      ]);
-
-      const { out, err, exitCode } = await publish(
+      const { exitCode } = await publish(
         { ...env, ...envInfo.envs, ...{ BUILDKITE: undefined, GITHUB_ACTIONS: undefined } },
         packageDir,
       );
       expect(exitCode).toBe(0);
+      const put = mockRegistry.requests.find(r => r.method === "PUT" && r.path === "/otp-pkg-4");
+      expect(put?.headers.get("user-agent")).toContain("ci/" + envInfo.ci);
     });
   }
 });
@@ -262,7 +153,6 @@ test("can publish a package then install it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("basic");
   await Promise.all([
-    rm(join(registry.packagesPath, "publish-pkg-1"), { recursive: true, force: true }),
     write(
       packageJson,
       JSON.stringify({
@@ -294,11 +184,7 @@ test("can publish from a tarball", async () => {
       "publish-pkg-2": "2.2.2",
     },
   };
-  await Promise.all([
-    rm(join(registry.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
-    write(packageJson, JSON.stringify(json)),
-    write(join(packageDir, "bunfig.toml"), bunfig),
-  ]);
+  await Promise.all([write(packageJson, JSON.stringify(json)), write(join(packageDir, "bunfig.toml"), bunfig)]);
 
   await pack(packageDir, env);
 
@@ -311,12 +197,13 @@ test("can publish from a tarball", async () => {
   expect(await exists(join(packageDir, "node_modules", "publish-pkg-2", "package.json"))).toBeTrue();
 
   await Promise.all([
-    rm(join(registry.packagesPath, "publish-pkg-2"), { recursive: true, force: true }),
     rm(join(packageDir, "bun.lockb"), { recursive: true, force: true }),
     rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
   ]);
 
-  // now with an absoute path
+  // Unpublish so the same version can be published again, this time
+  // from an absolute path. A registry rejects a republish otherwise.
+  registry.remove("publish-pkg-2");
   ({ out, err, exitCode } = await publish(env, packageDir, join(packageDir, "publish-pkg-2-2.2.2.tgz")));
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warn:");
@@ -335,11 +222,7 @@ test("can publish scoped packages", async () => {
       "@scoped/pkg-1": "1.1.1",
     },
   };
-  await Promise.all([
-    rm(join(registry.packagesPath, "@scoped", "pkg-1"), { recursive: true, force: true }),
-    write(packageJson, JSON.stringify(json)),
-    write(join(packageDir, "bunfig.toml"), bunfig),
-  ]);
+  await Promise.all([write(packageJson, JSON.stringify(json)), write(join(packageDir, "bunfig.toml"), bunfig)]);
 
   const { out, err, exitCode } = await publish(env, packageDir);
   expect(err).not.toContain("error:");
@@ -361,7 +244,6 @@ for (const info of [
     const bunfig = await registry.authBunfig("binaries-" + info.user);
 
     await Promise.all([
-      rm(join(registry.packagesPath, "publish-pkg-" + info.user), { recursive: true, force: true }),
       write(
         join(publishDir, "package.json"),
         JSON.stringify({
@@ -433,7 +315,6 @@ test("dependencies are installed", async () => {
   const publishDir = tmpdirSync();
   const bunfig = await registry.authBunfig("manydeps");
   await Promise.all([
-    rm(join(registry.packagesPath, "publish-pkg-deps"), { recursive: true, force: true }),
     write(
       join(publishDir, "package.json"),
       JSON.stringify(
@@ -494,7 +375,6 @@ test("can publish workspace package", async () => {
     },
   };
   await Promise.all([
-    rm(join(registry.packagesPath, "publish-pkg-3"), { recursive: true, force: true }),
     write(join(packageDir, "bunfig.toml"), bunfig),
     write(
       packageJson,
@@ -520,7 +400,6 @@ describe("--dry-run", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("dryrun");
     await Promise.all([
-      rm(join(registry.packagesPath, "dry-run-1"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -537,13 +416,12 @@ describe("--dry-run", async () => {
     const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(registry.packagesPath, "dry-run-1"))).toBeFalse();
+    expect(await registry.packument("dry-run-1")).toBeUndefined();
   });
   test("does not publish from tarball path", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("dryruntarball");
     await Promise.all([
-      rm(join(registry.packagesPath, "dry-run-2"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -562,7 +440,7 @@ describe("--dry-run", async () => {
     const { out, err, exitCode } = await publish(env, packageDir, "./dry-run-2-2.2.2.tgz", "--dry-run");
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(registry.packagesPath, "dry-run-2"))).toBeFalse();
+    expect(await registry.packument("dry-run-2")).toBeUndefined();
   });
 });
 
@@ -596,8 +474,9 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     test(`should run in order${arg.length > 0 ? " (--dry-run)" : ""}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();
       const bunfig = await registry.authBunfig("lifecycle" + (arg.length > 0 ? "dry" : ""));
+      // Every test in this block publishes publish-pkg-4@4.4.4.
+      registry.remove("publish-pkg-4");
       await Promise.all([
-        rm(join(registry.packagesPath, "publish-pkg-4"), { recursive: true, force: true }),
         write(packageJson, JSON.stringify(json)),
         write(join(packageDir, "script.js"), script),
         write(join(packageDir, "bunfig.toml"), bunfig),
@@ -629,8 +508,8 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
   test("--ignore-scripts", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("ignorescripts");
+    registry.remove("publish-pkg-4");
     await Promise.all([
-      rm(join(registry.packagesPath, "publish-pkg-5"), { recursive: true, force: true }),
       write(packageJson, JSON.stringify(json)),
       write(join(packageDir, "script.js"), script),
       write(join(packageDir, "bunfig.toml"), bunfig),
@@ -661,7 +540,6 @@ test("prepublishOnly modifying version publishes correct version (#17195)", asyn
     fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));`;
 
   await Promise.all([
-    rm(join(registry.packagesPath, "publish-version-update"), { recursive: true, force: true }),
     write(
       packageJson,
       JSON.stringify({
@@ -693,7 +571,6 @@ test("attempting to publish a private package should fail", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("privatepackage");
   await Promise.all([
-    rm(join(registry.packagesPath, "publish-pkg-6"), { recursive: true, force: true }),
     write(
       packageJson,
       JSON.stringify({
@@ -712,7 +589,7 @@ test("attempting to publish a private package should fail", async () => {
   let { out, err, exitCode } = await publish(env, packageDir);
   expect(exitCode).toBe(1);
   expect(err).toContain("error: attempted to publish a private package");
-  expect(await exists(join(registry.packagesPath, "publish-pkg-6-6.6.6.tgz"))).toBeFalse();
+  expect(await registry.packument("publish-pkg-6")).toBeUndefined();
 
   // try tarball
   await pack(packageDir, env);
@@ -727,7 +604,6 @@ describe("access", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("accessflag");
     await Promise.all([
-      rm(join(registry.packagesPath, "publish-pkg-7"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -746,13 +622,15 @@ describe("access", async () => {
     ({ out, err, exitCode } = await publish(env, packageDir, "--access", "public"));
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(registry.packagesPath, "publish-pkg-7"))).toBeTrue();
+    expect(await registry.packument("publish-pkg-7")).toBeDefined();
   });
 
   for (const access of ["restricted", "public"]) {
     test(`access ${access}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();
       const bunfig = await registry.authBunfig("access" + access);
+      // Both iterations publish the same name@version.
+      registry.remove("@secret/publish-pkg-8");
 
       const pkgJson = {
         name: "@secret/publish-pkg-8",
@@ -765,11 +643,7 @@ describe("access", async () => {
         },
       };
 
-      await Promise.all([
-        rm(join(registry.packagesPath, "@secret", "publish-pkg-8"), { recursive: true, force: true }),
-        write(join(packageDir, "bunfig.toml"), bunfig),
-        write(packageJson, JSON.stringify(pkgJson)),
-      ]);
+      await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
 
       let { out, err, exitCode } = await publish(env, packageDir);
       expect(exitCode).toBe(0);
@@ -794,11 +668,7 @@ describe("tag", async () => {
         "publish-pkg-9": "simpletag",
       },
     };
-    await Promise.all([
-      rm(join(registry.packagesPath, "publish-pkg-9"), { recursive: true, force: true }),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-      write(packageJson, JSON.stringify(pkgJson)),
-    ]);
+    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
 
     let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
     expect(exitCode).toBe(0);
@@ -821,7 +691,6 @@ it("$npm_command is accurate during publish", async () => {
     }),
   );
   await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_command"));
-  await rm(join(registry.packagesPath, "publish-pkg-10"), { recursive: true, force: true });
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo $npm_command\n`);
   expect(out.split("\n")).toEqual([
@@ -861,7 +730,6 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     `,
   );
   await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_lifecycle_event"));
-  await rm(join(registry.packagesPath, "publish-pkg-11"), { recursive: true, force: true });
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo 2 $npm_lifecycle_event\n$ echo 3 $npm_lifecycle_event\n`);
   expect(out.split("\n")).toEqual([
@@ -965,11 +833,7 @@ describe("--tolerate-republish", async () => {
       version: "1.0.0",
     };
 
-    await Promise.all([
-      rm(join(registry.packagesPath, "republish-test-1"), { recursive: true, force: true }),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-      write(packageJson, JSON.stringify(pkgJson)),
-    ]);
+    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
 
     // First publish should succeed
     let { out, err, exitCode } = await publish(env, packageDir);
@@ -990,11 +854,7 @@ describe("--tolerate-republish", async () => {
       version: "1.0.0",
     };
 
-    await Promise.all([
-      rm(join(registry.packagesPath, "republish-test-2"), { recursive: true, force: true }),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-      write(packageJson, JSON.stringify(pkgJson)),
-    ]);
+    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
 
     // First publish should succeed
     let { out, err, exitCode } = await publish(env, packageDir);
@@ -1016,11 +876,7 @@ describe("--tolerate-republish", async () => {
       version: "1.0.0",
     };
 
-    await Promise.all([
-      rm(join(registry.packagesPath, "republish-test-3"), { recursive: true, force: true }),
-      write(join(packageDir, "bunfig.toml"), bunfig),
-      write(packageJson, JSON.stringify(pkgJson)),
-    ]);
+    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
 
     // Create tarball
     await pack(packageDir, env);

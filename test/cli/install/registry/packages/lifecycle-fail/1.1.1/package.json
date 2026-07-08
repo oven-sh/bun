@@ -1,0 +1,8 @@
+{
+    "name": "lifecycle-fail",
+    "version": "1.1.1",
+    "scripts": {
+        "preinstall": "bun fail.js",
+        "postinstall": "bun create.js"
+    }
+}

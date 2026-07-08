@@ -1,0 +1,8 @@
+{
+    "name": "dragon-test-7-a",
+    "version": "1.0.0",
+    "dependencies": {
+      "dragon-test-7-b": "1.0.0",
+      "dragon-test-7-c": "2.0.0"
+    }
+}

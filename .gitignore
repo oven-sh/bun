@@ -96,6 +96,12 @@ misctools/sha
 myscript.sh
 node_modules
 node_modules_*
+# Some npm-registry package fixtures legitimately ship a node_modules
+# of their own (bundled dependencies). Those are test data, not
+# installed dependencies; without this they silently never get
+# committed and the fixture serves an incomplete tarball.
+!/test/cli/install/registry/packages/**/node_modules
+!/test/cli/install/registry/packages/**/node_modules/**
 out
 out.*
 outcss

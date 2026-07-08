@@ -1,0 +1,8 @@
+{
+    "name": "@private/has-bin-entry",
+    "version": "1.0.0",
+    "bin": "./bin.js",
+    "dependencies": {
+        "no-deps": "1.0.0"
+    }
+}

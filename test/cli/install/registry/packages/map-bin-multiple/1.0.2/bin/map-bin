@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+
+require("fs").writeFileSync("map-bin.txt", "hello map bin");

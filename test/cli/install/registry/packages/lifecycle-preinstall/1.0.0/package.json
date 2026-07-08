@@ -1,0 +1,7 @@
+{
+  "name": "lifecycle-preinstall",
+  "version": "1.0.0",
+  "scripts": {
+    "preinstall": "bun preinstall.js"
+  }
+}

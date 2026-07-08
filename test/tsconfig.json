@@ -7,6 +7,7 @@
     "baseUrl": ".",
     "paths": {
       "harness": ["./harness.ts"],
+      "npm-registry": ["./npm-registry/index.ts"],
       "mkfifo": ["./mkfifo.ts"],
       "node-harness": ["./js/node/harness.ts"],
       "deno:harness": ["./js/deno/harness.ts"],

@@ -3,7 +3,7 @@ preload = "./preload.ts"
 
 [install]
 linker = "isolated"
-# See ../bunfig.toml — CI deletes the install cache between steps, and
-# verdaccio's internal packages have phantom dependencies that the global
-# store's stricter isolation catches.
+# See ../bunfig.toml — the CI test runner points BUN_INSTALL_CACHE_DIR at a
+# per-call tmpdir and deletes it between the root and test/ installs, and the
+# global store's entries are absolute symlinks into that now-deleted cache.
 globalStore = false

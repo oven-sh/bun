@@ -1,0 +1,19 @@
+{
+  "name": "bunx-bins",
+  "version": "1.0.0",
+  "bin": {
+    "bin-node": "bin-node.js",
+    "bin-bun": "bin-bun.ts",
+    "bin-bun-run": "bin-bun-run.ts",
+    "bin1": "bin1.ts",
+    "bin2": "bin2.ts",
+    "bin3": "bin3.ts",
+    "bin4": "bin4.ts",
+    "bin5": "bin5.ts",
+    "bin6": "bin6.ts",
+    "bin7": "bin7.ts",
+    "native": "native.exe",
+    "uses-native": "uses-native.ts",
+    "no-shebang": "no-shebang.ts"
+  }
+}

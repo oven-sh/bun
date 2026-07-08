@@ -1,0 +1,7 @@
+{
+  "name": "uses-strict-peer",
+  "version": "1.0.0",
+  "peerDependencies": {
+    "strict-peer-dep": "1.0.0"
+  }
+}

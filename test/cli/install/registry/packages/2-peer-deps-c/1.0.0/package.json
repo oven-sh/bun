@@ -1,0 +1,8 @@
+{
+  "name": "2-peer-deps-c",
+  "version": "1.0.0",
+  "peerDependencies": {
+    "no-deps": "1.0.0",
+    "a-dep": "1.0.10"
+  }
+}

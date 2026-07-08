@@ -1,12 +1,44 @@
-import { file, spawn } from "bun";
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { file, spawn, write } from "bun";
+import { expect, it } from "bun:test";
 import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { NpmRegistry, bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join, relative } from "path";
-import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
+interface TestContext {
+  registry: NpmRegistry;
+  package_dir: string;
+  registry_url: string;
+  readonly requested: number;
+}
+
+// None of these tests resolve anything from a registry (they only add file:
+// dependencies); each gets an empty one so that an install that unexpectedly
+// tried to would fail loudly instead of reaching a real registry.
+async function createTestContext(): Promise<TestContext> {
+  const registry = await new NpmRegistry().start();
+  const package_dir = tmpdirSync();
+  await write(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "${registry.url}"
+saveTextLockfile = false
+`,
+  );
+  return {
+    registry,
+    package_dir,
+    registry_url: registry.url,
+    get requested() {
+      return registry.requestCount;
+    },
+  };
+}
+
+function destroyTestContext(ctx: TestContext): void {
+  ctx.registry.stop();
+}
 
 it.concurrent("should remove existing package", async () => {
   const ctx = await createTestContext();

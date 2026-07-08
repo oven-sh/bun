@@ -1,0 +1,2 @@
+echo "ERROR: native binary not installed" >&2
+exit 1

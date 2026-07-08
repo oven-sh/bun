@@ -1,8 +1,7 @@
-import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
+import { NpmRegistry, bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isCI } from "../../harness";
-import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
 const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
 
@@ -56,17 +55,80 @@ async function globEverything(dir: string) {
   );
 }
 
+let registry: NpmRegistry;
 let registryUrl: string;
 
-async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
-  const registry = getRegistry();
+/** The single version the registry serves for each package name. */
+const PACKAGE_VERSIONS: Record<string, string> = {
+  "left-pad": "1.3.0",
+  "is-even": "1.0.0",
+  "is-odd": "1.0.0",
+  "test-security-scanner": "1.0.0",
+};
 
-  if (!registry) {
-    throw new Error("Registry not found");
+// The `test-security-scanner` index.js served for each scanner behavior.
+const SCANNER_INDEX_JS: Record<"none" | "warn" | "fatal", string> = {
+  none: `export const scanner = {
+  version: "1",
+  scan: async function(payload) {
+    console.error("SCANNER_RAN: " + payload.packages.length + " packages");
+    const results = [];
+
+    return results;
   }
+};`,
+  warn: `export const scanner = {
+  version: "1",
+  scan: async function(payload) {
+    console.error("SCANNER_RAN: " + payload.packages.length + " packages");
+    const results = [];
+    if (payload.packages.length > 0) {
+      results.push({
+        package: payload.packages[0].name,
+        level: "warn",
+        description: "Test warning"
+      });
+    }
 
-  registry.clearRequestLog();
-  registry.setScannerBehavior(options.scannerReturns ?? "none");
+    return results;
+  }
+};`,
+  fatal: `export const scanner = {
+  version: "1",
+  scan: async function(payload) {
+    console.error("SCANNER_RAN: " + payload.packages.length + " packages");
+    const results = [];
+
+    if (payload.packages.length > 0) {
+      results.push({
+        package: payload.packages[0].name,
+        level: "fatal",
+        description: "Test fatal error"
+      });
+    }
+    return results;
+  }
+};`,
+};
+
+function setScannerBehavior(behavior: "none" | "warn" | "fatal") {
+  registry.define("test-security-scanner", {
+    "1.0.0": { main: "index.js", tarball: { "index.js": SCANNER_INDEX_JS[behavior] } },
+  });
+}
+
+// `registry.paths` is the percent-decoded pathname of every request, in arrival order.
+function getRequestedPackages(): string[] {
+  return registry.paths.filter(path => !path.includes(".tgz") && path !== "/").map(path => path.slice(1));
+}
+
+function getRequestedTarballs(): string[] {
+  return registry.paths.filter(path => path.endsWith(".tgz"));
+}
+
+async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
+  registry.clearRequests();
+  setScannerBehavior(options.scannerReturns ?? "none");
 
   const {
     command,
@@ -196,7 +258,7 @@ registry = "${registryUrl}/"`,
     console.log(redShellPrefix, cmd.join(" "));
   }
 
-  registry.clearRequestLog();
+  registry.clearRequests();
 
   // write the full bunfig WITH scanner configuration
   await Bun.write(
@@ -410,7 +472,7 @@ scanner = "${scannerPath}"`,
                 }
 
                 case "isolated": {
-                  const versionInRegistry = SimpleRegistry.packages[arg][0];
+                  const versionInRegistry = PACKAGE_VERSIONS[arg];
                   const path = join(
                     dir,
                     "node_modules",
@@ -437,7 +499,7 @@ scanner = "${scannerPath}"`,
                 }
 
                 case "isolated": {
-                  const versionInRegistry = SimpleRegistry.packages[arg][0];
+                  const versionInRegistry = PACKAGE_VERSIONS[arg];
                   const path = join(
                     dir,
                     "node_modules",
@@ -461,8 +523,8 @@ scanner = "${scannerPath}"`,
     }
   }
 
-  const requestedPackages = registry.getRequestedPackages();
-  const requestedTarballs = registry.getRequestedTarballs();
+  const requestedPackages = getRequestedPackages();
+  const requestedTarballs = getRequestedTarballs();
 
   // when we have no node modules and the scanner comes from npm, we must first install the scanner
   // but, if we expect the scanner to report failure then we should ONLY see the scanner tarball requested, no others
@@ -487,7 +549,7 @@ scanner = "${scannerPath}"`,
     }
 
     // we should have ONLY requested the security scanner at this point
-    expect(requestedTarballs).toEqual(["/test-security-scanner-1.0.0.tgz"]);
+    expect(requestedTarballs).toEqual(["/test-security-scanner/-/test-security-scanner-1.0.0.tgz"]);
   }
 
   const sortedPackages = [...requestedPackages].sort();
@@ -504,11 +566,16 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
   const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
 
   beforeAll(async () => {
-    registryUrl = await startRegistry(DO_TEST_DEBUG);
+    registry = await new NpmRegistry({ verbose: DO_TEST_DEBUG }).start();
+    // `registry.url` has a trailing slash; every interpolation below appends its own.
+    registryUrl = registry.url.slice(0, -1);
+    registry.define("left-pad", { "1.3.0": {} });
+    registry.define("is-even", { "1.0.0": { dependencies: { "is-odd": "^1.0.0" } } });
+    registry.define("is-odd", { "1.0.0": { dependencies: { "is-even": "^1.0.0" } } });
   });
 
   afterAll(() => {
-    stopRegistry();
+    registry.stop();
   });
 
   const ttyConfigs = [

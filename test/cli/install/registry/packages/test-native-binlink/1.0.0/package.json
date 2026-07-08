@@ -1,0 +1,10 @@
+{
+  "name": "test-native-binlink",
+  "version": "1.0.0",
+  "bin": {
+    "test-binlink-cmd": "./bin/main.js"
+  },
+  "optionalDependencies": {
+    "test-native-binlink-target": "1.0.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+    "name": "self-file-dep",
+    "version": "1.0.0",
+    "dependencies": {
+        "self-file-dep": "file:."
+    }
+}

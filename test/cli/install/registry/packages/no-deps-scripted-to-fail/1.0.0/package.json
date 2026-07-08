@@ -1,0 +1,7 @@
+{
+    "name": "no-deps-scripted-to-fail",
+    "version": "1.0.0",
+    "scripts": {
+        "install": "exit 1"
+    }
+}

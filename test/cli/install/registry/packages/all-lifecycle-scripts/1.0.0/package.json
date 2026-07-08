@@ -1,0 +1,12 @@
+{
+  "name": "all-lifecycle-scripts",
+  "version": "1.0.0",
+  "scripts": {
+    "preinstall": "bun preinstall.js",
+    "install": "bun install.js",
+    "postinstall": "bun postinstall.js",
+    "preprepare": "bun preprepare.js",
+    "prepare": "bun prepare.js",
+    "postprepare": "bun postprepare.js"
+  }
+}

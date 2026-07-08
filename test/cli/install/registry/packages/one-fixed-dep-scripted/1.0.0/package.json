@@ -1,0 +1,12 @@
+{
+    "name": "one-fixed-dep-scripted",
+    "version": "1.0.0",
+    "scripts": {
+        "preinstall": "echo preinstall >> log",
+        "install": "echo install >> log",
+        "postinstall": "echo postinstall >> log"
+    },
+    "dependencies": {
+        "no-deps-scripted": "1.0.0"
+    }
+}

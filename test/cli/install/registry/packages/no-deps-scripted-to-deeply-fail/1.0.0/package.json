@@ -1,0 +1,7 @@
+{
+    "name": "no-deps-scripted-to-deeply-fail",
+    "version": "1.0.0",
+    "dependencies": {
+        "no-deps-scripted-to-fail": "1.0.0"
+    }
+}

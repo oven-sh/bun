@@ -1,0 +1,7 @@
+{
+    "name": "files",
+    "version": "1.1.1",
+    "dependencies": {
+        "no-deps": "2.0.0"
+    }
+}

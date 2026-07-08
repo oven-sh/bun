@@ -1,0 +1,7 @@
+{
+    "name": "alias-loop-2",
+    "version": "1.0.0",
+    "dependencies": {
+        "alias2": "npm:alias-loop-1@*"
+    }
+}

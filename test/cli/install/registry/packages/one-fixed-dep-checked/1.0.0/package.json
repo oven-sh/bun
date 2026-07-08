@@ -1,0 +1,10 @@
+{
+    "name": "one-fixed-dep-checked",
+    "version": "1.0.0",
+    "scripts": {
+        "install": "node check"
+    },
+    "dependencies": {
+        "no-deps-checked": "1.0.0"
+    }
+}

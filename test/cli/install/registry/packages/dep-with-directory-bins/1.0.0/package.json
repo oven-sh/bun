@@ -1,0 +1,7 @@
+{
+  "name": "dep-with-directory-bins",
+  "version": "1.0.0",
+  "directories": {
+    "bin": "./bins"
+  }
+}

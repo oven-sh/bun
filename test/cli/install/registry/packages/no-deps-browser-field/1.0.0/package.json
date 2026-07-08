@@ -1,0 +1,9 @@
+{
+    "name": "no-deps-browser-field",
+    "version": "1.0.0",
+    "bin": "./bin",
+    "main": "./index.js",
+    "browser": {
+      "./index.js": "./index.js"
+    }
+}

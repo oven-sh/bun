@@ -1,0 +1,42 @@
+{
+  "name": "resolve",
+  "description": "resolve like require.resolve() on behalf of files asynchronously and synchronously",
+  "version": "1.9.0",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/browserify/resolve.git"
+  },
+  "main": "index.js",
+  "keywords": [
+    "resolve",
+    "require",
+    "node",
+    "module"
+  ],
+  "scripts": {
+    "prepublish": "safe-publish-latest",
+    "lint": "eslint .",
+    "tests-only": "tape test/*.js",
+    "pretest": "npm run lint",
+    "test": "npm run --silent tests-only",
+    "posttest": "npm run test:multirepo",
+    "test:multirepo": "cd ./test/resolver/multirepo && npm install && npm test"
+  },
+  "devDependencies": {
+    "@ljharb/eslint-config": "^13.0.0",
+    "eslint": "^5.10.0",
+    "object-keys": "^1.0.12",
+    "safe-publish-latest": "^1.1.2",
+    "tap": "0.4.13",
+    "tape": "^4.9.1"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "James Halliday",
+    "email": "mail@substack.net",
+    "url": "http://substack.net"
+  },
+  "dependencies": {
+    "path-parse": "^1.0.6"
+  }
+}

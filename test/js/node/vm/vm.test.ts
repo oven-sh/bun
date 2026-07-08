@@ -1177,3 +1177,108 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("timeout termination preserves already-queued promise reactions", () => {
+  // default microtask mode: jobs the guest queued before expiry share the host's queue
+  // and must run at the next host checkpoint, so a host `.then` on the guest's promise settles.
+  test.concurrent("runInContext", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const c = vm.createContext({ o: [] });
+      let code;
+      try {
+        vm.runInContext(
+          "hostPromise = Promise.resolve().then(()=>{ o.push(1); return 'v' })" +
+          "                               .then((x)=>{ o.push(2); return x }); for(;;);",
+          c, { timeout: 80 });
+      } catch (e) { code = e.code; }
+      let hostSaw = "no";
+      c.hostPromise?.then(() => { hostSaw = "yes"; });
+      setTimeout(() => {
+        console.log("o=" + JSON.stringify(c.o) + " host=" + hostSaw + " code=" + code);
+      }, 0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "o=[1,2] host=yes code=ERR_SCRIPT_EXECUTION_TIMEOUT",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("runInThisContext", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      globalThis.o = [];
+      Promise.resolve().then(() => { o.push("host-before"); });
+      let code;
+      try {
+        vm.runInThisContext(
+          "globalThis.guestPromise = Promise.resolve().then(()=>{ o.push('guest'); }); for(;;);",
+          { timeout: 80 });
+      } catch (e) { code = e.code; }
+      let hostSaw = "no";
+      globalThis.guestPromise?.then(() => { hostSaw = "yes"; });
+      setTimeout(() => {
+        console.log("o=" + JSON.stringify(o) + " host=" + hostSaw + " code=" + code);
+      }, 0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: 'o=["host-before","guest"] host=yes code=ERR_SCRIPT_EXECUTION_TIMEOUT',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("SourceTextModule.evaluate", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const c = vm.createContext({ o: [] });
+      const mod = new vm.SourceTextModule(
+        "globalThis.hostPromise = Promise.resolve().then(()=>{ o.push(1); }); for(;;);",
+        { context: c });
+      await mod.link(() => { throw 0; });
+      let code;
+      try { await mod.evaluate({ timeout: 80 }); } catch (e) { code = e.code; }
+      let hostSaw = "no";
+      c.hostPromise?.then(() => { hostSaw = "yes"; });
+      setTimeout(() => {
+        console.log("o=" + JSON.stringify(c.o) + " host=" + hostSaw + " code=" + code);
+      }, 0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module", "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "o=[1] host=yes code=ERR_SCRIPT_EXECUTION_TIMEOUT",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

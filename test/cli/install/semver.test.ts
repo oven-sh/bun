@@ -60,6 +60,41 @@ describe("Bun.semver.order()", () => {
     expect(order(`\n\t1.2.3`, " 1.2.3")).toBe(0);
     expect(order(`\r\t\n\r1.2.3`, " 1.2.3")).toBe(0);
   });
+
+  // node-semver .trim()s its input. Bun skipped these as a prefix but only
+  // accepted ' ' as a trailing terminator, so order() threw on \t \n \r \v \f.
+  test("trailing whitespace", () => {
+    for (const ws of [" ", "\t", "\n", "\r", "\v", "\f", "\r\n", " \t\n\r\v\f"]) {
+      expect(order(`1.2.3${ws}`, "1.0.0")).toBe(1);
+      expect(order("1.0.0", `1.2.3${ws}`)).toBe(-1);
+      expect(order(`1.2.3${ws}`, `1.2.3${ws}`)).toBe(0);
+      expect(order(`${ws}1.2.3${ws}`, "1.2.3")).toBe(0);
+      expect(order(`1.2.3-beta${ws}`, "1.2.3-beta")).toBe(0);
+      expect(order(`1.2.3+build${ws}`, "1.2.3")).toBe(0);
+    }
+
+    expect("1.0.0\r\n10.0.0\r\n2.0.0\r\n".split("\n").filter(Boolean).toSorted(order)).toEqual([
+      "1.0.0\r",
+      "2.0.0\r",
+      "10.0.0\r",
+    ]);
+  });
+
+  // JS .trim() also removes non-ASCII whitespace (NBSP, BOM, Zs, LS/PS).
+  // Bun's is_all_ascii guard returned 0 instead of trimming first.
+  test("non-ASCII whitespace is trimmed like node-semver", () => {
+    for (const ws of ["\u00A0", "\u2003", "\u3000", "\uFEFF", "\u2028", "\u2029"]) {
+      expect(order(`1.2.3${ws}`, "9.9.9")).toBe(-1);
+      expect(order(`${ws}1.2.3`, "9.9.9")).toBe(-1);
+      expect(order(`${ws}1.2.3${ws}`, "1.2.3")).toBe(0);
+      expect(order("9.9.9", `${ws}1.2.3${ws}`)).toBe(1);
+    }
+
+    // non-ASCII that isn't trimmable whitespace is invalid, matching
+    // node-semver's compare() which throws on invalid input.
+    expect(() => order("1.2.3\u00E9", "1.0.0")).toThrow("Invalid SemVer");
+    expect(() => order("1.0.0", "1.2.3\u00E9")).toThrow("Invalid SemVer");
+  });
   // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/comparisons.js#L4
   test("comparisons", () => {
     var tests = [
@@ -202,6 +237,20 @@ describe("Bun.semver.satisfies()", () => {
     expect(() => {
       satisfies("~1.2.3", Symbol.for("1.2.3"));
     }).toThrow("Cannot convert a symbol to a string");
+  });
+
+  test("non-ASCII whitespace is trimmed like node-semver", () => {
+    for (const ws of ["\u00A0", "\u2003", "\u3000", "\uFEFF", "\u2028", "\u2029"]) {
+      expect(satisfies(`1.2.3${ws}`, "*")).toBe(true);
+      expect(satisfies(`${ws}1.2.3${ws}`, "^1.0.0")).toBe(true);
+      expect(satisfies("1.2.3", `${ws}^1.0.0${ws}`)).toBe(true);
+      expect(satisfies(`${ws}1.2.3${ws}`, `${ws}1.2.3${ws}`)).toBe(true);
+    }
+
+    // non-ASCII that isn't trimmable whitespace: invalid version never
+    // satisfies (node-semver catches and returns false).
+    expect(satisfies("1.2.3\u00E9", "*")).toBe(false);
+    expect(satisfies("1.2.3", "1.2.3\u00E9")).toBe(false);
   });
 
   test("failures does not cause weird memory issues", () => {

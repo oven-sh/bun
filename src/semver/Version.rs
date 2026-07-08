@@ -517,7 +517,7 @@ impl<T: VersionInt> VersionType<T> {
             }
 
             match input[i] {
-                b' ' => {
+                b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => {
                     is_done = true;
                     break;
                 }

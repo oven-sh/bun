@@ -4963,7 +4963,9 @@ test("scoped package manifest url uses uppercase %2F", async () => {
       }
       if (path.endsWith("/has-bin-entry-1.0.0.tgz")) {
         return new Response(
-          Bun.file(join(import.meta.dir, "registry", "packages", "@scoped", "has-bin-entry", "has-bin-entry-1.0.0.tgz")),
+          Bun.file(
+            join(import.meta.dir, "registry", "packages", "@scoped", "has-bin-entry", "has-bin-entry-1.0.0.tgz"),
+          ),
         );
       }
       return new Response("not found", { status: 404 });

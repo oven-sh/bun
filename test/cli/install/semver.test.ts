@@ -253,6 +253,14 @@ describe("Bun.semver.satisfies()", () => {
     expect(satisfies("1.2.3", "1.2.3\u00E9")).toBe(false);
   });
 
+  test("empty or whitespace-only version never satisfies", () => {
+    for (const s of ["", " ", "   ", "\t\n", "\r\n", "\u00A0", "\uFEFF"]) {
+      expect(satisfies(s, "*")).toBe(false);
+      expect(satisfies(s, ">=0")).toBe(false);
+      expect(satisfies(s, "0.0.0")).toBe(false);
+    }
+  });
+
   test("failures does not cause weird memory issues", () => {
     for (let i = 0; i < 1e5; i++) {
       if (!satisfies("1.2.3", "1.2.3")) {
@@ -830,7 +838,7 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([true, true, false, true, false, true, true]);
+  expect(JSON.parse(stdout)).toEqual([false, true, false, true, false, true, true]);
   expect(exitCode).toBe(0);
 });
 

@@ -120,7 +120,7 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     }
 
     let left_result = Version::parse(SlicedString::init(left_trimmed, left_trimmed));
-    if left_result.wildcard != query::token::Wildcard::None {
+    if !left_result.valid || left_result.wildcard != query::token::Wildcard::None {
         return Ok(JSValue::FALSE);
     }
 

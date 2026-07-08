@@ -2018,3 +2018,53 @@ it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", a
   // Node 26 agrees byte-for-byte: every dequeued chunk is written before the abort finishes.
   expect({ outcome, written }).toEqual({ outcome: "rejected:stop", written: ["a", "b", "c"] });
 });
+
+// When a Bun native sink (spawn stdin, Bun.serve response body) consumes a TransformStream's
+// readable and then tears it down on abort, the transform controller API must not segfault.
+it("TransformStreamDefaultController survives after a native sink tears down its readable", async () => {
+  const script = `
+    process.on("unhandledRejection", () => {});
+    const actions = {
+      desiredSize: c => c.desiredSize,
+      enqueue: c => c.enqueue(new Uint8Array([1])),
+      terminate: c => c.terminate(),
+      error: c => c.error(new Error("bad payload")),
+    };
+    for (const [name, fn] of Object.entries(actions)) {
+      let ctrl;
+      const ts = new TransformStream({ start(c) { ctrl = c; } });
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", "setInterval(()=>{},1e5)"],
+        stdin: ts.readable, stdout: "ignore", stderr: "ignore",
+      });
+      child.kill();
+      await child.exited;
+      // The stdin sink's finally step releases its reader and clears the readable's
+      // controller slot; unlocked is the observable post-teardown condition.
+      while (ts.readable.locked) await new Promise(r => setImmediate(r));
+      let outcome;
+      try { outcome = "returned:" + fn(ctrl); } catch (e) { outcome = "threw:" + e?.constructor?.name; }
+      console.log(name, outcome);
+    }
+    console.log("SURVIVED");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  void stderr;
+  expect({ stdout: stdout.trim().split("\n"), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: [
+      "desiredSize returned:null",
+      "enqueue threw:TypeError",
+      "terminate returned:undefined",
+      "error returned:undefined",
+      "SURVIVED",
+    ],
+    exitCode: 0,
+    signalCode: null,
+  });
+});

@@ -123,7 +123,7 @@ static String preprocessHostSetterValue(StringView value)
         }
     }
     if (!needsWork)
-        return { };
+        return {};
 
     StringBuilder builder;
     builder.reserveCapacity(value.length());

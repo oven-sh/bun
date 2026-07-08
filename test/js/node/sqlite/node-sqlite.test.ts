@@ -1746,3 +1746,27 @@ describe("GC stress", () => {
     30_000,
   );
 });
+
+// process.versions.sqlite must not force-dlopen the system SQLite: that
+// would defeat setCustomSQLite() for anyone whose imports read
+// process.versions before opening a database.
+test.skipIf(process.platform !== "darwin")("reading process.versions does not defeat setCustomSQLite", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const _ = process.versions.sqlite;
+      const { Database } = require("bun:sqlite");
+      Database.setCustomSQLite("/usr/lib/libsqlite3.dylib");
+      console.log("ok");
+    `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("already loaded");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});

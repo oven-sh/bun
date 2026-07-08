@@ -90,12 +90,13 @@ static constexpr bool lazy_sqlite3_has_session = true;
 // only included on the dlopen path, and this must be visible on every build.
 extern "C" void Bun__initializeSQLite();
 
-// process.versions.sqlite — the loaded library's version on macOS (via
-// dlsym'd sqlite3_libversion), the bundled amalgamation's constant elsewhere.
+// process.versions.sqlite — the loaded library's version if a library has
+// been loaded, else the header constant. Never triggers a dlopen: reading
+// process.versions must not defeat Database.setCustomSQLite().
 extern "C" const char* Bun__sqlite3_version()
 {
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() == 0 && lazy_sqlite3_libversion)
+    if (sqlite3_handle && lazy_sqlite3_libversion)
         return lazy_sqlite3_libversion();
 #endif
     return SQLITE_VERSION;

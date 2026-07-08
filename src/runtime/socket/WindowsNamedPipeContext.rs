@@ -295,14 +295,14 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    /// errdefer shared by `open`/`connect`: fail the wrapped JS socket, then
-    /// release the only ref `create()` handed us.
     /// Owns the freshly-`create()`d context until `disarm()`: on any early
     /// return it fails the pending connect and releases the sole ref.
     fn armed(this: *mut Self) -> FailAndRelease {
         FailAndRelease(Some(this))
     }
 
+    /// errdefer shared by `open`/`connect`: fail the wrapped JS socket, then
+    /// release the only ref `create()` handed us.
     fn fail_and_release(this: *mut Self) {
         // SAFETY: `this` is live; `create()` returned it and no deref has fired yet.
         // +1 ref held on the inner socket; live until `Self::deref` below.

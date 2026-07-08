@@ -750,7 +750,7 @@ describe("Large payload via ipc pipe", () => {
     customRegistry: (urls, ctx) => {
       return async (request: Request) => {
         urls.push(request.url);
-        const url = request.url.replaceAll("%2f", "/");
+        const url = request.url.replaceAll("%2f", "/").replaceAll("%2F", "/");
         expect(request.method).toBe("GET");
         if (url.endsWith(".tgz")) {
           return new Response(barTarballBytes);

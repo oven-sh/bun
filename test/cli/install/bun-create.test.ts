@@ -48,7 +48,7 @@ it("should create selected template with @ prefix", async () => {
 
   const err = await stderr.text();
   expect(err.split(/\r?\n/)).toContain(
-    `error: GET https://registry.npmjs.org/@quick-start%2fcreate-some-template - 404`,
+    `error: GET https://registry.npmjs.org/@quick-start%2Fcreate-some-template - 404`,
   );
 });
 
@@ -63,7 +63,7 @@ it("should create selected template with @ prefix implicit `/create`", async () 
   });
 
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2fcreate - 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2Fcreate - 404`);
   await exited;
 });
 
@@ -78,7 +78,7 @@ it("should create selected template with @ prefix implicit `/create` with versio
   });
 
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2fcreate - 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2Fcreate - 404`);
 
   await exited;
 });

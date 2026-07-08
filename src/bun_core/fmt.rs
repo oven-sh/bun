@@ -327,7 +327,7 @@ impl Display for DependencyUrlFormatter<'_> {
         let mut remain = self.url;
         while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
             write_bytes(f, &remain[..slash])?;
-            f.write_str("%2f")?;
+            f.write_str("%2F")?;
             remain = &remain[slash + 1..];
         }
         write_bytes(f, remain)

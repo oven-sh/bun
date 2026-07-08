@@ -91,6 +91,7 @@ static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
 } // namespace detail
 
 template<bool> struct HttpResponse;
+template<bool> struct NodeHttpResponseData;
 
 /* Real heap-allocated owner of one HTTP server's socket group + router state.
  * Replaces the old reinterpret_cast over us_socket_context_t — `group.ext`
@@ -183,18 +184,24 @@ private:
     }
 
     static us_socket_t *onOpen(us_socket_t *s, int /*is_client*/, char * /*ip*/, int /*ip_length*/) {
-        /* Init socket ext */
-        new (us_socket_ext(s)) HttpResponseData<SSL>;
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+
+        /* Init socket ext. node:http compat connections carry the bigger
+         * NodeHttpResponseData block; the listen socket was sized for it
+         * (see listen()/listen_unix(), which read the same context flag). */
+        if (httpContextData->flags.usingNodeHttpCompat) {
+            new (us_socket_ext(s)) NodeHttpResponseData<SSL>;
+        } else {
+            new (us_socket_ext(s)) HttpResponseData<SSL>;
+        }
           /* Any connected socket should timeout until it has a request */
         ((HttpResponse<SSL> *) s)->resetTimeout();
-
-        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
         /* node:http compat: the headers/request timeout window opens at accept
          * (mirrors the parser-initialize timestamp in Node's ConnectionsList),
          * so a client that connects and never sends anything still expires. */
         if (httpContextData->flags.usingNodeHttpCompat) {
-            ((HttpResponseData<SSL> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
+            ((NodeHttpResponseData<SSL> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
             /* A peer FIN must not tear the connection down at the loop level:
              * onEnd() below decides whether to close right away (idle) or to
              * keep writing the responses that are still in flight / pipelined
@@ -252,8 +259,13 @@ private:
         }
 
 
-        /* Destruct socket ext */
-        httpResponseData->~HttpResponseData<SSL>();
+        /* Destruct socket ext (the derived type when this is a node:http
+         * compat context - see onOpen) */
+        if (httpContextData->flags.usingNodeHttpCompat) {
+            ((NodeHttpResponseData<SSL> *) httpResponseData)->~NodeHttpResponseData<SSL>();
+        } else {
+            httpResponseData->~HttpResponseData<SSL>();
+        }
 
         return s;
     }
@@ -311,7 +323,11 @@ private:
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-        auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.usingNodeHttpCompat, httpContextData->flags.useInsecureHTTPParser, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        /* node:http compat: the parser's per-connection node state lives in the
+         * derived ext block; everyone else passes nullptr. */
+        NodeHttpResponseData<SSL> *nodeHttpResponseData = httpContextData->flags.usingNodeHttpCompat ? (NodeHttpResponseData<SSL> *) httpResponseData : nullptr;
+
+        auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.usingNodeHttpCompat, httpContextData->flags.useInsecureHTTPParser, nodeHttpResponseData ? &nodeHttpResponseData->nodeHttpRequestTrailers : nullptr, nodeHttpResponseData ? &nodeHttpResponseData->chunkedExtensionsByteCount : nullptr, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
             /* For every request we reset the timeout and hang until user makes action */
@@ -332,10 +348,11 @@ private:
              * pipelined request whose head sits mid-buffer never went through
              * onData with an idle connection, so open its window here too. */
             if (httpContextData->flags.usingNodeHttpCompat) {
-                if (httpResponseData->lastMessageStartMs == 0) {
-                    httpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
+                auto *nodeHttpResponseData = (NodeHttpResponseData<SSL> *) httpResponseData;
+                if (nodeHttpResponseData->lastMessageStartMs == 0) {
+                    nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                 }
-                httpResponseData->headersCompleted = true;
+                nodeHttpResponseData->headersCompleted = true;
             }
 
             /* Are we not ready for another request yet? Terminate the connection.
@@ -390,7 +407,10 @@ private:
                 httpResponseData->closeDelimited = false;
                 /* Per-response trailer fields must not leak into the next response
                  * on this keep-alive connection. */
-                httpResponseData->nodeHttpResponseTrailers.clear();
+                if (httpContextData->flags.usingNodeHttpCompat) {
+                    ((NodeHttpResponseData<SSL> *) httpResponseData)->nodeHttpResponseTrailers.clear();
+                    httpResponseData->hasNodeHttpResponseTrailers = false;
+                }
             }
 
             /* Select the router based on SNI (only possible for SSL) */
@@ -462,8 +482,9 @@ private:
              * received - the connection is idle for the headers/request timeout
              * sweeps until the next message starts. */
             if (fin && httpContextData->flags.usingNodeHttpCompat && !httpResponseData->isConnectRequest) {
-                httpResponseData->lastMessageStartMs = 0;
-                httpResponseData->headersCompleted = false;
+                auto *nodeHttpResponseData = (NodeHttpResponseData<SSL> *) httpResponseData;
+                nodeHttpResponseData->lastMessageStartMs = 0;
+                nodeHttpResponseData->headersCompleted = false;
             }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
@@ -557,10 +578,11 @@ private:
              * buffer by this read (either fresh bytes on an idle connection or a
              * pipelined request after the previous message completed) - its
              * headers timeout window opens now. */
-            if (trackNodeHttpTimings && httpResponseData->lastMessageStartMs == 0
+            if (trackNodeHttpTimings && ((NodeHttpResponseData<SSL> *) httpResponseData)->lastMessageStartMs == 0
                 && httpResponseData->hasBufferedPartialRequestHeaders()) {
-                httpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
-                httpResponseData->headersCompleted = false;
+                auto *nodeHttpResponseData = (NodeHttpResponseData<SSL> *) httpResponseData;
+                nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
+                nodeHttpResponseData->headersCompleted = false;
             }
 
             /* Timeout on uncork failure */
@@ -866,12 +888,19 @@ public:
         }, priority);
     }
 
+    /* The per-socket ext block this context's connections need: node:http
+     * compat contexts (flag set before listen, see NodeHTTP_assignOnNodeJSCompat)
+     * carry the bigger NodeHttpResponseData. onOpen constructs the same type. */
+    unsigned int socketExtSize() {
+        return (unsigned int) (getSocketContextData()->flags.usingNodeHttpCompat ? sizeof(NodeHttpResponseData<SSL>) : sizeof(HttpResponseData<SSL>));
+    }
+
     /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */
     us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options) {
         int error = 0;
         /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
          * accept() until data arrives and dispatch the read immediately after accept. */
-        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
+        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);
@@ -882,7 +911,7 @@ public:
     /* Listen to unix domain socket using this HttpContext */
     us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
         int error = 0;
-        auto* socket = us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
+        auto* socket = us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
             us_socket_unref(&socket->s);

@@ -1614,6 +1614,31 @@ impl PostgresSQLConnection {
             && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
             && (self.write_buffer.get().len() as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
+
+    /// A newly accepted request may inline its Bind/Execute into `write_buffer`
+    /// only when every queued entry is already serialized; `current()` attributes
+    /// responses by FIFO order, so a still-Pending entry ahead would be skipped.
+    pub fn can_pipeline_new_request(&self) -> bool {
+        if !self.can_pipeline() {
+            return false;
+        }
+        let q = self.requests.get();
+        let n = q.readable_length();
+        // Fast path: every pipelined request is still in-flight and nothing
+        // else is queued, so nothing is Pending.
+        if self.pipelined_requests.get() as usize == n {
+            return true;
+        }
+        for i in 0..n {
+            // Queue invariant: every stored pointer is a live, heap-allocated
+            // `PostgresSQLQuery` with refcount >= 1 held by the queue itself.
+            let req = ParentRef::from(NonNull::new(q.peek_item(i)).expect("queue item non-null"));
+            if req.status.get() == QueryStatus::Pending {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 // `Writer.connection` is a

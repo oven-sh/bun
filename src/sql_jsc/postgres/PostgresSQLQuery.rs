@@ -641,7 +641,8 @@ impl PostgresSQLQuery {
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
-                            if !connection.has_query_running() || connection.can_pipeline() {
+                            if !connection.has_query_running() || connection.can_pipeline_new_request()
+                            {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 

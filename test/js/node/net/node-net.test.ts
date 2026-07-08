@@ -1335,6 +1335,52 @@ describe("net.Socket onread buffer factory", () => {
   });
 });
 
+it("onread: read() after a redundant pause() still redelivers the declined tail", async () => {
+  // Node's read() calls tryReadStart on the handle regardless of the stream's
+  // flowing state (lib/net.js:779-789), so an explicit pause() before it does
+  // not starve the queued tail; only resume() defers to a later pause().
+  const received: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const server = createServer(c => {
+    c.on("data", () => {});
+    c.end(Buffer.from("abcdefgh"));
+  });
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          received.push(buf.toString("latin1", 0, n));
+          if (received.length === 1) {
+            setImmediate(() => {
+              client!.pause();
+              client!.read();
+            });
+            return false;
+          }
+          if (received.length === 2) done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await done.promise;
+    expect(received).toEqual(["abcd", "efgh"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 it("onread: a peer FIN does not redeliver the declined tail before resume()", async () => {
   // The EOF path's read(0) must not restart a flow the callback paused: Node's
   // readStop leaves both the tail and the FIN unread until resume().

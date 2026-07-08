@@ -168,6 +168,9 @@ const kOnreadDraining = Symbol("kOnreadDraining");
 // callback has not taken yet.
 const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
+// Set when read()/_read() scheduled the tail drain: Node restarts a paused
+// onread socket from read(), but not from a resume() a pause() then overtook.
+const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 // Shared pause marker for a fully-consumed slice: a zero-length view of the
 // received chunk would pin its whole ArrayBuffer for as long as the socket
 // stays paused.
@@ -2179,32 +2182,39 @@ Object.defineProperty(Socket.prototype, "pending", {
 // Redelivers the slices an onread callback declined (returned false) before
 // the kernel flow is allowed to resume; never re-enters the callback
 // synchronously from resume()/read(). Returns true while a tail is pending.
-function drainOnreadTail(self) {
+function drainOnreadTail(self, fromRead?) {
   if (self[kOnreadTail] === undefined) return false;
+  // read() restarts a paused onread socket: Node's read() calls tryReadStart
+  // on the handle regardless of the stream's flowing state (lib/net.js:779-789).
+  if (fromRead) self[kOnreadReadRequested] = true;
   if (!self[kOnreadDraining]) {
     self[kOnreadDraining] = true;
-    process.nextTick(socket => {
-      socket[kOnreadDraining] = false;
-      const tail = socket[kOnreadTail];
-      if (tail === undefined || socket.destroyed) return;
-      // A pause() between resume() and this tick (or from inside the callback)
-      // must win: Node's level-triggered _handle.reading leaves the handle
-      // stopped after resume()→pause() (lib/net.js:817-835).
-      if (socket.isPaused()) return;
-      socket[kOnreadTail] = undefined;
-      socket[kOnreadDeliver](tail);
-      if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
-      // Fully consumed: release the EOF the peer already sent, then let the
-      // kernel flow resume.
-      if (socket[kOnreadPendingEnd]) {
-        socket[kOnreadPendingEnd] = false;
-        finishSocketEnd(socket);
-      } else if (!socket.isPaused()) {
-        socket._handle?.resume?.();
-      }
-    }, self);
+    process.nextTick(drainOnreadTailNT, self);
   }
   return true;
+}
+
+function drainOnreadTailNT(socket) {
+  socket[kOnreadDraining] = false;
+  const fromRead = socket[kOnreadReadRequested];
+  socket[kOnreadReadRequested] = false;
+  const tail = socket[kOnreadTail];
+  if (tail === undefined || socket.destroyed) return;
+  // A pause() between resume() and this tick (or from inside the callback)
+  // must win: Node's level-triggered _handle.reading leaves the handle
+  // stopped after resume()→pause() (lib/net.js:817-835). read() overrides it.
+  if (!fromRead && socket.isPaused()) return;
+  socket[kOnreadTail] = undefined;
+  socket[kOnreadDeliver](tail);
+  if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
+  // Fully consumed: release the EOF the peer already sent, then let the
+  // kernel flow resume.
+  if (socket[kOnreadPendingEnd]) {
+    socket[kOnreadPendingEnd] = false;
+    finishSocketEnd(socket);
+  } else if (fromRead || !socket.isPaused()) {
+    socket._handle?.resume?.();
+  }
 }
 
 Socket.prototype.resume = function resume() {
@@ -2309,7 +2319,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 };
 
 Socket.prototype.read = function read(size) {
-  if (!this.connecting && !drainOnreadTail(this)) {
+  if (!this.connecting && !drainOnreadTail(this, true)) {
     this._handle?.resume?.();
     // Restarting kernel reads makes the handle hold the loop open again;
     // mirror resume()'s re-ref or a paused-then-read() socket waits for
@@ -2326,7 +2336,7 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
-  } else if (this[kOnreadTail] === undefined) {
+  } else if (!drainOnreadTail(this, true)) {
     socket?.resume?.();
     // See read() above - the Readable machinery's pull path must also
     // restore the handle's hold on the loop.

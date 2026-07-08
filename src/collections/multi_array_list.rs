@@ -47,6 +47,7 @@
 
 use core::alloc::Layout;
 use core::any::TypeId;
+use std::any::Any;
 use core::marker::PhantomData;
 use core::mem::type_info::{Type as TypeInfo, TypeKind};
 use core::mem::{ManuallyDrop, MaybeUninit};

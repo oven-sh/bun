@@ -1350,11 +1350,17 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     if (existing) clearTimeout(existing);
     if (msecs === 0) {
       this.#timeoutTimer = null;
-      if (callback) this.removeListener("timeout", callback);
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
     } else {
       const bound = (this.#boundOnTimeout ??= this._onTimeout.bind(this));
       this.#timeoutTimer = setTimeout(bound, msecs).unref();
-      if (callback) this.once("timeout", callback);
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
     }
     return this;
   }

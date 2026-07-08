@@ -736,9 +736,8 @@ describe("Bun.semver.satisfies()", () => {
   });
 
   test("desugared upper bounds exclude prereleases of the bound tuple", () => {
-    // node-semver desugars ^1.2.3 to ">=1.2.3 <2.0.0-0" (not "<2.0.0"): the "-0"
-    // is the lowest prerelease, so 2.0.0-rc.1 cannot satisfy the upper bound even
-    // when AND-ed with a comparator that names a prerelease on the same tuple.
+    // node-semver desugars ^1.2.3 to ">=1.2.3 <2.0.0-0" (not "<2.0.0"), so a
+    // prerelease of the bound tuple (e.g. 2.0.0-rc.1) is excluded.
     // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L306
     const excludes = [
       // caret

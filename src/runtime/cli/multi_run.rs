@@ -1626,12 +1626,16 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
         unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
         // Pane mode: at most one repaint per tick, however many reads landed.
-        // This is the final frame too: the last `process_exit` fires inside
-        // `tick_once`, so its repaint lands here before the loop condition
-        // sees `is_done`.
         #[cfg(unix)]
         state.flush_redraw()?;
     }
+    // Paint the final frame unconditionally: under load the loop has been
+    // observed to exit with the last in-loop repaint still showing a task
+    // as Running (the mechanism is not yet understood; see PR #32761), and
+    // a user's terminal must never be left at that stale state. Not a
+    // `flush_redraw`, which gates on `needs_redraw`.
+    #[cfg(unix)]
+    state.redraw()?;
 
     let status = state.finalize();
     Global::exit(status as u32);

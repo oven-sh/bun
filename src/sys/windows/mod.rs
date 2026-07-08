@@ -196,24 +196,18 @@ pub use bun_core::windows_sys::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
 
+/// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
+pub const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
+
 /// Convert a 64-bit Windows `FILETIME`
 /// (100-ns intervals since 1601-01-01 UTC, as projected in
 /// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
 /// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
 /// `bun_core::time::nano_timestamp()` reports.
-///
-/// Computed as `(hns + epoch_shift * (ns_per_s/100)) * 100` where `epoch_shift`
-/// is `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
-/// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
 #[inline]
 pub const fn from_sys_time(nt_time: i64) -> i128 {
-    /// The 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
-    const WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS: i128 = -11_644_473_600 * 10_000_000;
-    (nt_time as i128 + WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS) * 100
+    (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
 }
-
-/// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
-pub const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
 
 /// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
 /// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).

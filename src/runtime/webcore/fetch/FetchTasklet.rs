@@ -1033,9 +1033,10 @@ impl FetchTasklet {
         };
 
         let result = if success {
-            // Head arrived together with a body failure: cancel any in-flight
-            // request-body sink with the real error so its `cancel(reason)`
-            // matches the split-read `on_body_received` path.
+            let resolved = self.on_resolve();
+            // Cancel the request-body sink last (as on_body_received does):
+            // `ResumableSink::cancel` runs the user's cancel callback
+            // synchronously, so the body error must already be stored.
             if self.result.fail.is_some() && self.sink_mut().is_some() {
                 let mut err = self.on_reject();
                 let err_js = err.to_js(&global_this);
@@ -1045,7 +1046,7 @@ impl FetchTasklet {
                 }
                 err.reset();
             }
-            StrongOptional::create(self.on_resolve(), &global_this)
+            StrongOptional::create(resolved, &global_this)
         } else {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();

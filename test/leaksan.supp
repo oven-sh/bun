@@ -108,8 +108,13 @@ leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
-# test/js/node/tls/node-tls-cert.test.ts
-leak:create_ssl_context_from_bun_options
+# test/js/node/tls/node-tls-cert.test.ts, test/js/node/test/parallel/
+# test-tls-psk-alpn-callback-exception-handling.js - the SSL_CTX a
+# tls.Server builds at listen(). #29932 renamed the frame from
+# create_ssl_context_from_bun_options to
+# BunSocketContextOptions::create_ssl_context / us_ssl_ctx_from_options.
+leak:create_ssl_context
+leak:us_ssl_ctx_from_options
 # test/js/node/test/parallel/test-inspector-enabled.js
 leak:jsc.Debugger.startJSDebuggerThread
 # test/js/sql/sqlite-sql.test.ts

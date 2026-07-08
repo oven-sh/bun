@@ -27,7 +27,8 @@ function readNoDelay(sock: net.Socket): number {
   const len = new Uint32Array([4]);
   const rc = getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, ptr(val), ptr(len));
   expect(rc).toBe(0);
-  return val[0];
+  // Darwin returns any nonzero for "enabled" (observed: 4); normalize.
+  return val[0] === 0 ? 0 : 1;
 }
 
 async function withPair(

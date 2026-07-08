@@ -722,3 +722,45 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+it.concurrent("loader: 'object' propagates exceptions from export property getters", async () => {
+  const script = `
+    const sentinel = new Error("GETTER-THROW");
+    const exportsObj = { before: 1 };
+    Object.defineProperty(exportsObj, "boom", { enumerable: true, get() { throw sentinel; } });
+    exportsObj.after = 2;
+
+    Bun.plugin({
+      name: "throwing-getter",
+      setup(build) {
+        build.module("throwing-getter:esm", () => ({ exports: exportsObj, loader: "object" }));
+        build.module("throwing-getter:cjs", () => ({ exports: exportsObj, loader: "object" }));
+      },
+    });
+
+    async function attempt(label, fn) {
+      try {
+        const ns = await fn();
+        return label + " resolved boom=" + ns.boom;
+      } catch (e) {
+        return label + " rejected " + (e === sentinel) + " " + e.message;
+      }
+    }
+
+    console.log(await attempt("import", () => import("throwing-getter:esm")));
+    console.log(await attempt("require", () => require("throwing-getter:cjs")));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lines = stdout.trim() ? stdout.trim().split("\n") : [stderr];
+  expect({ lines, exitCode }).toEqual({
+    lines: ["import rejected true GETTER-THROW", "require rejected true GETTER-THROW"],
+    exitCode: 0,
+  });
+});

@@ -3174,6 +3174,9 @@ function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
+function emitStreamErrorFromCodeNT(stream, rstCode) {
+  stream.emit("error", streamErrorFromCode(rstCode));
+}
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
@@ -5211,10 +5214,11 @@ class ClientHttp2Session extends Http2Session {
       }
       req[kNeverAnnounced] = false;
       if (req.destroyed) {
-        // Synchronous rejection: surface the error after the caller has attached listeners.
+        // Synchronous rejection: surface the error once the caller has had a chance to attach
+        // listeners. Not listener-gated: absent one it becomes an uncaught exception, like node.
         const rstCode = req.rstCode;
         if (rstCode && rstCode !== NGHTTP2_CANCEL) {
-          process.nextTick(emitEventNT, req, "error", streamErrorFromCode(rstCode));
+          process.nextTick(emitStreamErrorFromCodeNT, req, rstCode);
         }
         return req;
       }

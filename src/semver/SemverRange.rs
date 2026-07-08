@@ -3,6 +3,7 @@ use core::fmt;
 
 use crate::Version;
 use crate::query::token::Wildcard;
+use crate::version::Tag;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -75,6 +76,7 @@ impl Range {
                 let lhs = Version {
                     major: version.major.saturating_add(1),
                     // .raw = version.raw
+                    tag: Tag::zero_pre(),
                     ..Default::default()
                 };
                 let rhs = Version {
@@ -99,6 +101,7 @@ impl Range {
                     major: version.major,
                     minor: version.minor.saturating_add(1),
                     // .raw = version.raw;
+                    tag: Tag::zero_pre(),
                     ..Default::default()
                 };
                 let rhs = Version {

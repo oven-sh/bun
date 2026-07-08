@@ -303,6 +303,16 @@ impl<'a> Installer<'a> {
         let _guard = PatchTaskGuard(patch_task_ptr);
         // SAFETY: exclusive owner — see above.
         let patch_task = unsafe { &mut *patch_task_ptr };
+        // Every peer variant shares one patched cache dir (named by the patch
+        // contents hash, not the peer set). Once it exists, reuse it: rebuilding
+        // it replaces the directory under earlier entries' running hardlink tasks.
+        if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
+            if sys::directory_exists_at(apply.cache_dir, apply.cache_dir_subpath.as_zstr())
+                .unwrap_or(false)
+            {
+                return;
+            }
+        }
         bun_core::handle_oom(patch_task.apply());
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {

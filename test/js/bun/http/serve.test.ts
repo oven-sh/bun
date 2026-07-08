@@ -2139,39 +2139,36 @@ it.concurrent("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
-// prettier-ignore
+// Fixture serves a >1 MB file (the sendfile threshold). Each iteration reads
+// one chunk from several streams so the server is provably mid-send when
+// killed; on macOS the old sendfile(2) path could hang uninterruptibly here.
 it("should be able to stop in the middle of a file response", async () => {
-  async function doRequest(url: string) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(10) });
-      const read = (response.body as ReadableStream<any>).getReader();
-      while (true) {
-        const { value, done } = await read.read();
-        if (done) break;
-      }
-      expect(response.status).toBe(200);
-    } catch {}
-  }
   const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
   for (let i = 0; i < 3; i++) {
-    const process = Bun.spawn([bunExe(), fixture], {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture],
       env: bunEnv,
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",
     });
-    const { value } = await process.stdout.getReader().read();
+    const { value } = await proc.stdout.getReader().read();
     const url = new TextDecoder().decode(value).trim();
-    const requests = [];
-    for (let j = 0; j < 5_000; j++) {
-      requests.push(doRequest(url));
+    // Deliberately small so macOS CI runners never approach mbuf exhaustion.
+    const readers: ReadableStreamDefaultReader[] = [];
+    for (let j = 0; j < 16; j++) {
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      readers.push((res.body as ReadableStream).getReader());
     }
-    // only await for 1k requests (and kill the process)
-    await Promise.all(requests.slice(0, 1_000));
-    expect(process.exitCode || 0).toBe(0);
-    process.kill();
+    await Promise.all(readers.map(r => r.read()));
+    expect(proc.exitCode).toBe(null);
+    proc.kill();
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGTERM");
+    for (const r of readers) await r.cancel().catch(() => {});
   }
-}, 60_000);
+});
 
 it("should be able to abrupt stop the server", async () => {
   for (let i = 0; i < 10; i++) {
@@ -3188,4 +3185,64 @@ it("type: direct stream — small write queued under backpressure is delivered i
   } finally {
     socket.destroy();
   }
+});
+
+// Aborting an upload mid-body while a req.body.tee() branch is the in-flight
+// response body must not crash the server process.
+it("survives aborted uploads while responding with a tee()d request-body branch", async () => {
+  const script = `
+    const net = require("node:net");
+    const readAll = async rs => { const rd = rs.getReader(); for (;;) { if ((await rd.read()).done) return; } };
+    let seen = 0, settled = 0, notify = () => {};
+    const srv = Bun.serve({
+      hostname: "127.0.0.1", port: 0, idleTimeout: 0,
+      error() { return new Response("err"); },
+      async fetch(req) {
+        if (!req.body) return new Response("nobody");
+        seen++;
+        const [a, b] = req.body.tee();
+        readAll(b).catch(() => {}).finally(() => { settled++; notify(); });
+        return new Response(a);
+      },
+    });
+    const chunk = Buffer.alloc(8192, 66);
+    let it = 0;
+    for (; it < 40; it++) {
+      await new Promise(done => {
+        const s = net.connect(srv.port, "127.0.0.1", () => {
+          s.write("POST / HTTP/1.1\\r\\nhost: x\\r\\ncontent-length: 262144\\r\\n\\r\\n");
+          setImmediate(() => {
+            s.write(chunk);
+            s.write(chunk);
+            s.write(chunk);
+            setImmediate(() => { s.destroy(); done(); });
+          });
+        });
+        s.on("data", () => {});
+        s.on("error", () => done());
+      });
+    }
+    // One clean request so every aborted connection's header has reached fetch().
+    await fetch(srv.url).then(r => r.text());
+    // readAll(b) settles only after the tee's source-error reaction has errored branch b,
+    // so settled == seen proves every tee reaction for every handled request has run.
+    while (settled < seen) await new Promise(r => { notify = r; });
+    console.log("SURVIVED", it, seen === settled);
+    srv.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "SURVIVED 40 true",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

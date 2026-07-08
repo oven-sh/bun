@@ -727,7 +727,6 @@ mod _impl {
     use crate::node::util::validators;
     use bun_jsc::{ErrorCode, JSFunction, JSType};
 
-    use crate::crypto::create_crypto_error;
     use crate::crypto::pbkdf2::{self, PBKDF2};
 
     impl Scrypt {
@@ -1116,8 +1115,8 @@ mod _impl {
         };
 
         if !data.run(output.slice_mut()) {
-            let err = create_crypto_error(global_this, boringssl::c::ERR_get_error());
             boringssl::c::ERR_clear_error();
+            let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
             return Err(global_this.throw_value(err));
         }
 

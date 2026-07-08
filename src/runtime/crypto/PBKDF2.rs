@@ -8,11 +8,7 @@ use bun_jsc::{
 
 use crate::node::StringOrBuffer;
 
-use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{self, Algorithm};
-
-// BoringSSL error code; not yet exported by `bun_boringssl_sys`.
-const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
 
 pub(crate) struct PBKDF2 {
     pub password: StringOrBuffer,
@@ -46,6 +42,10 @@ impl PBKDF2 {
 
         output.fill(0);
         debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
+        // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
+        if length == 0 {
+            return false;
+        }
         boringssl::ERR_clear_error();
         // SAFETY: password/salt point to valid slices for the given lengths;
         // algorithm.md() returns a non-null EVP_MD; output is writable for `length` bytes.
@@ -92,7 +92,7 @@ impl PBKDF2 {
 
         let keylen_num = arg3.as_number();
 
-        if keylen_num.is_infinite() || keylen_num.is_nan() {
+        if !arg3.is_integer() {
             return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
@@ -117,11 +117,7 @@ impl PBKDF2 {
 
         let keylen: i32 = keylen_num as i32;
 
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
-
-        if !arg2.is_any_int() {
+        if !arg2.is_number() {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"iterations",
                 b"number",
@@ -129,25 +125,32 @@ impl PBKDF2 {
             ));
         }
 
-        let iteration_count = arg2.coerce_to_int64(global_this)?;
+        let iterations_num = arg2.as_number();
 
-        if !global_this.has_exception()
-            && (iteration_count < 1 || iteration_count > i32::MAX as i64)
-        {
+        if !arg2.is_integer() {
             return Err(global_this.throw_range_error(
-                iteration_count,
+                iterations_num,
                 bun_jsc::RangeErrorOptions {
                     field_name: b"iterations",
-                    min: 1,
-                    max: i32::MAX as i64 + 1,
+                    msg: b"an integer",
                     ..Default::default()
                 },
             ));
         }
 
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        if iterations_num < 1.0 || iterations_num > i32::MAX as f64 {
+            return Err(global_this.throw_range_error(
+                iterations_num,
+                bun_jsc::RangeErrorOptions {
+                    field_name: b"iterations",
+                    min: 1,
+                    max: i32::MAX as i64,
+                    ..Default::default()
+                },
+            ));
         }
+
+        let iteration_count: i64 = iterations_num as i64;
 
         let algorithm = 'brk: {
             if !arg4.is_string() {
@@ -268,7 +271,7 @@ pub(crate) struct Pbkdf2Ctx {
     /// (`from_js(.., is_async=true)` already protected the buffers).
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
-    pub err: Option<u32>,
+    pub err: bool,
     pub promise: JSPromiseStrong,
 }
 
@@ -278,14 +281,14 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
-            self.err = Some(EVP_R_MEMORY_LIMIT_EXCEEDED);
+            self.err = true;
             return;
         }
         buf.resize(len, 0);
         self.output = buf;
 
         if !self.pbkdf2.run(&mut self.output) {
-            self.err = Some(boringssl::ERR_get_error());
+            self.err = true;
             boringssl::ERR_clear_error();
 
             self.output = Vec::new();
@@ -294,9 +297,9 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
 
     fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let promise = self.promise.swap();
-        if let Some(err) = self.err {
-            promise
-                .reject_with_async_stack(global_this, Ok(create_crypto_error(global_this, err)))?;
+        if self.err {
+            let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
+            promise.reject_with_async_stack(global_this, Ok(err))?;
             return Ok(());
         }
 
@@ -322,7 +325,7 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job
             // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
-            err: None,
+            err: false,
             promise: JSPromiseStrong::init(global_this),
         },
     )

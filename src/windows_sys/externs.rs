@@ -459,15 +459,20 @@ pub struct FILE_FS_VOLUME_INFORMATION {
     pub VolumeLabel: [WCHAR; 1],
 }
 
-// Layout asserts against the C headers (checked via clang on Windows).
-const _: () = assert!(core::mem::size_of::<FILE_ALL_INFORMATION>() == 104);
-const _: () = assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, StandardInformation) == 40);
-const _: () = assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, InternalInformation) == 64);
-const _: () = assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, CurrentByteOffset) == 80);
-const _: () = assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, FileNameLength) == 96);
-const _: () = assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
-const _: () = assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
-const _: () = assert!(core::mem::offset_of!(FILE_FS_VOLUME_INFORMATION, VolumeSerialNumber) == 8);
+// Layout asserts against the C headers (checked via clang on Windows). Gated on
+// `windows` because this crate is also compiled on LP64 targets where
+// `c_ulong` is 64-bit, which perturbs these offsets.
+#[cfg(windows)]
+const _: () = {
+    assert!(core::mem::size_of::<FILE_ALL_INFORMATION>() == 104);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, StandardInformation) == 40);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, InternalInformation) == 64);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, CurrentByteOffset) == 80);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, FileNameLength) == 96);
+    assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
+    assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
+    assert!(core::mem::offset_of!(FILE_FS_VOLUME_INFORMATION, VolumeSerialNumber) == 8);
+};
 
 /// `DEVICE_TYPE` values (`ntddk.h`).
 pub const FILE_DEVICE_NAMED_PIPE: ULONG = 0x00000011;

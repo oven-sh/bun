@@ -347,6 +347,25 @@ describe("util", () => {
     expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
   });
 
+  it("styleText restores outer format after nested styleText", () => {
+    expect(util.styleText("red", "a" + util.styleText("blue", "b") + "c")).toBe(
+      "\u001b[31ma\u001b[34mb\u001b[31mc\u001b[39m",
+    );
+    expect(util.styleText(["bold", "red"], "a" + util.styleText("green", "b") + "c")).toBe(
+      "\u001b[1m\u001b[31ma\u001b[32mb\u001b[31mc\u001b[39m\u001b[22m",
+    );
+    expect(util.styleText("red", "a" + util.styleText("green", "b" + util.styleText("blue", "c") + "d") + "e")).toBe(
+      "\u001b[31ma\u001b[32mb\u001b[34mc\u001b[32md\u001b[31me\u001b[39m",
+    );
+    expect(util.styleText("bold", "a" + util.styleText("dim", "b") + "c")).toBe(
+      "\u001b[1ma\u001b[2mb\u001b[22m\u001b[1mc\u001b[22m",
+    );
+    expect(util.styleText("red", "X\u001b[39m")).toBe("\u001b[31mX\u001b[39m\u001b[39m");
+    expect(util.styleText("red", "X\u001b[39mY\u001b[39m")).toBe("\u001b[31mX\u001b[31mY\u001b[39m\u001b[39m");
+    expect(util.styleText("none", "test")).toBe("test");
+    expect(util.styleText(["red", "none"], "test")).toBe("\u001b[31mtest\u001b[39m");
+  });
+
   it("styleText", () => {
     [undefined, null, false, 5n, 5, Symbol(), () => {}, {}].forEach(invalidOption => {
       assert.throws(

@@ -213,6 +213,32 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+
+function replaceCloseCode(str, closeSeq, openSeq, keepClose) {
+  const closeLen = closeSeq.length;
+  let index = StringPrototypeIndexOf.$call(str, closeSeq);
+  if (index === -1) return str;
+
+  let result = "";
+  let lastIndex = 0;
+  const replacement = keepClose ? closeSeq + openSeq : openSeq;
+
+  do {
+    const afterClose = index + closeLen;
+    if (afterClose < str.length) {
+      result += StringPrototypeSlice.$call(str, lastIndex, index) + replacement;
+      lastIndex = afterClose;
+    } else {
+      break;
+    }
+    index = StringPrototypeIndexOf.$call(str, closeSeq, lastIndex);
+  } while (index !== -1);
+
+  return result + StringPrototypeSlice.$call(str, lastIndex);
+}
+
 function styleText(format, text) {
   validateString(text, "text");
 
@@ -220,23 +246,33 @@ function styleText(format, text) {
     let left = "";
     let right = "";
     for (const key of format) {
+      if (key === "none") continue;
       const formatCodes = inspect.colors[key];
       if (formatCodes == null) {
         validateOneOf(key, "format", ObjectKeys(inspect.colors));
       }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+      const openNum = formatCodes[0];
+      const openSeq = `\u001b[${openNum}m`;
+      const closeSeq = `\u001b[${formatCodes[1]}m`;
+      left += openSeq;
+      right = `${closeSeq}${right}`;
+      text = replaceCloseCode(text, closeSeq, openSeq, openNum === 1 || openNum === 2);
     }
 
     return `${left}${text}${right}`;
   }
 
-  let formatCodes = inspect.colors[format];
+  if (format === "none") return text;
 
+  const formatCodes = inspect.colors[format];
   if (formatCodes == null) {
     validateOneOf(format, "format", ObjectKeys(inspect.colors));
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+  const openNum = formatCodes[0];
+  const openSeq = `\u001b[${openNum}m`;
+  const closeSeq = `\u001b[${formatCodes[1]}m`;
+  text = replaceCloseCode(text, closeSeq, openSeq, openNum === 1 || openNum === 2);
+  return `${openSeq}${text}${closeSeq}`;
 }
 
 function getSystemErrorName(err: any) {

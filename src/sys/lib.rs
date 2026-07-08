@@ -4251,7 +4251,8 @@ mod windows_impl {
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
         // SAFETY: `buf` outlives the call and `len` is clamped to its size.
-        let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
+        let rc =
+            unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(
                 Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd),

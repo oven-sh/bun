@@ -2082,7 +2082,8 @@ pub mod ws2_32 {
             pub(super) fn listen(s: SOCKET, backlog: c_int) -> c_int;
             pub(super) fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
             pub(super) fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET;
-            pub(super) fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+            pub(super) fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int)
+            -> c_int;
         }
     }
 

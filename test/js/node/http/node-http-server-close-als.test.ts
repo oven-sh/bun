@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 

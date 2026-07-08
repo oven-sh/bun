@@ -120,10 +120,10 @@ describe("url.domainToASCII/domainToUnicode with long internationalised hosts", 
       const got = url.domainToASCII(input);
       // Reference: the pure-JS RFC 3492 encoder in node:punycode has no length
       // cap. UTS #46 mapping for these inputs reduces to NFC + lowercasing.
-      const expected = punycode.toASCII(input.normalize("NFC").toLowerCase());
-      expect(got).toBe(expected);
+      const mapped = input.normalize("NFC").toLowerCase();
+      expect(got).toBe(punycode.toASCII(mapped));
       expect(got.startsWith("xn--")).toBe(true);
-      expect(url.domainToUnicode(got)).toBe(input.toLowerCase());
+      expect(url.domainToUnicode(got)).toBe(mapped);
     });
   }
 

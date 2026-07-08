@@ -45,10 +45,9 @@ async function handshakeWithConnectionHeader(connectionLines: string): Promise<H
   }
 }
 
-// RFC 6455 §4.1 item 6: the |Connection| header field must CONTAIN a token that
-// is an ASCII case-insensitive match for "Upgrade". Connection is a comma-
-// separated token list (RFC 7230 §6.1), and multiple field lines are equivalent
-// to their comma-joined form (§3.2.2).
+// RFC 6455 §4.1 item 6: |Connection| must CONTAIN a token that case-insensitively
+// matches "Upgrade". It is a comma-list (RFC 7230 §6.1), and repeated field lines
+// are equivalent to their comma-joined form (§3.2.2).
 describe("WebSocket Connection header validation", () => {
   test.each([
     ["single token", "Connection: Upgrade\r\n"],

@@ -8,10 +8,10 @@ import { bunEnv, bunExe, isDebug, isLinux } from "harness";
 // registered via process.on("SIGPWR", ...) actually fires.
 
 describe.skipIf(!isLinux)("SIGPWR", () => {
-  async function runScript(script: string) {
+  async function runScript(script: string, extraEnv: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: bunEnv,
+      env: { ...bunEnv, ...extraEnv },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -102,19 +102,14 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
     expect(await runScript(script)).toEqual(ok("survived\n"));
   });
 
-  // A Worker gives MachineThreads a second entry so Bun.gc(true) actually has a thread to
-  // suspend via pthread_kill(SIGPWR), proving the SI_TKILL gate still lets JSC's own
-  // suspend/resume through while an external SIGPWR is routed to the JS listener.
+  // collectContinuously runs a dedicated collector thread in the same VM that suspends the
+  // main mutator via pthread_kill(SIGPWR); a broken SI_TKILL passthrough would hang here.
+  // The exact `handled` count also proves internal deliveries are not misrouted to JS.
   test.concurrent("GC suspend/resume still works with the SIGPWR guard installed", async () => {
     const iterations = isDebug ? 10 : 50;
     const script = /*js*/ `
       let handled = 0;
       process.on("SIGPWR", () => { handled++; });
-      const w = new Worker("data:text/javascript,postMessage(0);setInterval(()=>{},1e6)");
-      await new Promise((resolve, reject) => {
-        w.addEventListener("message", resolve, { once: true });
-        w.addEventListener("error", reject, { once: true });
-      });
       for (let i = 0; i < ${iterations}; i++) {
         const junk = [];
         for (let j = 0; j < 200; j++) junk.push({ a: j, b: Buffer.alloc(64, 65).toString() });
@@ -122,11 +117,10 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
         process.kill(process.pid, 30);
         await new Promise(r => setImmediate(r));
       }
-      await w.terminate();
       console.log(JSON.stringify({ handled }));
     `;
 
-    const { stdout, stderr, exitCode, signalCode } = await runScript(script);
+    const { stdout, stderr, exitCode, signalCode } = await runScript(script, { BUN_JSC_collectContinuously: "1" });
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ handled: iterations });
     expect(exitCode).toBe(0);

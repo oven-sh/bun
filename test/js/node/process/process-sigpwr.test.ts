@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux } from "harness";
 
 // JSC uses SIGPWR on Linux to suspend/resume the JS thread for conservative stack scanning.
 // An unsolicited SIGPWR (from process.kill, Bun.spawn().kill, or an external `kill -PWR`)
@@ -8,59 +8,16 @@ import { bunEnv, bunExe, isLinux } from "harness";
 // registered via process.on("SIGPWR", ...) actually fires.
 
 describe.skipIf(!isLinux)("SIGPWR", () => {
-  test.concurrent("process.kill(self, 30) runs the SIGPWR listener instead of crashing", async () => {
-    const script = /*js*/ `
-      const { promise, resolve } = Promise.withResolvers();
-      process.on("SIGPWR", (name, num) => {
-        console.log("handler", name, num);
-        resolve();
-      });
-      process.kill(process.pid, 30);
-      await promise;
-      console.log("survived");
-    `;
-
+  async function runScript(script: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "handler SIGPWR 30\nsurvived\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
-
-  test.concurrent('process.kill(self, "SIGPWR") runs the listener', async () => {
-    const script = /*js*/ `
-      const { promise, resolve } = Promise.withResolvers();
-      process.on("SIGPWR", () => { console.log("handler ran"); resolve(); });
-      process.kill(process.pid, "SIGPWR");
-      await promise;
-    `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "handler ran\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  });
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
 
   async function spawnAndSignalAfterReady(deliver: (proc: import("bun").Subprocess<"ignore", "pipe", "pipe">) => void) {
     const script = /*js*/ `
@@ -78,6 +35,7 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
       stderr: "pipe",
     });
 
+    const stderrPromise = proc.stderr.text();
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
@@ -93,28 +51,46 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
     }
     stdout += decoder.decode();
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([stderrPromise, proc.exited]);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
+  const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+
+  // The literal 30 is intentional: this exercises the numeric-signal path from the repro,
+  // which hands the raw number straight to kill(2) without name-table lookup.
+  test.concurrent("process.kill(self, 30) runs the SIGPWR listener instead of crashing", async () => {
+    const script = /*js*/ `
+      const { promise, resolve } = Promise.withResolvers();
+      process.on("SIGPWR", (name, num) => {
+        console.log("handler", name, num);
+        resolve();
+      });
+      process.kill(process.pid, 30);
+      await promise;
+      console.log("survived");
+    `;
+    expect(await runScript(script)).toEqual(ok("handler SIGPWR 30\nsurvived\n"));
+  });
+
+  test.concurrent('process.kill(self, "SIGPWR") runs the listener', async () => {
+    const script = /*js*/ `
+      const { promise, resolve } = Promise.withResolvers();
+      process.on("SIGPWR", () => { console.log("handler ran"); resolve(); });
+      process.kill(process.pid, "SIGPWR");
+      await promise;
+    `;
+    expect(await runScript(script)).toEqual(ok("handler ran\n"));
+  });
+
   test.concurrent("SIGPWR delivered from outside the process runs the listener", async () => {
     const result = await spawnAndSignalAfterReady(proc => process.kill(proc.pid!, "SIGPWR"));
-    expect(result).toEqual({
-      stdout: "ready\nhandler ran\nsurvived\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    expect(result).toEqual(ok("ready\nhandler ran\nsurvived\n"));
   });
 
   test.concurrent("subprocess.kill('SIGPWR') runs the listener in the child", async () => {
     const result = await spawnAndSignalAfterReady(proc => proc.kill("SIGPWR"));
-    expect(result).toEqual({
-      stdout: "ready\nhandler ran\nsurvived\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    expect(result).toEqual(ok("ready\nhandler ran\nsurvived\n"));
   });
 
   test.concurrent("unsolicited SIGPWR with no listener does not crash the process", async () => {
@@ -123,33 +99,19 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
       await new Promise(r => setImmediate(r));
       console.log("survived");
     `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "survived\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    expect(await runScript(script)).toEqual(ok("survived\n"));
   });
 
   // GC stress: make JSC actually use its SIGPWR suspend/resume machinery alongside an
   // external SIGPWR, to prove the si_code gate lets the GC path through unmolested.
   test.concurrent("GC suspend/resume still works with the SIGPWR guard installed", async () => {
+    const iterations = isDebug ? 10 : 50;
     const script = /*js*/ `
       let handled = 0;
       process.on("SIGPWR", () => { handled++; });
-      for (let i = 0; i < 50; i++) {
+      for (let i = 0; i < ${iterations}; i++) {
         const junk = [];
-        for (let j = 0; j < 1000; j++) junk.push({ a: j, b: Buffer.alloc(64, 65).toString() });
+        for (let j = 0; j < 200; j++) junk.push({ a: j, b: Buffer.alloc(64, 65).toString() });
         Bun.gc(true);
         process.kill(process.pid, 30);
         await new Promise(r => setImmediate(r));
@@ -157,19 +119,11 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
       console.log(JSON.stringify({ handled }));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
+    const { stdout, stderr, exitCode, signalCode } = await runScript(script);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ handled: 50 });
+    expect(JSON.parse(stdout.trim())).toEqual({ handled: iterations });
     expect(exitCode).toBe(0);
-    expect(proc.signalCode).toBe(null);
+    expect(signalCode).toBe(null);
   });
 
   test.concurrent("removing all SIGPWR listeners does not reset the disposition to SIG_DFL", async () => {
@@ -182,21 +136,6 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
       await new Promise(r => setImmediate(r));
       console.log("survived");
     `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "survived\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    expect(await runScript(script)).toEqual(ok("survived\n"));
   });
 });

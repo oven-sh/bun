@@ -548,13 +548,33 @@ describe("request.url falls back to the server's authority when Host is unusable
   it.each([
     ["HTTP/1.0 with no Host", "/helloooo", "GET /helloooo HTTP/1.0\r\n\r\n"],
     ["HTTP/1.0 Host containing /", "/helloooo", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
-    ["HTTP/1.1 Host containing a space", "/helloooo", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],
-    ["HTTP/1.1 Host with out-of-range port", "/helloooo", "GET /helloooo HTTP/1.1\r\nHost: h:99999\r\nConnection: close\r\n\r\n"],
-    ["HTTP/1.1 Host with unclosed IPv6 bracket", "/helloooo", "GET /helloooo HTTP/1.1\r\nHost: [::1\r\nConnection: close\r\n\r\n"],
-    ["HTTP/1.1 Host with bad percent escape", "/helloooo", "GET /helloooo HTTP/1.1\r\nHost: a%zz\r\nConnection: close\r\n\r\n"],
+    [
+      "HTTP/1.1 Host containing a space",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.1 Host with out-of-range port",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: h:99999\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.1 Host with unclosed IPv6 bracket",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: [::1\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.1 Host with bad percent escape",
+      "/helloooo",
+      "GET /helloooo HTTP/1.1\r\nHost: a%zz\r\nConnection: close\r\n\r\n",
+    ],
     ["HTTP/1.1 empty Host", "/helloooo", "GET /helloooo HTTP/1.1\r\nHost: \r\nConnection: close\r\n\r\n"],
     ["HTTP/1.0 no Host, long path (>128 byte URL)", longPath, `GET ${longPath} HTTP/1.0\r\n\r\n`],
-    ["HTTP/1.1 Host with out-of-range port, long path", longPath, `GET ${longPath} HTTP/1.1\r\nHost: h:99999\r\nConnection: close\r\n\r\n`],
+    [
+      "HTTP/1.1 Host with out-of-range port, long path",
+      longPath,
+      `GET ${longPath} HTTP/1.1\r\nHost: h:99999\r\nConnection: close\r\n\r\n`,
+    ],
   ])("%s", async (_name, path, payload) => {
     let observed: { url: string; cloneErr: string | null } | undefined;
     using server = Bun.serve({
@@ -648,10 +668,7 @@ describe("request.url falls back to the server's authority when Host is unusable
       hostname: "127.0.0.1",
       fetch: req => new Response(req.url),
     });
-    const raw = await play(
-      server.port,
-      "GET /helloooo HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n",
-    );
+    const raw = await play(server.port, "GET /helloooo HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
     expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("http://example.com/helloooo");
   });
 });

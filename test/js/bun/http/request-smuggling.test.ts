@@ -1428,25 +1428,31 @@ describe("Host header field values in request.url", () => {
     ["example.com#frag"],
     ["example.com\\other:8080"],
     ["[::1]:3000?q"],
-  ])("an HTTP/1.1 request whose Host header is %j is served, with the server's authority as request.url", async host => {
-    await using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        return new Response(req.url);
-      },
-    });
+  ])(
+    "an HTTP/1.1 request whose Host header is %j is served, with the server's authority as request.url",
+    async host => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          return new Response(req.url);
+        },
+      });
 
-    const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
-    expect(response).toStartWith("HTTP/1.1 200");
-    // The handler ran, and none of the Host field's bytes were copied into the synthesized URL:
-    // the authority is the server's own configured hostname (RFC 9112 3.3 fallback).
-    const url = new URL(response.slice(response.indexOf("\r\n\r\n") + 4));
-    expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
-      hostname: "127.0.0.1",
-      pathname: "/index",
-    });
-  });
+      const response = await sendRawRequest(
+        server,
+        `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(response).toStartWith("HTTP/1.1 200");
+      // The handler ran, and none of the Host field's bytes were copied into the synthesized URL:
+      // the authority is the server's own configured hostname (RFC 9112 3.3 fallback).
+      const url = new URL(response.slice(response.indexOf("\r\n\r\n") + 4));
+      expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
+        hostname: "127.0.0.1",
+        pathname: "/index",
+      });
+    },
+  );
 
   test.each([
     ["example.com", "http://example.com/index"],

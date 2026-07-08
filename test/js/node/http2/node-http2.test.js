@@ -3181,14 +3181,17 @@ describe("http2 client session originSet", () => {
 
   // node: encrypted is undefined until the socket connects and originSet keys off it; reading
   // originSet while connecting must not seed (and permanently cache) a bogus origin derived from
-  // an unconnected socket.
+  // an unconnected socket. The seed itself is the WHATWG serialized origin (getURLOrigin), so a
+  // mixed-case servername is lowercased and the default https port would be stripped.
   it.each([
-    ["IP literal", "127.0.0.1"],
-    ["hostname", "localhost"],
-  ])("is undefined before connect and seeded from the connected socket (%s)", async (_label, host) => {
+    ["IP literal", "127.0.0.1", undefined, "https://127.0.0.1"],
+    ["hostname", "localhost", undefined, "https://localhost"],
+    ["mixed-case servername", "127.0.0.1", "LocalHost", "https://localhost"],
+  ])("is undefined before connect and seeded from the connected socket (%s)", async (_label, host, servername, origin) => {
     await withSecureServer(async port => {
       const { promise, resolve, reject } = Promise.withResolvers();
-      const client = http2.connect(`https://${host}:${port}`, TLS_OPTIONS);
+      const url = `https://${host}:${port}`;
+      const client = http2.connect(url, servername ? { ...TLS_OPTIONS, servername } : TLS_OPTIONS);
       client.on("error", reject);
       client.on("close", () => reject(new Error("closed before connect")));
       const beforeConnect = { encrypted: client.encrypted, originSet: client.originSet };
@@ -3204,9 +3207,11 @@ describe("http2 client session originSet", () => {
         afterDestroy: { destroyed: client.destroyed, originSet: client.originSet },
       }).toEqual({
         beforeConnect: { encrypted: undefined, originSet: undefined },
-        onConnect: { encrypted: true, originSet: [`https://${host}:${port}`] },
+        onConnect: { encrypted: true, originSet: [`${origin}:${port}`] },
         afterDestroy: { destroyed: true, originSet: undefined },
       });
+      // http2-wrapper (got, crawlee) compares originSet[0] against URL#origin of the connect URL.
+      if (!servername) expect(onConnect.originSet[0]).toBe(new URL(url).origin);
     });
   });
 

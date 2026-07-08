@@ -3413,6 +3413,11 @@ function initOriginSet(session: Http2Session) {
     }
     let originString = `https://${hostName}`;
     if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    // node: originSet.add(getURLOrigin(originString)) - the WHATWG serialized origin (strips the
+    // default https port and ASCII-normalizes the host), so it compares equal to URL#origin.
+    try {
+      originString = new URL(originString).origin;
+    } catch {}
     originSet.add(originString);
   }
   return originSet;

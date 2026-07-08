@@ -551,6 +551,20 @@ const SQL: typeof Bun.SQL = function SQL(
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
     }
 
+    // Some databases (SQLite's ON CONFLICT ROLLBACK / OR ROLLBACK / RAISE(ROLLBACK)) can roll the
+    // transaction back on their own mid-callback. Once that happens the connection is in autocommit
+    // and any further COMMIT/ROLLBACK would fail with "no transaction is active".
+    let needs_rollback = false;
+    const isConnectionInTransaction = pool.isConnectionInTransaction?.bind(pool);
+    function transaction_still_open() {
+      return isConnectionInTransaction === undefined || isConnectionInTransaction(pooledConnection);
+    }
+    function transaction_aborted_error() {
+      return pool.invalidTransactionStateError(
+        "current transaction is aborted (the database already rolled it back), commands ignored until end of transaction",
+      );
+    }
+
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
@@ -567,6 +581,9 @@ const SQL: typeof Bun.SQL = function SQL(
       ) {
         return Promise.$reject(pool.connectionClosedError());
       }
+      if (needs_rollback && !transaction_still_open()) {
+        return Promise.$reject(transaction_aborted_error());
+      }
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -579,9 +596,15 @@ const SQL: typeof Bun.SQL = function SQL(
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
     transaction_sql.unsafe = (string, args = []) => {
+      if (needs_rollback && !transaction_still_open()) {
+        return Promise.$reject(transaction_aborted_error());
+      }
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
     transaction_sql.file = async (path: string, args = []) => {
+      if (needs_rollback && !transaction_still_open()) {
+        throw transaction_aborted_error();
+      }
       return await Bun.file(path)
         .text()
         .then(text => {
@@ -687,10 +710,13 @@ const SQL: typeof Bun.SQL = function SQL(
       for (const query of transactionQueries) {
         (query as Query<any, any>).cancel();
       }
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+      if (transaction_still_open()) {
+        if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+          await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        }
+        await run_internal_transaction_sql(ROLLBACK_COMMAND);
       }
-      await run_internal_transaction_sql(ROLLBACK_COMMAND);
+      needs_rollback = false;
       state.connectionState |= ReservedConnectionState.closed;
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
@@ -707,6 +733,9 @@ const SQL: typeof Bun.SQL = function SQL(
 
       try {
         let result = await savepoint_callback(transaction_sql);
+        if (needs_rollback && !transaction_still_open()) {
+          throw transaction_aborted_error();
+        }
         if (RELEASE_SAVEPOINT_COMMAND) {
           // mssql dont have release savepoint
           await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
@@ -716,8 +745,10 @@ const SQL: typeof Bun.SQL = function SQL(
         }
         return result;
       } catch (err) {
-        if (!(state.connectionState & ReservedConnectionState.closed)) {
-          await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+        if (!(state.connectionState & ReservedConnectionState.closed) && transaction_still_open()) {
+          try {
+            await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          } catch {}
         }
         throw err;
       }
@@ -753,13 +784,15 @@ const SQL: typeof Bun.SQL = function SQL(
         return await promise.finally(onSavepointFinished.bind(null, promise));
       };
     }
-    let needs_rollback = false;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
       if ($isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
+      }
+      if (needs_rollback && !transaction_still_open()) {
+        throw transaction_aborted_error();
       }
       // at this point we dont need to rollback anymore
       needs_rollback = false;
@@ -770,15 +803,13 @@ const SQL: typeof Bun.SQL = function SQL(
       return resolve(transaction_result);
     } catch (err) {
       try {
-        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
+        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback && transaction_still_open()) {
           if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
             await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }
-      } catch (err) {
-        return reject(err);
-      }
+      } catch {}
       return reject(err);
     } finally {
       state.connectionState |= ReservedConnectionState.closed;

@@ -1144,6 +1144,149 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  describe("SQLite automatic ROLLBACK (ON CONFLICT ROLLBACK / OR ROLLBACK / RAISE(ROLLBACK))", () => {
+    beforeEach(async () => {
+      await sql`CREATE TABLE t (v TEXT PRIMARY KEY ON CONFLICT ROLLBACK)`;
+      await sql`CREATE TABLE log (v TEXT)`;
+      await sql`INSERT INTO t VALUES ('dup')`;
+    });
+
+    test("uncaught conflict: begin() rejects with the original statement error, not 'cannot rollback'", async () => {
+      let caught: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT INTO t VALUES ('dup')`;
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect({ code: caught?.code, message: String(caught) }).toEqual({
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        message: "SQLiteError: UNIQUE constraint failed: t.v",
+      });
+    });
+
+    test("caught conflict: later statements are refused and nothing is committed", async () => {
+      let beginErr: any;
+      let stmtErr: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT INTO log VALUES ('first')`;
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch {}
+          try {
+            await tx`INSERT INTO log VALUES ('after-auto-rollback')`;
+          } catch (e) {
+            stmtErr = e;
+            throw e;
+          }
+        });
+      } catch (e) {
+        beginErr = e;
+      }
+      const durable = (await sql`SELECT v FROM log`).map((r: any) => r.v);
+      expect({
+        stmtErrCode: stmtErr?.code,
+        beginErrCode: beginErr?.code,
+        durable,
+      }).toEqual({
+        stmtErrCode: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        beginErrCode: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        durable: [],
+      });
+      // the connection must remain usable for a fresh transaction afterwards
+      await sql.begin(async tx => {
+        await tx`INSERT INTO log VALUES ('next-tx')`;
+      });
+      expect((await sql`SELECT v FROM log`).map((r: any) => r.v)).toEqual(["next-tx"]);
+    });
+
+    test("caught conflict where callback swallows everything: begin() still rejects, COMMIT is not attempted", async () => {
+      let beginErr: any;
+      try {
+        await sql.begin(async tx => {
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch {}
+          // every subsequent statement keeps failing; swallowing one must not let the next through
+          try {
+            await tx`INSERT INTO log VALUES ('a')`;
+          } catch {}
+          try {
+            await tx`INSERT INTO log VALUES ('b')`;
+          } catch {}
+        });
+      } catch (e) {
+        beginErr = e;
+      }
+      expect({
+        code: beginErr?.code,
+        message: String(beginErr),
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        message:
+          "SQLiteError: current transaction is aborted (the database already rolled it back), commands ignored until end of transaction",
+        durable: [],
+      });
+    });
+
+    test("INSERT OR ROLLBACK (statement-level conflict clause) behaves the same", async () => {
+      await sql`CREATE TABLE t2 (v TEXT PRIMARY KEY)`;
+      await sql`INSERT INTO t2 VALUES ('dup')`;
+      let caught: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT OR ROLLBACK INTO t2 VALUES ('dup')`;
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
+    });
+
+    test("tx.unsafe refuses to run after auto-rollback", async () => {
+      let stmtErr: any;
+      await sql
+        .begin(async tx => {
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch {}
+          await tx.unsafe("INSERT INTO log VALUES ('after-auto-rollback')");
+        })
+        .catch(e => (stmtErr = e));
+      expect({
+        code: stmtErr?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        durable: [],
+      });
+    });
+
+    test("auto-rollback inside a savepoint propagates the original error and aborts the outer transaction", async () => {
+      let caught: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT INTO log VALUES ('outer')`;
+          await tx.savepoint(async sp => {
+            await sp`INSERT INTO t VALUES ('dup')`;
+          });
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect({
+        code: caught?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        durable: [],
+      });
+    });
+  });
 });
 
 describe("SQLite-specific features", () => {

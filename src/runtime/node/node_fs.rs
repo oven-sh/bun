@@ -5703,7 +5703,7 @@ impl NodeFS {
             // Fall back to copying file data so `fs.link()` still works.
             #[cfg(target_env = "ohos")]
             if rc < 0 {
-                let errno = SystemErrno::from_i32(sys::last_errno());
+                let errno = SystemErrno::from(sys::last_errno());
                 if errno == E::EPERM {
                     return Self::link_copy_fallback(from, to, args);
                 }

@@ -7,13 +7,7 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
 
-var {
-  Performance,
-  PerformanceEntry,
-  PerformanceMark,
-  PerformanceMeasure,
-  PerformanceObserverEntryList,
-} = globalThis;
+var { Performance, PerformanceEntry, PerformanceMark, PerformanceMeasure, PerformanceObserverEntryList } = globalThis;
 
 // globalThis.PerformanceObserver now resolves to this module's subclass, so the
 // native class is fetched directly to avoid re-entering this module on load.

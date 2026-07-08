@@ -3355,7 +3355,9 @@ describe.concurrent("http2 server: pushed stream error surfacing", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({
-      stdout: expect.stringContaining("push error: ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_REFUSED_STREAM"),
+      stdout: expect.stringContaining(
+        "push error: ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_REFUSED_STREAM",
+      ),
       stderr: "",
     });
     expect(stdout).toContain("push close rstCode=7");

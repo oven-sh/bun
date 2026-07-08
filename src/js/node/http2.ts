@@ -3184,18 +3184,25 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       if (error !== 0 && !stream.rstCode) stream.rstCode = error;
       error = self[kSessionDestroyError];
     }
-    // The resolved error is passed to stream.destroy() unconditionally: node surfaces the same
-    // error whether or not an 'error' listener is attached (absent a listener it becomes an
-    // uncaught exception, like any Duplex). Gating on listenerCount here dropped the resolved
-    // session error and let _destroy synthesize a misleading ERR_HTTP2_STREAM_ERROR from rstCode.
+    // Pass the resolved error to stream.destroy() unconditionally: node surfaces the same error
+    // whether or not an 'error' listener is attached (absent one it becomes an uncaught exception,
+    // like any Duplex); do not gate on listenerCount.
     let error_instance: Error | undefined;
     if (typeof error === "number") {
       stream.rstCode = error;
-      if (error != 0 && !stream[kNeverAnnounced]) {
+      // NO_ERROR and CANCEL close without an 'error' event (node semantics); _destroy mirrors
+      // this exclusion when it synthesizes from rstCode.
+      if (error != 0 && error != NGHTTP2_CANCEL && !stream[kNeverAnnounced]) {
         error_instance = streamErrorFromCode(error);
       }
-    } else if (!stream[kNeverAnnounced]) {
-      error_instance = error;
+    } else if (error != null && !stream[kNeverAnnounced]) {
+      // A session destroyed without an error synthesizes ERR_HTTP2_STREAM_CANCEL for its open
+      // streams; node only surfaces that on streams that never became active, otherwise the close
+      // is silent. Bun does not yet track that distinction, so this one code stays listener-gated
+      // rather than becoming an uncaught exception on active streams.
+      if (error.code !== "ERR_HTTP2_STREAM_CANCEL" || stream.listenerCount("error") > 0) {
+        error_instance = error;
+      }
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
@@ -3485,10 +3492,10 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
-      // Until the request HEADERS are accepted and the 'stream' event fires, user code has no
-      // reference to this object and cannot attach an 'error' listener; node never surfaces a
-      // JS stream for a request it rejects at the header layer.
-      stream[kNeverAnnounced] = true;
+      // Until an incoming request's HEADERS are accepted and the 'stream' event fires, user code
+      // has no reference to this object; node never surfaces a JS stream for a request it rejects
+      // at the header layer. Even ids are server-initiated pushes (handed out via pushStream).
+      if (stream_id % 2 === 1) stream[kNeverAnnounced] = true;
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
       return stream;

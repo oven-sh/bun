@@ -425,7 +425,7 @@ impl NetworkTask {
             // "npm" CLI requests the manifest with the encoded name.
             let encoded_name_storage;
             let encoded_name: &[u8] = if strings::index_of_char(name, b'/').is_some() {
-                encoded_name_storage = name.replace(b"/", b"%2f");
+                encoded_name_storage = name.replace(b"/", b"%2F");
                 &encoded_name_storage
             } else {
                 name

@@ -19,7 +19,6 @@ const {
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
   NodeHTTPResponseAbortEvent,
-  setRequestTimeout,
   kAbortController,
 } = require("internal/http");
 
@@ -302,13 +301,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "signal", {
 
 IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (callback) this.on("timeout", callback);
-
-  const handle = this[kHandle];
-  if (handle) {
-    setRequestTimeout(handle, Math.ceil(msecs / 1000));
-  } else {
-    this.socket?.setTimeout(msecs);
-  }
+  this.socket?.setTimeout(msecs);
   return this;
 };
 

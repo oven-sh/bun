@@ -608,6 +608,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
         }
 
+        // Like Node.js's connectionListenerInternal: the server timeout is
+        // applied to the socket before any request routing (so it also covers
+        // CONNECT and upgrade tunnels); a user-set per-socket timeout is
+        // refreshed, not cleared.
+        const serverTimeoutMs = server.timeout;
+        if (serverTimeoutMs) socket.setTimeout(serverTimeoutMs);
+        else socket._unrefTimer();
+
         const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
@@ -710,9 +718,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
-        const serverTimeoutMs = server.timeout;
-        if (serverTimeoutMs) socket.setTimeout(serverTimeoutMs);
-        else socket._unrefTimer();
         socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
@@ -1353,6 +1358,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {
+    this._unrefTimer();
     const handle = this[kHandle];
     let err;
     try {

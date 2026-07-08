@@ -196,4 +196,28 @@ describe("http.Server.prototype.setTimeout", () => {
       cleanup(srv, client);
     }
   });
+
+  test.concurrent("req.setTimeout(0) clears the server-armed socket timer", async () => {
+    // All four entry points (server/socket/req/res.setTimeout) share one timer.
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const srv = await listen((req, _res) => {
+      req.resume();
+      req.setTimeout(0);
+    });
+    srv.setTimeout(200);
+    srv.on("timeout", () => resolve("timeout"));
+
+    const client = await connectAndWrite(
+      (srv.address() as net.AddressInfo).port,
+      "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 900\r\n\r\nab",
+    );
+    client.on("close", () => resolve("close"));
+
+    try {
+      const winner = await Promise.race([promise, Bun.sleep(600).then(() => "alive")]);
+      expect(winner).toBe("alive");
+    } finally {
+      cleanup(srv, client);
+    }
+  });
 });

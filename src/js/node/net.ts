@@ -3742,7 +3742,7 @@ function listenInCluster(
     sharedOnly: tls ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, reply) {
+  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
     if (listeningId !== server[kClusterListeningId]) {
       handle?.close();
       return;

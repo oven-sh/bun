@@ -126,6 +126,10 @@ pub(crate) fn do_send(
     #[cfg(not(windows))]
     let _ = peer_pid;
 
+    // cluster child.ts routes its internal traffic through process.send (so a
+    // monkey-patched process.send observes it, matching node's sendHelper);
+    // this option carries the wire-level Internal tag through that hop.
+    let mut is_internal = IsInternal::External;
     if handle.is_callable() {
         callback = handle;
         handle = JSValue::UNDEFINED;
@@ -133,6 +137,12 @@ pub(crate) fn do_send(
         callback = options_;
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
+        if options_
+            .get(global_object, "$internal")?
+            .is_some_and(|v| v.to_boolean())
+        {
+            is_internal = IsInternal::Internal;
+        }
     }
 
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
@@ -274,7 +284,7 @@ pub(crate) fn do_send(
     let status = ipc_data.serialize_and_send(
         global_object,
         message,
-        IsInternal::External,
+        is_internal,
         callback,
         zig_handle,
     );

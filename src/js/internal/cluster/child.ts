@@ -3,7 +3,6 @@ const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 const { kClusterOwner: owner_symbol } = require("internal/shared");
 
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
 // Closes a numeric cluster fd. On Windows these are raw SOCKETs that must go
 // through closesocket(), not the CRT fd table that fs.closeSync uses.
@@ -19,6 +18,13 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
+// Carries the wire-level Internal tag through process.send (do_send in
+// ipc_host.rs); routing via process.send (instead of the sendHelperChild
+// binding) lets a monkey-patched process.send observe cluster traffic like
+// node's sendHelper does (test-net-server-close-before-ipc-response.js).
+const kInternalSendOptions = { __proto__: null, "$internal": true };
+let seq = 0;
+const callbacks = new Map();
 
 // Minimal stand-in for node's TCPWrap client handle: the primary hands off an
 // accepted connection as a raw fd over the IPC channel (surfaced as
@@ -72,6 +78,17 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
+    // ack-matching lives here (not in the Rust dispatcher) because send()
+    // routes through process.send and manages seq in this file.
+    const ack = message.ack;
+    if (ack !== undefined) {
+      const callback = callbacks.$get(ack);
+      if (callback !== undefined) {
+        callbacks.$delete(ack);
+        callback.$call(this, message, handle);
+        return;
+      }
+    }
     if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
       handle = makeConnectionHandle(message["$fd"]);
     }
@@ -287,7 +304,11 @@ function onconnection(message, handle) {
 }
 
 function send(message, cb?) {
-  return sendHelper(message, null, cb);
+  if (!process.connected) return false;
+  message.seq = seq;
+  if (typeof cb === "function") callbacks.$set(seq, cb);
+  seq += 1;
+  return process.send(message, undefined, kInternalSendOptions);
 }
 
 // Extend generic Worker with methods specific to worker processes.

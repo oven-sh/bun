@@ -250,11 +250,12 @@ pub(crate) const MAX_FIELDS: usize = 32;
 
 use crate::const_str_eq;
 
-/// `TypeId` of `F`. All callers pass concrete types that are `'static` in
-/// practice, matching what `Field::ty` (reflected type info) produces.
+/// `TypeId` of `F`. Uses the reflection API (`TypeInfo::of`) which works
+/// without `'static` and is the same source that `Field::ty` comes from.
+/// `TypeKind::type_id()` returns the same `TypeId` that `Field::ty` provides.
 #[inline(always)]
-const fn type_id_of<F: ?Sized + 'static>() -> TypeId {
-    TypeId::of::<F>()
+const fn type_id_of<F: ?Sized>() -> TypeId {
+    TypeInfo::of::<F>().kind.type_id()
 }
 
 /// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.
@@ -440,7 +441,7 @@ impl<T> Reflected<T> {
     /// associated type alias (e.g. `EntryPoint::Kind` vs `entry_point::Kind`),
     /// so a size match is accepted when ids differ. Size mismatch is always
     /// rejected.
-    const fn check<const NAME: &'static str, F: 'static>() -> usize {
+    const fn check<const NAME: &'static str, F>() -> usize {
         let fields = fields_of::<T>();
         let mut i = 0;
         while i < fields.len() {
@@ -635,14 +636,14 @@ impl<T> Slice<T> {
     /// Compile-time checked: a const-eval assertion verifies that `T` has a
     /// field named `NAME` and that its type is exactly `F`.
     #[inline]
-    pub fn items<const NAME: &'static str, F: 'static>(&self) -> &[F] {
+    pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         Col::new(self.col_ptr::<F>(fi), self.len).as_slice()
     }
 
     /// Returns the mutable column slice for field `NAME` typed as `&mut [F]`.
     #[inline]
-    pub fn items_mut<const NAME: &'static str, F: 'static>(&mut self) -> &mut [F] {
+    pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
@@ -657,7 +658,7 @@ impl<T> Slice<T> {
     /// `self.len()` reads/writes; the caller must not create overlapping
     /// `&mut` references to the same column when *dereferencing* it.
     #[inline]
-    pub fn items_raw<const NAME: &'static str, F: 'static>(&self) -> *mut F {
+    pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         self.col_ptr::<F>(fi).as_ptr()
     }
@@ -938,14 +939,14 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Compile-time checked: const-eval verifies `NAME` is a field of `T` and
     /// `F` is exactly its type.
     #[inline]
-    pub fn items<const NAME: &'static str, F: 'static>(&self) -> &[F] {
+    pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         Col::new(self.col_ptr::<F>(fi), self.len).as_slice()
     }
 
     /// Get the mutable slice of values for field `NAME`.
     #[inline]
-    pub fn items_mut<const NAME: &'static str, F: 'static>(&mut self) -> &mut [F] {
+    pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
@@ -953,7 +954,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Raw column pointer; see [`Slice::items_raw`]. Obtaining the pointer is
     /// always sound; the read/write contract is on the caller's *dereference*.
     #[inline]
-    pub fn items_raw<const NAME: &'static str, F: 'static>(&self) -> *mut F {
+    pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
         self.col_ptr::<F>(fi).as_ptr()
     }

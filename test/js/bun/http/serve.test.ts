@@ -1140,6 +1140,36 @@ it("should support reloading", async () => {
   );
 });
 
+it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
+  // The server's kind is fixed when listen() sizes its connections' native
+  // per-socket block; a reload that smuggles in the node:http handler used by
+  // node's http.Server wrapper must be ignored, not flip the context into
+  // node-compat mode under connections allocated with the smaller block.
+  const first: Handler = () => new Response("first");
+  const second: Handler = () => new Response("second");
+  await runTest(
+    {
+      fetch: first,
+    },
+    async server => {
+      expect(await (await fetch(server.url.origin)).text()).toBe("first");
+      server.reload({
+        fetch: second,
+        // @ts-expect-error internal option used by node:http's Server
+        onNodeHTTPRequest: () => {
+          throw new Error("must never be routed");
+        },
+      });
+      // Fresh connections after the reload (fetch pools per-origin, so mix in
+      // explicit no-keepalive requests to force new native sockets).
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
+        expect(await res.text()).toBe("second");
+      }
+    },
+  );
+});
+
 describe("status code text", () => {
   const fixture = {
     200: "OK",

@@ -102,13 +102,16 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
     expect(await runScript(script)).toEqual(ok("survived\n"));
   });
 
-  // GC stress: make JSC actually use its SIGPWR suspend/resume machinery alongside an
-  // external SIGPWR, to prove the si_code gate lets the GC path through unmolested.
+  // A Worker gives MachineThreads a second entry so Bun.gc(true) actually has a thread to
+  // suspend via pthread_kill(SIGPWR), proving the SI_TKILL gate still lets JSC's own
+  // suspend/resume through while an external SIGPWR is routed to the JS listener.
   test.concurrent("GC suspend/resume still works with the SIGPWR guard installed", async () => {
     const iterations = isDebug ? 10 : 50;
     const script = /*js*/ `
       let handled = 0;
       process.on("SIGPWR", () => { handled++; });
+      const w = new Worker("data:text/javascript,postMessage(0);setInterval(()=>{},1e6)");
+      await new Promise(r => w.addEventListener("message", r, { once: true }));
       for (let i = 0; i < ${iterations}; i++) {
         const junk = [];
         for (let j = 0; j < 200; j++) junk.push({ a: j, b: Buffer.alloc(64, 65).toString() });
@@ -116,6 +119,7 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
         process.kill(process.pid, 30);
         await new Promise(r => setImmediate(r));
       }
+      await w.terminate();
       console.log(JSON.stringify({ handled }));
     `;
 

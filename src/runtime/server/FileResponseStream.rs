@@ -552,10 +552,9 @@ impl Drop for FileResponseStream {
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {
-    // Matches the cfg on `on_sendfile`. macOS is intentionally excluded: XNU's
-    // sendfile allocates mbufs with M_WAIT/no PCATCH before the SS_NBIO check,
-    // so under mbuf pressure it sleeps uninterruptibly and the process becomes
-    // unkillable. The BufferedReader path is fully non-blocking.
+    // Matches the cfg on `on_sendfile`. macOS is excluded: XNU's sendfile can
+    // sleep uninterruptibly under mbuf pressure, leaving the process unkillable;
+    // the BufferedReader path stays non-blocking.
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = (resp, file_type, length);

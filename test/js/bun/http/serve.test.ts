@@ -2139,11 +2139,9 @@ it.concurrent("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
-// The fixture serves a >1 MB file, the threshold at which the sendfile backend
-// is selected on platforms that use it. Each iteration opens several streams,
-// reads one chunk so they are provably mid-send, then kills the server and
-// awaits proc.exited. On macOS the old sendfile(2) path could park
-// uninterruptibly on an XNU turnstile and never exit; see can_sendfile().
+// Fixture serves a >1 MB file (the sendfile threshold). Each iteration reads
+// one chunk from several streams so the server is provably mid-send when
+// killed; on macOS the old sendfile(2) path could hang uninterruptibly here.
 it("should be able to stop in the middle of a file response", async () => {
   const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
   for (let i = 0; i < 3; i++) {

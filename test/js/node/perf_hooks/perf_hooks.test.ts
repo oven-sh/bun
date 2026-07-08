@@ -90,12 +90,17 @@ test("globalThis.PerformanceObserver delivers node-only entry types", async () =
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const result = JSON.parse(stdout);
-  expect(result).toEqual({
+  let result;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    result = { parseFailed: true, stdout };
+  }
+  expect({ ...result, stderr, exitCode }).toEqual({
     sameClass: true,
     viaGlobal: ["http:HttpClient", "http:HttpRequest", "net:connect"],
     viaModule: ["http:HttpClient", "http:HttpRequest", "net:connect"],
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });

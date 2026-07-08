@@ -1200,6 +1200,7 @@ JSC_DEFINE_CUSTOM_GETTER(getPerformanceObserverGlobal, (JSGlobalObject * lexical
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue perfHooks = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::NodePerfHooks);
     RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_ASSERT(perfHooks.isObject());
     JSValue result = perfHooks.getObject()->get(globalObject, Identifier::fromString(vm, "PerformanceObserver"_s));
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* thisObject = JSValue::decode(thisValue).getObject())

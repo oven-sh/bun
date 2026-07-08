@@ -117,8 +117,8 @@ const kObserverCallback = Symbol("kObserverCallback");
  * The native (WebCore) observer only understands mark/measure/resource.
  * Node-only entry types ('net', 'dns', ...) are routed to the JS-side
  * registry in internal/shared; everything else is delegated to the native
- * observer unchanged. (`NodePerformanceObserver` is the existing alias for
- * the native class destructured from globalThis above.)
+ * observer unchanged. `NodePerformanceObserver` is the native class, fetched
+ * via `getPerformanceObserverConstructor` above.
  */
 class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
   constructor(callback) {

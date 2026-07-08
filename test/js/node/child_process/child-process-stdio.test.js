@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { execSync, spawn } from "node:child_process";
+import { once } from "node:events";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -115,5 +116,28 @@ describe("process.stdin", () => {
       env: bunEnv,
     });
     expect(result).toEqual("data: File read successfully");
+  });
+});
+
+// https://github.com/oven-sh/bun/pull/31833
+// Short stdio arrays are padded to length 3; the eager-load guard used to read
+// the raw pre-padding length, so a 2-element array left stdout un-eagerly-
+// loaded and accessing it after exit hit an assertion in native-readable.
+describe("short stdio arrays", () => {
+  test.each([
+    [["pipe", "pipe"]],
+    [["ignore", "pipe"]],
+    [["inherit", "pipe"]],
+    [["pipe", "pipe", "pipe"]], // 3-element control row
+  ])("stdio %j: stdout is a usable Readable after exit", async stdio => {
+    const child = spawn(bunExe(), ["-e", "process.stdout.write('ok')"], { env: bunEnv, stdio });
+    let out = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", d => (out += d));
+    const [code, signal] = await once(child, "close");
+    expect(out).toBe("ok");
+    expect(child.stdout.readable).toBe(false);
+    expect(signal).toBeNull();
+    expect(code).toBe(0);
   });
 });

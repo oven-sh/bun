@@ -831,6 +831,20 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_stdio(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Self::stdio_array(this, global, false)
+    }
+
+    /// Internal: like `get_stdio` but transfers ownership of Bun-created
+    /// extra-pipe fds to the caller (child_process.ts wraps each in a
+    /// `net.Socket`, which closes on destroy). Slots are neutralized so
+    /// `finalize_streams` won't close them a second time. `get_stdio` stays a
+    /// pure read so `Bun.spawn` users who only inspect `.stdio` don't leak fds.
+    #[bun_jsc::host_fn(method)]
+    pub fn take_stdio(this: &Self, global: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        Self::stdio_array(this, global, true)
+    }
+
+    fn stdio_array(this: &Self, global: &JSGlobalObject, take: bool) -> JsResult<JSValue> {
         let array = JSValue::create_empty_array(global, 0)?;
         array.push(global, JSValue::NULL)?;
         array.push(global, JSValue::NULL)?; // TODO: align this with options
@@ -839,6 +853,10 @@ impl Subprocess<'_> {
         for item in this.stdio_pipes.get().iter() {
             #[cfg(windows)]
             {
+                // TODO(windows): `take` should neutralize the slot the way the
+                // IPC-channel path does so `finalize_streams` doesn't also
+                // `uv_close` the pipe the JS `net.Socket` adopted.
+                let _ = take;
                 if let StdioResult::Buffer(buffer) = item {
                     // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`);
                     // expose the numeric handle value.
@@ -861,18 +879,16 @@ impl Subprocess<'_> {
             }
         }
 
-        // Exposing a raw fd hands it to JS, which wraps it in
-        // `net.Socket({ fd })` (child_process.ts `"pipe"` case) — the socket
-        // takes ownership and closes the fd on destroy. Downgrade our entries
-        // so `finalize_streams` doesn't close them again (fd-UAF assert).
         #[cfg(not(windows))]
-        this.stdio_pipes.with_mut(|v| {
-            for item in v.iter_mut() {
-                if let ExtraPipe::OwnedFd(fd) = item {
-                    *item = ExtraPipe::UnownedFd(*fd);
+        if take {
+            this.stdio_pipes.with_mut(|v| {
+                for item in v.iter_mut() {
+                    if let ExtraPipe::OwnedFd(_) = item {
+                        *item = ExtraPipe::Unavailable;
+                    }
                 }
-            }
-        });
+            });
+        }
 
         Ok(array)
     }

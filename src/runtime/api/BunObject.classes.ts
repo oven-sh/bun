@@ -123,6 +123,12 @@ export default [
       stdio: {
         getter: "getStdio",
       },
+      takeStdio: {
+        // Internal — child_process.ts calls this to adopt extra-pipe fds
+        // before wrapping them in net.Socket. Not part of the public API.
+        fn: "takeStdio",
+        length: 0,
+      },
       terminal: {
         getter: "getTerminal",
         cache: true,

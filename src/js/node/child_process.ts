@@ -1221,13 +1221,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            // Use the guarded adapter: after the child exits (lazy spawn),
-            // the native stream may no longer carry $bunNativePtr, and
-            // constructNativeReadable asserts on it. The adapter transfers
-            // natively when possible and falls back to ReadableFromWeb.
-            const pipe = require("internal/webstreams_adapters").newStreamReadableFromReadableStream(value, {
-              encoding,
-            });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1250,7 +1244,10 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe":
             if (!NetModule) NetModule = require("node:net");
-            const fd = handle && handle.stdio[i];
+            // takeStdio() transferred ownership of Bun-created pipe fds; the
+            // Socket becomes the sole closer. Reading `handle.stdio` here
+            // instead would leave the native side owning the same fd.
+            const fd = this.#nativeStdio && this.#nativeStdio[i];
             if (!fd) return null;
             return NetModule.connect({ fd });
         }
@@ -1262,6 +1259,7 @@ class ChildProcess extends EventEmitter {
   #stdout;
   #stderr;
   #stdioObject;
+  #nativeStdio;
   #encoding;
   #stdioOptions;
 
@@ -1346,7 +1344,9 @@ class ChildProcess extends EventEmitter {
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
-    const stdioCount = stdio.length;
+    // `bunStdio` is already padded to length >= 3 by normalizeStdio; using
+    // the raw `stdio.length` here left short arrays un-eagerly-loaded.
+    const stdioCount = bunStdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
     validateString(options.file, "options.file");
@@ -1423,6 +1423,7 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
+        if (stdioCount > 3) this.#nativeStdio = this.#handle.takeStdio();
         for (let item of this.stdio) {
           item?.ref?.();
         }

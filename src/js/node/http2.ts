@@ -3140,10 +3140,39 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
+// Node's Http2Stream[kMaybeDestroy] server branch (lib/internal/http2/core.js): once the
+// response has finished, a server stream with no pending trailers whose request body was
+// never consumed (no read()/'data'/pipe - readableDidRead + readableFlowing) is closed
+// with RST_STREAM NO_ERROR. Without it a rejected upload deadlocks: the request body
+// stalls once the receive window fills (nothing reads, so backpressure never reopens it)
+// and the stream never reaches the fully-closed state, so the peer is never released.
+// setImmediate matches node (it lets push streams reach the peer before the close).
+function serverStreamOnFinish(this: ServerHttp2Stream) {
+  if (this.destroyed || this.closed) return;
+  if (!this.headersSent) return;
+  // Node holds the auto-close while trailers are pending: its HAS_TRAILERS flag is set by
+  // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
+  if (this[kSendingTrailers]) return;
+  if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && this.sentTrailers === undefined) return;
+  if (!this.readableDidRead && this.readableFlowing === null) {
+    setImmediate(callStreamClose, this);
+  }
+}
+function callStreamClose(stream: ServerHttp2Stream) {
+  if (!stream.destroyed && !stream.closed) stream.close();
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
+  }
+  // Node registers its 'finish' -> kMaybeDestroy hook inside shutdownWritable (its
+  // _final): a file response (respondWithFile/FD) nulls out _final and ends the
+  // user-facing writable while the file is still being written natively, so it must
+  // never install the hook - the early 'finish' would RST and truncate the transfer.
+  _final(callback) {
+    this.once("finish", serverStreamOnFinish);
+    super._final(callback);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.

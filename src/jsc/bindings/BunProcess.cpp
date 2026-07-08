@@ -1614,10 +1614,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if OS(LINUX)
                         if (signalNumber != g_wtfConfig.sigThreadSuspendResume)
 #endif
-                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                            // Don't uninstall the old handler if it's not the one we installed.
-                            signal(signalNumber, oldHandler);
-                        }
+                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                                // Don't uninstall the old handler if it's not the one we installed.
+                                signal(signalNumber, oldHandler);
+                            }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         Bun__UVSignalHandle__close(signal_handle.handle);

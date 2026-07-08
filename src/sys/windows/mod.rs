@@ -119,6 +119,7 @@ pub use bun_windows_sys::LPCVOID;
 pub use bun_windows_sys::LPCWSTR;
 pub use bun_windows_sys::LPSTR;
 pub use bun_windows_sys::LPWSTR;
+pub use bun_windows_sys::NT_ERROR;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::NTSTATUS;
 pub use bun_windows_sys::PWSTR;
@@ -152,11 +153,18 @@ pub use bun_windows_sys::FILE_ATTRIBUTE_REPARSE_POINT;
 pub use bun_windows_sys::FILE_ATTRIBUTE_SPARSE_FILE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_SYSTEM;
 pub use bun_windows_sys::FILE_ATTRIBUTE_TEMPORARY;
+pub use bun_windows_sys::FILE_ALL_INFORMATION;
 pub use bun_windows_sys::FILE_BASIC_INFORMATION;
+pub use bun_windows_sys::FILE_DEVICE_CONSOLE;
+pub use bun_windows_sys::FILE_DEVICE_NAMED_PIPE;
+pub use bun_windows_sys::FILE_DEVICE_NULL;
 pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
+pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
+pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
+pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_OPEN_REPARSE_POINT;
 pub use bun_windows_sys::FILE_SEQUENTIAL_ONLY;
@@ -202,6 +210,33 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
     /// The 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
     const WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS: i128 = -11_644_473_600 * 10_000_000;
     (nt_time as i128 + WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS) * 100
+}
+
+/// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
+pub const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
+
+/// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
+/// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
+/// Matches libuv's `uv__filetime_to_timespec`.
+#[inline]
+pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
+    let t = filetime - EPOCH_DIFFERENCE_100NS;
+    let mut sec = t / 10_000_000;
+    let mut nsec = (t - sec * 10_000_000) * 100;
+    if nsec < 0 {
+        sec -= 1;
+        nsec += 1_000_000_000;
+    }
+    bun_libuv_sys::uv_timespec_t { sec: sec as _, nsec: nsec as _ }
+}
+
+/// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
+/// Unix epoch) into a Windows `FILETIME`.
+#[inline]
+pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
+    let ticks =
+        (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
+    FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 }
 }
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;

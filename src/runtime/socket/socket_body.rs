@@ -4650,11 +4650,9 @@ pub fn js_is_named_pipe_socket(
     Ok(JSValue::FALSE)
 }
 
-/// node:net-internal setsockopt(TCP_NODELAY) that bypasses the handle's
-/// prototype `setNoDelay` slot. uSockets enables TCP_NODELAY on every fd, but
-/// Node's default is Nagle on; net.ts clears it here so the user-observable
-/// `_handle.setNoDelay` call count still matches Node (the upstream
-/// `test-net-*-nodelay.js` tests monkey-patch that slot).
+/// node:net-internal setsockopt(TCP_NODELAY) bypassing the handle's `setNoDelay`
+/// slot, so net.ts can undo uSockets' forced TCP_NODELAY=1 while keeping the
+/// Node-compat call count on `_handle.setNoDelay` (test-net-*-nodelay.js).
 #[bun_jsc::host_fn]
 pub fn js_native_set_no_delay(
     _global: &JSGlobalObject,

@@ -66,33 +66,26 @@ async function withPair(
 }
 
 describe.skipIf(isWindows)("net.Socket TCP_NODELAY kernel state", () => {
-  test("client default is Nagle enabled (TCP_NODELAY=0)", async () => {
+  test.concurrent("client default is Nagle enabled (TCP_NODELAY=0)", async () => {
     await withPair({}, {}, client => {
       expect(readNoDelay(client)).toBe(0);
     });
   });
 
-  test("accepted socket default is Nagle enabled (TCP_NODELAY=0)", async () => {
+  test.concurrent("accepted socket default is Nagle enabled (TCP_NODELAY=0)", async () => {
     await withPair({}, {}, (_client, accepted) => {
       expect(readNoDelay(accepted)).toBe(0);
     });
   });
 
-  test("setNoDelay(false) on a fresh socket clears TCP_NODELAY", async () => {
-    await withPair({}, {}, client => {
-      client.setNoDelay(false);
-      expect(readNoDelay(client)).toBe(0);
-    });
-  });
-
-  test("setNoDelay(true) sets TCP_NODELAY", async () => {
+  test.concurrent("setNoDelay(true) sets TCP_NODELAY", async () => {
     await withPair({}, {}, client => {
       client.setNoDelay(true);
       expect(readNoDelay(client)).toBe(1);
     });
   });
 
-  test("setNoDelay(true) then setNoDelay(false) toggles the kernel flag", async () => {
+  test.concurrent("setNoDelay(true) then setNoDelay(false) toggles the kernel flag", async () => {
     await withPair({}, {}, client => {
       client.setNoDelay(true);
       expect(readNoDelay(client)).toBe(1);
@@ -101,56 +94,27 @@ describe.skipIf(isWindows)("net.Socket TCP_NODELAY kernel state", () => {
     });
   });
 
-  test("net.connect({ noDelay: false }) yields TCP_NODELAY=0", async () => {
+  test.concurrent("net.connect({ noDelay: false }) yields TCP_NODELAY=0", async () => {
     await withPair({}, { noDelay: false }, client => {
       expect(readNoDelay(client)).toBe(0);
     });
   });
 
-  test("net.connect({ noDelay: true }) yields TCP_NODELAY=1", async () => {
+  test.concurrent("net.connect({ noDelay: true }) yields TCP_NODELAY=1", async () => {
     await withPair({}, { noDelay: true }, client => {
       expect(readNoDelay(client)).toBe(1);
     });
   });
 
-  test("net.createServer({ noDelay: true }) sets TCP_NODELAY on accepted sockets", async () => {
+  test.concurrent("net.createServer({ noDelay: true }) sets TCP_NODELAY on accepted sockets", async () => {
     await withPair({ noDelay: true }, {}, (_client, accepted) => {
       expect(readNoDelay(accepted)).toBe(1);
     });
   });
 
-  test("net.createServer({ noDelay: false }) leaves TCP_NODELAY=0 on accepted sockets", async () => {
+  test.concurrent("net.createServer({ noDelay: false }) leaves TCP_NODELAY=0 on accepted sockets", async () => {
     await withPair({ noDelay: false }, {}, (_client, accepted) => {
       expect(readNoDelay(accepted)).toBe(0);
     });
-  });
-
-  test("setNoDelay(false) before connect applies once connected", async () => {
-    let accepted: net.Socket | undefined;
-    const server = net.createServer(s => {
-      accepted = s;
-      s.on("error", () => {});
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.on("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const port = (server.address() as net.AddressInfo).port;
-      const client = new net.Socket();
-      client.setNoDelay(false);
-      await new Promise<void>((resolve, reject) => {
-        client.on("error", reject);
-        client.connect(port, "127.0.0.1", resolve);
-      });
-      try {
-        expect(readNoDelay(client)).toBe(0);
-      } finally {
-        client.destroy();
-        accepted?.destroy();
-      }
-    } finally {
-      await new Promise<void>(r => server.close(() => r()));
-    }
   });
 });

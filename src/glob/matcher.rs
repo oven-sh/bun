@@ -591,14 +591,7 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
             return false; // Invalid pattern!
         }
 
-        *c = match glob[*glob_index as usize] {
-            b'a' => b'\x61',
-            b'b' => b'\x08',
-            b'n' => b'\n',
-            b'r' => b'\r',
-            b't' => b'\t',
-            cc => cc,
-        };
+        *c = glob[*glob_index as usize];
     }
 
     true
@@ -636,18 +629,9 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
                 return false; // Invalid pattern!
             }
 
-            *c = match glob[*glob_index as usize] {
-                b'a' => b'\x61' as u32,
-                b'b' => b'\x08' as u32,
-                b'n' => b'\n' as u32,
-                b'r' => b'\r' as u32,
-                b't' => b'\t' as u32,
-                _ => 'brk: {
-                    let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
-                    *clen = len;
-                    break 'brk cp;
-                }
-            };
+            let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+            *clen = len;
+            *c = cp;
         }
         // multi-byte sequences
         _ => {

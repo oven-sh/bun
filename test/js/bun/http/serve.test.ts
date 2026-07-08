@@ -2139,39 +2139,36 @@ it.concurrent("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
-// prettier-ignore
+// Fixture serves a >1 MB file (the sendfile threshold). Each iteration reads
+// one chunk from several streams so the server is provably mid-send when
+// killed; on macOS the old sendfile(2) path could hang uninterruptibly here.
 it("should be able to stop in the middle of a file response", async () => {
-  async function doRequest(url: string) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(10) });
-      const read = (response.body as ReadableStream<any>).getReader();
-      while (true) {
-        const { value, done } = await read.read();
-        if (done) break;
-      }
-      expect(response.status).toBe(200);
-    } catch {}
-  }
   const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
   for (let i = 0; i < 3; i++) {
-    const process = Bun.spawn([bunExe(), fixture], {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture],
       env: bunEnv,
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",
     });
-    const { value } = await process.stdout.getReader().read();
+    const { value } = await proc.stdout.getReader().read();
     const url = new TextDecoder().decode(value).trim();
-    const requests = [];
-    for (let j = 0; j < 5_000; j++) {
-      requests.push(doRequest(url));
+    // Deliberately small so macOS CI runners never approach mbuf exhaustion.
+    const readers: ReadableStreamDefaultReader[] = [];
+    for (let j = 0; j < 16; j++) {
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      readers.push((res.body as ReadableStream).getReader());
     }
-    // only await for 1k requests (and kill the process)
-    await Promise.all(requests.slice(0, 1_000));
-    expect(process.exitCode || 0).toBe(0);
-    process.kill();
+    await Promise.all(readers.map(r => r.read()));
+    expect(proc.exitCode).toBe(null);
+    proc.kill();
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGTERM");
+    for (const r of readers) await r.cancel().catch(() => {});
   }
-}, 60_000);
+});
 
 it("should be able to abrupt stop the server", async () => {
   for (let i = 0; i < 10; i++) {

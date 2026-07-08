@@ -145,6 +145,10 @@ describe("packument", () => {
     expect(revalidated.status).toBe(304);
     expect(revalidated.headers.get("vary")).toBe("accept");
     const lastModified = first.headers.get("last-modified")!;
+    // RFC 9110 §13.1.3 compares parsed dates with <=, so a later date
+    // than the registry ever emitted is a 304, not just a verbatim echo.
+    const later = new Date(Date.parse(lastModified) + 1000).toUTCString();
+    expect((await fetch(`${registry.url}pkg`, { headers: { "if-modified-since": later } })).status).toBe(304);
     expect((await fetch(`${registry.url}pkg`, { headers: { "if-modified-since": lastModified } })).status).toBe(304);
     // New registry state invalidates the validator.
     registry.define("pkg", { "1.0.0": {}, "2.0.0": {} });
@@ -272,6 +276,22 @@ describe("tarballs", () => {
     registry.define("pkg", { "1.0.0": {} });
     expect((await fetch(`${registry.url}pkg/-/pkg-9.9.9.tgz`)).status).toBe(404);
     expect((await fetch(`${registry.url}pkg/-/evil.tgz`)).status).toBe(404);
+  });
+
+  test("a raw-bytes tarball that is a Buffer subarray serves exactly the view", async () => {
+    // `Buffer.prototype.slice` is a view, not a copy; the tarball route
+    // must serve the view's window, not its underlying pool.
+    await using registry = await new NpmRegistry().start();
+    const { bytes } = buildTarball({ "package.json": JSON.stringify({ name: "view", version: "1.0.0" }) });
+    const pool = Buffer.alloc(bytes.length + 64, 0xab);
+    pool.set(bytes, 32);
+    const view = pool.subarray(32, 32 + bytes.length);
+    registry.define("view", { "1.0.0": { tarball: view } });
+
+    const dist = (await registry.packument("view"))!.versions["1.0.0"]!.dist;
+    const served = new Uint8Array(await (await fetch(dist.tarball)).arrayBuffer());
+    expect(served).toEqual(new Uint8Array(bytes));
+    expect(computeIntegrity(served).integrity).toBe(dist.integrity);
   });
 });
 
@@ -539,6 +559,13 @@ describe("publish", () => {
     const correct = computeIntegrity(attached(make("sri-multi", ""))).integrity;
     const b3 = make("sri-multi", `sha512-WRONG== ${correct}`);
     expect((await put(registry, "sri-multi", b3)).status).toBe(201);
+
+    // Only the strongest recognized algorithm counts (SRI §3.3.4,
+    // `ssri.pickAlgorithm`): a correct sha256 cannot cover a wrong sha512.
+    const sha256 = `sha256-${b64(new Bun.SHA256().update(attached(make("sri-bad", ""))))}`;
+    const b4 = make("sri-bad", `${sha256} sha512-WRONG==`);
+    expect((await put(registry, "sri-bad", b4)).status).toBe(400);
+    expect(await registry.packument("sri-bad")).toBeUndefined();
 
     // The registry serves its own sha512 regardless of what the client sent.
     for (const n of ["sri-384", "sri-nopad", "sri-multi"]) {

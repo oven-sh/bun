@@ -499,10 +499,11 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
     // `If-None-Match` takes precedence over `If-Modified-Since` (RFC
     // 9110 §13.1.3); npm clients send back whichever they stored.
     const inm = req.headers.get("if-none-match");
+    const ims = Date.parse(req.headers.get("if-modified-since") ?? "");
     const notModified =
       inm !== null
         ? inm.split(",").some(tag => tag.trim().replace(/^W\//, "") === headers.get("etag"))
-        : req.headers.get("if-modified-since") === headers.get("last-modified");
+        : !Number.isNaN(ims) && Date.parse(headers.get("last-modified")!) <= ims;
     if (notModified) return new Response(null, { status: 304, headers });
     return new Response(body, { headers });
   }
@@ -527,7 +528,10 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
       return npmError(404, `no tarball for ${name} named ${JSON.stringify(file)}`);
     }
     const { bytes } = await stored.tarball();
-    return new Response(bytes.slice().buffer, {
+    // `bytes` may be a `Buffer` subarray (a view), whose `.slice()` is
+    // also a view, so `.buffer` would be the whole underlying pool;
+    // `Response` serves exactly a view's window when handed one.
+    return new Response(bytes, {
       headers: { "content-type": "application/octet-stream", "content-length": String(bytes.length) },
     });
   }

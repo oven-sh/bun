@@ -25,28 +25,34 @@ export function computeIntegrity(bytes: Uint8Array): Integrity {
   return { integrity: sriSha512(bytes), shasum: shasum(bytes) };
 }
 
-const SRI_ALGORITHMS: Record<string, new () => Bun.CryptoHasher> = {
-  sha256: Bun.SHA256,
-  sha384: Bun.SHA384,
-  sha512: Bun.SHA512,
-};
+/** W3C SRI's recognized algorithms, weakest to strongest. */
+const SRI_ALGORITHMS = [
+  ["sha256", Bun.SHA256],
+  ["sha384", Bun.SHA384],
+  ["sha512", Bun.SHA512],
+] as const;
 
 /**
- * Does `sri` prove `bytes`? `sri` is parsed as W3C SRI §3.3: a
- * whitespace-separated list of `<algo>-<base64>` tokens (padding
- * optional, trailing `?options` ignored), accepted when any token's
- * hash matches `bytes` for the algorithm it names. That is what
- * `ssri.checkData` and every installer does with `dist.integrity`.
+ * Does `sri` prove `bytes`? `sri` is parsed as W3C SRI §3.3 (a
+ * whitespace-separated list of `<algo>-<base64>` tokens, padding
+ * optional, trailing `?options` ignored), and — like `ssri.checkData`
+ * and W3C SRI §3.3.4 — only the strongest recognized algorithm present
+ * is checked: accepted iff any token for that algorithm matches.
  */
 export function checkIntegrity(sri: string, bytes: Uint8Array): boolean {
+  const byAlgo = new Map<string, string[]>();
   for (const token of sri.trim().split(/\s+/)) {
     const dash = token.indexOf("-");
     if (dash <= 0) continue;
-    const Hasher = SRI_ALGORITHMS[token.slice(0, dash)];
-    if (Hasher === undefined) continue;
-    const claimed = token.slice(dash + 1).replace(/\?.*$/, "").replace(/=+$/, "");
+    const algo = token.slice(0, dash);
+    const digest = token.slice(dash + 1).replace(/\?.*$/, "").replace(/=+$/, "");
+    (byAlgo.get(algo) ?? byAlgo.set(algo, []).get(algo)!).push(digest);
+  }
+  for (const [algo, Hasher] of [...SRI_ALGORITHMS].reverse()) {
+    const digests = byAlgo.get(algo);
+    if (digests === undefined) continue;
     const actual = Buffer.from(new Hasher().update(bytes).digest()).toString("base64").replace(/=+$/, "");
-    if (claimed === actual) return true;
+    return digests.includes(actual);
   }
   return false;
 }

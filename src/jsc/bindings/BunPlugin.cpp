@@ -34,6 +34,9 @@
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
+#include "PathInlines.h"
+
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
 namespace Zig {
 
@@ -728,9 +731,96 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
 
+// Must be kept in sync with api::Loader in src/options_types/schema.rs (same
+// numbering as $LoaderIdToLabel in the bundler plugin builtins).
+static WTF::ASCIILiteral loaderLabel(BunLoaderType loader)
+{
+    switch (loader) {
+    case 1:
+        return "jsx"_s;
+    case 2:
+        return "js"_s;
+    case 3:
+        return "ts"_s;
+    case 4:
+        return "tsx"_s;
+    case 5:
+        return "css"_s;
+    case 6:
+        return "file"_s;
+    case 7:
+        return "json"_s;
+    case 8:
+        return "jsonc"_s;
+    case 9:
+        return "toml"_s;
+    case 10:
+        return "wasm"_s;
+    case 11:
+        return "napi"_s;
+    case 12:
+        return "base64"_s;
+    case 13:
+        return "dataurl"_s;
+    case 14:
+        return "text"_s;
+    case 15:
+        return "bunsh"_s;
+    case 16:
+        return "sqlite"_s;
+    case 17:
+        return "sqlite_embedded"_s;
+    case 18:
+        return "html"_s;
+    case 19:
+        return "yaml"_s;
+    default:
+        return "js"_s;
+    }
+}
+
+// Must be kept in sync with ImportKind::label() in src/ast/lib.rs (same
+// strings as $ImportKindIdToLabel in the bundler plugin builtins).
+static WTF::ASCIILiteral importKindLabel(uint8_t kind)
+{
+    switch (kind) {
+    case 0:
+        return "entry-point-run"_s;
+    case 1:
+        return "entry-point-build"_s;
+    case 2:
+        return "import-statement"_s;
+    case 3:
+        return "require-call"_s;
+    case 4:
+        return "dynamic-import"_s;
+    case 5:
+        return "require-resolve"_s;
+    case 6:
+        return "import-rule"_s;
+    case 8:
+        return "url-token"_s;
+    case 9:
+        return "composes"_s;
+    case 11:
+        return "internal"_s;
+    default:
+        return "import-statement"_s;
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadDefer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    // Runtime plugins load one module at a time, so there is never anything to
+    // defer for. Return a resolved promise so plugins written against the
+    // bundler API can call defer() unconditionally.
+    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, JSC::jsUndefined()));
+}
+
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    WTF::String namespaceWTFString = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String();
+    Group* groupPtr = this->group(namespaceWTFString);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -748,11 +838,20 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.assertNoExceptionExceptTermination();
 
-    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
     const auto& builtinNames = WebCore::builtinNames(vm);
     paramsObject->putDirect(
         vm, builtinNames.pathPublicName(),
         jsString(vm, pathString));
+    paramsObject->putDirect(
+        vm, Identifier::fromString(vm, "namespace"_s),
+        namespaceWTFString.isEmpty() ? jsNontrivialString(vm, "file"_s) : jsString(vm, namespaceWTFString));
+    paramsObject->putDirect(
+        vm, Identifier::fromString(vm, "loader"_s),
+        jsNontrivialString(vm, loaderLabel(Bun__getDefaultLoader(globalObject, path))));
+    paramsObject->putDirect(
+        vm, Identifier::fromString(vm, "defer"_s),
+        JSC::JSFunction::create(vm, globalObject, 0, "defer"_s, jsFunctionOnLoadDefer, JSC::ImplementationVisibility::Public));
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -798,9 +897,10 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
 }
 
-EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
+EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer, uint8_t kind)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    WTF::String namespaceWTFString = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String();
+    Group* groupPtr = this->group(namespaceWTFString);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -842,18 +942,38 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         JSC::MarkedArgumentBuffer arguments;
 
-        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
         const auto& builtinNames = WebCore::builtinNames(vm);
         auto* pathJS = Bun::toJS(globalObject, *path);
         RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
             pathJS);
-        auto* importerJS = Bun::toJS(globalObject, *importer);
-        RETURN_IF_EXCEPTION(scope, {});
+        WTF::String importerString = importer->toWTFString(BunString::ZeroCopy);
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
-            importerJS);
+            jsString(vm, importerString));
+        bool isFileNamespace = namespaceWTFString.isEmpty() || namespaceWTFString == "file"_s;
+        paramsObject->putDirect(
+            vm, Identifier::fromString(vm, "namespace"_s),
+            isFileNamespace ? jsNontrivialString(vm, "file"_s) : jsString(vm, namespaceWTFString));
+        paramsObject->putDirect(
+            vm, Identifier::fromString(vm, "kind"_s),
+            jsNontrivialString(vm, importKindLabel(kind)));
+        JSC::JSValue resolveDirValue = JSC::jsUndefined();
+        if (isFileNamespace && !importerString.isEmpty()) {
+            size_t lastSep = importerString.reverseFind(PLATFORM_SEP);
+#if OS(WINDOWS)
+            size_t lastSepFwd = importerString.reverseFind('/');
+            if (lastSepFwd != WTF::notFound && (lastSep == WTF::notFound || lastSepFwd > lastSep))
+                lastSep = lastSepFwd;
+#endif
+            if (lastSep != WTF::notFound && lastSep > 0)
+                resolveDirValue = jsString(vm, importerString.substring(0, lastSep));
+        }
+        paramsObject->putDirect(
+            vm, Identifier::fromString(vm, "resolveDir"_s),
+            resolveDirValue);
         arguments.append(paramsObject);
 
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -899,9 +1019,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
 } // namespace Zig
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target, uint8_t kind)
 {
-    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
+    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from, kind);
 }
 
 extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)

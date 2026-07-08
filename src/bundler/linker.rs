@@ -532,6 +532,7 @@ impl Linker {
                                 } else {
                                     BunPluginTarget::Node
                                 },
+                                import_record.kind,
                             )? {
                                 import_record.path = self.generate_import_path(
                                     source_dir,

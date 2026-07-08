@@ -5086,6 +5086,13 @@ unsafe fn resolve_hook(
                 bun_core::String::borrow_utf8(after_namespace),
                 source,
                 bun_jsc::BunPluginTarget::Bun,
+                if is_esm {
+                    ImportKind::Stmt
+                } else if is_user_require_resolve {
+                    ImportKind::RequireResolve
+                } else {
+                    ImportKind::Require
+                },
             ) {
                 Ok(Some(resolved_path)) => {
                     // SAFETY: per fn contract.

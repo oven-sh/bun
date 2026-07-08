@@ -258,6 +258,7 @@ public:
             instanceDataFinalizer.call(this, instanceData, true);
             instanceDataFinalizer.clear();
             instanceData = nullptr;
+            clearExceptionsBetweenFinalizers();
             return;
         }
 

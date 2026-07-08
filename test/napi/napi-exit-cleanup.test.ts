@@ -23,7 +23,7 @@
 
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -57,7 +57,7 @@ const childEnv = {
   LSAN_OPTIONS: undefined,
 };
 
-describe.concurrent("napi cleanup at bun test exit", () => {
+describe.concurrent.skipIf(!canBuildNodeAddons())("napi cleanup at bun test exit", () => {
   beforeAll(() => {
     if (existsSync(hookAddon) && existsSync(wrapAddon)) return;
     // Same one-shot build pattern as test/regression/issue/30205.test.ts.

@@ -5635,9 +5635,9 @@ pub fn jsdom_file_construct_(
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
                     // `get::<_, true>` on a single-Blob sequence returns
-                    // `dupe()` (a shared StoreRef), so this `Bytes` may already
-                    // carry an owned `stored_name` from the source blob; the
-                    // assignment drops (frees) the previous `Box<[u8]>`.
+                    // `dupe_without_metadata()` (a shared StoreRef), so this `Bytes`
+                    // may already carry an owned `stored_name` from the source blob;
+                    // the assignment drops (frees) the previous `Box<[u8]>`.
                     bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
                 store::Data::S3(_) | store::Data::File(_) => {

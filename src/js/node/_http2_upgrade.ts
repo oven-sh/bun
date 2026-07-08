@@ -299,6 +299,9 @@ function upgradeRawSocketToH2(
   server: Http2SecureServer,
   rawSocket: import("node:net").Socket,
 ): boolean {
+  // Node's h2 setupHandle disables Nagle per session; connectionListener sees
+  // the Duplex proxy (no setNoDelay), so set it on the underlying fd here.
+  rawSocket.setNoDelay?.();
   // Create a Duplex stream that acts as the TLS "socket" from the H2 session's perspective.
   const tlsSocket = new Duplex() as unknown as TLSProxySocket;
   tlsSocket._ctx = new UpgradeContext(connectionListener, server, rawSocket);

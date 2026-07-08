@@ -207,9 +207,9 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        // SAFETY: `twin` holds a live +1
-        // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
-        // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
+        // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
+        // is live for `ThisPtr::new`; dispatch is single-threaded so no
+        // aliasing `&mut` exists.
         unsafe {
             TLSSocket::on_data(
                 bun_ptr::ThisPtr::new(raw),

@@ -501,7 +501,7 @@ impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandl
 // re-derives `&mut NewSocket` via the wrapper's `m_ptr`; a `&mut NewSocket`
 // argument formed by `PtrHandler` and protected through the dispatch frame
 // would alias that re-entrant borrow (Stacked-Borrows UB + `noalias`
-// dead-store of the re-entrant write). `RawPtrHandler` passes `*mut Self`.
+// dead-store of the re-entrant write). `RawPtrHandler` passes `ThisPtr<Self>`.
 pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
 /// Listener accept path: the ext is uninitialised at on_open time (the C accept

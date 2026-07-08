@@ -432,12 +432,12 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         RELEASE_AND_RETURN(scope, readableStreamError(globalObject, stream, error));
 }
 
-// Invokes the user's pull() once. Brackets the call with m_pullInFlight (the spec default
-// controller sets [[pulling]] before invoking pullAlgorithm); leaves it set only when pull()
-// returned a promise, whose settlement reaction clears it. Returns the synchronous abrupt
-// completion (empty when pull() returned normally or threw a termination).
+// Invokes the user's pull() once, bracketed by m_pullInFlight (the spec sets [[pulling]]
+// before invoking pullAlgorithm); left set only when a promise's settlement reaction will
+// clear it. Returns the synchronous abrupt completion (empty on normal return/termination).
 static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
     JSObject* pullFunction = controller->m_pull.get();
     JSObject* underlyingSource = controller->m_underlyingSource.get();
@@ -459,6 +459,8 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
         auto* runtime = JSStreamsRuntime::from(globalObject);
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onDirectPullFulfilled(), runtime->onDirectPullRejected(), jsUndefined(), controller);
+        if (scope.exception()) [[unlikely]]
+            controller->m_pullInFlight = false;
     } else {
         controller->m_pullInFlight = false;
     }
@@ -507,10 +509,9 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;
 
-    // Serialize pull() invocations: while an async pull's promise is still pending,
-    // subsequent reads just install m_pendingRead for that pull to deliver into via
-    // flush()/end(). The pull promise's fulfillment reaction clears m_pullInFlight and
-    // re-pulls if a consumer is still waiting.
+    // Serialize pull(): while an async pull's promise is pending, subsequent reads install
+    // m_pendingRead for it to deliver into via flush()/end(); its fulfillment reaction
+    // clears m_pullInFlight and re-pulls if a consumer is still waiting.
     if (!m_pullInFlight) {
         m_deferClose = -1;
         m_deferFlush = -1;
@@ -764,10 +765,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
     controller->m_pullInFlight = false;
     RETURN_IF_EXCEPTION(scope, {});
     bool pullAgain = takeDirectPullAgain(controller);
-    // Edge-triggered (m_pullAgain) AND level-checked (a consumer is still waiting), the
-    // spec's ShouldCallPull equivalent: a stale edge whose triggering read was already
-    // satisfied does not cause a spurious pull. Loop so a synchronous re-pull that leaves
-    // another consumer queued chains to the next.
+    // Edge-triggered (m_pullAgain) AND level-checked (a consumer is waiting), the spec's
+    // ShouldCallPull equivalent; loop so a synchronous re-pull chains to the next consumer.
     while (pullAgain && !controller->m_closed && !controller->m_pullInFlight
         && directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
         controller->m_deferClose = -1;

@@ -866,7 +866,8 @@ impl Request {
                     return self.get_protocol().len() + host.len() + req_url.len();
                 }
                 if let Some(base) = self.request_context.fallback_base_url() {
-                    return base.len() + req_url.len();
+                    return bun_url::origin_from_slice(base).map_or(base.len(), <[u8]>::len)
+                        + req_url.len();
                 }
             }
             return req_url.len();

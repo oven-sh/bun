@@ -1048,6 +1048,9 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
         MAKE_STATIC_STRING_IMPL("SIGBREAK"),
+        MAKE_STATIC_STRING_IMPL("SIGSTKFLT"),
+        MAKE_STATIC_STRING_IMPL("SIGPOLL"),
+        MAKE_STATIC_STRING_IMPL("SIGPWR"),
     };
 
     return signalNames;
@@ -1060,7 +1063,7 @@ static void loadSignalNumberMap()
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
-        signalNameToNumberMap->reserveInitialCapacity(31);
+        signalNameToNumberMap->reserveInitialCapacity(35);
 #if OS(WINDOWS)
         // libuv-supported console-control signals on Windows:
         // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
@@ -1150,6 +1153,15 @@ static void loadSignalNumberMap()
 #ifdef SIGSYS
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
 #endif
+#ifdef SIGSTKFLT
+        signalNameToNumberMap->add(signalNames[32], SIGSTKFLT);
+#endif
+#ifdef SIGPOLL
+        signalNameToNumberMap->add(signalNames[33], SIGPOLL);
+#endif
+#ifdef SIGPWR
+        signalNameToNumberMap->add(signalNames[34], SIGPWR);
+#endif
 #endif
     });
 }
@@ -1163,14 +1175,20 @@ bool isSignalName(WTF::String input)
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();
+    auto& vm = JSC::getVM(globalObject);
 
-    String signalName = signalNumberToNameMap->get(signalNumber);
-    Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
-    MarkedArgumentBuffer args;
-    args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
-    args.append(jsNumber(signalNumber));
-
-    process->wrapped().emitForBindings(signalNameIdentifier, args);
+    // A single signal number can map to multiple names (SIGABRT/SIGIOT, SIGIO/SIGPOLL).
+    // Emit the event for every name that resolves to this number so listeners registered
+    // under either alias fire, matching Node.js.
+    for (auto& entry : *signalNameToNumberMap) {
+        if (entry.value != signalNumber)
+            continue;
+        Identifier signalNameIdentifier = Identifier::fromString(vm, entry.key);
+        MarkedArgumentBuffer args;
+        args.append(jsString(vm, signalNameIdentifier.string()));
+        args.append(jsNumber(signalNumber));
+        process->wrapped().emitForBindings(signalNameIdentifier, args);
+    }
 }
 
 #if OS(WINDOWS)
@@ -1433,7 +1451,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         std::call_once(signalNumberToNameMapOnceFlag, [] {
             auto signalNames = getSignalNames();
             signalNumberToNameMap = new HashMap<int, String>();
-            signalNumberToNameMap->reserveInitialCapacity(31);
+            signalNumberToNameMap->reserveInitialCapacity(35);
             signalNumberToNameMap->add(SIGHUP, signalNames[0]);
             signalNumberToNameMap->add(SIGINT, signalNames[1]);
             signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
@@ -1509,6 +1527,15 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
 #ifdef SIGBREAK
             signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+#endif
+#ifdef SIGSTKFLT
+            signalNumberToNameMap->add(SIGSTKFLT, signalNames[32]);
+#endif
+#ifdef SIGPOLL
+            signalNumberToNameMap->add(SIGPOLL, signalNames[33]);
+#endif
+#ifdef SIGPWR
+            signalNumberToNameMap->add(SIGPWR, signalNames[34]);
 #endif
         });
 

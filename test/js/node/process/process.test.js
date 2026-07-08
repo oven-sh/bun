@@ -2,6 +2,7 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import os from "node:os";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -918,6 +919,97 @@ describe.concurrent(() => {
       expect(() => process.kill(2147483640, "SIGPOOP")).toThrow();
       expect(() => process.kill(2147483640, 456)).toThrow();
     });
+
+    // SIGSTKFLT, SIGPOLL and SIGPWR are Linux-only signals that are in
+    // os.constants.signals but were missing from the process.kill name table.
+    it.skipIf(process.platform !== "linux")(
+      "process.kill accepts every signal name in os.constants.signals",
+      async () => {
+        const results = {};
+        for (const name of Object.keys(os.constants.signals)) {
+          try {
+            process.kill(0x7fffffff, name);
+            results[name] = "sent";
+          } catch (e) {
+            results[name] = e.code;
+          }
+        }
+        // Every name in os.constants.signals must be resolved as a signal name,
+        // so the only error we should ever see is ESRCH from kill(2) for the
+        // nonexistent pid, never ERR_UNKNOWN_SIGNAL from the name lookup.
+        const unknown = Object.entries(results).filter(([, v]) => v === "ERR_UNKNOWN_SIGNAL");
+        expect(unknown).toEqual([]);
+      },
+    );
+
+    it.skipIf(process.platform !== "linux")(
+      "process.on('SIGSTKFLT') installs a real handler and the listener runs",
+      async () => {
+        const script = /*js*/ `
+          const { promise, resolve } = Promise.withResolvers();
+          process.on("SIGSTKFLT", (name, num) => {
+            console.log("handler", name, num);
+            resolve();
+          });
+          process.kill(process.pid, "SIGSTKFLT");
+          await promise;
+          console.log("survived");
+        `;
+        await using child = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+        expect({ stdout, stderr, signalCode: child.signalCode }).toEqual({
+          stdout: "handler SIGSTKFLT 16\nsurvived\n",
+          stderr: "",
+          signalCode: null,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // SIGPOLL is an alias for SIGIO on Linux. Node.js emits both event names
+    // when the signal arrives; the listener registered under each alias must
+    // fire with its own name.
+    it.skipIf(process.platform !== "linux")(
+      "process.on fires listeners for every alias of a signal number",
+      async () => {
+        const script = /*js*/ `
+          const fired = [];
+          const { promise, resolve } = Promise.withResolvers();
+          process.on("SIGPOLL", (name, num) => {
+            fired.push(["SIGPOLL", name, num]);
+            if (fired.length === 2) resolve();
+          });
+          process.on("SIGIO", (name, num) => {
+            fired.push(["SIGIO", name, num]);
+            if (fired.length === 2) resolve();
+          });
+          process.kill(process.pid, "SIGPOLL");
+          await promise;
+          console.log(JSON.stringify(fired.sort((a, b) => a[0].localeCompare(b[0]))));
+        `;
+        await using child = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+        expect({ stdout: stdout.trim(), stderr, signalCode: child.signalCode }).toEqual({
+          stdout: JSON.stringify([
+            ["SIGIO", "SIGIO", 29],
+            ["SIGPOLL", "SIGPOLL", 29],
+          ]),
+          stderr: "",
+          signalCode: null,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   const undefinedStubs = [

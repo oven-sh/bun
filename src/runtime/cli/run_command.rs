@@ -2761,11 +2761,14 @@ impl RunCommand {
             }
 
             // Try restricted PATH first
+            #[cfg_attr(not(target_env = "ohos"), allow(unused_assignments, unused_variables))]
+            let mut found = false;
             if !path_for_which.is_empty() {
                 let mut path_buf = PathBuffer::uninit();
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    found = true;
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
                     let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();

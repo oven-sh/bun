@@ -717,9 +717,11 @@ impl ErrorCode {
     pub const TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode = ErrorCode(329);
     /// `ERR_TRACE_EVENTS_UNAVAILABLE` (instanceof Error)
     pub const TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode(330);
+    /// `ERR_HTTP2_INVALID_CONNECTION_HEADERS` (instanceof TypeError)
+    pub const HTTP2_INVALID_CONNECTION_HEADERS: ErrorCode = ErrorCode(331);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 331;
+    pub const COUNT: u16 = 332;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -828,6 +830,8 @@ impl ErrorCode {
     pub const ERR_HTTP2_HEADERS_SENT: ErrorCode = ErrorCode::HTTP2_HEADERS_SENT;
     pub const ERR_HTTP2_INFO_STATUS_NOT_ALLOWED: ErrorCode =
         ErrorCode::HTTP2_INFO_STATUS_NOT_ALLOWED;
+    pub const ERR_HTTP2_INVALID_CONNECTION_HEADERS: ErrorCode =
+        ErrorCode::HTTP2_INVALID_CONNECTION_HEADERS;
     pub const ERR_HTTP2_INVALID_HEADER_VALUE: ErrorCode = ErrorCode::HTTP2_INVALID_HEADER_VALUE;
     pub const ERR_HTTP2_INVALID_INFO_STATUS: ErrorCode = ErrorCode::HTTP2_INVALID_INFO_STATUS;
     pub const ERR_HTTP2_INVALID_ORIGIN: ErrorCode = ErrorCode::HTTP2_INVALID_ORIGIN;
@@ -1442,6 +1446,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_INVALID_BUFFER_SIZE",
     "ERR_TRACE_EVENTS_CATEGORY_REQUIRED",
     "ERR_TRACE_EVENTS_UNAVAILABLE",
+    "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

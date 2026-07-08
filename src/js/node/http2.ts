@@ -496,7 +496,11 @@ function resumeStream(stream) {
 }
 
 function onStreamTrailersReady() {
-  this.sendTrailers(this[kResponse][kTrailers]);
+  try {
+    this.sendTrailers(this[kResponse][kTrailers]);
+  } catch (err) {
+    this.destroy(err);
+  }
 }
 
 function onStreamCloseResponse() {
@@ -847,6 +851,9 @@ class Http2ServerResponse extends Stream {
     validateString(name, "name");
     name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
+    if (!isConnectionHeaderAllowed(name, value)) {
+      return;
+    }
     this[kTrailers][name] = value;
   }
 
@@ -2185,6 +2192,7 @@ class Http2Stream extends Duplex {
     // symbol keys, and deleting it here would flip the object into dictionary mode,
     // pessimizing every later property access on it.
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    assertNoConnectionHeaders(headers);
     // node keeps the never-index list visible on sentTrailers (symbol keys are not iterated by
     // the wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3228,12 +3236,11 @@ function assertNoConnectionHeaders(headers): void {
   for (const name in headers) {
     const lower = name.toLowerCase();
     if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && headers[name] !== "trailers")) {
-      const err = new TypeError(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
-      err.code = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
-      throw err;
+      throw $ERR_HTTP2_INVALID_CONNECTION_HEADERS(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
     }
   }
 }
+hideFromStack(assertNoConnectionHeaders);
 
 function headerValueIsUnsendable(value): boolean {
   if ($isArray(value)) {
@@ -3279,13 +3286,15 @@ function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
 
 // node validates header constraints in JS before anything reaches the native encoder, so a
 // throwing request leaves no partial state in the shared HPACK table. Mirror the single-value
-// rule here: duplicated single-value fields (across case variants) and multi-element arrays for
-// them throw before encoding starts.
+// rule and the RFC 9113 §8.2.2 connection-specific-field rule here: both throw before encoding.
 function assertSingleValueHeaders(headers) {
   let seen = null;
   const keys = Object.keys(headers);
   for (let i = 0; i < keys.length; i++) {
     const lower = keys[i].toLowerCase();
+    if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && headers[keys[i]] !== "trailers")) {
+      throw $ERR_HTTP2_INVALID_CONNECTION_HEADERS(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
+    }
     if (!kSingleValueHeaders.has(lower)) continue;
     const value = headers[keys[i]];
     if (($isArray(value) && value.length > 1) || (seen !== null && seen.has(lower))) {

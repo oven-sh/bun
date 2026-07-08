@@ -707,6 +707,234 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+// RFC 9113 §8.2.2: HTTP/2 does not use the Connection header to indicate connection-specific
+// fields; an endpoint MUST NOT generate them in any field block (request, response, 1xx, or
+// trailers). A conforming peer treats such a field block as malformed and resets the stream
+// with PROTOCOL_ERROR, so emitting them is an interop failure even when the local side sees
+// a clean 'finish'. node rejects them before encoding with ERR_HTTP2_INVALID_CONNECTION_HEADERS.
+describe("connection-specific header fields (RFC 9113 §8.2.2)", () => {
+  const forbidden: ReadonlyArray<[string, string]> = [
+    ["connection", "close"],
+    ["keep-alive", "timeout=5"],
+    ["upgrade", "h2c"],
+    ["proxy-connection", "keep-alive"],
+    ["transfer-encoding", "chunked"],
+    ["http2-settings", "AAMAAABkAAQAAP__"],
+    ["te", "gzip"],
+  ];
+
+  async function roundTrip(
+    onStream: (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => void,
+  ): Promise<{ rstCode: number; trailers: Record<string, string>; serverThrew: any }> {
+    const server = http2.createServer();
+    const serverThrew = Promise.withResolvers<any>();
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      try {
+        onStream(stream as http2.ServerHttp2Stream, headers);
+        serverThrew.resolve(null);
+      } catch (e) {
+        serverThrew.resolve(e);
+        if (!stream.headersSent) stream.respond({ ":status": 200 });
+        stream.end("body");
+      }
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const req = client.request({ ":path": "/" });
+      const result = Promise.withResolvers<{ rstCode: number; trailers: Record<string, string> }>();
+      let trailers: Record<string, string> = {};
+      req.on("trailers", t => (trailers = { ...t }));
+      req.on("error", () => {});
+      req.on("close", () => result.resolve({ rstCode: req.rstCode, trailers }));
+      req.resume();
+      req.end();
+      const r = await result.promise;
+      return { ...r, serverThrew: await serverThrew.promise };
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  test.each(forbidden)("respond() rejects %s", async (name, value) => {
+    const { rstCode, serverThrew } = await roundTrip(stream => {
+      stream.respond({ ":status": 200, [name]: value });
+      stream.end("body");
+    });
+    expect(serverThrew).toMatchObject({
+      name: "TypeError",
+      code: "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
+      message: `HTTP/1 Connection specific headers are forbidden: "${name}"`,
+    });
+    expect(rstCode).toBe(0);
+  });
+
+  test("respond() accepts te: trailers", async () => {
+    const { rstCode, serverThrew } = await roundTrip(stream => {
+      stream.respond({ ":status": 200, te: "trailers" });
+      stream.end("body");
+    });
+    expect(serverThrew).toBeNull();
+    expect(rstCode).toBe(0);
+  });
+
+  test.each(forbidden)("sendTrailers() rejects %s and a corrected retry completes the stream", async (name, value) => {
+    const server = http2.createServer();
+    const serverThrew = Promise.withResolvers<any>();
+    server.on("stream", stream => {
+      stream.on("error", e => serverThrew.reject(e));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        try {
+          stream.sendTrailers({ [name]: value });
+          serverThrew.resolve(null);
+        } catch (e) {
+          serverThrew.resolve(e);
+          stream.sendTrailers({ "x-ok": "1" });
+        }
+      });
+      stream.end("body");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const req = client.request({ ":path": "/" });
+      const done = Promise.withResolvers<{ rstCode: number; trailers: any }>();
+      let trailers: any = {};
+      req.on("trailers", t => (trailers = { ...t }));
+      req.on("error", () => {});
+      req.on("close", () => done.resolve({ rstCode: req.rstCode, trailers }));
+      req.resume();
+      req.end();
+      const threw = await serverThrew.promise;
+      expect(threw).toMatchObject({
+        name: "TypeError",
+        code: "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
+        message: `HTTP/1 Connection specific headers are forbidden: "${name}"`,
+      });
+      const { rstCode, trailers: received } = await done.promise;
+      expect({ "x-ok": received["x-ok"], [name]: received[name], rstCode }).toEqual({
+        "x-ok": "1",
+        [name]: undefined,
+        rstCode: 0,
+      });
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test.each(forbidden)("additionalHeaders() rejects %s", async (name, value) => {
+    const { rstCode, serverThrew } = await roundTrip(stream => {
+      stream.additionalHeaders({ ":status": 103, [name]: value });
+      stream.respond({ ":status": 200 });
+      stream.end("body");
+    });
+    expect(serverThrew).toMatchObject({
+      name: "TypeError",
+      code: "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
+    });
+    expect(rstCode).toBe(0);
+  });
+
+  test.each(forbidden)("client request() rejects %s", async (name, value) => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("body");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      await once(client, "connect");
+      expect(() => client.request({ ":path": "/", [name]: value })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_HTTP2_INVALID_CONNECTION_HEADERS",
+          message: `HTTP/1 Connection specific headers are forbidden: "${name}"`,
+        }),
+      );
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("client request() accepts te: trailers", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("body");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      await once(client, "connect");
+      const req = client.request({ ":path": "/", te: "trailers" });
+      const closed = Promise.withResolvers<number>();
+      req.on("error", e => closed.reject(e));
+      req.on("close", () => closed.resolve(req.rstCode));
+      req.resume();
+      req.end();
+      expect(await closed.promise).toBe(0);
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // compat API: res.addTrailers({connection: ...}) previously emitted an UnsupportedWarning
+  // claiming the value was dropped, then put it on the wire anyway. Now the compat setter
+  // drops it (matching res.setHeader), so the trailer block is clean and the peer does not
+  // reset the delivered response with PROTOCOL_ERROR.
+  test("compat addTrailers drops connection and the response is not reset by the peer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        "-e",
+        String.raw`
+          const http2 = require("node:http2");
+          const srv = http2.createServer((req, res) => {
+            res.writeHead(200);
+            res.write("body");
+            res.addTrailers({ connection: "close", "x-ok": "1" });
+            res.end();
+          });
+          srv.listen(0, "127.0.0.1", () => {
+            const ses = http2.connect("http://127.0.0.1:" + srv.address().port);
+            const st = ses.request({ ":path": "/" });
+            let trailers = {};
+            st.on("trailers", t => (trailers = t));
+            st.on("error", e => console.log("err=" + e.code));
+            st.on("close", () => {
+              console.log("rst=" + st.rstCode + " x-ok=" + trailers["x-ok"] + " connection=" + trailers["connection"]);
+              ses.destroy();
+              srv.close();
+            });
+            st.resume();
+            st.end();
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: normalizeBunSnapshot(stdout), exitCode, stderr }).toMatchObject({
+      stdout: "rst=0 x-ok=1 connection=undefined",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;

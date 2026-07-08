@@ -1854,7 +1854,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() {
             this.detach_native_callback();
             this.socket.set(SocketHandler::<SSL>::DETACHED);
-            this.deref();
+            this.get().deref();
             return Ok(());
         }
         let handlers = this.get_handlers();
@@ -3389,7 +3389,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
                 // `deref` runs `deinit_and_destroy`, which drops the owned_ctx
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
-                tls.deref();
+                tls.get().deref();
                 if err != 0 && !global.has_exception() {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }

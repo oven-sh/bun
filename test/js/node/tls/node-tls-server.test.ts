@@ -1641,6 +1641,47 @@ describe("tls.Server secure-context options", () => {
     }
   });
 
+  it("surfaces a natively-rejected key on the server 'error' event for a STARTTLS-only server", async () => {
+    // Node throws this from tls.createServer() itself; bun builds the context
+    // lazily and reports native load failures on the server 'error' event at
+    // listen() time, so the STARTTLS wrap must use that same surface instead
+    // of throwing synchronously out of the user's server.emit('connection').
+    const tlsServer = createServer({ key: "not a private key", cert: agent6CertChain });
+    const surfaced = Promise.withResolvers<Error & { code?: string }>();
+    tlsServer.on("error", surfaced.resolve);
+    const emitted: string[] = [];
+    let raw: net.Socket | undefined;
+    const rawServer = net.createServer(sock => {
+      raw = sock;
+      try {
+        tlsServer.emit("connection", sock);
+        emitted.push("returned");
+      } catch (e) {
+        emitted.push("threw");
+        surfaced.resolve(e as Error);
+      }
+    });
+    let client: net.Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      rawServer.once("error", listening.reject);
+      rawServer.listen(0, listening.resolve);
+      await listening.promise;
+      client = net.connect((rawServer.address() as AddressInfo).port);
+      client.on("error", () => {});
+      const err = await surfaced.promise;
+      expect({ emitted, code: err.code, rawDestroyed: raw!.destroyed }).toEqual({
+        emitted: ["returned"],
+        code: "ERR_OSSL_PEM_NO_START_LINE",
+        rawDestroyed: true,
+      });
+    } finally {
+      client?.destroy();
+      rawServer.close();
+      tlsServer.close();
+    }
+  });
+
   it("a failing setSecureContext() leaves the STARTTLS wrap credentials untouched", async () => {
     // `ciphers: "@SECLEVEL=3"` is only rejected by the LATE cipher-content
     // validator, after every option field would already have been assigned; a

@@ -1263,6 +1263,31 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
+function buildSharedCreds(server) {
+  return (server._sharedCreds = new InternalSecureContext(
+    {
+      ...server[ksharedCredsOptions],
+      // pfx was already parsed into server.key/cert/ca by setSecureContext.
+      pfx: undefined,
+      _pfxExtraCACerts: undefined,
+      key: server.key,
+      cert: server.cert,
+      ca: server.ca,
+      crl: server.crl,
+      ciphers: server.ciphers,
+      secureOptions: server.secureOptions,
+      allowPartialTrustChain: server.allowPartialTrustChain,
+      sessionTimeout: server.sessionTimeout,
+      sigalgs: server.sigalgs,
+      passphrase: server.passphrase,
+      secureProtocol: server.secureProtocol,
+      minVersion: server.minVersion,
+      maxVersion: server.maxVersion,
+    },
+    true,
+  ));
+}
+
 function Server(options, secureConnectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, secureConnectionListener);
@@ -1612,28 +1637,16 @@ function Server(options, secureConnectionListener): void {
     // server's honorCipherOrder default and pfx-derived CA (Node wrap.js:1520).
     let secureContext = this._sharedCreds;
     if (!secureContext) {
-      secureContext = this._sharedCreds = new InternalSecureContext(
-        {
-          ...this[ksharedCredsOptions],
-          // pfx was already parsed into this.key/cert/ca by setSecureContext.
-          pfx: undefined,
-          _pfxExtraCACerts: undefined,
-          key: this.key,
-          cert: this.cert,
-          ca: this.ca,
-          crl: this.crl,
-          ciphers: this.ciphers,
-          secureOptions: this.secureOptions,
-          allowPartialTrustChain: this.allowPartialTrustChain,
-          sessionTimeout: this.sessionTimeout,
-          sigalgs: this.sigalgs,
-          passphrase: this.passphrase,
-          secureProtocol: this.secureProtocol,
-          minVersion: this.minVersion,
-          maxVersion: this.maxVersion,
-        },
-        true,
-      );
+      // Options that only the native loader rejects (a malformed key/cert PEM,
+      // a wrong passphrase) fail here on the first wrap; surface them on the
+      // server 'error' event, exactly like the lazy build on the listen() path.
+      try {
+        secureContext = buildSharedCreds(this);
+      } catch (err) {
+        socket.destroy();
+        this.emit("error", err);
+        return;
+      }
     }
     const wrapped = new TLSSocket(socket, {
       secureContext,

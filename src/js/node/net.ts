@@ -864,6 +864,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         // rejects the connection; an accepting server (rejectUnauthorized:
         // false) just exposes authorized/authorizationError on the socket.
         if (self._rejectUnauthorized) {
+          // Same once-only latch as every other server-side report, so a native
+          // error racing the destroy below cannot emit a second tlsClientError.
+          self[kerrorEmitted] = true;
           server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);

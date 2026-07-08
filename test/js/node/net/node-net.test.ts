@@ -1034,3 +1034,26 @@ it("paused socket whose peer wrote >LIBUS_RECV_BUFFER_LENGTH then closed deliver
   }
   expect({ received, dataAfterEnd }).toEqual({ received: TOTAL, dataAfterEnd: 0 });
 });
+
+// The is_paused guard in loop.c must not skip the shut_down fast-close: on
+// epoll a paused+shut-down socket registers only EPOLLHUP|EPOLLERR, and if the
+// eof handler does nothing the level-triggered EPOLLHUP spins the loop.
+it("paused socket that ends then receives the peer's FIN closes instead of busy-looping", async () => {
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.on("end", () => c.end());
+  });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  try {
+    const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+    c.on("error", reject);
+    c.on("close", () => resolve("close"));
+    await new Promise<void>(r => c.once("connect", () => r()));
+    c.pause();
+    c.end("x");
+    expect(await promise).toBe("close");
+  } finally {
+    server.close();
+  }
+});

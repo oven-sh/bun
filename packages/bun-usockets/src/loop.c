@@ -693,10 +693,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
-            /* is_paused: on_data paused us mid-drain. kqueue's EV_EOF fires with
-             * bytes still buffered, so dispatching end now would order end before
-             * data. Resume re-arms readable; level-triggered eof re-reports then. */
-            if(eof && s && !s->flags.is_paused) {
+            if(eof && s) {
                 if (UNLIKELY(us_socket_is_closed(s))) {
                     // Do not call on_end after the socket has been closed
                     return;
@@ -706,7 +703,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if(s->flags.allow_half_open) {
+                if (s->flags.is_paused) {
+                    /* on_data paused us mid-drain; kqueue EV_EOF fires with bytes
+                     * still buffered. Defer on_end so resume can drain first. The
+                     * shut_down close above must stay ungated or EPOLLHUP spins. */
+                } else if(s->flags.allow_half_open) {
                     /* EOF with half-open allowed: stop polling readable but KEEP
                      * polling writable. Masking with the current events dropped
                      * writable when the EOF landed before the poll had been

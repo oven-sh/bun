@@ -691,18 +691,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
                     while let Some(query) = curr {
-                        // Probe with release boundaries: derived upper bounds carry a synthetic
-                        // `-0` prerelease which would route `Group::satisfies` through the
-                        // prerelease-tuple gate and reject a plain transitive range like `>=1.5.0`.
-                        let left = Semver::Version {
-                            tag: Default::default(),
-                            ..query.range.left.version
+                        // Derived `Lt` upper bounds carry a synthetic `-0` prerelease (see
+                        // `Tag::zero_pre`); strip it so the probe takes the release path in
+                        // `Group::satisfies`. Other ops keep any user-written prerelease.
+                        let probe = |c: &Semver::range::Comparator| {
+                            let mut v = c.version;
+                            if c.op == Semver::range::Op::Lt {
+                                v.tag = Default::default();
+                            }
+                            v
                         };
-                        let right = Semver::Version {
-                            tag: Default::default(),
-                            ..query.range.right.version
-                        };
-                        if group.satisfies(left, buf, buf) || group.satisfies(right, buf, buf) {
+                        if group.satisfies(probe(&query.range.left), buf, buf)
+                            || group.satisfies(probe(&query.range.right), buf, buf)
+                        {
                             name = aliased.npm().name;
                             name_hash =
                                 Semver::string::Builder::string_hash(this.lockfile.str(&name));

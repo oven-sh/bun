@@ -514,6 +514,10 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
         }
         // A VM termination from the pull, or a failure while registering the rejection reaction.
         RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        // Drain anything the in-flight pull wrote while no reader was waiting; onFlush is a
+        // no-op-restore on an empty sink.
+        deferredFlush = 1;
     }
 
     // controller.error() inside pull is not deferred: re-validate before adding a read request.

@@ -780,6 +780,32 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect(counter.pulls).toBe(1);
       expect(total).toBe(N);
     });
+
+    it("a write buffered while no reader is waiting is delivered on the next read", async () => {
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const { promise: wrote, resolve: markWrote } = Promise.withResolvers();
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write(new Uint8Array(10));
+          await c.flush();
+          await Bun.sleep(1);
+          c.write(new Uint8Array(20));
+          markWrote();
+          await gate;
+          c.end();
+        },
+      });
+      const reader = rs.getReader();
+      expect((await reader.read()).value.byteLength).toBe(10);
+      await wrote;
+      await Bun.sleep(1);
+      // The 20 bytes were written while no reader was waiting and the end-of-tick
+      // flush already ran; the next read must still drain them from the sink.
+      expect((await reader.read()).value.byteLength).toBe(20);
+      openGate();
+      expect((await reader.read()).done).toBe(true);
+    });
   });
 
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {

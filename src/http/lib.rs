@@ -288,6 +288,20 @@ pub fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
+/// Normalise an idle timeout (seconds) for uSockets' timers: the long-timeout
+/// counter wraps `% 240` minutes, so clamp to 239 min, and values above 240s
+/// are served by the minute-granularity long timer, so round them up to a
+/// whole minute so the floor-to-minute path never fires *earlier* than asked.
+#[inline]
+pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
+    let raw = raw.min(239 * 60);
+    (if raw > 240 {
+        raw.div_ceil(60) * 60
+    } else {
+        raw
+    }) as c_uint
+}
+
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
@@ -622,6 +636,11 @@ pub struct HTTPClient<'a> {
     pub progress_node: Option<NonNull<bun_core::Progress::Node>>,
 
     pub flags: Flags,
+
+    /// Per-request override of the global [`IDLE_TIMEOUT_SECONDS`], set from
+    /// `fetch(url, { timeout: <ms> })`. Already normalised (see
+    /// [`normalize_idle_timeout_seconds`]). `None` = use the global default.
+    pub idle_timeout_seconds: Option<c_uint>,
 
     pub state: InternalState<'a>,
     pub tls_props: Option<ssl_config::SharedPtr>,
@@ -3907,19 +3926,25 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
-        // Duration comes from `IDLE_TIMEOUT_SECONDS` (tunable via
-        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests) and is normalised once
-        // in `HTTPThread::on_start` — clamped to the uSockets long-timer bound and
-        // rounded up to a whole minute above 240s — so this is a plain
-        // pass-through. `socket.set_timeout` picks the short-tick timer for values
-        // ≤ 240s and the minute-granularity long timer above that, so the default
-        // 300s maps to the same 5-minute long timer as before.
-        if self.flags.disable_timeout || idle_timeout_seconds() == 0 {
-            socket.set_timeout(0);
-            return;
+    /// The idle timeout to arm for this request, in seconds (0 = disabled):
+    /// the per-request `fetch({ timeout })` override when present, otherwise
+    /// the global `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default. Both are already
+    /// normalised (see [`normalize_idle_timeout_seconds`]).
+    #[inline]
+    pub fn effective_idle_timeout_seconds(&self) -> c_uint {
+        if self.flags.disable_timeout {
+            return 0;
         }
-        socket.set_timeout(idle_timeout_seconds());
+        self.idle_timeout_seconds
+            .unwrap_or_else(idle_timeout_seconds)
+    }
+
+    pub fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
+        // Values are pre-normalised (global: `HTTPThread::on_start`;
+        // per-request: `AsyncHTTP::init`) so this is a plain pass-through.
+        // `socket.set_timeout` picks the short-tick timer for values ≤ 240s
+        // and the minute-granularity long timer above that.
+        socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

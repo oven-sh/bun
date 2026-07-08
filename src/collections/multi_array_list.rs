@@ -254,8 +254,9 @@ use crate::const_str_eq;
 /// because reflected `Field::ty` ids are not `'static`-restricted, and column
 /// callers routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
 #[inline(always)]
-const fn type_id_of<F: ?Sized>() -> TypeId {
-    core::intrinsics::type_id::<F>()
+fn type_id_of<F: ?Sized>() -> TypeId {
+    // Uses TypeId::of which in Rust 2026+ works for non-`'static` types.
+    TypeId::of::<F>()
 }
 
 /// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.

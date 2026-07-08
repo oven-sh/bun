@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { mkdir, readdir, readlink, rm, stat, symlink } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -2442,4 +2442,678 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(stderr).toContain('--linker: "isoalted"');
   expect(stderr).toContain("'isolated' or 'hoisted'");
   expect(exitCode).toBe(1);
+});
+
+describe("bun link integration", () => {
+  // `bun link` writes into the global link dir under BUN_INSTALL. Give each
+  // test its own to keep the user's real `~/.bun` clean and avoid collisions
+  // between parallel tests that register the same package name. Caller owns
+  // the directory lifetime via a `using home = tempDir(...)` declaration so
+  // the harness cleans up global-link fixtures on test exit.
+  //
+  // Override `BUN_INSTALL_GLOBAL_DIR` (precedes `BUN_INSTALL` inside
+  // `openGlobalDir`) and `BUN_INSTALL_CACHE_DIR` (precedes bunfig's
+  // `install.cache` inside `fetchCacheDirectoryPath`). On CI, the
+  // runner pre-points `BUN_INSTALL_CACHE_DIR` at a shared tmpdir to
+  // warm the per-package tarball cache across tests — under the
+  // isolated linker that cache also contains the global virtual
+  // store (`<cache>/links/<storepath>-<hash>/...`), so one linked
+  // test's producer-materialized body persists into every subsequent
+  // test's install whose `no-deps@1.0.0` lockfile closure hashes to
+  // the same entry key, and the "marker must be absent" assertions
+  // flap. Pin everything inside the per-test tempDir.
+  function hermeticEnv(home: string) {
+    return {
+      ...bunEnv,
+      BUN_INSTALL: home,
+      BUN_INSTALL_GLOBAL_DIR: join(home, "install", "global"),
+      BUN_INSTALL_CACHE_DIR: join(home, "install", "cache"),
+      HOME: home,
+      XDG_CONFIG_HOME: home,
+      USERPROFILE: home,
+    };
+  }
+
+  // Recursively list every file under `dir` as a POSIX-separator relative
+  // path, so capability tests can compare the installed `.bun/<pkg>/` body
+  // against the set of files `bun pm pack --dry-run` reports. Shared by
+  // all tests that assert file-set parity; extract to avoid drift if the
+  // traversal contract changes (follow symlinks, depth limits, etc.).
+  async function listFilesRecursive(dir: string, prefix = ""): Promise<string[]> {
+    const out: string[] = [];
+    for (const name of await readdir(dir)) {
+      const abs = join(dir, name);
+      const rel = prefix ? `${prefix}/${name}` : name;
+      const s = await stat(abs);
+      if (s.isDirectory()) {
+        out.push(...(await listFilesRecursive(abs, rel)));
+      } else {
+        out.push(rel);
+      }
+    }
+    return out;
+  }
+
+  // The registry's `no-deps@1.0.0` tarball contains only `package.json` and
+  // `index.js`. Producer adds `marker.js` — presence of that file in
+  // `node_modules/.bun/no-deps@1.0.0/node_modules/no-deps/` is proof the
+  // body was sourced from the producer dir, not the registry tarball cache.
+  // Returned to the caller, which wraps it with `using` for disposal.
+  // Don't `using` here — that would dispose on function return, before
+  // the test body can use the producer.
+  async function setupLinkedNoDeps(env: NodeJS.ProcessEnv) {
+    const producer = tempDir("linkpkg-producer-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      "index.js": "module.exports = 'FROM_PRODUCER';",
+      "marker.js": "module.exports = 'FROM_PRODUCER_MARKER';",
+    });
+
+    // On any throw before `return`, the caller's `using` never binds, so
+    // dispose here to keep the producer dir from leaking on persistent
+    // CI runners.
+    try {
+      await using linkProc = spawn({
+        cmd: [bunExe(), "link"],
+        cwd: String(producer),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [linkStdout, linkStderr, linkExit] = await Promise.all([
+        linkProc.stdout.text(),
+        linkProc.stderr.text(),
+        linkProc.exited,
+      ]);
+      if (linkExit !== 0) {
+        throw new Error(`bun link failed:\nstdout: ${linkStdout}\nstderr: ${linkStderr}`);
+      }
+      return producer;
+    } catch (e) {
+      producer[Symbol.dispose]();
+      throw e;
+    }
+  }
+
+  test("isolated: npm-resolved dep honors active bun link", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-a",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(true);
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
+    expect(await file(join(bodyDir, "index.js")).text()).toContain("FROM_PRODUCER");
+    void producer;
+  });
+
+  test("isolated: catalog-resolved dep honors active bun link", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "isolated-link-consumer-b",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "1.0.0" },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "app", "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "no-deps": "catalog:" },
+        }),
+      ),
+    ]);
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(true);
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
+    void producer;
+  });
+
+  test("isolated: producer rebuild propagates on reinstall", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-c",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    const runInstall = async () => {
+      await using p = spawn({
+        cmd: [bunExe(), "install", "--backend=hardlink"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    };
+
+    await runInstall();
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
+
+    // Mutate producer; reinstall should see fresh content, not the
+    // content-addressed snapshot from the first install.
+    await write(join(String(producer), "marker.js"), "module.exports = 'FROM_PRODUCER_REBUILT';");
+
+    await runInstall();
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_REBUILT");
+  });
+
+  test("isolated: no link registered → body sourced from registry tarball", async () => {
+    // Hermetic env with no `bun link` registered — the registry's
+    // `no-deps@1.0.0` tarball has no `marker.js`, so its absence in the body
+    // confirms the producer path was never consulted.
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-e",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "package.json"))).toBe(true);
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+  });
+
+  // Windows dropped from this one: `symlink.isSupported()` is false on
+  // Windows (BackendSupport.windows carries only hardlink + copyfile), so
+  // `--backend=symlink` is silently discarded by CommandLineArguments and
+  // the backend stays at the Windows default (hardlink). The override fires
+  // and marker.js ends up in the store — expected platform behavior, not a
+  // regression this test can usefully assert.
+  test.skipIf(isWindows)("isolated: --backend=symlink bypasses the bun link override", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-f",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=symlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    // With symlink backend the user opted into shared-writable semantics; our
+    // override deliberately does not fire, so the body must be the registry
+    // tarball (no marker.js).
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+    // Top-level symlink still points at the isolated store entry — a regression
+    // from --backend=symlink to a flat hoisted layout would break here even
+    // though the body-check above would still pass.
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBe(true);
+    void producer;
+  });
+
+  // Dangling link (producer deleted without `bun unlink`) — a common dev
+  // workflow slip. Pre-fix this hard-failed every isolated install that
+  // resolved the same package name, with an ENOENT from the installer
+  // worker opening the orphan link and no registry fallback. Accept it
+  // as a registration only when the target resolves.
+  //
+  // Windows dropped: the staged dangling state and the lstat
+  // isSymbolicLink() assertions assume the registration is a symlink.
+  // On Windows `bun link` registers a junction and the installer detects
+  // dangling registrations through the GetFileAttributesW probe in
+  // linked_package_path, a different path this POSIX-shaped fixture
+  // doesn't validate.
+  test.skipIf(isWindows)("isolated: dangling bun link is ignored, registry download still runs", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    // Link a producer, then delete the producer dir WITHOUT bun unlink.
+    // The symlink at <globalLinkDir>/no-deps now dangles.
+    {
+      using doomed = await setupLinkedNoDeps(env);
+      await rm(String(doomed), { recursive: true, force: true });
+      // Confirm the dangling state: the link exists but its target doesn't.
+      const linkPath = join(String(home), "install", "global", "node_modules", "no-deps");
+      expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      expect(existsSync(linkPath)).toBe(false);
+    }
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-dangling",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "package.json"))).toBe(true);
+    // Registry tarball, not the deleted producer.
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+  });
+
+  test("isolated: link overrides only the direct-dep resolution, not other versions of the name", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    // `one-dep@1.0.0` depends on `no-deps@1.0.1`, so the lockfile resolves
+    // two versions of the linked name: 1.0.0 (direct) and 1.0.1
+    // (transitive). Only the direct resolution may take the producer body —
+    // stamping it into the transitive copy would hand `one-dep` a version
+    // it never asked for (hoisted-linker parity: `npm link` only replaces
+    // the top-level `node_modules/<name>`).
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-multiversion",
+        dependencies: { "no-deps": "1.0.0", "one-dep": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const directBody = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    const transitiveBody = join(packageDir, "node_modules", ".bun", "no-deps@1.0.1", "node_modules", "no-deps");
+    // Direct resolution: producer body.
+    expect(existsSync(join(directBody, "marker.js"))).toBe(true);
+    // Transitive different-version copy: registry tarball, no marker.
+    expect(existsSync(join(transitiveBody, "package.json"))).toBe(true);
+    expect(existsSync(join(transitiveBody, "marker.js"))).toBe(false);
+    void producer;
+  });
+
+  // Capability: the installed entry must reflect what a published package
+  // would contain — NOT the producer's working tree.
+  //
+  // The source of truth is `bun pm pack --dry-run`: whatever that reports
+  // as the published file set IS the set we must materialize in the
+  // consumer's `.bun/<hash>/<pkg>/`. Expressing the contract this way
+  // binds the linker's behavior to bun's own publish semantics (which
+  // already handle `package.json#files`, `.npmignore`, default excludes,
+  // etc.), so the test doesn't go stale when those rules evolve.
+  // The current implementation applies only a default basename skip list
+  // (Installer.rs) on every platform, so `files` whitelists and
+  // `.npmignore` are not honored yet; these tests stay todo until pack's
+  // publishable-path selection is ported to the linked-producer copy.
+  test.todo("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    // Producer shaped like a real repo: publishable content at top level
+    // plus a pile of things `bun publish` would strip.
+    using producer = tempDir("linkpkg-realrepo-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      "README.md": "# content\n",
+      "index.js": "module.exports = 'FROM_PRODUCER';",
+      "dist/lib.js": "module.exports = 'BUILT_OUTPUT';",
+      ".git/HEAD": "ref: refs/heads/main\n",
+      ".git/config": "[core]\n",
+      ".github/workflows/ci.yml": "name: ci\n",
+      ".vscode/settings.json": "{}",
+      ".idea/workspace.xml": "<xml/>",
+      ".DS_Store": "\x00",
+      "src/index.ts": "export const x = 1;",
+      "node_modules/leaked-dep/package.json": JSON.stringify({ name: "leaked-dep", version: "1.0.0" }),
+    });
+
+    // Ask bun what it considers the published file set.
+    await using packProc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--dry-run"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [packStdout, packStderr, packExit] = await Promise.all([
+      packProc.stdout.text(),
+      packProc.stderr.text(),
+      packProc.exited,
+    ]);
+    if (packExit !== 0) throw new Error(`bun pm pack failed:\n${packStderr}`);
+    const publishedFiles = new Set<string>();
+    for (const line of packStdout.split("\n")) {
+      // `bun pm pack --dry-run` lists entries as: "packed <size> <relpath>"
+      const m = line.match(/^packed\s+\S+\s+(.+?)\s*$/);
+      if (m) publishedFiles.add(m[1]);
+    }
+    // Sanity: pack MUST report package.json, otherwise the test's source
+    // of truth is broken and the comparison below is meaningless.
+    expect(publishedFiles.has("package.json")).toBe(true);
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) throw new Error(`bun link failed: ${linkStderr}`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-filter",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    const installedFiles = new Set(await listFilesRecursive(bodyDir));
+
+    // Capability assertion: installed contents === publishable contents.
+    // Sort for a readable diff on failure.
+    const sortedInstalled = [...installedFiles].sort();
+    const sortedPublished = [...publishedFiles].sort();
+    expect(sortedInstalled).toEqual(sortedPublished);
+  });
+
+  // Real producers restrict the published tree with `package.json#files`.
+  // Content-ui (the motivating repo) uses `"files": ["dist"]` — everything
+  // else (src/, docs/, .storybook/, config files) is dev-only and must not
+  // end up inside a consumer's `.bun/<hash>/<pkg>/`. Same capability
+  // assertion as the prior test; the producer shape is what changes.
+  test.todo("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    using producer = tempDir("linkpkg-fileswl-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", files: ["dist"] }),
+      "README.md": "# content\n",
+      "dist/bundle.js": "module.exports = 'BUILT';",
+      "src/index.ts": "export {}",
+      "docs/guide.md": "# docs\n",
+      ".storybook/main.js": "module.exports = {};",
+      ".github/workflows/ci.yml": "name: ci\n",
+      "tsconfig.json": "{}",
+      "vite.config.ts": "export default {};",
+    });
+
+    await using packProc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--dry-run"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [packStdout, packStderr, packExit] = await Promise.all([
+      packProc.stdout.text(),
+      packProc.stderr.text(),
+      packProc.exited,
+    ]);
+    if (packExit !== 0) throw new Error(`bun pm pack failed:\n${packStderr}`);
+    const publishedFiles = new Set<string>();
+    for (const line of packStdout.split("\n")) {
+      const m = line.match(/^packed\s+\S+\s+(.+?)\s*$/);
+      if (m) publishedFiles.add(m[1]);
+    }
+    // Sanity: `files: ["dist"]` should restrict to package.json + README +
+    // dist/*. If bun pm pack reports more than that, either the test's
+    // producer shape drifted or publish semantics changed — either way
+    // the capability assertion below is no longer a useful test.
+    expect([...publishedFiles].sort()).toEqual(["README.md", "dist/bundle.js", "package.json"]);
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) throw new Error(`bun link failed: ${linkStderr}`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-files",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    const installedFiles = new Set(await listFilesRecursive(bodyDir));
+
+    expect([...installedFiles].sort()).toEqual([...publishedFiles].sort());
+  });
+
+  // Regression: when a producer has `files: ["build/**/*"]` AND a directory
+  // sibling at root that shares its name with a directory nested under
+  // `build/`, the root-level whitelist must not strip the nested copy.
+  // Real-world repro: @amboss/design-system has both `<root>/assets/` (dev
+  // SVG sources, excluded from publish) and `<root>/build/esm/web-tokens/
+  // assets/` (built JSON shipped via files). A basename-only skip list
+  // drops both; npm publish (and we) must keep the nested one.
+  test.todo("isolated: root-only `files` exclusion does not strip same-named nested dirs", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    using producer = tempDir("linkpkg-nested-same-name-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", files: ["build/**/*"] }),
+      "README.md": "# nested\n",
+      // Root `assets/` — excluded by `files`.
+      "assets/icon.svg": "<svg/>",
+      // Nested `assets/` under whitelisted `build/` — must survive.
+      "build/esm/web-tokens/assets/icons.json": "{}",
+      "build/esm/web-tokens/assets/logo.json": "{}",
+      "build/esm/index.js": "module.exports = 'BUILT';",
+      // Other dev junk siblings to assets/ at root, also excluded.
+      "src/index.ts": "export {}",
+      "docs/guide.md": "# docs\n",
+    });
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) throw new Error(`bun link failed: ${linkStderr}`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-nested-same-name",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    const installedFiles = new Set(await listFilesRecursive(bodyDir));
+
+    // Nested assets/ under build/ must be present.
+    expect(installedFiles.has("build/esm/web-tokens/assets/icons.json")).toBe(true);
+    expect(installedFiles.has("build/esm/web-tokens/assets/logo.json")).toBe(true);
+    // Root assets/ must be excluded.
+    expect(installedFiles.has("assets/icon.svg")).toBe(false);
+    // Other excluded siblings stay out.
+    expect(installedFiles.has("src/index.ts")).toBe(false);
+    expect(installedFiles.has("docs/guide.md")).toBe(false);
+  });
 });

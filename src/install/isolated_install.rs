@@ -223,6 +223,14 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
+    // Populate the linked-names cache once, on the main thread, before any
+    // install worker calls `linked_package_path`. Replaces a per-dependency
+    // `lstat` with a single readdir of the global link dir; short-circuits
+    // every subsequent lookup when nothing is linked (the common case on
+    // CI and dev machines without active links). See
+    // `populate_linked_names_cache` in PackageManager/PackageManagerDirectories.rs.
+    crate::package_manager_real::directories::populate_linked_names_cache(manager);
+
     // Take a raw pointer so column borrows below don't tie up `&mut manager`
     // (which owns the lockfile).
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
@@ -230,6 +238,67 @@ pub(crate) fn install_isolated_packages(
     // `manager` outlives this function and no other `&mut Lockfile` is formed
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
+
+    // Store entries an active `bun link` overrides: the resolutions of root /
+    // workspace *direct* dependencies whose resolved package name is
+    // link-registered. Keying the override on name alone would stamp the
+    // producer's working tree into every `.bun/<name>@<ver>/` entry in the
+    // lockfile — when the tree contains the linked name at more than one
+    // version (direct `react@18` plus a transitive `react@16`), the
+    // mismatched copies would break at runtime. The hoisted linker only ever
+    // replaces the top-level `node_modules/<name>`; gating on direct-dep
+    // resolutions preserves that: transitive different-version copies keep
+    // their registry bytes.
+    let linked_pkg_ids: DynamicBitSet = {
+        let mut set = DynamicBitSet::init_empty(lockfile.packages.len())?;
+        let any_links = if cfg!(windows) {
+            manager.linked_names_any_on_windows
+        } else {
+            !manager.linked_names.is_empty()
+        };
+        if any_links
+            && PackageInstall::supported_method() != crate::package_install::Method::Symlink
+        {
+            let pkgs = lockfile.packages.slice();
+            let pkg_dependency_slices = pkgs.items_dependencies();
+            let pkg_names = pkgs.items_name();
+            let resolutions = &lockfile.buffers.resolutions[..];
+            let dependencies = &lockfile.buffers.dependencies[..];
+            let string_buf = &lockfile.buffers.string_bytes[..];
+
+            // Root first, then every workspace package root declares.
+            let mut scan_targets: Vec<usize> = vec![0];
+            for dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
+                if !dependencies[dep_idx as usize].behavior.is_workspace() {
+                    continue;
+                }
+                let res = resolutions[dep_idx as usize];
+                if res != invalid_package_id {
+                    scan_targets.push(res as usize);
+                }
+            }
+            for pid in scan_targets {
+                for dep_idx in pkg_dependency_slices[pid].begin()..pkg_dependency_slices[pid].end()
+                {
+                    let res = resolutions[dep_idx as usize];
+                    if res == invalid_package_id || set.is_set(res as usize) {
+                        continue;
+                    }
+                    let mut link_buf = PathBuffer::uninit();
+                    if crate::package_manager_real::directories::linked_package_path_mut(
+                        manager,
+                        pkg_names[res as usize].slice(string_buf),
+                        &mut link_buf,
+                    )
+                    .is_some()
+                    {
+                        set.set(res as usize);
+                    }
+                }
+            }
+        }
+        set
+    };
 
     let store: Store = 'store: {
         let mut timer = std::time::Instant::now();
@@ -1286,6 +1355,22 @@ pub(crate) fn install_isolated_packages(
                                 {
                                     break 'eligible false;
                                 }
+                                // An active `bun link` sources the body from the
+                                // producer's live working tree, which is mutable
+                                // by design. Materializing that into the shared
+                                // content-addressed `<cache>/links/<hash>/` would
+                                // poison every other consumer on the machine that
+                                // resolves the same lockfile closure, and the
+                                // override's pre-delete would wipe the shared
+                                // entry under them. Force link-overridden
+                                // packages project-local. `linked_pkg_ids` is
+                                // already empty under `--backend=symlink` (the
+                                // override never fires there) and contains only
+                                // direct-dep resolutions, so transitive
+                                // same-name entries keep GVS eligibility.
+                                if linked_pkg_ids.is_set(pkg_id as usize) {
+                                    break 'eligible false;
+                                }
                                 break 'eligible true;
                             }
                             _ => false,
@@ -2048,6 +2133,7 @@ pub(crate) fn install_isolated_packages(
                     bun_core::ZStr::from_slice_with_nul(b)
                 }),
             global_store_tmp_suffix: fast_random(),
+            linked_pkg_ids,
             summary: Default::default(),
             task_queue: Default::default(),
         };
@@ -2193,12 +2279,23 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
+                    // An active `bun link` whose direct-dep resolution is this
+                    // entry means the producer dir is the source of truth —
+                    // override the cache-based materialization regardless of
+                    // whether the store dir already exists. `linked_pkg_ids`
+                    // was built on the main thread before the installer
+                    // (empty under `--backend=symlink`; direct-dep
+                    // resolutions only, so transitive same-name entries at
+                    // other versions keep their registry bytes).
+                    let has_active_link = installer.linked_pkg_ids.is_set(pkg_id as usize);
+
                     let needs_install = installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
+                        || has_active_link
                         || matches!(patch_info, installer::PatchInfo::Remove(_))
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
@@ -2298,6 +2395,20 @@ pub(crate) fn install_isolated_packages(
                         entry_steps[entry_id.get() as usize]
                             .store(installer::Step::Done as u32, Ordering::Relaxed);
                         installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
+                        continue;
+                    }
+
+                    // `link_package` will source from the producer dir via
+                    // `linked_package_path`; skip the cache-fetch dance entirely
+                    // (mirrors how `.folder` is handled — no registry traffic
+                    // needed when the body comes from an on-disk producer).
+                    // Without this, the main thread still enqueues a download
+                    // whose extracted bytes the worker never reads, and an
+                    // offline / unpublished-package install (the canonical
+                    // `bun link` case) would fail at the fetch step instead of
+                    // succeeding from the producer on disk.
+                    if has_active_link {
+                        installer.start_task(entry_id);
                         continue;
                     }
 

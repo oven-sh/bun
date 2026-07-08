@@ -1097,10 +1097,9 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 ) {
 
 #if _WIN32
-    //  Windows SO_REUSEADDR lets any local process rebind an in-use TCP port and
-    //  receive its connections (libuv issue #1360), so drop it for TCP; the UDP
-    //  path in bsd_create_udp_socket still honors it. SO_REUSEPORT does not exist:
-    //  callers that set DISALLOW see ENOTSUP, others fall back to SO_EXCLUSIVEADDRUSE.
+    //  Windows SO_REUSEADDR lets any process steal an in-use TCP port (libuv #1360),
+    //  so drop it for TCP (bsd_create_udp_socket keeps it). SO_REUSEPORT does not
+    //  exist: DISALLOW callers see ENOTSUP, others fall back to SO_EXCLUSIVEADDRUSE.
     options &= ~LIBUS_LISTEN_REUSE_ADDR;
     if ((options & LIBUS_LISTEN_REUSE_PORT) && !(options & LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE)) {
         options = (options & ~LIBUS_LISTEN_REUSE_PORT) | LIBUS_LISTEN_EXCLUSIVE_PORT;

@@ -116,6 +116,10 @@ for (const nodeType of Object.keys(walk.base)) {
   };
 }
 
+// Hoisted from Node's inline literal: builtin-parser.ts only recognises `/`
+// as regex-start after `[(,=;:{]|return|=>`, so an inline regex here (after
+// `+` in the upstream `.replace(...)` chain) would silently truncate the
+// bundled module. bundle-modules.ts asserts on that truncation now.
 const kParenMessageRe = / \([^)]+\)/;
 
 function processTopLevelAwait(src) {

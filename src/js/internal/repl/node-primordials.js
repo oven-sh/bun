@@ -3,10 +3,11 @@
 // intrinsic once at module load and invokes it through the tamper-proof
 // `$call`/`$apply` intrinsics, so replacing a prototype method (e.g.
 // `Array.prototype.push = ...`) after this module loads does not affect the
-// ported code. This is weaker than Node's real primordials in two ways: the
-// capture happens at (lazy) module load rather than realm bootstrap, and the
-// Safe* containers are plain aliases whose instance methods still dispatch
-// through their (mutable) prototypes.
+// ported code. Safe* containers re-export the real makeSafe()-wrapped
+// implementations from internal/primordials so there is one definition per
+// name. Weaker than Node only in that capture happens at (lazy) module load
+// rather than realm bootstrap.
+const { SafeMap, SafeSet, SafeWeakSet, SafeStringIterator } = require("internal/primordials");
 
 const ArrayFromFn = Array.from;
 const ArrayPrototypeAtFn = Array.prototype.at;
@@ -58,13 +59,6 @@ const StringPrototypeToLocaleLowerCaseFn = String.prototype.toLocaleLowerCase;
 const StringPrototypeToLowerCaseFn = String.prototype.toLowerCase;
 const StringPrototypeTrimFn = String.prototype.trim;
 const StringPrototypeTrimStartFn = String.prototype.trimStart;
-const StringPrototypeSymbolIteratorFn = String.prototype[Symbol.iterator];
-
-class SafeStringIterator {
-  constructor(string) {
-    return StringPrototypeSymbolIteratorFn.$call(string);
-  }
-}
 
 export default {
   ArrayFrom: (...args) => ArrayFromFn.$apply(Array, args),
@@ -132,9 +126,9 @@ export default {
   RegExpPrototypeSymbolReplace: (re, s, replacement) => RegExpPrototypeSymbolReplaceFn.$call(re, s, replacement),
   RegExpPrototypeSymbolSplit: (re, s, limit) => RegExpPrototypeSymbolSplitFn.$call(re, s, limit),
   SafePromiseRace: promises => PromiseRaceFn.$call(Promise, promises),
-  SafeSet: Set,
-  SafeMap: Map,
-  SafeWeakSet: WeakSet,
+  SafeSet,
+  SafeMap,
+  SafeWeakSet,
   SafeStringIterator,
   StringFromCharCode: String.fromCharCode,
   StringPrototypeCharAt: (s, i) => StringPrototypeCharAtFn.$call(s, i),

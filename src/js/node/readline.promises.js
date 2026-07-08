@@ -3,7 +3,6 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
 
 const { Promise, SymbolDispose } = primordials;
 

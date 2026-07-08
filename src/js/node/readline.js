@@ -24,7 +24,6 @@ var __node_module__ = { exports: {} };
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-("use strict");
 
 const {
   DateNow,

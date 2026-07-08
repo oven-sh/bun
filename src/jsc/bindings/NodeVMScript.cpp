@@ -131,6 +131,17 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Node's vm.Script throws SyntaxError at construction; the REPL's
+    // recoverable-error flow (and user code) relies on that. Matches
+    // vm.compileFunction (NodeVM.cpp) which also parses eagerly.
+    JSC::ParserError parseError;
+    if (!JSC::checkSyntax(vm, source, parseError)) {
+        auto exception = parseError.toErrorObject(globalObject, source, -1);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwException(globalObject, scope, exception);
+        return {};
+    }
+
     const bool produceCachedData = options.produceCachedData;
     auto filename = options.filename;
 

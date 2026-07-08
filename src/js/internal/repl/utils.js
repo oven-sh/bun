@@ -3,7 +3,6 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
 
 const {
   ArrayPrototypeFilter,
@@ -24,7 +23,9 @@ const {
   Symbol,
 } = primordials;
 
-const { tokTypes: tt, Parser: AcornParser } = require("internal/repl/acorn");
+// Lazy: don't destructure — the vm.Script parse of acorn's ~122 KB source
+// stays deferred until isRecoverableError/isValidSyntax first runs.
+const acorn = require("internal/repl/acorn");
 
 const { sendInspectorCommand, getBuiltinLibs } = require("internal/repl/node-shims");
 
@@ -83,11 +84,11 @@ function isRecoverableError(e, code) {
   //       change these messages in the future, this will lead to a test
   //       failure, indicating that this code needs to be updated.
   //
-  const RecoverableParser = AcornParser.extend(Parser => {
+  const RecoverableParser = acorn.Parser.extend(Parser => {
     return class extends Parser {
       nextToken() {
         super.nextToken();
-        if (this.type === tt.eof) recoverable = true;
+        if (this.type === acorn.tokTypes.eof) recoverable = true;
       }
       raise(pos, message) {
         switch (message) {
@@ -737,14 +738,14 @@ const startsWithBraceRegExp = /^\s*{/;
 const endsWithSemicolonRegExp = /;\s*$/;
 function isValidSyntax(input) {
   try {
-    AcornParser.parse(input, {
+    acorn.Parser.parse(input, {
       ecmaVersion: "latest",
       allowAwaitOutsideFunction: true,
     });
     return true;
   } catch {
     try {
-      AcornParser.parse(`_=${input}`, {
+      acorn.Parser.parse(`_=${input}`, {
         ecmaVersion: "latest",
         allowAwaitOutsideFunction: true,
       });

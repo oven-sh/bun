@@ -1,70 +1,50 @@
 // Entry script for `bun --interactive` (`-i` is taken by `--install=fallback`): starts the Node.js-compatible
-// REPL (the ported node:repl) the way Node's internal/main/repl.js does, using
-// only public node:repl APIs (this file runs as a regular entrypoint, so it
-// cannot require internal modules).
+// REPL (the ported node:repl) the way Node's internal/main/repl.js does. This
+// file runs as a regular entrypoint (not a builtin), so it reaches
+// createInternalRepl via a Symbol.for hook on node:repl and never re-implements
+// the NODE_REPL_* env parsing that internal/repl.js already owns.
 
-const REPL = require("node:repl");
+// exec_node_repl injects the user's `-e` script as a JSON string literal here
+// (data, not code — a syntax error or unterminated token in `-e` cannot bleed
+// into this bootstrap). Read and clear it before any user code runs.
+declare const __BUN_EVAL_SCRIPT__: string | undefined;
+const evalScript: string | undefined = typeof __BUN_EVAL_SCRIPT__ === "string" ? __BUN_EVAL_SCRIPT__ : undefined;
 
-console.log(`Welcome to Node.js ${process.version}.\n` + 'Type ".help" for more information.');
-
-const opts: Record<string, any> = {
-  ignoreUndefined: false,
-  useGlobal: true,
-  breakEvalOnSigint: true,
-};
-
-if (parseInt(process.env.NODE_NO_READLINE!)) {
-  opts.terminal = false;
-}
-
-const replModeEnv = process.env.NODE_REPL_MODE;
-if (replModeEnv) {
-  opts.replMode = {
-    strict: REPL.REPL_MODE_STRICT,
-    sloppy: REPL.REPL_MODE_SLOPPY,
-  }[replModeEnv.toLowerCase().trim()];
-}
-
-if (opts.replMode === undefined) {
-  opts.replMode = REPL.REPL_MODE_SLOPPY;
-}
-
-const size = Number(process.env.NODE_REPL_HISTORY_SIZE);
-if (!Number.isNaN(size) && size > 0) {
-  opts.size = size;
+const ext = process.env.NODE_REPL_EXTERNAL_MODULE;
+if (ext) {
+  // Node loads this in place of the built-in REPL (lib/internal/main/repl.js).
+  require(require("node:path").resolve(ext));
 } else {
-  opts.size = 1000;
-}
+  const REPL = require("node:repl");
+  const createInternalRepl = (REPL as Record<symbol, Function>)[Symbol.for("bun.repl.createInternalRepl")];
 
-const term = "terminal" in opts ? opts.terminal : process.stdout.isTTY;
-const filePath = term ? process.env.NODE_REPL_HISTORY : "";
+  console.log(
+    `Welcome to Bun v${(globalThis as any).Bun.version} (Node.js-compatible REPL, node:repl ${process.version}).\n` +
+      'Type ".help" for more information.',
+  );
 
-// Standalone-REPL semantics (Node boots its CLI REPL through
-// internal/repl with kStandaloneREPL set): relaxed input validation,
-// repl.repl introspection, inspect.replDefaults writer wiring.
-const kStandaloneREPL = (REPL as Record<symbol, symbol>)[Symbol.for("bun.repl.kStandaloneREPL")];
-if (kStandaloneREPL) {
-  (opts as Record<symbol, boolean>)[kStandaloneREPL] = true;
-}
+  createInternalRepl(process.env, (err: Error | null, replServer: any) => {
+    if (err) throw err;
 
-const replServer = REPL.start(opts);
-
-replServer.setupHistory({
-  filePath,
-  size: opts.size,
-  onHistoryFileLoaded: (err: Error | null) => {
-    if (err) {
-      throw err;
-    }
-  },
-});
-
-replServer.on("exit", () => {
-  if (replServer.historyManager?.isFlushing) {
-    replServer.once("flushHistory", () => {
+    replServer.on("exit", () => {
+      if (replServer.historyManager?.isFlushing) {
+        replServer.once("flushHistory", () => process.exit());
+        return;
+      }
       process.exit();
     });
-    return;
-  }
-  process.exit();
-});
+
+    // `node -i -e`: Node runs the -e script as a separate compilation unit
+    // AFTER the REPL starts, so `var`/`function` land on the global object and
+    // a syntax/runtime error is reported at [eval]:1 with the REPL still live.
+    if (evalScript !== undefined) {
+      try {
+        require("node:vm").runInThisContext(evalScript, { filename: "[eval]", displayErrors: true });
+      } catch (e) {
+        // Route through the REPL's own error printer so `Uncaught …` and the
+        // decorated stack render exactly as if typed at the prompt.
+        replServer._handleError(e);
+      }
+    }
+  });
+}

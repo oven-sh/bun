@@ -45,12 +45,9 @@ var __node_module__ = { exports: {} };
  *   repl.start("node > ").context.foo = "stdin is fun";
  */
 
-("use strict");
-
 const {
   ArrayPrototypeAt,
   ArrayPrototypeFilter,
-  ArrayPrototypeFindLastIndex,
   ArrayPrototypeForEach,
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
@@ -91,7 +88,9 @@ const {
 } = primordials;
 
 const { makeRequireFunction, addBuiltinLibsToObject } = require("internal/repl/node-shims");
-const { parse: acornParse } = require("internal/repl/acorn");
+// Lazy: acorn's ~122 KB source parses on first property access, not on
+// require('node:repl'); don't destructure at module scope.
+const acorn = require("internal/repl/acorn");
 const acornWalk = require("internal/repl/acorn-walk");
 const {
   decorateErrorStack,
@@ -117,7 +116,6 @@ let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
   debug = fn;
 });
 const {
-  ErrorPrepareStackTrace,
   codes: {
     ERR_CANNOT_WATCH_SIGINT,
     ERR_INVALID_ARG_VALUE,
@@ -128,7 +126,6 @@ const {
     ERR_SCRIPT_EXECUTION_INTERRUPTED,
   },
   isErrorStackTraceLimitWritable,
-  overrideStackTrace,
 } = require("internal/repl/node-errors");
 const { sendInspectorCommand } = require("internal/repl/node-shims");
 const { getOptionValue } = require("internal/repl/node-shims");
@@ -165,27 +162,29 @@ const parentModule = __node_module__;
 // AsyncLocalStorage to track which REPL instance owns the current async context
 // This replaces the domain-based tracking for error handling
 const replContext = new AsyncLocalStorage();
-let exceptionCaptureSetup = false;
+let exceptionCaptureUseCount = 0;
 
-/**
- * Sets up the uncaught exception capture callback to route errors
- * to the appropriate REPL instance. This replaces domain-based error handling.
- * Uses addUncaughtExceptionCaptureCallback to coexist with the primary
- * callback (e.g., domain module).
- */
+function replExceptionCaptureCallback(err) {
+  const store = replContext.getStore();
+  if (store?.replServer) {
+    const result = store.replServer._handleError(err);
+    return result !== "unhandled"; // We handled it
+  }
+  // No active REPL context - let other handlers try
+}
+
+// One-shot install per process. Node's `addUncaughtExceptionCaptureCallback`
+// keeps a separate aux list that never counts against
+// `hasUncaughtExceptionCaptureCallback()`; Bun lacks that native API, so the
+// shim occupies the exclusive slot for the process lifetime once the first
+// REPL starts (uninstalling on 'exit' would drop async errors that fire after
+// input close — see test-repl-uncaught-exception-after-input-ended). The
+// shim's fallthrough re-emits `uncaughtException` with the origin arg so user
+// listeners still see it.
 function setupExceptionCapture() {
-  if (exceptionCaptureSetup) return;
-
-  require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(err => {
-    const store = replContext.getStore();
-    if (store?.replServer) {
-      const result = store.replServer._handleError(err);
-      return result !== "unhandled"; // We handled it
-    }
-    // No active REPL context - let other handlers try
-  });
-
-  exceptionCaptureSetup = true;
+  if (exceptionCaptureUseCount++ === 0) {
+    require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
+  }
 }
 
 const kBufferedCommandSymbol = Symbol("bufferedCommand");
@@ -231,7 +230,7 @@ writer.options = { ...inspect.defaultOptions, showProxy: true };
 // Converts static import statement to dynamic import statement
 const toDynamicImport = codeLine => {
   let dynamicImportStatement = "";
-  const ast = acornParse(codeLine, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
+  const ast = acorn.parse(codeLine, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
   acornWalk.ancestor(ast, {
     ImportDeclaration(node) {
       const awaitDynamicImport = `await import(${JSONStringify(node.source.value)});`;
@@ -991,25 +990,8 @@ class REPLServer extends Interface {
     let errStack = "";
 
     if (typeof e === "object" && e !== null) {
-      overrideStackTrace.set(e, (error, stackFrames) => {
-        let frames;
-        if (typeof stackFrames === "object") {
-          // Search from the bottom of the call stack to
-          // find the first frame with a null function name
-          const idx = ArrayPrototypeFindLastIndex(stackFrames, frame => frame.getFunctionName() === null);
-          // If found, get rid of it and everything below it
-          frames = ArrayPrototypeSlice(stackFrames, 0, idx);
-        } else {
-          frames = stackFrames;
-        }
-        // FIXME(devsnek): this is inconsistent with the checks
-        // that the real prepareStackTrace dispatch uses in
-        // lib/internal/errors.js.
-        if (typeof MainContextError.prepareStackTrace === "function") {
-          return MainContextError.prepareStackTrace(error, frames);
-        }
-        return ErrorPrepareStackTrace(error, frames);
-      });
+      // Node's overrideStackTrace formatter can't fire under JSC (stack is
+      // already materialized); decorateErrorStack does the REPL-frame trimming.
       decorateErrorStack(e);
 
       if (isError(e)) {
@@ -1495,12 +1477,13 @@ ObjectDefineProperty(__node_module__.exports, "_builtinLibs", {
   configurable: true,
 });
 
-// Lets the bun --interactive entry opt into standalone-REPL semantics
-// (it boots via the public repl.start, not internal/repl).
+// Lets the bun --interactive entry (a plain eval script, not a builtin) reach
+// internal/repl's createInternalRepl so the NODE_REPL_* env parsing has one
+// implementation. Lazy getter: internal/repl requires node:repl at its top.
 // Non-enumerable so it stays off the public node:repl surface.
-ObjectDefineProperty(__node_module__.exports, Symbol.for("bun.repl.kStandaloneREPL"), {
+ObjectDefineProperty(__node_module__.exports, Symbol.for("bun.repl.createInternalRepl"), {
   __proto__: null,
-  value: kStandaloneREPL,
+  get: () => require("internal/repl").createInternalRepl,
 });
 
 export default __node_module__.exports;

@@ -5,17 +5,23 @@
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
+const { RegExpPrototypeSymbolReplace, RegExpPrototypeSymbolSplit } = require("internal/repl/node-primordials");
 
 // ---- internal/util ----------------------------------------------------
 
-const kEmptyObject = Object.freeze({ __proto__: null });
+const { kEmptyObject } = require("internal/shared");
 
+// Node's real implementation reconstructs the regex in an internal realm so a
+// tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
+// internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
+// override hole (a tampered `RegExp.prototype.exec` is still observable per
+// spec — see `@@replace`/`@@split` `Get(rx,"exec")`).
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
-  return regexp[Symbol.replace](str, replacement);
+  return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
 
 function SideEffectFreeRegExpPrototypeSymbolSplit(regexp, str, limit) {
-  return regexp[Symbol.split](str, limit);
+  return RegExpPrototypeSymbolSplit(regexp, str, limit);
 }
 
 function assignFunctionName(name, fn) {
@@ -50,18 +56,12 @@ function decorateErrorStack(err) {
 }
 
 function isError(e) {
-  return e instanceof Error || Object.prototype.toString.$call(e) === "[object Error]";
+  return util.types.isNativeError(e) || e instanceof Error;
 }
 
 // ---- internal/util/colors ----------------------------------------------
 
-function shouldColorize(stream) {
-  if (process.env.FORCE_COLOR !== undefined) {
-    const getColorDepth = require("node:tty").WriteStream.prototype.getColorDepth;
-    return getColorDepth.$call({}) > 2;
-  }
-  return stream?.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
-}
+const { shouldColorize } = require("internal/util/colors");
 
 // ---- internal/util/debuglog ----------------------------------------------
 
@@ -74,6 +74,9 @@ function debuglog(set, cb) {
 // ---- internal/util/inspector ----------------------------------------------
 
 function sendInspectorCommand(cb, onError) {
+  // JSC's inspector protocol has no `Runtime.globalLexicalScopeNames` (V8-only),
+  // so let/const/class tab-completion in useGlobal:true mode is inert until a
+  // native binding enumerates JSGlobalObject::globalLexicalEnvironment().
   return onError();
 }
 
@@ -114,21 +117,7 @@ function isWritable(stream) {
 
 // ---- internal/events/abort_listener ----------------------------------------------
 
-function addAbortListener(signal, listener) {
-  if (require("node:events").addAbortListener) {
-    return require("node:events").addAbortListener(signal, listener);
-  }
-  if (signal.aborted) {
-    queueMicrotask(() => listener());
-  } else {
-    signal.addEventListener("abort", listener, { once: true });
-  }
-  return {
-    [Symbol.dispose]() {
-      signal?.removeEventListener("abort", listener);
-    },
-  };
-}
+const { addAbortListener } = require("internal/abort_listener");
 
 // ---- internal/bootstrap/realm ----------------------------------------------
 
@@ -268,7 +257,7 @@ function makeContextifyScript(
   hostDefinedOptionId,
   importModuleDynamically,
 ) {
-  const script = new vm.Script(code, {
+  return new vm.Script(code, {
     filename,
     lineOffset,
     columnOffset,
@@ -276,19 +265,6 @@ function makeContextifyScript(
     produceCachedData,
     importModuleDynamically: importModuleDynamically ?? (specifier => import(specifier)),
   });
-  // Node's vm.Script constructor throws SyntaxError eagerly; Bun's native
-  // Script defers parsing to run time. The REPL's recoverable-error flow
-  // depends on the eager throw, so force a parse via createCachedData and,
-  // when it fails, surface the real SyntaxError by running the script in a
-  // throwaway context (a parse error always fires before any code executes).
-  try {
-    script.createCachedData();
-  } catch {
-    new vm.Script(code, { filename, lineOffset, columnOffset }).runInContext(vm.createContext({}), {
-      displayErrors: false,
-    });
-  }
-  return script;
 }
 
 function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
@@ -329,9 +305,11 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // Bun has no native SIGINT watchdog for vm script execution; report
-  // success so breakEvalOnSigint callers proceed (Ctrl+C interruption of
-  // long-running synchronous eval is not supported).
+  // breakOnSigint interruption of synchronous eval WORKS via Bun's own
+  // SigintWatcher (wired in NodeVMScript.cpp). Only Node's `had_pending_
+  // signals` race — SIGINT landing after the script exits but before raw mode
+  // is restored — is unimplemented, so stopSigintWatchdog() always reports no
+  // pending signal.
   return true;
 }
 
@@ -375,9 +353,12 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 // Bun only implements the single-callback set/clear API; emulate Node's
-// additive API with a dispatcher list.
+// additive API with a dispatcher list. Tracked so the exclusive slot is only
+// cleared when the shim itself owns it — never a user's callback — and is
+// released once the last REPL closes.
 
 let captureCallbacks = null;
+let dispatcherInstalled = false;
 
 function addUncaughtExceptionCaptureCallback(cb) {
   if (!captureCallbacks) {
@@ -387,20 +368,22 @@ function addUncaughtExceptionCaptureCallback(cb) {
         for (const fn of captureCallbacks) {
           if (fn(err)) return;
         }
-        // No callback claimed the error: Node's additive API falls through to
-        // the regular 'uncaughtException' flow, and only then to the fatal
-        // handler.
-        if (process.emit("uncaughtException", err)) return;
+        // No callback claimed it: Node's aux API falls through to the
+        // regular 'uncaughtException' flow (with the origin arg), then to
+        // the native fatal handler.
+        if (process.emit("uncaughtException", err, "uncaughtException")) return;
         try {
           process.stderr.write(`Uncaught ${util.inspect(err)}\n`);
         } catch {}
         process.exit(1);
       });
+      dispatcherInstalled = true;
     } catch {
-      // A user capture callback is already installed via the single-callback
-      // API. Node's additive API coexists with it natively; without that
-      // engine support, defer to the user's callback - REPL error handling
-      // falls back to the regular uncaughtException flow.
+      // A user capture callback already occupies the exclusive slot. Node's
+      // additive API coexists with it natively; without that engine support,
+      // defer to the user's callback and don't push (the dispatcher isn't
+      // wired, so a queued cb would never fire).
+      return;
     }
   }
   captureCallbacks.push(cb);
@@ -412,7 +395,10 @@ function removeUncaughtExceptionCaptureCallback(cb) {
   if (i !== -1) captureCallbacks.splice(i, 1);
   if (captureCallbacks.length === 0) {
     captureCallbacks = null;
-    process.setUncaughtExceptionCaptureCallback(null);
+    if (dispatcherInstalled) {
+      dispatcherInstalled = false;
+      process.setUncaughtExceptionCaptureCallback(null);
+    }
   }
 }
 

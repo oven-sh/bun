@@ -1250,21 +1250,149 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
   });
 });
 
-// `node -i -e 'code'`: eval first, then REPL with the eval'd globals visible.
-// `__commonJS` collides with the bootstrap unless the user script is block-wrapped.
-test("--interactive -e runs the eval first and enters the REPL with its globals visible", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--interactive", "-e", "const __commonJS = 0; globalThis.fromEval = 42"],
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdin: Buffer.from("fromEval\n.exit\n"),
-    stdout: "pipe",
-    stderr: "pipe",
+describe("--interactive", () => {
+  const env = { ...bunEnv, NO_COLOR: "1", NODE_REPL_HISTORY: "" };
+
+  async function runInteractive(extra: string[], stdin: string, opts: { cwd?: string; env?: any } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive", ...extra],
+      env: { ...env, ...opts.env },
+      cwd: opts.cwd,
+      // Closing stdin (EOF) exits the REPL; `.exit` adds latency on debug builds.
+      stdin: Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("prints a Bun-branded banner, not 'Welcome to Node.js'", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive([], "");
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringMatching(/^Welcome to Bun v\d+\.\d+\.\d+.*\(Node\.js-compatible REPL/),
+      stderr: expect.not.stringContaining("error"),
+    });
+    expect(stdout).not.toContain("Welcome to Node.js");
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toContain("> 42");
-  expect(stderr).not.toContain("has already been declared");
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+
+  // `node -i -e 'code'`: -e runs as a separate Script after REPL.start(), so
+  // `var`/`function` declarations land on globalThis and are visible in the REPL.
+  test("-e runs after REPL start; var/function declarations are visible", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(
+      ["-e", "var fromVar = 1; function f() { return 42 }"],
+      "fromVar + f()\n",
+    );
+    expect(stdout).toContain("43");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  test("-e with a syntax error is reported and the REPL still starts", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", "console.log(1"], "2+2\n");
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).toContain("4");
+    // The error is reported against the user's [eval] script, not the bootstrap.
+    expect(stdout + stderr).toMatch(/SyntaxError/);
+    expect(stdout + stderr).not.toMatch(/node-repl|createInternalRepl|__BUN_EVAL_SCRIPT__/);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["/*", "const x=`foo"])(
+    "-e with an unterminated template/comment cannot swallow the bootstrap (%j)",
+    async bad => {
+      const { stdout, stderr } = await runInteractive(["-e", bad], "");
+      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout + stderr).toMatch(/SyntaxError/);
+    },
+  );
+
+  // Node silently ignores `-i` when a script positional is present.
+  test("with a script positional runs the script and does not enter the REPL", async () => {
+    using dir = tempDir("interactive-script", { "foo.js": `console.log("script-ran")` });
+    const { stdout, stderr, exitCode } = await runInteractive(["foo.js"], "1+1\n", { cwd: String(dir) });
+    expect(stdout).toContain("script-ran");
+    expect(stdout).not.toContain("Welcome");
+    expect(stdout).not.toContain("> ");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  // Documented "for now" deviation: `-p` wins over `--interactive`.
+  test("-p wins over --interactive (prints, no REPL)", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(["-p", "1+1"], "999\n");
+    expect(stdout.trim()).toBe("2");
+    expect(stdout).not.toContain("Welcome");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  test("NODE_REPL_EXTERNAL_MODULE replaces the built-in REPL", async () => {
+    using dir = tempDir("ext-repl", { "ext.js": `console.log("external-repl-42")` });
+    const { stdout, stderr, exitCode } = await runInteractive([], "", {
+      cwd: String(dir),
+      env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" },
+    });
+    expect(stdout).toContain("external-repl-42");
+    expect(stdout).not.toContain("Welcome");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("node:repl process-global side effects", () => {
+  const env = { ...bunEnv, NO_COLOR: "1" };
+
+  // Known limitation until process.addUncaughtExceptionCaptureCallback is
+  // implemented natively: the shim occupies the exclusive capture slot for the
+  // process lifetime. It must NOT displace a user callback installed BEFORE the
+  // first repl.start(), and unclaimed errors must still reach an
+  // 'uncaughtException' listener with the origin arg.
+  test("uncaught-exception capture shim defers to a pre-installed user callback and passes origin", async () => {
+    const script = `
+      let userGot;
+      process.setUncaughtExceptionCaptureCallback(e => { userGot = e.message; });
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough(); out.resume();
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
+      r.close();
+      let listenerOrigin;
+      process.on("uncaughtException", (e, origin) => { listenerOrigin = origin; });
+      setImmediate(() => { throw new Error("boom"); });
+      setImmediate(() => setImmediate(() => {
+        console.log("userGot=" + userGot);
+        // The user callback owns the slot; REPL didn't displace it.
+        process.exit(0);
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("userGot=boom");
+    expect(stderr).not.toContain("ALREADY_SET");
+    expect(exitCode).toBe(0);
+  });
+
+  test("REPL survives a tampered RegExp.prototype[Symbol.split]", async () => {
+    const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = ""; out.on("data", d => buf += d);
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
+      r.on("exit", () => { console.log(buf); process.exit(0); });
+      inp.write("RegExp.prototype[Symbol.split] = () => { throw 0 }\\n");
+      inp.write("oops\\n");
+      inp.write("1+1\\n");
+      inp.end();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Uncaught ReferenceError");
+    expect(stdout).toContain("> 2");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // JSC's Error#stack is an own data property (V8's is an accessor), so a frozen

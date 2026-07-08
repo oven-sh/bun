@@ -524,8 +524,35 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test.todo("can specify columnOffset", () => {
     //
   });
-  test.todo("can specify displayErrors", () => {
-    //
+  test("can specify displayErrors", () => {
+    const src = 'throw new Error("boom")';
+    // displayErrors: false — no source-line/caret decoration on the stack.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("boom");
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+    // displayErrors: true (default) — stack is decorated with the source line.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: true });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).toMatch(/^t\.vm:1\nthrow new Error/);
+    }
+    // Same for runInContext.
+    try {
+      new Script(src, { filename: "t.vm" }).runInContext(createContext({}), { displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+  });
+  test("throws SyntaxError at construction like Node", () => {
+    // Node's vm.Script parses eagerly; the REPL depends on this.
+    expect(() => new Script("function {")).toThrow(SyntaxError);
+    expect(() => new Script("const x = ")).toThrow(SyntaxError);
   });
   test.todo("can specify timeout", () => {
     //
@@ -698,15 +725,12 @@ resp.text().then((a) => {
 });
 
 test("can't use export syntax in vm.Script", () => {
-  expect(() => {
-    const script = new Script("export default {};");
-    script.runInThisContext();
-  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
-
-  expect(() => {
-    const script = new Script("export default {};");
-    script.createCachedData();
-  }).toThrow({ message: "createCachedData failed" });
+  // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
+  // construction rather than at runInThisContext()/createCachedData().
+  expect(() => new Script("export default {};")).toThrow({
+    name: "SyntaxError",
+    message: "Unexpected keyword 'export'",
+  });
 });
 
 test("rejects invalid bytecode", () => {

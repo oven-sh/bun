@@ -3,7 +3,6 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
 
 const {
   ArrayPrototypeFilter,
@@ -59,7 +58,8 @@ const {
   getOwnNonIndexProperties,
 } = require("internal/repl/node-shims");
 
-const { isIdentifierStart, isIdentifierChar, parse: acornParse } = require("internal/repl/acorn");
+// Lazy: don't destructure — see internal/repl/acorn.js.
+const acorn = require("internal/repl/acorn");
 const acornWalk = require("internal/repl/acorn-walk");
 
 const importRE = /\bimport\s*\(\s*['"`](([\w@./:-]+\/)?(?:[\w@./:-]*))(?![^'"`])$/;
@@ -81,13 +81,13 @@ function isIdentifier(str) {
     return false;
   }
   const first = StringPrototypeCodePointAt(str, 0);
-  if (!isIdentifierStart(first)) {
+  if (!acorn.isIdentifierStart(first)) {
     return false;
   }
   const firstLen = first > 0xffff ? 2 : 1;
   for (let i = firstLen; i < str.length; i += 1) {
     const cp = StringPrototypeCodePointAt(str, i);
-    if (!isIdentifierChar(cp)) {
+    if (!acorn.isIdentifierChar(cp)) {
       return false;
     }
     if (cp > 0xffff) {
@@ -413,7 +413,7 @@ function complete(line, callback) {
 
     let completeTargetAst;
     try {
-      completeTargetAst = acornParse(parsableCompleteTarget, {
+      completeTargetAst = acorn.parse(parsableCompleteTarget, {
         __proto__: null,
         sourceType: "module",
         ecmaVersion: "latest",
@@ -591,7 +591,7 @@ function findExpressionCompleteTarget(code) {
 
   let ast;
   try {
-    ast = acornParse(code, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
+    ast = acorn.parse(code, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
   } catch {
     const keywords = code.split(" ");
 

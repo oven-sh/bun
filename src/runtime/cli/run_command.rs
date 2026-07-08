@@ -2954,19 +2954,23 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        use ::core::fmt::Write as _;
         let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
         let user = ::core::mem::take(&mut ctx.runtime_options.eval.script);
-        let mut script = Vec::with_capacity(user.len() + 6 + bootstrap.len());
+        let mut script = String::with_capacity(user.len() + 40 + bootstrap.len());
         if !user.is_empty() {
-            // `node -i -e`: run user code first, then the REPL (useGlobal=true).
-            // Block-wrap user code so its const/let can't collide with the
-            // bootstrap's top-level vars; static import/export thus errors (as in Node).
-            script.extend_from_slice(b"{\n");
-            script.extend_from_slice(&user);
-            script.extend_from_slice(b"\n};\n");
+            // `node -i -e`: pass the user script as DATA (a JSON string
+            // literal), never as spliced code — the bootstrap runs it via
+            // vm.runInThisContext after REPL.start(), matching Node's
+            // internal/main/repl.js order. Splicing code would let a
+            // user-side syntax error / unterminated `` ` `` swallow the
+            // bootstrap and would block-scope `-e` declarations away.
+            let json = bun_core::fmt::format_json_string_utf8(&user, Default::default());
+            write!(script, "const __BUN_EVAL_SCRIPT__ = {json};\n").unwrap_or_oom();
         }
-        script.extend_from_slice(bootstrap);
-        ctx.runtime_options.eval.script = script.into_boxed_slice();
+        // SAFETY: embedded builtin sources are UTF-8 by construction.
+        script.push_str(unsafe { ::core::str::from_utf8_unchecked(bootstrap) });
+        ctx.runtime_options.eval.script = script.into_bytes().into_boxed_slice();
         Self::exec_eval(ctx)
     }
 

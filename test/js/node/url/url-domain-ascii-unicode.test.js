@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import url from "node:url";
+import punycode from "node:punycode";
 
 const pairs = [
   ["ıíd", "xn--d-iga7r"],
@@ -100,12 +101,10 @@ describe("url.domainToUnicode", () => {
   }
 });
 
-// The URL Standard runs UTS #46 ToASCII with VerifyDnsLength=false, so host
-// length must not cause rejection. These inputs previously hit two internal
-// caps: ICU's ENCODE_MAX_CODE_UNITS (1000 UTF-16 units per label) and a fixed
-// 2048-unit output buffer.
+// UTS #46 ToASCII runs with VerifyDnsLength=false so host length must not reject.
+// These cases cover ICU's ENCODE_MAX_CODE_UNITS (1000 UTF-16 units per label)
+// and the former fixed 2048-unit output buffer.
 describe("url.domainToASCII/domainToUnicode with long internationalised hosts", () => {
-  const punycode = require("node:punycode");
   const a = n => Buffer.alloc(n, "a").toString();
 
   const longLabelCases = [

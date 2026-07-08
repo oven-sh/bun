@@ -1178,13 +1178,16 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
   });
 });
 
-describe('microtaskMode: "afterEvaluate" promise reaction routing', () => {
-  // A PromiseReactionJob's realm is the handler's realm (HTML HostEnqueuePromiseJob),
-  // so the job must land on the handler's realm's microtask queue. For a handler
-  // from the host realm attached to a context promise, the reaction runs on the
-  // host queue (the event loop drains it). For a context-realm handler attached
-  // to a host promise, the reaction is stranded on the context's own queue until
-  // the next evaluation in that context drains it.
+// A PromiseReactionJob's realm is the handler's realm (HTML HostEnqueuePromiseJob),
+// so the job must land on the handler's realm's microtask queue. For a handler
+// from the host realm attached to a context promise, the reaction runs on the
+// host queue (the event loop drains it). For a context-realm handler attached
+// to a host promise, the reaction is stranded on the context's own queue until
+// the next evaluation in that context drains it.
+//
+// The fix is a JavaScriptCore change (oven-sh/WebKit#277). Marked todo until the
+// WEBKIT_VERSION bump lands; a passing .todo then forces these to be enabled.
+describe.todo('microtaskMode: "afterEvaluate" promise reaction routing', () => {
   async function run(fixture: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],

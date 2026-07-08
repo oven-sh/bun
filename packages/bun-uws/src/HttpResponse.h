@@ -454,9 +454,8 @@ public:
      * pipelined replay stays ordered ahead of the final response bytes.
      * node:http compat only (writeEarlyHints, writeProcessing). */
     HttpResponse *writeRawInformational(std::string_view data) {
-        if constexpr (NODE_HTTP) {
-            Super::write(data.data(), (int) data.length());
-        }
+        static_assert(NODE_HTTP, "writeRawInformational is node:http-only; call via the <SSL,true> instantiation");
+        Super::write(data.data(), (int) data.length());
         return this;
     }
 
@@ -875,10 +874,7 @@ public:
         return nullptr;
     }
     bool isConnectRequest() {
-        if constexpr (NODE_HTTP) {
-            return getHttpResponseData()->nodeCompat.isConnectRequest;
-        }
-        return false;
+        return getHttpResponseData()->isConnectRequest;
     }
 
     void setWriteOffset(uint64_t offset) {

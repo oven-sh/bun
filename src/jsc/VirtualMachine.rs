@@ -1578,18 +1578,7 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
-            // RareData's and RuntimeState's JSC `Strong` handles must release
-            // while the HandleSet is still alive. `destroy()` below runs after
-            // `destructOnExit`, where dropping them reads freed handle storage
-            // (ASAN UAF in `Bun__StrongRef__delete`).
-            if let Some(rare) = self.rare_data.as_deref_mut() {
-                rare.s3_default_client.deinit();
-            }
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: JS thread, live VM; the hook only touches the
-                // per-thread RuntimeState it owns.
-                unsafe { (hooks.release_runtime_state_js_handles)(core::ptr::from_mut(self)) };
-            }
+            self.release_strong_refs_before_teardown();
 
             Zig__GlobalObject__destructOnExit(self.global());
 
@@ -1605,6 +1594,25 @@ impl VirtualMachine {
             self.destroy();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
+
+    /// Release every JSC `Strong` handle owned by this VM's Rust-side state
+    /// (direct fields, `RareData`, and `RuntimeState`) while the JSC HandleSet
+    /// is still alive. Called immediately before `destructOnExit` (main VM) /
+    /// `WebWorker__teardownJSCVM` (worker) — dropping any of these afterwards
+    /// reads freed handle storage (ASAN UAF in `Bun__StrongRef__delete`).
+    /// Idempotent; every `deinit()` leaves its slot empty.
+    pub fn release_strong_refs_before_teardown(&mut self) {
+        self.overridden_main.deinit();
+        self.entry_point_result.value.deinit();
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.s3_default_client.deinit();
+        }
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: JS thread, live VM; the hook only touches the
+            // per-thread RuntimeState it owns.
+            unsafe { (hooks.release_runtime_state_js_handles)(core::ptr::from_mut(self)) };
+        }
     }
 }
 
@@ -4460,8 +4468,6 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
-
-        self.overridden_main.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.

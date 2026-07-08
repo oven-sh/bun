@@ -1250,6 +1250,7 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            vm.release_strong_refs_before_teardown();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

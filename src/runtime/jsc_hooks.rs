@@ -1453,20 +1453,8 @@ unsafe fn release_runtime_state_js_handles(_vm: *mut VirtualMachine) {
         return;
     }
     // SAFETY: `state` is the live per-thread `RuntimeState`; this runs on the
-    // JS thread during `global_exit`, before any teardown frees it.
-    let state = unsafe { &mut *state };
-    state.sql_rare.mysql_context.on_query_resolve_fn.deinit();
-    state.sql_rare.mysql_context.on_query_reject_fn.deinit();
-    state
-        .sql_rare
-        .postgresql_context
-        .on_query_resolve_fn
-        .deinit();
-    state
-        .sql_rare
-        .postgresql_context
-        .on_query_reject_fn
-        .deinit();
+    // JS thread before any teardown frees it.
+    unsafe { &mut *state }.sql_rare.release_js_handles();
 }
 
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.

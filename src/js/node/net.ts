@@ -3449,6 +3449,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  backlog,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
@@ -3463,6 +3464,7 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      backlog,
       socket: serverHandlersFor(this),
       data: this,
     });
@@ -3495,6 +3497,7 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      backlog,
       socket: serverHandlersFor(this),
       data: this,
     });
@@ -3507,6 +3510,7 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      backlog,
       socket: serverHandlersFor(this),
       data: this,
     });
@@ -3625,6 +3629,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      backlog,
     );
     return;
   }
@@ -3656,6 +3661,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      backlog,
     );
   });
 }

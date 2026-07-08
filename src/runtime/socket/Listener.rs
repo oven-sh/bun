@@ -198,6 +198,8 @@ impl Listener {
         let port = socket_config.port;
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
+        // Node defaults to 511; the kernel clamps to net.core.somaxconn anyway.
+        let backlog: c_int = socket_config.backlog.filter(|b| *b > 0).unwrap_or(511);
 
         #[cfg(windows)]
         if port.is_none() {
@@ -253,12 +255,10 @@ impl Listener {
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
 
-                // we need to add support for the backlog parameter on listen here we use the
-                // default value of nodejs
                 match WindowsNamedPipeListeningContext::listen(
                     global,
                     &pipe_buf[..pipe_len],
-                    511,
+                    backlog,
                     ssl_cfg_taken.as_ref(),
                     this,
                 ) {
@@ -410,6 +410,7 @@ impl Listener {
                         secure_ctx_ptr,
                         Some(host_cstr),
                         *port as c_int,
+                        backlog,
                         socket_flags,
                         size_of::<*mut c_void>() as c_int,
                         &mut errno,
@@ -427,6 +428,7 @@ impl Listener {
                     kind,
                     secure_ctx_ptr,
                     u,
+                    backlog,
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
                     &mut errno,

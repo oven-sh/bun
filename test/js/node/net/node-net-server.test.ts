@@ -1,9 +1,11 @@
-import { realpathSync } from "fs";
+import { realpathSync, readFileSync } from "fs";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "os";
 import { join } from "path";
+import { isLinux } from "harness";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -567,5 +569,90 @@ describe("net.createServer events", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+// The listen(2) backlog is only directly observable from the kernel on Linux
+// via netlink (`ss -ltn` Send-Q column == sk_max_ack_backlog for LISTEN sockets).
+const ssBin = isLinux ? Bun.which("ss") : null;
+describe.skipIf(!ssBin)("net.Server listen backlog", () => {
+  const somaxconn = (() => {
+    try {
+      return parseInt(readFileSync("/proc/sys/net/core/somaxconn", "utf8").trim(), 10);
+    } catch {
+      return 128;
+    }
+  })();
+  const clamp = (n: number) => Math.min(n, somaxconn);
+
+  function kernelBacklog(port: number): number {
+    const out = execFileSync(ssBin!, ["-l", "-t", "-n", "-H", `sport = :${port}`], { encoding: "utf8" }).trim();
+    const fields = out.split(/\s+/);
+    // State Recv-Q Send-Q Local-Address:Port Peer-Address:Port
+    return parseInt(fields[2], 10);
+  }
+
+  async function withListener(args: any[], fn: (port: number) => void) {
+    const server = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(...args, resolve);
+      });
+      fn((server.address() as AddressInfo).port);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+
+  it.each([1, 3, 64])("passes options.backlog=%d to listen(2)", async requested => {
+    await withListener([{ port: 0, host: "127.0.0.1", backlog: requested }], port => {
+      expect(kernelBacklog(port)).toBe(clamp(requested));
+    });
+  });
+
+  it("accepts positional backlog: listen(port, host, backlog, cb)", async () => {
+    await withListener([0, "127.0.0.1", 5], port => {
+      expect(kernelBacklog(port)).toBe(clamp(5));
+    });
+  });
+
+  it("accepts positional backlog: listen(port, backlog, cb)", async () => {
+    await withListener([0, 9], port => {
+      expect(kernelBacklog(port)).toBe(clamp(9));
+    });
+  });
+
+  it("defaults to 511 when no backlog is given", async () => {
+    await withListener([{ port: 0, host: "127.0.0.1" }], port => {
+      expect(kernelBacklog(port)).toBe(clamp(511));
+    });
+  });
+
+  it("passes backlog for unix-socket listeners", async () => {
+    const sockPath = join(realpathSync(tmpdir()), `backlog-${process.pid}-${Date.now()}.sock`);
+    const server = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ path: sockPath, backlog: 4 }, resolve);
+      });
+      const out = execFileSync(ssBin!, ["-l", "-x", "-n", "-H", `src ${sockPath}`], { encoding: "utf8" }).trim();
+      // Netid State Recv-Q Send-Q Local-Address Peer-Address
+      const fields = out.split(/\s+/);
+      expect(parseInt(fields[3], 10)).toBe(clamp(4));
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it("Bun.listen accepts backlog", async () => {
+    using listener = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      backlog: 17,
+      socket: { data() {} },
+    });
+    expect(kernelBacklog(listener.port)).toBe(clamp(17));
   });
 });

@@ -261,19 +261,6 @@ fn check_option_usage(
         match option.r#type {
             OptionValueType::String => {
                 if matches!(token.value, ValueRef::Jsvalue(v) if !v.is_string()) {
-                    if token.negative {
-                        // the option was found earlier because we trimmed 'no-' from the name, so we throw
-                        // the expected unknown option error.
-                        let raw_name = RawNameFormatter {
-                            token: *token,
-                            raw: token.raw.as_bun_string(global)?,
-                        };
-                        let err = global.to_type_error(
-                            bun_jsc::ErrorCode::PARSE_ARGS_UNKNOWN_OPTION,
-                            format_args!("Unknown option '{raw_name}'"),
-                        );
-                        return Err(global.throw_value(err));
-                    }
                     let err = global.to_type_error(
                         bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                         format_args!(
@@ -289,7 +276,7 @@ fn check_option_usage(
                             } else {
                                 ""
                             },
-                            token.name.as_bun_string(global)?,
+                            option.long_name,
                         ),
                     );
                     return Err(global.throw_value(err));
@@ -312,7 +299,7 @@ fn check_option_usage(
                             } else {
                                 ""
                             },
-                            token.name.as_bun_string(global)?,
+                            option.long_name,
                         ),
                     );
                     return Err(global.throw_value(err));
@@ -373,7 +360,12 @@ fn store_option(
         value
     };
 
-    let is_multiple = option_idx.is_some_and(|idx| options[idx].multiple);
+    let is_multiple = if negative {
+        // Node checks `multiple` on the stripped name after negation.
+        find_option_by_long_name(key, options).is_some_and(|idx| options[idx].multiple)
+    } else {
+        option_idx.is_some_and(|idx| options[idx].multiple)
+    };
     if is_multiple {
         // Always store value in array, including for boolean.
         // values[long_option] starts out not present,
@@ -697,31 +689,45 @@ fn tokenize_args(
 
             TokenSubtype::LoneLongOption => {
                 // e.g. '--foo'
-                let mut long_option = arg.substring(2);
+                let long_option = arg.substring(2);
 
-                let negative = if ctx.allow_negative && long_option.has_prefix_comptime(b"no-") {
-                    long_option = long_option.substring(3);
-                    true
-                } else {
-                    false
-                };
-
-                let option_idx = find_option_by_long_name(long_option, options);
+                let mut option_idx = find_option_by_long_name(long_option, options);
                 let option_type: OptionValueType =
                     option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
 
                 let mut value: Option<JSValue> = None;
-                if option_type == OptionValueType::String && index + 1 < num_args && !negative {
+                if option_type == OptionValueType::String && index + 1 < num_args {
                     // e.g. '--foo', "bar"
                     value = Some(args.get(global, index + 1)?);
                     bun_output::scoped_log!(parseArgs, "  (consuming next as value)");
                 }
 
+                // Node strips `no-` in storeOption only when the value is undefined.
+                let negative = ctx.allow_negative
+                    && value.is_none()
+                    && long_option.has_prefix_comptime(b"no-");
+
+                let name = if negative {
+                    let stripped = if long_option.length() > 3 {
+                        long_option.substring(3)
+                    } else {
+                        String::empty()
+                    };
+                    if option_idx.is_none() {
+                        // Strict mode accepts the stripped option only when it is boolean.
+                        option_idx = find_option_by_long_name(stripped, options)
+                            .filter(|&i| options[i].r#type == OptionValueType::Boolean);
+                    }
+                    stripped
+                } else {
+                    long_option
+                };
+
                 ctx.handle_token(&Token::Option(OptionToken {
                     index,
                     value: ValueRef::Jsvalue(value.unwrap_or(JSValue::UNDEFINED)),
                     inline_value: value.is_none(),
-                    name: ValueRef::Bunstr(long_option),
+                    name: ValueRef::Bunstr(name),
                     parse_type: OptionParseType::LoneLongOption,
                     raw: arg_ref,
                     option_idx,

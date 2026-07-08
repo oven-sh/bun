@@ -955,6 +955,26 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       await new Promise(resolve => setImmediate(resolve));
       expect(pulls).toBe(1);
     });
+
+    it("a read whose demand was already satisfied does not cause a spurious re-pull", async () => {
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          c.write(new Uint8Array([1]));
+          await c.flush();
+          c.write(new Uint8Array([2]));
+          await c.flush();
+        },
+      });
+      const reader = rs.getReader();
+      await Promise.all([reader.read(), reader.read()]);
+      await new Promise(resolve => setImmediate(resolve));
+      // Both reads were satisfied by pull #1's two flushes; m_pullAgain set by the second
+      // read() must not trigger a demand-less re-pull.
+      expect(pulls).toBe(1);
+    });
   });
 
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {

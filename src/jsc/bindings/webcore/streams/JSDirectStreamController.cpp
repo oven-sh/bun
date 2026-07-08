@@ -739,6 +739,11 @@ static bool takeDirectPullAgain(JSDirectStreamController* controller)
     return pullAgain;
 }
 
+static bool directControllerHasWaitingConsumer(JSDirectStreamController* controller, JSReadableStream* stream)
+{
+    return controller->m_pendingRead || (stream && readableStreamGetNumReadRequests(stream) > 0);
+}
+
 // Settlement reactions of the user pull()'s returned promise ([reaction-convention]).
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -759,9 +764,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
     controller->m_pullInFlight = false;
     RETURN_IF_EXCEPTION(scope, {});
     bool pullAgain = takeDirectPullAgain(controller);
-    // Edge-triggered: re-pull only if a NEW read arrived while a pull was in flight. Loop so
-    // a synchronous re-pull that leaves another consumer queued chains to the next.
-    while (pullAgain && !controller->m_closed && !controller->m_pullInFlight) {
+    // Edge-triggered (m_pullAgain) AND level-checked (a consumer is still waiting), the
+    // spec's ShouldCallPull equivalent: a stale edge whose triggering read was already
+    // satisfied does not cause a spurious pull. Loop so a synchronous re-pull that leaves
+    // another consumer queued chains to the next.
+    while (pullAgain && !controller->m_closed && !controller->m_pullInFlight
+        && directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
         controller->m_deferClose = -1;
         controller->m_deferFlush = -1;
         JSValue abrupt = callDirectPull(vm, globalObject, controller);

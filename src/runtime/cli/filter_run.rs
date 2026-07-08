@@ -600,7 +600,10 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1).into();
+                        return bun_sys::SignalCode(*signal)
+                            .to_exit_code()
+                            .unwrap_or(1)
+                            .into();
                     }
                     _ => return 1,
                 }

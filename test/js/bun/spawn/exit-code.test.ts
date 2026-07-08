@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { spawnSync as nodeSpawnSync } from "node:child_process";
 
 it("process.exit(1) works", () => {
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/exit-code-1.js"]);

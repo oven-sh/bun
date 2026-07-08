@@ -5,6 +5,8 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isWindows, libcPathForDlopen } from "harness";
 import net from "node:net";
+import http2 from "node:http2";
+import { once } from "node:events";
 
 // POSIX getsockopt; Windows uses SOCKET handles rather than fds for this path.
 const { getsockopt } = isWindows
@@ -116,5 +118,31 @@ describe.skipIf(isWindows)("net.Socket TCP_NODELAY kernel state", () => {
     await withPair({ noDelay: false }, {}, (_client, accepted) => {
       expect(readNoDelay(accepted)).toBe(0);
     });
+  });
+
+  // Node's h2 setupHandle unconditionally calls socket.setNoDelay(); Bun's
+  // http2.ts was relying on uSockets' forced TCP_NODELAY=1, so it has to set
+  // noDelay explicitly now that net.ts undoes that default.
+  test.concurrent("http2.connect / createServer sockets have TCP_NODELAY=1", async () => {
+    let accepted: net.Socket | undefined;
+    const server = http2.createServer();
+    server.on("connection", s => {
+      accepted = s;
+    });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as net.AddressInfo).port;
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      try {
+        await once(client, "connect");
+        while (!accepted) await new Promise(r => setImmediate(r));
+        expect(readNoDelay(client.socket as net.Socket)).toBe(1);
+        expect(readNoDelay(accepted)).toBe(1);
+      } finally {
+        client.close();
+      }
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 });

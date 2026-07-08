@@ -769,31 +769,6 @@ end:
   return ret;
 }
 
-/* Present the issuer path OpenSSL's auto-chain would build for a leaf-only
- * certificate, so unrelated `ca` entries are never presented. Node relies on
- * auto-chain: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1640 */
-static void add_auto_chain_from_store(SSL_CTX *ctx) {
-  X509 *leaf = SSL_CTX_get0_certificate(ctx);
-  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  if (leaf == NULL || store == NULL) return;
-  X509_STORE_CTX *walk = X509_STORE_CTX_new();
-  if (walk == NULL) {
-    ERR_clear_error();
-    return;
-  }
-  if (X509_STORE_CTX_init(walk, store, leaf, NULL)) {
-    /* The walk only builds the chain; an unverifiable path is not an error
-     * here (OpenSSL's ssl_add_cert_chain ignores it the same way). */
-    (void)X509_verify_cert(walk);
-    STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(walk);
-    for (size_t i = 1, n = chain ? sk_X509_num(chain) : 0; i < n; i++) {
-      if (!SSL_CTX_add1_chain_cert(ctx, sk_X509_value(chain, i))) break;
-    }
-  }
-  X509_STORE_CTX_free(walk);
-  ERR_clear_error();
-}
-
 /* The context's own cert store for mutation: the process-shared root store and
  * the still-empty SSL_CTX_new() store are first replaced by a private full
  * default-root copy, and the context is marked so the per-socket attach keeps
@@ -967,6 +942,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  /* BoringSSL ships with SSL_MODE_NO_AUTO_CHAIN set; Node clears it so a
+   * leaf-only `cert` presents the intermediates found in the context's store
+   * (crypto_context.cc#L1640). It only runs when the configured chain is 1. */
+  SSL_CTX_clear_mode(ssl_context, SSL_MODE_NO_AUTO_CHAIN);
   /* Honor explicit minVersion/maxVersion (Node's secureProtocol/min/maxVersion);
    * default to a TLS1.2 floor when no minimum is requested. */
   SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);
@@ -1085,27 +1064,17 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                       : SSL_VERIFY_PEER,
           us_verify_callback);
     }
-  } else if (options.request_cert) {
-    /* No per-config CAs are added to this store, so the process-wide shared
-     * copy (built once) can be used instead of re-parsing the ~150 bundled
-     * roots for every context - the same approach as Node's root_cert_store. */
+  } else {
+    /* No user CA: seed the shared default root store, like Node's
+     * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
+     * (for requestCert) client verification both read it. The getter up-refs,
+     * so set_cert_store owns exactly one reference per context. */
     SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
-  }
-
-  /* A leaf-only `cert` whose intermediate lives in the trust store must still
-   * present that intermediate. Node clears SSL_MODE_NO_AUTO_CHAIN so BoringSSL
-   * builds this at handshake time (crypto_context.cc:1640); do the same walk
-   * eagerly here so the chain is fixed at CTX build time. Not gated on
-   * options.ca — Node auto-chains against NODE_EXTRA_CA_CERTS/system roots too. */
-  if ((options.cert && options.cert_count > 0) || options.cert_file_name) {
-    STACK_OF(X509) *existing_chain = NULL;
-    SSL_CTX_get0_chain_certs(ssl_context, &existing_chain);
-    if (existing_chain == NULL || sk_X509_num(existing_chain) == 0) {
-      add_auto_chain_from_store(ssl_context);
+    if (options.request_cert) {
+      SSL_CTX_set_verify(ssl_context,
+          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                      : SSL_VERIFY_PEER,
+          us_verify_callback);
     }
   }
 
@@ -1239,18 +1208,10 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!store) {
     return 0;
   }
-  int rc = add_ca_cert_to_ctx_store(ctx, content, store);
-  /* PKCS#12-bundled intermediates reach here after the context was built with
-   * a leaf-only cert; re-run the auto-chain walk so the presented chain picks
-   * them up (Node's LoadPKCS12 adds them via SSL_CTX_add1_chain_cert). */
-  if (rc && SSL_CTX_get0_certificate(ctx) != NULL) {
-    STACK_OF(X509) *existing_chain = NULL;
-    SSL_CTX_get0_chain_certs(ctx, &existing_chain);
-    if (existing_chain == NULL || sk_X509_num(existing_chain) == 0) {
-      add_auto_chain_from_store(ctx);
-    }
-  }
-  return rc;
+  /* A CA added after the context was built (pfx extras, addCACert) lands in
+   * the store the handshake-time auto-chain walks, so a leaf-only cert picks
+   * the intermediate up with no eager re-walk. */
+  return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded

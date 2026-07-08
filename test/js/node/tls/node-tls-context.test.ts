@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
@@ -503,6 +503,70 @@ describe("Bun.serve SNI", () => {
 });
 
 describe("server certificate chain built from `ca`", () => {
+  it("presents an intermediate known only to the default store (NODE_EXTRA_CA_CERTS)", async () => {
+    // With no `ca`, Node seeds the context's store with the default roots
+    // (which include NODE_EXTRA_CA_CERTS) and the handshake-time auto-chain
+    // completes a leaf-only `cert` from it. The client trusts ONLY the root
+    // (an explicit `ca` replaces its default store), so it can verify iff the
+    // server actually sent the intermediate.
+    const [agent6Leaf, ca3Cert] = agent6Cert.split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const ca3Serial = new X509Certificate(ca3Cert).serialNumber.toUpperCase();
+    using dir = tempDir("extra-ca-auto-chain", {
+      "intermediate.pem": ca3Cert,
+      "leaf.pem": agent6Leaf,
+      "key.pem": agent6Key,
+      "root.pem": ca1,
+      "main.ts": `
+        import tls from "node:tls";
+        import { readFileSync } from "node:fs";
+        const server = tls.createServer(
+          { key: readFileSync("key.pem"), cert: readFileSync("leaf.pem") },
+          s => s.end(),
+        );
+        server.on("tlsClientError", e => { console.error("tlsClientError: " + e); process.exit(1); });
+        server.listen(0, () => {
+          const socket = tls.connect(
+            {
+              port: server.address().port,
+              ca: [readFileSync("root.pem")],
+              rejectUnauthorized: false,
+              checkServerIdentity: () => undefined,
+            },
+            () => {
+              const serials = [];
+              let cur = socket.getPeerCertificate(true);
+              while (cur) {
+                serials.push(String(cur.serialNumber).toUpperCase());
+                const issuer = cur.issuerCertificate;
+                if (!issuer || issuer === cur) break;
+                cur = issuer;
+              }
+              console.log(JSON.stringify({ authorized: socket.authorized, serials }));
+              socket.end();
+              server.close();
+            },
+          );
+          socket.on("error", e => { console.error("client error: " + e); process.exit(1); });
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "intermediate.pem") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const got = exitCode === 0 ? JSON.parse(stdout.trim()) : { authorized: false, serials: [] };
+    expect({
+      authorized: got.authorized,
+      presentedIntermediate: got.serials.includes(ca3Serial),
+      exitCode,
+      failureDetail: exitCode === 0 ? "" : stderr,
+    }).toEqual({ authorized: true, presentedIntermediate: true, exitCode: 0, failureDetail: "" });
+  });
+
   // Node never presents the whole `ca` set: OpenSSL auto-chain walks the
   // trust store from the leaf and sends only the resulting issuer path.
   it("does not present `ca` entries unrelated to the leaf's issuer chain", async () => {

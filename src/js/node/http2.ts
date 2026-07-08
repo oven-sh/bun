@@ -3180,6 +3180,12 @@ function emitStreamErrorFromCodeNT(stream, rstCode) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
+    // node only tears down live streams (closeSession skips streams already gone from its set);
+    // re-destroying a destroyed Duplex with an error would re-emit it as an uncaught exception.
+    if (stream.destroyed) {
+      if (destroy_self) self.destroy();
+      return;
+    }
     // node destroys a stream torn down by a session error with that same session error, and a
     // stream closed by a raw code with no error at all - _destroy synthesizes the
     // ERR_HTTP2_STREAM_ERROR from rstCode (never for NGHTTP2_NO_ERROR / NGHTTP2_CANCEL).

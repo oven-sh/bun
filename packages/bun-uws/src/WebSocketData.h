@@ -32,7 +32,7 @@ struct WebSocketData : AsyncSocketData<false>, WebSocketState<true> {
     template <bool, bool, typename> friend struct WebSocketContext;
     template <bool, typename> friend struct WebSocketContextData;
     template <bool, bool, typename> friend struct WebSocket;
-    template <bool> friend struct HttpContext;
+    template <bool, bool> friend struct HttpContext;
 private:
     std::string fragmentBuffer;
     unsigned int controlTipLength = 0;

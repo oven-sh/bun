@@ -91,11 +91,11 @@ namespace uWS {
 
     static_assert(sizeof(struct us_bun_socket_context_options_t) == sizeof(SocketContextOptions), "Mismatching uSockets/uWebSockets ABI");
 
-template <bool SSL>
+template <bool SSL, bool NODE_HTTP = false>
 struct TemplatedApp {
 private:
     /* The app always owns at least one http context, but creates websocket contexts on demand */
-    HttpContext<SSL> *httpContext;
+    HttpContext<SSL, NODE_HTTP> *httpContext;
     /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
      * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
     struct ssl_ctx_st *sslCtx = nullptr;
@@ -104,7 +104,7 @@ private:
     struct PendingServerName {
         std::string hostname;
         struct ssl_ctx_st *ctx;
-        HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
+        HttpRouter<typename HttpContextData<SSL, NODE_HTTP>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
@@ -139,7 +139,7 @@ public:
                 if (success) *success = false;
                 return std::move(*this);
             }
-            auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
+            auto *domainRouter = new HttpRouter<typename HttpContextData<SSL, NODE_HTTP>::RouterData>();
             int result = 0;
             forEachListenSocket([&](us_listen_socket_t *ls) {
                 result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
@@ -201,7 +201,7 @@ public:
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */
-    TemplatedApp &&filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {
+    TemplatedApp &&filter(MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, int)> &&filterHandler) {
         httpContext->filter(std::move(filterHandler));
 
         return std::move(*this);
@@ -313,7 +313,7 @@ private:
          * default serve the request - it never aborts or suspends the handshake. */
         (void) abort_handshake;
         (void) socket;
-        auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
+        auto *httpContext = (HttpContext<SSL, NODE_HTTP> *) us_socket_group_ext(us_listen_socket_group(ls));
         httpContext->getSocketContextData()->missingServerNameHandler(hostname);
         /* The handler is expected to have registered the name via
          * addServerName(); hand the newly-registered context back so the
@@ -329,12 +329,12 @@ private:
             sslCtx = us_ssl_ctx_from_options(options, &err);
             if (!sslCtx) { httpContext = nullptr; return; }
         }
-        httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
+        httpContext = HttpContext<SSL, NODE_HTTP>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
     }
 public:
 
-    static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
-        auto *app = new TemplatedApp<SSL>(options);
+    static TemplatedApp* create(SocketContextOptions options = {}) {
+        auto *app = new TemplatedApp(options);
         if (app->constructorFailed()) {
             delete app;
             return nullptr;
@@ -363,7 +363,7 @@ public:
         bool sendPingsAutomatically = true;
         /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
         unsigned short maxLifetime = 0;
-        MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
+        MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, OpCode)> message = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> drain = nullptr;
@@ -584,7 +584,7 @@ public:
 
     /* Browse to a server name, changing the router to this domain */
     TemplatedApp &&domain(const std::string &serverName) {
-        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        HttpContextData<SSL, NODE_HTTP> *httpContextData = httpContext->getSocketContextData();
 
         void *domainRouter = nullptr;
         for (auto &p : pendingServerNames) {
@@ -599,42 +599,42 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("GET", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&post(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&post(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("POST", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&options(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&options(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("OPTIONS", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&del(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&del(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("DELETE", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&patch(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&patch(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("PATCH", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&put(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&put(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("PUT", pattern, std::move(handler));
         }
@@ -648,21 +648,21 @@ public:
     }
 
 
-    TemplatedApp &&head(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&head(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("HEAD", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&connect(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&connect(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("CONNECT", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&trace(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&trace(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("TRACE", pattern, std::move(handler));
         }
@@ -670,7 +670,7 @@ public:
     }
 
     /* This one catches any method */
-    TemplatedApp &&any(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&any(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("*", pattern, std::move(handler));
         }
@@ -739,29 +739,31 @@ public:
         return std::move(*this);
     }
 
-    void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+    void setOnSocketClosed(typename HttpContextData<SSL, NODE_HTTP>::OnSocketClosedCallback onClose) {
         httpContext->getSocketContextData()->onSocketClosed = onClose;
     }
-    void setOnSocketDrain(HttpContextData<SSL>::OnSocketDrainCallback onDrain) {
+    void setOnSocketDrain(typename HttpContextData<SSL, NODE_HTTP>::OnSocketDrainCallback onDrain) {
         httpContext->getSocketContextData()->onSocketDrain = onDrain;
     }
-    void setOnSocketData(HttpContextData<SSL>::OnSocketDataCallback onData) {
-        httpContext->getSocketContextData()->onSocketData = onData;
+    void setOnSocketData(typename HttpContextData<SSL, NODE_HTTP>::OnSocketDataCallback onData) {
+        if constexpr (NODE_HTTP) {
+            httpContext->getSocketContextData()->onSocketData = onData;
+        }
     }
 
-    void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
-        httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+    void setOnClientError(typename HttpContextData<SSL, NODE_HTTP>::OnClientErrorCallback onClientError) {
+        if constexpr (NODE_HTTP) {
+            httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+        }
     }
 
-    void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
+    void setOnSocketUpgraded(typename HttpContextData<SSL, NODE_HTTP>::OnSocketUpgradedCallback onUpgraded) {
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
-    /* Marks this app as backing a node:http server, enabling the per-socket
-     * request timing used by headersTimeout/requestTimeout. */
-    void setUsingNodeHttpCompat(bool value) {
-        httpContext->getSocketContextData()->flags.usingNodeHttpCompat = value;
-    }
+    /* NODE_HTTP is now the compile-time flag; runtime setter kept as a no-op
+     * so existing CAPI callers keep compiling until migrated. */
+    void setUsingNodeHttpCompat(bool /*value*/) {}
 
     TemplatedApp &&run() {
         uWS::run();
@@ -788,7 +790,9 @@ public:
 
 };
 
-typedef TemplatedApp<false> App;
-typedef TemplatedApp<true> SSLApp;
+typedef TemplatedApp<false, false> App;
+typedef TemplatedApp<true, false> SSLApp;
+typedef TemplatedApp<false, true> NodeHttpApp;
+typedef TemplatedApp<true, true> NodeHttpSSLApp;
 
 }

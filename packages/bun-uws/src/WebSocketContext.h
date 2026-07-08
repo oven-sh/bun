@@ -28,7 +28,7 @@ namespace uWS {
 
 template <bool SSL, bool isServer, typename USERDATA>
 struct WebSocketContext {
-    template <bool> friend struct TemplatedApp;
+    template <bool, bool> friend struct TemplatedApp;
     template <bool, typename> friend struct WebSocketProtocol;
 private:
     /* Real heap-allocated owner; group.ext = this. Replaces the old

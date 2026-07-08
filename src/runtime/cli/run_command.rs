@@ -2968,8 +2968,7 @@ impl RunCommand {
             // Argv is arbitrary bytes on Linux; the JSON encoder's SAFETY
             // contract requires UTF-8, so lossily normalize first.
             let user = String::from_utf8_lossy(&user);
-            let json =
-                bun_core::fmt::format_json_string_utf8(user.as_bytes(), Default::default());
+            let json = bun_core::fmt::format_json_string_utf8(user.as_bytes(), Default::default());
             write!(script, "const __BUN_EVAL_SCRIPT__ = {json};\n").unwrap_or_oom();
         }
         // SAFETY: embedded builtin sources are UTF-8 by construction.

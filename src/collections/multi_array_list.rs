@@ -440,7 +440,7 @@ impl<T> Reflected<T> {
     /// associated type alias (e.g. `EntryPoint::Kind` vs `entry_point::Kind`),
     /// so a size match is accepted when ids differ. Size mismatch is always
     /// rejected.
-    const fn check<const NAME: &'static str, F>() -> usize {
+    const fn check<const NAME: &'static str, F: 'static>() -> usize {
         let fields = fields_of::<T>();
         let mut i = 0;
         while i < fields.len() {

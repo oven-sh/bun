@@ -526,8 +526,10 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
         // A VM termination from the pull, or a failure while registering the reaction.
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        // Drain anything the in-flight pull wrote while no reader was waiting; onFlush is a
-        // no-op-restore on an empty sink.
+        // A new read arrived while an async pull is pending: the fulfillment reaction will
+        // re-pull. Drain anything that pull already wrote; onFlush is a no-op-restore on an
+        // empty sink.
+        m_pullAgain = true;
         deferredFlush = 1;
     }
 
@@ -716,14 +718,6 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
         m_deferFlush = 1;
 }
 
-static bool directControllerHasWaitingConsumer(JSDirectStreamController* controller)
-{
-    if (controller->m_pendingRead)
-        return true;
-    auto* stream = controller->m_stream.get();
-    return stream && readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0;
-}
-
 // Settlement reactions of the user pull()'s returned promise ([reaction-convention]).
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -733,14 +727,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->m_pullInFlight = false;
+    bool pullAgain = controller->m_pullAgain;
+    controller->m_pullAgain = false;
     auto* stream = controller->m_stream.get();
     if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable)
         return JSValue::encode(jsUndefined());
     // Drain anything this pull wrote while no reader was waiting.
     controller->onFlush(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // A read that arrived while this pull was in flight is still waiting: pull again now.
-    if (!controller->m_closed && !controller->m_pullInFlight && directControllerHasWaitingConsumer(controller)) {
+    // Edge-triggered: re-pull only if a NEW read arrived while this pull was in flight.
+    if (pullAgain && !controller->m_closed && !controller->m_pullInFlight) {
         controller->m_deferClose = -1;
         controller->m_deferFlush = -1;
         JSValue abrupt = callDirectPull(vm, globalObject, controller);

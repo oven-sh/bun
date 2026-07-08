@@ -66,10 +66,11 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed { false };
-    // An async pull()'s returned promise has not yet settled: onPull must not re-enter
-    // the user's pull() while this is true. Cleared by the pull promise's fulfillment
-    // reaction (onDirectPullFulfilled).
+    // An async pull()'s returned promise has not yet settled; cleared by its settlement
+    // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
+    // (edge-triggered, matching the spec default controller's [[pullAgain]]).
     bool m_pullInFlight { false };
+    bool m_pullAgain { false };
     // which of the 3 sink flavors this controller runs.
     DirectSinkKind m_sinkKind { DirectSinkKind::ArrayBuffer };
 

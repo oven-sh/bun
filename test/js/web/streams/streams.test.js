@@ -880,6 +880,20 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect((await p2).value[0]).toBe(2);
       expect((await reader.read()).done).toBe(true);
     });
+
+    it("an async pull() that returns without writing is not re-invoked from its own fulfillment", async () => {
+      // Edge-triggered re-pull: a do-nothing pull must not livelock the microtask queue.
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull() {
+          pulls++;
+        },
+      });
+      rs.getReader().read();
+      await new Promise(resolve => setImmediate(resolve));
+      expect(pulls).toBe(1);
+    });
   });
 
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {

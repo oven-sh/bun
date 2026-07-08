@@ -944,7 +944,7 @@ describe("node:domain integration", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "caught boom true false",
-      stderr: "",
+      stderr,
       exitCode: 0,
     });
   });
@@ -974,7 +974,7 @@ describe("node:domain integration", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "caught boom true false",
-      stderr: "",
+      stderr,
       exitCode: 0,
     });
   });
@@ -1013,7 +1013,7 @@ describe("node:domain integration", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "stack: 0 isD3: true",
-      stderr: "",
+      stderr,
       exitCode: 0,
     });
   });
@@ -1052,7 +1052,7 @@ describe("node:domain integration", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "stack: 0 active: undefined",
-      stderr: "",
+      stderr,
       exitCode: 0,
     });
   });

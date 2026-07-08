@@ -355,12 +355,14 @@ pub struct VirtualMachine {
 // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
 // mutating VM/process state through it is interior mutation invisible to Rust.
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
-/// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp), where it
-/// decides the ordering of --abort-on-uncaught-exception relative to
-/// 'uncaughtException' listeners: exceptions abort before listeners are
-/// consulted (V8 aborts at throw time), while true promise rejections only
-/// abort after listeners declined to handle them (node's
-/// TriggerUncaughtException runs process._fatalException first).
+/// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp), which
+/// decides --abort-on-uncaught-exception ordering: both synchronous
+/// throws and true promise rejections abort before any monitor/capture/
+/// 'uncaughtException' listeners run (node aborts sync throws inside
+/// V8's Isolate::Throw and rejections at the top of the JS-facing
+/// TriggerUncaughtException binding, both before process._fatalException).
+/// The distinction matters for the origin string listeners observe when
+/// the flag is not set.
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UncaughtExceptionOrigin {
@@ -1443,10 +1445,9 @@ impl VirtualMachine {
             }
             // TODO maybe we want a separate code path for uncaught exceptions
             // NOTE: --abort-on-uncaught-exception is handled inside
-            // Bun__handleUncaughtException (before 'uncaughtException'
-            // listeners for exceptions, after them for rejections, like
-            // node), so by the time we get here with `handled == false` the
-            // flag is already honored.
+            // Bun__handleUncaughtException (before any monitor/listeners
+            // run, for every origin), so `handled == false` here means the
+            // flag was not set.
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);

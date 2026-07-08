@@ -161,9 +161,7 @@ describe("Blob type", () => {
     await using server = Bun.serve({
       port: 0,
       fetch: req =>
-        new Response(
-          JSON.stringify({ ct: req.headers.get("content-type"), hasCt: req.headers.has("content-type") }),
-        ),
+        new Response(JSON.stringify({ ct: req.headers.get("content-type"), hasCt: req.headers.has("content-type") })),
     });
     const post = (body: BodyInit) => fetch(server.url, { method: "POST", body }).then(r => r.json());
 

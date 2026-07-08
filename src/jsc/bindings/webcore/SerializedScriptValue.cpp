@@ -1777,7 +1777,21 @@ private:
                             out = v.toWTFString(m_lexicalGlobalObject);
                         return fieldScope.tryClearException();
                     };
-                    if (!readOwnString(vm.propertyNames->message, message)
+                    // .message is ToString'd rather than gated on isString (node clones
+                    // `e.message = 42` as "42"), and a coercion throw propagates instead
+                    // of dropping the field. Reading it before .line also keeps a Symbol
+                    // message from reaching ErrorInstance's lazy info materialization.
+                    const auto readOwnMessage = [&](String& out) -> bool {
+                        JSC::PropertyDescriptor d;
+                        bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
+                        if (fieldScope.exception())
+                            return false;
+                        if (!found || !d.isDataDescriptor() || !d.value())
+                            return true;
+                        out = d.value().toWTFString(m_lexicalGlobalObject);
+                        return !fieldScope.exception();
+                    };
+                    if (!readOwnMessage(message)
                         || !readOwnNumber(vm.propertyNames->line, line)
                         || !readOwnNumber(vm.propertyNames->column, column)
                         || !readOwnString(vm.propertyNames->sourceURL, sourceURL)

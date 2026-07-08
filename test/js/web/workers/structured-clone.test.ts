@@ -826,6 +826,37 @@ describe("Error serialization semantics", () => {
     const cloned = structuredClone(new MyErr());
     expect(Object.hasOwn(cloned, "message")).toBe(false);
   });
+
+  // The own data descriptor is ToString'd, not required to already be a string.
+  test.each([
+    [42, "42"],
+    [null, "null"],
+    [undefined, "undefined"],
+    [{ toString: () => "obj" }, "obj"],
+  ])("own data .message %p is coerced to %p", (value, expected) => {
+    const e = new Error("original");
+    e.message = value as any;
+    expect(structuredClone(e).message).toBe(expected);
+  });
+
+  // A throwing coercion propagates the original error rather than dropping the
+  // field. A Symbol message must not reach ErrorInstance's .line materialization.
+  test("Symbol .message throws TypeError instead of crashing", () => {
+    const e = new Error("original");
+    e.message = Symbol("s") as any;
+    expect(() => structuredClone(e)).toThrow(TypeError);
+  });
+
+  test("a throwing .message toString propagates the thrown error", () => {
+    class MyDomainError extends Error {}
+    const e = new Error("original");
+    e.message = {
+      toString() {
+        throw new MyDomainError("nope");
+      },
+    } as any;
+    expect(() => structuredClone(e)).toThrow(MyDomainError);
+  });
 });
 
 describe("options.transfer iterator error propagation", () => {

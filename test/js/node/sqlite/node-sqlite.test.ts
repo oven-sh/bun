@@ -1653,14 +1653,16 @@ test("worker-owned unclosed database is checkpointed on worker exit", async () =
       // stmt and db intentionally not closed; worker exits naturally.
       postMessage('done');`,
     "main.mjs": `import { Worker } from 'node:worker_threads';
+      import { existsSync, statSync } from 'node:fs';
       const w = new Worker('./worker.mjs');
       await new Promise((res, rej) => {
         w.on('message', () => {}); // drain
         w.on('error', rej);
         w.on('exit', code => (code === 0 ? res() : rej(new Error('exit ' + code))));
       });
-      // Verify the row landed in the main file (~JSDatabaseSync ran on
-      // lastChanceToFinalize) — reopen from the parent thread.
+      // ~JSDatabaseSync on lastChanceToFinalize checkpointed: the -wal is
+      // gone or empty. Checked before the reopen below touches the sidecars.
+      console.log(existsSync('exit.db-wal') ? statSync('exit.db-wal').size : 0);
       const { DatabaseSync } = await import('node:sqlite');
       const db = new DatabaseSync('exit.db');
       console.log(db.prepare('SELECT x FROM t').get().x);
@@ -1674,7 +1676,7 @@ test("worker-owned unclosed database is checkpointed on worker exit", async () =
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("99\n");
+  expect(stdout).toBe("0\n99\n");
   void stderr;
   expect(exitCode).toBe(0);
 });

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -2003,11 +2003,10 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("true\n");
-  const fs = require("node:fs");
   const wal = path.join(dir, "exit.db-wal");
   // TRUNCATE moved every frame into exit.db (or the sidecar was unlinked
   // by a full close). Either way, no un-checkpointed data is stranded.
-  expect(fs.existsSync(wal) ? fs.statSync(wal).size : 0).toBe(0);
+  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
   const verify = new Database(path.join(dir, "exit.db"));
   expect(verify.query("SELECT x FROM t").get().x).toBe(42);
   verify.close();

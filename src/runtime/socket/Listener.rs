@@ -43,12 +43,9 @@ use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
 
-/// Bridge to the per-VM digest-keyed weak `SSL_CTX*` cache. The
-/// `bun_jsc::rare_data::SSLContextCache` slot is an opaque cycle-break stub;
-/// the concrete cache lives on `crate::jsc_hooks::RuntimeState`.
-#[inline]
 /// Runs `f` against this thread's `SSL_CTX` cache. Takes a callback rather than
 /// handing out a `&'static mut`, which two callers could hold at once.
+#[inline]
 fn with_ssl_ctx_cache<R>(
     f: impl FnOnce(&mut crate::api::SSLContextCache::SSLContextCache) -> R,
 ) -> R {

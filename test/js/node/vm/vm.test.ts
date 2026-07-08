@@ -1288,4 +1288,42 @@ describe.concurrent("node:vm nested evaluation under outer timeout/breakOnSigint
       });
     },
   );
+
+  test("outer timeout fires while an inner untimed SourceTextModule.evaluate() is running", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const mod = new vm.SourceTextModule(
+        "const t0 = Date.now(); while (Date.now() - t0 < 2000);",
+        { identifier: "busy" },
+      );
+      await mod.link(() => {});
+      const host = () => { mod.evaluate(); };
+      try {
+        vm.runInNewContext("host()", { host }, { timeout: 70 });
+        console.log("outer-ret");
+      } catch (e) {
+        console.log("outer-threw:" + (e && e.code));
+      }
+      console.log("status:" + mod.status);
+      try {
+        console.log("error:" + String(mod.error));
+      } catch (e) {
+        console.log("error-threw:" + (e && e.code));
+      }
+      console.log("alive");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "outer-threw:ERR_SCRIPT_EXECUTION_TIMEOUT\nstatus:errored\nerror:null\nalive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

@@ -256,6 +256,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // watchdog/SIGINT watcher. Leave the request in place and
             // propagate it; the enclosing frame converts it.
             status(Status::Errored);
+            m_evaluationException.set(vm, this, JSC::Exception::create(vm, jsNull()));
             scope.throwException(globalObject, vm.ensureTerminationException());
             return {};
         }

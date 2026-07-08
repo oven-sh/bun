@@ -382,7 +382,6 @@ const bunHTTP2WaitForTrailers = Symbol("::bunhttp2waitfortrailers::");
 const bunHTTP2StreamAsyncContext = Symbol("::bunhttp2streamasynccontext::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
-const bunHTTP2StreamReadStop = Symbol("::bunhttp2StreamReadStop::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
@@ -2206,7 +2205,17 @@ function pushToStream(stream, data) {
     return;
   }
 
-  stream.push(data);
+  // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
+  // is the readable side's backpressure signal, and the reader must readStop()
+  // synchronously - a consumer's read()/_read() from this very push must be the LAST
+  // word on the window, not overwritten by a deferred stop. Without this half,
+  // _read()'s readStart makes pause() unenforceable: one reopen lets the peer flood
+  // past the buffer's high-water mark instead of stalling on the receive window.
+  // setStreamReading(id, false) only records the paused bit natively, so calling it
+  // from inside the dispatch that delivered `data` cannot re-enter the engine.
+  if (!stream.push(data) && data !== null) {
+    streamOnPause.$call(stream);
+  }
 }
 
 enum StreamState {
@@ -2279,18 +2288,12 @@ function rstNextTick(id: number, rstCode: number) {
 function streamOnPause(this: Http2Stream) {
   const session = this[bunHTTP2Session];
   const id = this.id;
-  if (session && id) {
-    this[bunHTTP2StreamReadStop] = true;
-    session[bunHTTP2Native]?.setStreamReading(id, false);
-  }
+  if (session && id) session[bunHTTP2Native]?.setStreamReading(id, false);
 }
 function streamOnResume(this: Http2Stream) {
   const session = this[bunHTTP2Session];
   const id = this.id;
-  if (session && id) {
-    this[bunHTTP2StreamReadStop] = false;
-    session[bunHTTP2Native]?.setStreamReading(id, true);
-  }
+  if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
 }
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
@@ -2363,7 +2366,6 @@ class Http2Stream extends Duplex {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
-  [bunHTTP2StreamReadStop]: boolean = false;
   // Async-context snapshot for native dispatches (see enterStreamAsyncContext); only client
   // streams capture one (possibly an empty context, i.e. undefined).
   [bunHTTP2StreamAsyncContext] = kNoAsyncContextSwap;
@@ -2813,11 +2815,20 @@ class Http2Stream extends Duplex {
   }
 
   _read(_size) {
-    // Pull-mode read() must reopen the receive window that a prior pause() gated.
-    // Only touch the native side when streamOnPause actually stopped it — the common
-    // (never-paused) path stays a no-op.
-    if (this[bunHTTP2StreamReadStop] === true && !this.destroyed) {
+    // Node's Http2Stream._read (lib/internal/http2/core.js): every read re-opens the
+    // stream's receive window (readStart). A pull-mode read() after pause() never
+    // emits 'resume', so this is the only path that reopens the window for it. This
+    // is only correct together with pushToStream's readStop-on-full-buffer above:
+    // Node's Readable calls _read even while paused (maybeReadMore), so an unbounded
+    // reopen here would otherwise defeat pause() entirely.
+    if (this.destroyed) {
+      this.push(null);
+      return;
+    }
+    if (!this.pending) {
       streamOnResume.$call(this);
+    } else {
+      this.once("ready", streamOnResume);
     }
   }
 

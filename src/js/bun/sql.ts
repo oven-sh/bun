@@ -278,13 +278,31 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     reserved_sql.unsafe = (string, args = []) => {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
+      }
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
 
     reserved_sql.file = async (path: string, args = []) => {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
+      }
       return await Bun.file(path)
         .text()
         .then(text => {
+          if (
+            state.connectionState & ReservedConnectionState.closed ||
+            !(state.connectionState & ReservedConnectionState.acceptQueries)
+          ) {
+            return Promise.$reject(pool.connectionClosedError());
+          }
           return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
         });
     };
@@ -579,12 +597,30 @@ const SQL: typeof Bun.SQL = function SQL(
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
     transaction_sql.unsafe = (string, args = []) => {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
+      }
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
     transaction_sql.file = async (path: string, args = []) => {
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
+      }
       return await Bun.file(path)
         .text()
         .then(text => {
+          if (
+            state.connectionState & ReservedConnectionState.closed ||
+            !(state.connectionState & ReservedConnectionState.acceptQueries)
+          ) {
+            return Promise.$reject(pool.connectionClosedError());
+          }
           return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
         });
     };

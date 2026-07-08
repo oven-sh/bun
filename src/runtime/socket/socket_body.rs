@@ -336,6 +336,37 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
 /// `needs_deref` releases the ref the now-detached native socket held. The idle
 /// teardown is gated on the socket still holding the `Handlers` we entered with:
 /// `onConnectError` can reconnect, and we must not tear that connection down.
+/// Drains the thread's BoringSSL error queue on scope exit, whichever way the
+/// scope is left.
+struct ClearErrorQueue(bool);
+
+impl Drop for ClearErrorQueue {
+    fn drop(&mut self) {
+        if self.0 {
+            boringssl_sys::ERR_clear_error();
+        }
+    }
+}
+
+/// The extra `SystemError` ref taken for the promise. `to_error_instance*`
+/// consumes one ref of every string, so the promise needs its own copy; this
+/// releases that copy on the paths that never build an error out of it.
+struct PendingSystemError(Option<jsc::SystemError>);
+
+impl PendingSystemError {
+    fn take(&mut self) -> jsc::SystemError {
+        self.0.take().expect("PendingSystemError consumed twice")
+    }
+}
+
+impl Drop for PendingSystemError {
+    fn drop(&mut self) {
+        if let Some(err) = self.0.take() {
+            err.deref();
+        }
+    }
+}
+
 struct ConnectErrorTeardown<const SSL: bool> {
     socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
     entered: Rc<Handlers>,
@@ -1152,10 +1183,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // callback returns. The on-stack `this_value` keeps it alive for the call.
         this.this_value.with_mut(|r| r.downgrade());
 
-        // `to_error_instance` releases one ref of each string in `err`, so the
-        // promise below needs its own copy. The guard releases that copy on the
-        // paths that never build an error out of it.
-        let err_for_promise = scopeguard::guard(err.dupe(), |e| e.deref());
+        let mut err_for_promise = PendingSystemError(Some(err.dupe()));
         let err_value = err.to_error_instance(&global);
         let result = match callback.call(&global, this_value, &[this_value, err_value]) {
             Ok(v) => v,
@@ -1172,7 +1200,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             // They've defined a `connectError` callback
             // The error is effectively handled, but we should still reject the promise.
             let promise = jsc::JSPromise::opaque_mut(JSValue::as_promise(val).unwrap());
-            let err_ = scopeguard::ScopeGuard::into_inner(err_for_promise)
+            let err_ = err_for_promise
+                .take()
                 .to_error_instance_with_async_stack(&global, promise);
             promise.reject_as_handled(&global, err_)?;
         }
@@ -3182,17 +3211,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `tls:` options. Either way `owned_ctx` holds one ref we drop in
         // deinit; SSL_new() takes its own.
         //
-        // The local lives INSIDE the guard so all reads/writes go
-        // through `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _`
-        // and then writing the local by name would pop the guard's pointer
-        // tag under Stacked Borrows and make the closure deref UB on a
-        // `?`-error path.
-        let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
-            if let Some(c) = c {
-                // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
-                unsafe { boringssl_sys::SSL_CTX_free(c) };
-            }
-        });
+        let owned_ctx: Option<boringssl_sys::OwnedSslCtx>;
         let mut ssl_opts: Option<SSLConfig> = None;
         // Drop frees ssl_opts.
 
@@ -3220,7 +3239,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     sc_js,
                 ));
             };
-            *owned_ctx = Some(sc.borrow().cast::<SSL_CTX>());
+            // `borrow()` returns a +1 ref (it calls `SSL_CTX_up_ref`).
+            // SAFETY: that ref is ours to release.
+            owned_ctx =
+                unsafe { boringssl_sys::OwnedSslCtx::from_raw(sc.borrow().cast::<SSL_CTX>()) };
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
@@ -3260,8 +3282,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // stable address for the VM's lifetime, JS-thread-only access.
                 unsafe { &mut (*state).ssl_ctx_cache }
             };
-            *owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
-                Some(c) => Some(c.cast::<SSL_CTX>()),
+            owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
+                // SAFETY: `get_or_create` hands back a +1 ref.
+                Some(c) => unsafe { boringssl_sys::OwnedSslCtx::from_raw(c.cast::<SSL_CTX>()) },
                 None => {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
                     // cases; bad cert/key/DH return NULL with err==.none and the
@@ -3292,9 +3315,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let vm = handlers.vm;
 
-        // Ownership of the +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx`
-        // below; defuse the guard so a later `?` doesn't double-free.
-        let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
+        // The +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx` below.
+        let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
 
         let cfg = ssl_opts.as_ref();
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
@@ -3344,11 +3366,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             Some(s) => s,
             None => {
                 let err = boringssl_sys::ERR_get_error();
-                scopeguard::defer! {
-                    if err != 0 {
-                        boringssl_sys::ERR_clear_error();
-                    }
-                }
+                let _clear_err = ClearErrorQueue(err != 0);
                 // `deref` runs `deinit_and_destroy`, which drops the owned_ctx
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
                 tls.get().deref();
@@ -4201,12 +4219,7 @@ pub fn js_upgrade_duplex_to_tls(
     // `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _` and then
     // writing the local by name would invalidate the guard's pointer tag
     // under Stacked Borrows.
-    let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
-        if let Some(c) = c {
-            // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
-            unsafe { boringssl_sys::SSL_CTX_free(c) };
-        }
-    });
+    let mut owned_ctx: Option<boringssl_sys::OwnedSslCtx> = None;
     let sc_js: JSValue = 'blk: {
         if let Some(v) = opts.get_truthy(global, "secureContext")? {
             break 'blk v;
@@ -4228,7 +4241,9 @@ pub fn js_upgrade_duplex_to_tls(
                 sc_js,
             ));
         };
-        *owned_ctx = Some(sc.borrow().cast::<SSL_CTX>());
+        // `borrow()` returns a +1 ref (it calls `SSL_CTX_up_ref`).
+        // SAFETY: that ref is ours to release.
+        owned_ctx = unsafe { boringssl_sys::OwnedSslCtx::from_raw(sc.borrow().cast::<SSL_CTX>()) };
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -4280,9 +4295,8 @@ pub fn js_upgrade_duplex_to_tls(
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
-    // Ownership of the +1 `SSL_CTX` ref transfers into
-    // `DuplexUpgradeContext.owned_ctx` below; defuse the guard.
-    let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
+    // The +1 `SSL_CTX` ref transfers into `DuplexUpgradeContext.owned_ctx` below.
+    let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
 
     // `DuplexUpgradeContext` is self-referential: `task.ctx` and
     // `upgrade.handlers.ctx` both point at the containing allocation, and

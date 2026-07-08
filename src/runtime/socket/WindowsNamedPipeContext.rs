@@ -148,6 +148,28 @@ macro_rules! match_socket {
 // Instead each handler projects only the disjoint fields it needs (`socket`,
 // `is_open`, `global_this`) via raw-pointer place expressions, and passes
 // `addr_of_mut!((*this).named_pipe)` as a raw pointer without retagging.
+/// Fails the pending connect and releases `create()`'s sole ref, unless
+/// `disarm()` runs first.
+struct FailAndRelease(Option<*mut WindowsNamedPipeContext>);
+
+impl FailAndRelease {
+    fn get(&mut self) -> *mut WindowsNamedPipeContext {
+        self.0.expect("guard already disarmed")
+    }
+
+    fn disarm(mut self) -> *mut WindowsNamedPipeContext {
+        self.0.take().expect("guard already disarmed")
+    }
+}
+
+impl Drop for FailAndRelease {
+    fn drop(&mut self) {
+        if let Some(this) = self.0.take() {
+            WindowsNamedPipeContext::fail_and_release(this);
+        }
+    }
+}
+
 impl WindowsNamedPipeContext {
     fn on_open(this: *mut Self) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`,
@@ -275,6 +297,12 @@ impl WindowsNamedPipeContext {
 
     /// errdefer shared by `open`/`connect`: fail the wrapped JS socket, then
     /// release the only ref `create()` handed us.
+    /// Owns the freshly-`create()`d context until `disarm()`: on any early
+    /// return it fails the pending connect and releases the sole ref.
+    fn armed(this: *mut Self) -> FailAndRelease {
+        FailAndRelease(Some(this))
+    }
+
     fn fail_and_release(this: *mut Self) {
         // SAFETY: `this` is live; `create()` returned it and no deref has fired yet.
         // +1 ref held on the inner socket; live until `Self::deref` below.
@@ -388,14 +416,13 @@ impl WindowsNamedPipeContext {
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
 
-        // The error-path guard reaches `socket` through `this` because it was
-        // moved into `this` by `create()`.
-        let mut guard = scopeguard::guard(this, Self::fail_and_release);
+        // The guard reaches `socket` through `this`: `create()` moved it there.
+        let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here
-        unsafe { (**guard).named_pipe.open(fd, ssl_config, owned_ctx) }?;
+        unsafe { (*guard.get()).named_pipe.open(fd, ssl_config, owned_ctx) }?;
 
-        let this = scopeguard::ScopeGuard::into_inner(guard);
+        let this = guard.disarm();
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
         Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
     }
@@ -411,10 +438,10 @@ impl WindowsNamedPipeContext {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
-        let mut guard = scopeguard::guard(this, Self::fail_and_release);
+        let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here
-        let named_pipe = unsafe { &mut (**guard).named_pipe };
+        let named_pipe = unsafe { &mut (*guard.get()).named_pipe };
 
         if path[path.len() - 1] == 0 {
             // is already null terminated
@@ -433,7 +460,7 @@ impl WindowsNamedPipeContext {
             named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
         }
 
-        let this = scopeguard::ScopeGuard::into_inner(guard);
+        let this = guard.disarm();
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
         Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
     }

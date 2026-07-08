@@ -703,10 +703,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if (s->flags.is_paused) {
-                    /* on_data paused us mid-drain; kqueue EV_EOF fires with bytes
-                     * still buffered. Defer on_end so resume can drain first. The
-                     * shut_down close above must stay ungated or EPOLLHUP spins. */
+                if (s->flags.is_paused && (events & LIBUS_SOCKET_READABLE)) {
+                    /* on_data paused us mid-drain this dispatch; kqueue EV_EOF
+                     * fires with bytes still buffered so defer on_end. Gated on
+                     * READABLE so a prior pause (AF_UNIX EPOLLHUP) still ends. */
                 } else if(s->flags.allow_half_open) {
                     /* EOF with half-open allowed: stop polling readable but KEEP
                      * polling writable. Masking with the current events dropped

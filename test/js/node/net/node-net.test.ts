@@ -1036,26 +1036,54 @@ it("paused socket whose peer wrote >LIBUS_RECV_BUFFER_LENGTH then closed deliver
   expect({ received, dataAfterEnd }).toEqual({ received: TOTAL, dataAfterEnd: 0 });
 });
 
-// The is_paused guard in loop.c must not skip the shut_down fast-close: on
-// epoll a paused+shut-down socket registers only EPOLLHUP|EPOLLERR, and if the
-// eof handler does nothing the level-triggered EPOLLHUP spins the loop.
-it("paused socket that ends then receives the peer's FIN closes instead of busy-looping", async () => {
-  const server = createServer(c => {
-    c.on("error", () => {});
-    c.on("end", () => c.end());
+// Deferring on_end while is_paused must not busy-loop on a poll-level eof
+// (EPOLLHUP). Windows uv_poll never passes eof from its callback and stops
+// at events==0, so pause();end() has nothing to observe there; see #32257.
+describe.skipIf(isWindows)("paused socket whose peer closed the connection", () => {
+  // pause() then end(): our SHUT_WR plus the peer's FIN asserts EPOLLHUP on TCP.
+  // The shut_down fast-close in the eof block must stay ungated by is_paused.
+  it("closes after end() once the peer's FIN arrives (TCP, shut_down)", async () => {
+    const server = createServer(c => {
+      c.on("error", () => {});
+      c.on("end", () => c.end());
+    });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+    try {
+      c.on("error", reject);
+      c.on("close", () => resolve("close"));
+      await new Promise<void>(r => c.once("connect", () => r()));
+      c.pause();
+      c.end("x");
+      expect(await promise).toBe("close");
+    } finally {
+      c.destroy();
+      server.close();
+    }
   });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const c = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
-  try {
-    c.on("error", reject);
-    c.on("close", () => resolve("close"));
-    await new Promise<void>(r => c.once("connect", () => r()));
-    c.pause();
-    c.end("x");
-    expect(await promise).toBe("close");
-  } finally {
-    c.destroy();
-    server.close();
-  }
+
+  // pause() only (not shut_down), AF_UNIX peer close sets sk_shutdown=MASK so
+  // EPOLLHUP fires without our SHUT_WR. The defer must only apply when on_data
+  // paused this dispatch (events had READABLE); otherwise on_end must still run.
+  it("closes when the AF_UNIX peer closes (not shut_down)", async () => {
+    const sockPath = join(socket_domain, `paused-unix-${randomUUID()}.sock`);
+    const server = createServer(c => {
+      c.on("error", () => {});
+      setImmediate(() => c.destroy());
+    });
+    await new Promise<void>(r => server.listen(sockPath, r));
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const c = connect({ path: sockPath });
+    try {
+      c.on("error", e => reject(e));
+      c.on("close", () => resolve("close"));
+      await new Promise<void>(r => c.once("connect", () => r()));
+      c.pause();
+      expect(await promise).toBe("close");
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -50,6 +50,140 @@ describe("node:test", () => {
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),
+    });
+  });
+});
+
+describe("node:test root before() timing", () => {
+  // In Node a root-level before() hook runs synchronously at the call site
+  // because the root test is already executing while the module body runs.
+  // Suite-level before() (inside a describe) is deferred in both runtimes.
+  test("runs a root before() synchronously so generated tests are registered", async () => {
+    using dir = tempDir("node-test-root-before", {
+      "rootbefore.test.mjs": `
+        import { test, describe, before } from 'node:test';
+
+        let cases = null;
+        before(() => { cases = ['a', 'b']; console.log('LOG:before-ran'); });
+        console.log('LOG:module-continues cases=' + JSON.stringify(cases));
+
+        describe('generated', () => {
+          console.log('LOG:describe-body cases=' + JSON.stringify(cases));
+          for (const c of (cases ?? [])) test('case ' + c, () => {});
+        });
+
+        test('control', () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "rootbefore.test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout
+      .split("\n")
+      .filter(l => l.startsWith("LOG:"))
+      .join("\n");
+    expect({ logs, stderr, exitCode }).toMatchObject({
+      logs: ['LOG:before-ran', 'LOG:module-continues cases=["a","b"]', 'LOG:describe-body cases=["a","b"]'].join("\n"),
+      stderr: expect.stringContaining("3 pass"),
+      exitCode: 0,
+    });
+  });
+
+  test("a throwing root before() fails the run but does not abort module evaluation", async () => {
+    using dir = tempDir("node-test-root-before-throw", {
+      "rootbefore.test.mjs": `
+        import { test, before } from 'node:test';
+        before(() => { console.log('LOG:before-ran'); throw new Error('before failed'); });
+        console.log('LOG:module-continues');
+        test('control', () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "rootbefore.test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout
+      .split("\n")
+      .filter(l => l.startsWith("LOG:"))
+      .join("\n");
+    expect({ logs, stderr, exitCode }).toMatchObject({
+      logs: "LOG:before-ran\nLOG:module-continues",
+      stderr: expect.stringContaining("before failed"),
+      exitCode: 1,
+    });
+  });
+
+  test("an async root before() runs its sync prefix now and tests await its completion", async () => {
+    using dir = tempDir("node-test-root-before-async", {
+      "rootbefore.test.mjs": `
+        import assert from 'node:assert';
+        import { test, before } from 'node:test';
+        let x = 0;
+        before(async () => {
+          x = 1;
+          await new Promise(r => setImmediate(r));
+          x = 2;
+        });
+        console.log('LOG:module-continues x=' + x);
+        test('control', () => { console.log('LOG:test x=' + x); assert.strictEqual(x, 2); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "rootbefore.test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout
+      .split("\n")
+      .filter(l => l.startsWith("LOG:"))
+      .join("\n");
+    expect({ logs, stderr, exitCode }).toMatchObject({
+      logs: "LOG:module-continues x=1\nLOG:test x=2",
+      stderr: expect.stringContaining("1 pass"),
+      exitCode: 0,
+    });
+  });
+
+  test("a suite-level before() inside describe() is still deferred", async () => {
+    using dir = tempDir("node-test-suite-before", {
+      "suitebefore.test.mjs": `
+        import { test, describe, before } from 'node:test';
+        describe('suite', () => {
+          let x = 0;
+          before(() => { x = 1; console.log('LOG:suite-before-ran'); });
+          console.log('LOG:describe-body x=' + x);
+          test('t', () => { console.log('LOG:test x=' + x); });
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "suitebefore.test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout
+      .split("\n")
+      .filter(l => l.startsWith("LOG:"))
+      .join("\n");
+    expect({ logs, stderr, exitCode }).toMatchObject({
+      logs: "LOG:describe-body x=0\nLOG:suite-before-ran\nLOG:test x=1",
+      stderr: expect.stringContaining("1 pass"),
+      exitCode: 0,
     });
   });
 });

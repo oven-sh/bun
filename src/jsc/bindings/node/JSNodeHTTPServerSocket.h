@@ -30,7 +30,7 @@ struct us_socket_t;
 }
 
 namespace uWS {
-template<bool SSL>
+template<bool SSL, bool IsNodeHttp>
 struct HttpResponseData;
 struct WebSocketData;
 }

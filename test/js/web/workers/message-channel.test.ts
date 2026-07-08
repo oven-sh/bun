@@ -331,3 +331,23 @@ test("cloneable and non-transferable equals (net.BlockList)", async () => {
   mc.port2.postMessage(blocklist);
   await promise;
 });
+
+// close() sets m_isDetached and then queues the 'close' event as a task. While that
+// task is pending, hasPendingActivity() must keep the JS wrapper alive: otherwise a
+// GC in that window severs the JSEventListener weak and the dispatch hits a dead
+// wrapper (debug: ASSERTION FAILED: m_wrapper).
+test("a pending close event survives GC after the port becomes unreachable", async () => {
+  let fired = 0;
+  for (let i = 0; i < 50; i++) {
+    (() => {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => fired++);
+      port1.close();
+      port2.close();
+    })();
+    if (i % 10 === 0) Bun.gc(true);
+  }
+  Bun.gc(true);
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(fired).toBe(50);
+});

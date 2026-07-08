@@ -220,11 +220,16 @@ void MessagePort::close()
 
     // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
     // after sync code and microtasks), so a listener added after close() still
-    // observes it and close(cb) interleaves with other listeners.
-    if (auto* context = scriptExecutionContext()) {
+    // observes it and close(cb) interleaves with other listeners. Never while the
+    // context is terminating: contextDestroyed() runs after the loop's queue was
+    // drained for shutdown, so the task would never run and would outlive the VM.
+    auto* context = scriptExecutionContext();
+    if (context && !context->isTerminating()) {
+        m_closeEventPending = true;
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
             protectedThis->dispatchCloseEvent();
             protectedThis->removeAllEventListeners();
+            protectedThis->m_closeEventPending = false;
         });
     } else {
         removeAllEventListeners();
@@ -384,6 +389,11 @@ bool MessagePort::hasPendingActivity() const
     // atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
+    // close() sets m_isDetached before queueing the deferred close task, and a port
+    // with only a 'close' listener has no message listener — so this must precede
+    // both gates or the wrapper is collected before the task dispatches.
+    if (m_closeEventPending)
+        return true;
     if (!scriptExecutionContext() || m_isDetached)
         return false;
     if (!m_hasMessageEventListener)

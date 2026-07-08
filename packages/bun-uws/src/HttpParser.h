@@ -65,6 +65,7 @@ namespace uWS
         HTTP_PARSER_ERROR_INVALID_EOF = 8,
         HTTP_PARSER_ERROR_INVALID_METHOD = 9,
         HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
+        HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER = 11,
     };
 
 
@@ -886,18 +887,27 @@ namespace uWS
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
 
-            /* Add all headers to bloom filter */
+            /* Add all headers to bloom filter, counting Host lines for the RFC 9112 5.4 check */
             req->bf.reset();
-
+            unsigned int hostHeaderCount = 0;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
+                if (h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4)) {
+                    hostHeaderCount++;
+                }
             }
-            /* Break if no host header (but we can have empty string which is different from nullptr).
-             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
-             * 'upgrade'/'connect' events before its Host requirement is enforced. */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+            /* RFC 9112 5.4: an HTTP/1.1 request with no Host header, or with more than one,
+             * MUST be answered with 400. Upgrade and CONNECT requests are exempt: Node.js
+             * dispatches them through the 'upgrade'/'connect' events before its Host
+             * requirement is enforced. An empty Host value is permitted (it is not absent). */
+            if (!req->ancientHttp && requireHostHeader
                 && !isConnectRequest && !req->getHeader("upgrade").data()) {
-                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
+                if (hostHeaderCount == 0) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
+                }
+                if (hostHeaderCount > 1) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER);
+                }
             }
 
             /* RFC 9112 6.3

@@ -1392,6 +1392,136 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   expect(seen).not.toContain("GET /admin");
 });
 
+// RFC 9112 5.4: a request with more than one Host header field line MUST be
+// answered with 400. Serving it would let req.url (built from the first Host
+// line) and req.headers.get("host") (the comma-join of every line) disagree on
+// the request's authority, which is the host-header-confusion shape the MUST
+// exists to prevent.
+describe("duplicate Host header field lines", () => {
+  async function sendRaw(port: number, payload: string): Promise<string> {
+    const client = net.connect(port, "127.0.0.1");
+    return new Promise<string>((resolve, reject) => {
+      let data = "";
+      client.on("error", reject);
+      client.on("data", chunk => (data += chunk.toString()));
+      client.on("close", () => resolve(data));
+      client.write(payload);
+    });
+  }
+
+  test("Bun.serve rejects a request with two Host header lines", async () => {
+    let handlerReached = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        handlerReached = true;
+        return Response.json({ url: req.url, host: req.headers.get("host") });
+      },
+    });
+
+    const response = await sendRaw(
+      server.port,
+      "GET /exact HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+    );
+    expect(response).toContain("HTTP/1.1 400");
+    expect(handlerReached).toBe(false);
+  });
+
+  test("Bun.serve rejects a request with three Host header lines of mixed casing", async () => {
+    let handlerReached = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        handlerReached = true;
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRaw(
+      server.port,
+      "GET / HTTP/1.1\r\nHost: a.test\r\nHOST: b.test\r\nhost: c.test\r\nConnection: close\r\n\r\n",
+    );
+    expect(response).toContain("HTTP/1.1 400");
+    expect(handlerReached).toBe(false);
+  });
+
+  test("Bun.serve rejects two identical Host header lines", async () => {
+    // Unlike Content-Length (where identical duplicates are permitted), Host is a
+    // singleton field: any repetition is rejected.
+    let handlerReached = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        handlerReached = true;
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRaw(
+      server.port,
+      "GET / HTTP/1.1\r\nHost: a.test\r\nHost: a.test\r\nConnection: close\r\n\r\n",
+    );
+    expect(response).toContain("HTTP/1.1 400");
+    expect(handlerReached).toBe(false);
+  });
+
+  test("Bun.serve accepts a single Host header line (control)", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return Response.json({ url: req.url, host: req.headers.get("host") });
+      },
+    });
+
+    const response = await sendRaw(server.port, "GET /exact HTTP/1.1\r\nHost: a.test\r\nConnection: close\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 200");
+    const body = JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4));
+    expect(body).toEqual({ url: "http://a.test/exact", host: "a.test" });
+  });
+
+  test("node:http rejects a request with two Host header lines", async () => {
+    // requireHostHeader defaults to true, so the same RFC 9112 5.4 check applies.
+    let handlerReached = false;
+    const server = createServer((req, res) => {
+      handlerReached = true;
+      res.end("OK");
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+      const response = await sendRaw(port, "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n");
+      expect(response).toContain("HTTP/1.1 400");
+      expect(handlerReached).toBe(false);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("node:http with requireHostHeader:false serves a request with two Host header lines", async () => {
+    // The escape hatch: opting out of the Host requirement also opts out of the
+    // duplicate check, and the handler sees only the first value (Node semantics).
+    const seen: { host: string | undefined; rawHeaders: string[] }[] = [];
+    const server = createServer({ requireHostHeader: false }, (req, res) => {
+      seen.push({ host: req.headers.host, rawHeaders: req.rawHeaders });
+      res.end("OK");
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+      const response = await sendRaw(port, "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n");
+      expect(response).toContain("HTTP/1.1 200");
+      expect(seen).toEqual([
+        {
+          host: "a.test",
+          rawHeaders: ["Host", "a.test", "Host", "b.test", "Connection", "close"],
+        },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("Host header field values in request.url", () => {
   // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
   // server is listening, so a refused connect (before anything was read) is retried.

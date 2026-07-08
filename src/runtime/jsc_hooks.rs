@@ -4101,6 +4101,33 @@ unsafe fn transpile_file(
         }
     });
 
+    // A plugin namespace still on the specifier here means no onLoad claimed
+    // it; never fall through to extension-based loading on the "ns:path"
+    // string. Mirrors `bundle_v2::LoadValue::NoMatch` for non-file namespaces.
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if lr.virtual_source.is_none() && unsafe { &*jsc_vm }.plugin_runner.is_some() {
+        let ns = bun_bundler::transpiler::PluginRunner::extract_namespace(lr.path.text);
+        let is_builtin_scheme = matches!(ns, b"" | b"file" | b"bun" | b"node" | b"data" | b"macro");
+        if !is_builtin_scheme {
+            let after_ns = &lr.path.text[(ns.len() + 1).min(lr.path.text.len())..];
+            let js = global_ref
+                .err(
+                    bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND,
+                    format_args!(
+                        "No plugin onLoad handler matched {} in namespace {}",
+                        bun_core::fmt::quote(after_ns),
+                        bun_core::fmt::quote(ns),
+                    ),
+                )
+                .to_js();
+            // SAFETY: per fn contract — `ret` is a valid out-param.
+            unsafe {
+                *ret = ErrorableResolvedSource::err(bun_core::err!("JSErrorObject"), js);
+            }
+            return ptr::null_mut();
+        }
+    }
+
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).

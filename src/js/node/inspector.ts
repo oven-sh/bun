@@ -66,7 +66,8 @@ function open(port?: number, host?: string, wait?: boolean) {
     // Node prints one diagnostic line and returns instead of throwing when the
     // socket cannot be bound, so a caller can retry with a different port.
     const raw = (e as Error)?.message ?? String(e);
-    const detail = raw.startsWith("Failed to start inspector: ") ? raw.slice(27) : raw;
+    const prefix = "Failed to start inspector: ";
+    const detail = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     process.stderr.write(`Starting inspector on ${hostname}:${portNumber} failed: ${detail}\n`);
     return disposable;
   }

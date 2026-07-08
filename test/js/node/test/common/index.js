@@ -818,7 +818,6 @@ function expectsError(validator, exact) {
 const bunInspectorPassing = new Set([
   'test-inspector-open-coverage.js',
   'test-inspector-open-port-integer-overflow.js',
-  'test-inspector-reported-host.js',
 ]);
 
 function skipIfInspectorDisabled() {

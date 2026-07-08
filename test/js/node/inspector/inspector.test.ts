@@ -331,6 +331,35 @@ test("inspector.open() can be retried after a failed start", async () => {
   expect(summary.finalUrl).toBeNull();
 });
 
+// wait=true refs the event loop before the debugger thread attempts to bind;
+// on bind failure the ref must be released so the process can exit.
+const failedOpenWaitFixture = `
+import inspector from "node:inspector";
+
+const blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+process.stdout.write(blocker.port + "\\n");
+inspector.open(blocker.port, "127.0.0.1", true);
+blocker.stop(true);
+`;
+
+test("inspector.open() with wait=true does not hang the process after a bind failure", async () => {
+  using dir = tempDir("inspector-failed-open-wait", {
+    "fixture.mjs": failedOpenWaitFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const port = stdout.trim();
+  expect(stderr).toContain(`Starting inspector on 127.0.0.1:${port} failed: address already in use`);
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
 // even when open() was called without `wait`. The client marks a global before
 // resuming, so the fixture can tell whether it actually waited.

@@ -660,6 +660,21 @@ pub fn wait_for_node_inspector_connection() {
     Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
 
+/// The debugger thread reported that `Bun.serve` failed (e.g. EADDRINUSE) —
+/// undo `create()`'s `poll_ref.ref_()` so the process can exit. Without this
+/// the ref leaks and the event loop never drains.
+// HOST_EXPORT(Debugger__abandonNodeInspectorWait, c)
+pub fn abandon_node_inspector_wait() {
+    let Some(dbg) = VirtualMachine::get().debugger_mut() else {
+        return;
+    };
+    if dbg.wait_for_connection != Wait::Off {
+        dbg.wait_for_connection = Wait::Off;
+        dbg.must_block_until_connected = false;
+        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+    }
+}
+
 /// `inspector.open()` re-opening a previously closed server: the next
 /// `open(port, host, true)` / `waitForDebugger()` must wait for a client of
 /// the new server, not return because an earlier client resolved the wait.

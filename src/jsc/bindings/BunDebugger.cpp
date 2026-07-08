@@ -723,6 +723,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
 extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForConnection);
 extern "C" void Debugger__waitForNodeInspectorConnection();
 extern "C" void Debugger__resetNodeInspectorWaitResolved();
+extern "C" void Debugger__abandonNodeInspectorWait();
 
 // Posts a control message to the node-inspector server's debugger thread
 // without checking whether the server is currently listening (the reopen path
@@ -813,10 +814,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     }
 
     if (!error.isEmpty()) {
+        Debugger__abandonNodeInspectorWait();
         throwException(globalObject, scope, createError(globalObject, makeString("Failed to start inspector: "_s, error)));
         return {};
     }
     if (resolvedUrl.isEmpty()) {
+        Debugger__abandonNodeInspectorWait();
         throwException(globalObject, scope, createError(globalObject, "Failed to start inspector: the inspector server did not start"_s));
         return {};
     }

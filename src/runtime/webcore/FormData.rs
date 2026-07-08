@@ -226,14 +226,10 @@ pub fn to_js_from_multipart_data(
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = ZigString::init_utf8(filename_str);
 
-                // `MimeType.value` is `Cow<'static,[u8]>`, so split the two
-                // ownership cases instead of unifying through a single
-                // `&[u8]` (avoids borrowing a temporary).
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
-                    blob.content_type_allocated.set(true);
                     blob.content_type
-                        .set(bun_core::heap::into_raw(Box::<[u8]>::from(ct)).cast_const());
+                        .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
                     blob.content_type_was_set.set(true);
                 } else {
                     let mime = 'brk: {
@@ -250,22 +246,9 @@ pub fn to_js_from_multipart_data(
                         bun_http::MimeType::sniff(value_str)
                     };
                     if let Some(mime) = mime {
-                        match mime.value {
-                            std::borrow::Cow::Borrowed(s) => {
-                                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-                                blob.content_type_was_set.set(false);
-                                blob.content_type_allocated.set(false);
-                            }
-                            std::borrow::Cow::Owned(v) => {
-                                // by_extension/sniff currently always yield Borrowed,
-                                // but handle Owned defensively to avoid a dangling ptr.
-                                blob.content_type.set(
-                                    bun_core::heap::into_raw(v.into_boxed_slice()).cast_const(),
-                                );
-                                blob.content_type_was_set.set(false);
-                                blob.content_type_allocated.set(true);
-                            }
-                        }
+                        blob.content_type
+                            .set(crate::webcore::blob::BlobContentType::from(mime));
+                        blob.content_type_was_set.set(false);
                     }
                 }
 
@@ -275,10 +258,8 @@ pub fn to_js_from_multipart_data(
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
                 );
-                // `append_blob` dupes the content type, so the copy boxed above
-                // is solely owned by this stack-local and must be released here.
+                // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
-                blob.free_content_type();
             } else {
                 let value = ZigString::init_utf8(
                     // > Each part whose `Content-Disposition` header does not

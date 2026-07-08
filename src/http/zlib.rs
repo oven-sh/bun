@@ -31,13 +31,20 @@ mod buffer_pool {
         BufferPool::first().cast::<MutableString>()
     }
 
-    pub fn put(mutable: &mut MutableString) {
-        mutable.reset();
-        // SAFETY: `mutable` was returned by `get()`; `#[repr(transparent)]`
-        // makes the `MutableString → PooledMutableString` reinterpret sound.
-        // `release_value` recovers the parent node via `offset_of`.
-        let pooled = unsafe { &mut *std::ptr::from_mut(mutable).cast::<PooledMutableString>() };
-        BufferPool::release_value(pooled);
+    /// # Safety
+    ///
+    /// `mutable` must be a pointer previously returned by [`get`] and not yet
+    /// returned to the pool. A raw pointer, not `&mut MutableString`: a full
+    /// pool frees the node this points into, which would be UB through a live
+    /// `&mut` function argument.
+    pub unsafe fn put(mutable: *mut MutableString) {
+        // SAFETY: caller contract — `mutable` is a live pooled buffer.
+        unsafe { (*mutable).reset() };
+        // SAFETY: caller contract. `#[repr(transparent)]` makes the
+        // `MutableString → PooledMutableString` reinterpret sound, and the cast
+        // keeps the node's provenance, which `release_value` needs to recover
+        // the parent node via `offset_of`.
+        unsafe { BufferPool::release_value(mutable.cast::<PooledMutableString>()) };
     }
 }
 pub use buffer_pool::{get, put};

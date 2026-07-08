@@ -3042,6 +3042,12 @@ pub mod time {
     pub fn milli_timestamp() -> i64 {
         (nano_timestamp() / NS_PER_MS as i128) as i64
     }
+    /// Wall-clock milliseconds since the Unix epoch, or the fake-timers mocked
+    /// wall clock when active. See [`super::mock_time`].
+    #[inline]
+    pub fn milli_timestamp_allow_mocked_time() -> f64 {
+        super::mock_time::wall_ms().unwrap_or_else(|| milli_timestamp() as f64)
+    }
     /// Wall-clock seconds since the Unix epoch.
     #[inline]
     pub fn timestamp() -> i64 {
@@ -4733,8 +4739,9 @@ impl SpawnStatus {
 //
 // This is the single source of truth for the request layout; `spawn_sys`
 // re-exports these types rather than re-declaring them. The #[repr(C)] data
-// mirrors are target-agnostic so the module is ungated; only the extern decl
-// is `cfg(unix)` (Windows spawns go through libuv and never link this symbol).
+// mirrors are target-agnostic so the module compiles on all platforms; only
+// the extern decl is `cfg(unix)` (Windows spawns go through libuv and never
+// link this symbol).
 pub mod spawn_ffi {
     use core::ffi::{c_char, c_int};
 
@@ -4803,6 +4810,12 @@ pub mod spawn_ffi {
         pub actions: ActionsList,
         pub pty_slave_fd: c_int,
         pub linux_pdeathsig: c_int,
+        /// `setuid(uid)` in the child before exec when `set_uid` is true.
+        pub uid: u32,
+        /// `setgid(gid)` in the child before exec when `set_gid` is true.
+        pub gid: u32,
+        pub set_uid: bool,
+        pub set_gid: bool,
     }
 
     impl Default for BunSpawnRequest {
@@ -4814,6 +4827,10 @@ pub mod spawn_ffi {
                 actions: ActionsList::default(),
                 pty_slave_fd: -1,
                 linux_pdeathsig: 0,
+                uid: 0,
+                gid: 0,
+                set_uid: false,
+                set_gid: false,
             }
         }
     }
@@ -5327,11 +5344,13 @@ pub mod timespec_mode {
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
 /// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` ⇒ not mocked.
+/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, Ordering};
+    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
     static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
+    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
+    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
@@ -5349,6 +5368,24 @@ pub mod mock_time {
     pub fn get() -> Option<i64> {
         let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
         if v == i64::MIN { None } else { Some(v) }
+    }
+    /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
+    /// fake-timers alongside `set` so calendar-based consumers and the
+    /// monotonic timer heap move through the same mock.
+    #[inline]
+    pub fn set_wall_ms(ms: f64) {
+        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+    }
+    /// Clear the mocked wall-clock time.
+    #[inline]
+    pub fn clear_wall() {
+        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+    }
+    /// Current mocked wall-clock time in ms, or `None` if not mocked.
+    #[inline]
+    pub fn wall_ms() -> Option<f64> {
+        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
+        if v.is_nan() { None } else { Some(v) }
     }
 }
 
@@ -5646,7 +5683,7 @@ pub mod form_data {
             // RFC 2045 §5.1: parameter attribute names are case-insensitive;
             // the `=` value is matched byte-exact (the boundary delimiter in
             // the body must match it verbatim).
-            let Some(eq) = crate::strings_impl::index_of_char(param, b'=') else {
+            let Some(eq) = crate::strings::index_of_char_usize(param, b'=') else {
                 continue;
             };
             if !param[..eq].eq_ignore_ascii_case(b"boundary") {
@@ -5656,7 +5693,7 @@ pub mod form_data {
             if begin.is_empty() {
                 return None;
             }
-            let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
+            let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
             if begin[0] == b'"' {
                 if end > 1 && begin[end - 1] == b'"' {
                     return Some(&begin[1..end - 1]);

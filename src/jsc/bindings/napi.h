@@ -828,7 +828,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, NativeExecutable*, const String& name, napi_callback constructor,
+    void finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);

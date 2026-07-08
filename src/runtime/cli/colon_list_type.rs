@@ -38,7 +38,18 @@ impl<T: ColonListValue> ColonListType<T> {
                 .unwrap_or(u32::MAX)
                 .min(strings::index_of_char(str, b'=').unwrap_or(u32::MAX));
             if midpoint == u32::MAX {
-                return Err(err!("InvalidSeparator"));
+                if T::IS_LOADER {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>--loader {}<r> is missing a \":\" separator. Expected <cyan>--loader .ext:loader<r>, for example <cyan>--loader .md:text<r>",
+                        bun_fmt::quote(str),
+                    );
+                } else {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>--define {}<r> is missing a \":\" or \"=\" separator. Expected <cyan>--define key=value<r>, for example <cyan>--define process.env.NODE_ENV='\"production\"'<r>",
+                        bun_fmt::quote(str),
+                    );
+                }
+                Global::exit(1);
             }
             let midpoint = midpoint as usize;
 
@@ -72,14 +83,7 @@ impl<T: ColonListValue> ColonListType<T> {
 
     pub(crate) fn resolve(input: &[&'static [u8]]) -> Result<Self, Error> {
         let mut list = Self::init(input.len());
-        match list.load(input) {
-            Ok(()) => {}
-            Err(e) if e == err!("InvalidSeparator") => {
-                pretty_errorln!("<r><red>error<r><d>:<r> expected \":\" separator");
-                Global::exit(1);
-            }
-            Err(e) => return Err(e),
-        }
+        list.load(input)?;
         Ok(list)
     }
 }

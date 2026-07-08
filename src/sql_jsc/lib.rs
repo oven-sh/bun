@@ -20,6 +20,9 @@ pub mod shared {
     #[path = "CachedStructure.rs"]
     pub mod cached_structure;
 
+    #[path = "ConnectionCtorArgs.rs"]
+    pub mod connection_ctor_args;
+
     pub mod datetime_text;
 
     #[path = "ObjectIterator.rs"]
@@ -27,6 +30,9 @@ pub mod shared {
 
     #[path = "QueryBindingIterator.rs"]
     pub mod query_binding_iterator;
+
+    #[path = "QueryCtorArgs.rs"]
+    pub mod query_ctor_args;
 
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;

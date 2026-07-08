@@ -405,6 +405,16 @@ impl JSGlobalObject {
         Ok(str)
     }
 
+    /// Renders `value` the way Node's `ERR_INVALID_ARG_VALUE` does (`util.inspect`
+    /// quoting, via the same C++ formatter the C++ overloads use). Returns a
+    /// +1-ref'd string wrapped in [`OwnedString`] so the ref is released on drop.
+    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+        crate::top_scope!(scope, global);
+        let str = OwnedString::new(Bun__ErrorCode__inspectForErrorMessage(global, value));
+        scope.return_if_exception()?;
+        Ok(str)
+    }
+
     pub fn throw_incompatible_option_pair(&self, opt1: &[u8], opt2: &[u8]) -> JsError {
         self.err(
             JscError::INCOMPATIBLE_OPTION_PAIR,
@@ -1602,6 +1612,11 @@ unsafe extern "C" {
     safe fn JSGlobalObject__createOutOfMemoryError(this: &JSGlobalObject) -> JSValue;
 
     safe fn Bun__ErrorCode__determineSpecificType(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> BunString;
+
+    safe fn Bun__ErrorCode__inspectForErrorMessage(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> BunString;

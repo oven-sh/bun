@@ -87,6 +87,170 @@ describe("bundler", async () => {
     },
   });
 
+  itBundled("bun/loader-json-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json": `{"__proto__": {"x": 1}, "a": 2}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-toml-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.toml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.toml": `a = 2\n[__proto__]\nx = 1\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"a\\":2,\\"__proto__\\":{\\"x\\":1}}"]' },
+  });
+
+  itBundled("bun/loader-yaml-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.yaml": `__proto__:\n  x: 1\na: 2\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-jsonc-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.jsonc';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.jsonc": `// jsonc\n{"__proto__": {"x": 1}, "a": 2,}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-json5-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json5';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json5": `{__proto__: {x: 1}, a: 2}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-json-nested-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json';
+    const nested = data.nested;
+    const out = [
+      Object.getPrototypeOf(nested) === Object.prototype,
+      Object.hasOwn(nested, "__proto__"),
+      nested.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json": `{"nested": {"__proto__": {"x": 1}, "a": 2}}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"nested\\":{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}}"]' },
+  });
+
+  itBundled("bun/loader-toml-inline-table-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.toml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.toml": `a = 2\n"__proto__" = { x = 1 }\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"a\\":2,\\"__proto__\\":{\\"x\\":1}}"]' },
+  });
+
+  itBundled("bun/loader-yaml-flow-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.yaml": `{__proto__: {x: 1}, a: 2}\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  // The CSS-modules lazy export builds its object through `E::Object::put`.
+  itBundled("bun/loader-css-module-proto-class-is-own-property", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+    import styles from './styles.module.css';
+    const out = [
+      Object.getPrototypeOf(styles) === Object.prototype,
+      Object.hasOwn(styles, "__proto__"),
+      typeof styles.a === "string",
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/styles.module.css": `.__proto__ { color: red; }\n.a { color: blue; }\n`,
+    },
+    run: { stdout: "[true,true,true]" },
+  });
+
   itBundled("bun/wasm-is-copied-to-outdir", {
     target: "bun",
     outdir: "/out",
@@ -217,5 +381,164 @@ describe("bundler", async () => {
         },
       });
     }
+  });
+
+  // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
+  // printer when bundled with the dev server's module format.
+  // https://github.com/oven-sh/bun/issues/31943
+  describe("internal_bake_dev lazy exports", () => {
+    itBundled("bake-dev/loader-json-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.json";
+          console.log(data.value);
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+        expect(output).toContain("import_data.default.value");
+      },
+    });
+
+    itBundled("bake-dev/loader-json-named-and-star-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import { value } from "./data.json";
+          import * as ns from "./data.json";
+          console.log(value, ns.value);
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+      },
+    });
+
+    itBundled("bake-dev/loader-json-require", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          const data = require("./data.json");
+          console.log(data.value);
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+      },
+    });
+
+    itBundled("bake-dev/loader-json-entry-point", {
+      format: "internal_bake_dev",
+      files: {
+        "/data.json": `{"value": 1}`,
+      },
+      entryPoints: ["/data.json"],
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+      },
+    });
+
+    itBundled("bake-dev/loader-jsonc-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.jsonc";
+          console.log(data.value);
+        `,
+        "/data.jsonc": `{
+          // comment
+          "value": 1,
+        }`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.jsonc"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {");
+        expect(output).toContain("value: 1");
+      },
+    });
+
+    itBundled("bake-dev/loader-toml-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.toml";
+          console.log(data.value);
+        `,
+        "/data.toml": `value = 1`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.toml"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {");
+        expect(output).toContain("value: 1");
+        expect(output).toContain("import_data.default.value");
+      },
+    });
+
+    itBundled("bake-dev/loader-empty-cjs-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import x from "./empty.cjs";
+          console.log(x);
+        `,
+        "/empty.cjs": "",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"empty.cjs"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {}");
+      },
+    });
+
+    itBundled("bake-dev/loader-empty-mjs-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import x from "./empty.mjs";
+          console.log(x);
+        `,
+        "/empty.mjs": "",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"empty.mjs"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = undefined");
+      },
+    });
+
+    // CSS imports are delivered out-of-band by the dev server, so the JS
+    // chunk only contains the importing module. This used to panic while
+    // linking the CSS file's lazy-export JS stub.
+    itBundled("bake-dev/loader-css-module-import", {
+      format: "internal_bake_dev",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import styles from "./styles.module.css";
+          console.log(styles.foo);
+        `,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
+        const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
+        expect(api.readFile(join("/out", cssFile))).toContain("color: red");
+      },
+    });
   });
 });

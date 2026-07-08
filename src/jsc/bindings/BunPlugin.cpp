@@ -306,12 +306,13 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     auto targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (targetValue) {
-        if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
-            String targetString = targetJSString->value(globalObject);
-            if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
-                JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
-                return {};
-            }
+        auto* targetJSString = targetValue.toStringOrNull(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        String targetString = targetJSString->value(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
+            JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
+            return {};
         }
     }
 
@@ -815,6 +816,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
 
+    JSC::MarkedArgumentBuffer matchedCallbacks;
+    matchedCallbacks.ensureCapacity(filters.size());
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     for (size_t i = 0; i < filters.size(); i++) {
         if (!filters[i].get()->match(globalObject, pathString, 0)) {
             continue;
@@ -823,6 +830,15 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         if (!function) [[unlikely]] {
             continue;
         }
+        matchedCallbacks.append(function);
+    }
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    for (size_t i = 0; i < matchedCallbacks.size(); i++) {
+        auto* function = matchedCallbacks.at(i).getObject();
 
         JSC::MarkedArgumentBuffer arguments;
 

@@ -795,10 +795,12 @@ impl<'a> Run<'a> {
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
+                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
                         G::Property {
-                            key: Some(Expr::init(E::EString::init(key_bytes), self.caller.loc)),
+                            flags: E::own_key_property_flags(&key),
+                            key: Some(key),
                             value: Some(object_value),
                             ..Default::default()
                         },
@@ -818,17 +820,13 @@ impl<'a> Run<'a> {
 
             T::Integer => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.to_int32() as f64,
-                    },
+                    E::Number::new(value.to_int32() as f64),
                     self.caller.loc,
                 ));
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.as_number(),
-                    },
+                    E::Number::new(value.as_number()),
                     self.caller.loc,
                 ));
             }
@@ -920,7 +918,7 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             bun_core::prettyln!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
                 bstr::BStr::new(function_name)

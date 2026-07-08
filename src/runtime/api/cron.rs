@@ -247,7 +247,7 @@ impl CronRegisterJob {
                     // borrows do not overlap (Windows only; POSIX ignores
                     // stderr here).
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -771,7 +771,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
     };
-    if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
+    if bun_core::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
         return Err(global.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
@@ -1048,7 +1048,7 @@ impl CronRemoveJob {
                     // Owned copy: `final_buffer()` is `&mut self` and would
                     // alias `s.set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -1632,9 +1632,10 @@ impl CronJob {
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
-        // Cron occurrences are calendar-based (real epoch); the timer heap is
-        // monotonic. Anchor both to real time so fake timers don't half-apply.
-        let now_ms: f64 = bun_core::time::milli_timestamp() as f64;
+        // Cron occurrences are calendar-based (epoch); the timer heap is
+        // monotonic. Anchor both to the same clock (mocked when fake timers
+        // are active) so they can never half-apply.
+        let now_ms: f64 = bun_core::time::milli_timestamp_allow_mocked_time();
         // The monotonic timer can fire fractionally before the wall-clock target
         // (clock skew / NTP step); floor next() at the prior target so it can't
         // recompute the same minute and double-fire.
@@ -1646,7 +1647,7 @@ impl CronJob {
         self.last_next_ms.set(next_ms);
         let delta: i64 = (next_ms - now_ms).max(1.0) as i64;
         Some(bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::ForceRealTime,
+            bun_core::TimespecMockMode::AllowMockedTime,
             delta,
         ))
     }

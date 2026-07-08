@@ -378,7 +378,6 @@ impl Config {
                     &mut self.log,
                     &source,
                     bun_resolver::tsconfig_json::JsonMode::Json,
-                    false,
                 ) else {
                     break 'macros;
                 };
@@ -924,9 +923,7 @@ fn export_replacement_value(
 
     if value.is_number() {
         return Ok(Some(Expr {
-            data: bun_ast::ExprData::ENumber(bun_ast::E::Number {
-                value: value.as_number(),
-            }),
+            data: bun_ast::ExprData::ENumber(bun_ast::E::Number::new(value.as_number())),
             loc: bun_ast::Loc::EMPTY,
         }));
     }

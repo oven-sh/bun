@@ -122,8 +122,6 @@ impl<C: ReaderContext> NewReader<C> {
 /// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
 pub use bun_core::NativeEndianInt as ReadableInt;
 
-pub type NewReaderOf<C> = NewReader<C>;
-
 impl<C: ReaderContext> From<C> for NewReader<C> {
     fn from(wrapped: C) -> Self {
         Self { wrapped }
@@ -137,13 +135,6 @@ pub trait Decode: Sized {
     ) -> Result<(), AnyMySQLError>;
 
     fn decode<C: ReaderContext>(
-        &mut self,
-        context: impl Into<NewReader<C>>,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(context.into())
-    }
-
-    fn decode_allocator<C: ReaderContext>(
         &mut self,
         context: impl Into<NewReader<C>>,
     ) -> Result<(), AnyMySQLError> {

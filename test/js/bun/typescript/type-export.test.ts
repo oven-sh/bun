@@ -3,22 +3,49 @@ import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
 const ext = isWindows ? ".exe" : "";
 
-function compileAndRun(dir: string, entrypoint: string) {
-  const outfile = dir + `/compiled${ext}`;
-  const buildResult = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", entrypoint, "--outfile", outfile],
+async function run(cmd: string[], cwd: string) {
+  await using proc = Bun.spawn({
+    cmd,
     env: bunEnv,
-    cwd: dir,
+    cwd,
     stdio: ["inherit", "pipe", "pipe"],
   });
-  expect(buildResult.stderr.toString()).toBe("");
-  expect(buildResult.exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
-  return Bun.spawnSync({
-    cmd: [outfile],
-    env: bunEnv,
-    cwd: dir,
-    stdio: ["inherit", "pipe", "pipe"],
+// Cap in-flight `--compile` builds: each one reads + rewrites a full standalone
+// executable, and running all of them at once exhausts CI memory/IO
+// (see the note at the top of test/bundler/bundler_compile.test.ts).
+const maxConcurrentCompiles = 4;
+let activeCompiles = 0;
+const compileWaiters: (() => void)[] = [];
+async function withCompileSlot<T>(fn: () => Promise<T>): Promise<T> {
+  while (activeCompiles >= maxConcurrentCompiles) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    compileWaiters.push(resolve);
+    await promise;
+  }
+  activeCompiles++;
+  try {
+    return await fn();
+  } finally {
+    activeCompiles--;
+    compileWaiters.shift()?.();
+  }
+}
+
+async function compileAndRun(dir: string, entrypoint: string) {
+  const outfile = dir + `/compiled${ext}`;
+  return await withCompileSlot(async () => {
+    const buildResult = await run(
+      [bunExe(), "build", "--compile", "--bytecode", "--format=esm", entrypoint, "--outfile", outfile],
+      dir,
+    );
+    expect(buildResult.stderr).toBe("");
+    expect(buildResult.exitCode).toBe(0);
+
+    return run([outfile], dir);
   });
 }
 
@@ -93,32 +120,23 @@ for (const b_file of b_files) {
           // TODO: "run" is skipped until ESM module_info is enabled in the runtime transpiler.
           // Currently module_info is only generated for standalone ESM bytecode (--compile).
           // Once enabled, flip this to include "run".
-          test.skipIf(mode === "run")("works", async () => {
-            let result: Bun.SyncSubprocess<"pipe", "inherit"> | Bun.SyncSubprocess<"pipe", "pipe">;
+          const testFn = mode === "run" ? test.skip : test.concurrent;
+          testFn("works", async () => {
+            let result: { stdout: string; stderr: string; exitCode: number };
             if (mode === "compile") {
-              result = compileAndRun(dir, dir + "/c.ts");
+              result = await compileAndRun(dir, dir + "/c.ts");
             } else if (mode === "build") {
               const build_result = await Bun.build({
                 entrypoints: [dir + "/c.ts"],
                 outdir: dir + "/dist",
               });
               expect(build_result.success).toBe(true);
-              result = Bun.spawnSync({
-                cmd: [bunExe(), "run", dir + "/dist/c.js"],
-                cwd: dir,
-                env: bunEnv,
-                stdio: ["inherit", "pipe", "inherit"],
-              });
+              result = await run([bunExe(), "run", dir + "/dist/c.js"], dir);
             } else {
-              result = Bun.spawnSync({
-                cmd: [bunExe(), "run", "c.ts"],
-                cwd: dir,
-                env: bunEnv,
-                stdio: ["inherit", "pipe", "inherit"],
-              });
+              result = await run([bunExe(), "run", "c.ts"], dir);
             }
 
-            const parsedOutput = JSON.parse(result.stdout.toString().trim());
+            const parsedOutput = JSON.parse(result.stdout.trim());
             expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
             expect(result.exitCode).toBe(0);
           });
@@ -142,7 +160,7 @@ describe("import not found", () => {
       "type",
     ],
   ] as const)
-    test(`${name}`, () => {
+    test.concurrent(`${name}`, async () => {
       const dir = tempDirWithFiles("type-export", {
         "a.ts": ccase,
         "b.ts": /*js*/ `
@@ -152,17 +170,12 @@ describe("import not found", () => {
         "nf.ts": "",
       });
 
-      const result = Bun.spawnSync({
-        cmd: [bunExe(), "run", "b.ts"],
-        cwd: dir,
-        env: bunEnv,
-        stdio: ["inherit", "pipe", "pipe"],
-      });
+      const result = await run([bunExe(), "run", "b.ts"], dir);
 
-      expect(result.stderr?.toString().trim()).toMatch(target_value);
+      expect(result.stderr.trim()).toMatch(target_value);
       expect({
         exitCode: result.exitCode,
-        stdout: result.stdout?.toString().trim(),
+        stdout: result.stdout.trim(),
       }).toEqual({
         exitCode: 1,
         stdout: "",
@@ -170,89 +183,64 @@ describe("import not found", () => {
     });
 });
 
-test("js file type export", () => {
+test.concurrent("js file type export", async () => {
   const dir = tempDirWithFiles("type-export", {
     "a.js": "export {not_found};",
   });
 
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "a.js"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
+  const result = await run([bunExe(), "a.js"], dir);
 
-  expect(result.stderr?.toString().trim()).toInclude('error: "not_found" is not declared in this file');
+  expect(result.stderr.trim()).toInclude('error: "not_found" is not declared in this file');
   expect(result.exitCode).toBe(1);
 });
 
-test("js file type import", () => {
+test.concurrent("js file type import", async () => {
   const dir = tempDirWithFiles("type-import", {
     "b.js": "import {type_only} from './ts.ts';",
     "ts.ts": "export type type_only = 'type_only';",
   });
 
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "b.js"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
+  const result = await run([bunExe(), "b.js"], dir);
 
-  expect(result.stderr?.toString().trim()).toInclude("Export named 'type_only' not found in module '");
-  expect(result.stderr?.toString().trim()).not.toInclude("Did you mean to import default?");
+  expect(result.stderr.trim()).toInclude("Export named 'type_only' not found in module '");
+  expect(result.stderr.trim()).not.toInclude("Did you mean to import default?");
   expect(result.exitCode).toBe(1);
 });
 
-test("js file type import with default export", () => {
+test.concurrent("js file type import with default export", async () => {
   const dir = tempDirWithFiles("type-import", {
     "b.js": "import {type_only} from './ts.ts';",
     "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
   });
 
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "b.js"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
+  const result = await run([bunExe(), "b.js"], dir);
 
-  expect(result.stderr?.toString().trim()).toInclude("Export named 'type_only' not found in module '");
-  expect(result.stderr?.toString().trim()).toInclude("Did you mean to import default?");
+  expect(result.stderr.trim()).toInclude("Export named 'type_only' not found in module '");
+  expect(result.stderr.trim()).toInclude("Did you mean to import default?");
   expect(result.exitCode).toBe(1);
 });
 
-test("js file with through export", () => {
+test.concurrent("js file with through export", async () => {
   const dir = tempDirWithFiles("type-import", {
     "b.js": "export {type_only} from './ts.ts';",
     "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
   });
 
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "b.js"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
+  const result = await run([bunExe(), "b.js"], dir);
 
-  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
+  expect(result.stderr.trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
   expect(result.exitCode).toBe(1);
 });
 
-test("js file with through export 2", () => {
+test.concurrent("js file with through export 2", async () => {
   const dir = tempDirWithFiles("type-import", {
     "b.js": "import {type_only} from './ts.ts'; export {type_only};",
     "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
   });
 
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "b.js"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
+  const result = await run([bunExe(), "b.js"], dir);
 
-  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
+  expect(result.stderr.trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
   expect(result.exitCode).toBe(1);
 });
 
@@ -275,15 +263,10 @@ describe("through export merge", () => {
           });
 
           for (const file of ["main." + fmt, "a." + fmt]) {
-            test(file, () => {
-              const result = Bun.spawnSync({
-                cmd: [bunExe(), file],
-                cwd: dir,
-                env: bunEnv,
-                stdio: ["inherit", "pipe", "pipe"],
-              });
+            test.concurrent(file, async () => {
+              const result = await run([bunExe(), file], dir);
 
-              expect(result.stderr?.toString().trim()).toInclude(
+              expect(result.stderr.trim()).toInclude(
                 file === "a." + fmt
                   ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
                   : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
@@ -322,57 +305,40 @@ describe("check ownkeys from a star import", () => {
   };
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    const testFn = mode === "run" ? test.skip : test;
+    const testFn = mode === "run" ? test.skip : test.concurrent;
 
-    testFn("works", () => {
+    testFn("works", async () => {
       const result =
-        mode === "compile"
-          ? compileAndRun(dir, dir + "/main.ts")
-          : Bun.spawnSync({
-              cmd: [bunExe(), "main.ts"],
-              cwd: dir,
-              env: bunEnv,
-              stdio: ["inherit", "pipe", "pipe"],
-            });
+        mode === "compile" ? await compileAndRun(dir, dir + "/main.ts") : await run([bunExe(), "main.ts"], dir);
 
-      expect(result.stderr?.toString().trim()).toBe("");
-      expect(JSON.parse(result.stdout?.toString().trim())).toEqual(expected);
+      expect(result.stderr.trim()).toBe("");
+      expect(JSON.parse(result.stdout.trim())).toEqual(expected);
       expect(result.exitCode).toBe(0);
     });
   });
 });
 
-test("check commonjs", () => {
+test.concurrent("check commonjs", async () => {
   const dir = tempDirWithFiles("commonjs", {
     ["main.ts"]: "const {my_value, my_type} = require('./a'); console.log(my_value, my_type);",
     ["a.ts"]: "module.exports = require('./b');",
     ["b.ts"]: "export const my_value = 'my_value'; export type my_type = 'my_type';",
   });
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "main.ts"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
-  expect(result.stderr?.toString().trim()).toBe("");
-  expect(result.stdout?.toString().trim()).toBe("my_value undefined");
+  const result = await run([bunExe(), "main.ts"], dir);
+  expect(result.stderr.trim()).toBe("");
+  expect(result.stdout.trim()).toBe("my_value undefined");
   expect(result.exitCode).toBe(0);
 });
 
-test("check merge", () => {
+test.concurrent("check merge", async () => {
   const dir = tempDirWithFiles("merge", {
     ["main.ts"]: "import {value} from './a'; console.log(value);",
     ["a.ts"]: "export * from './b'; export * from './c';",
     ["b.ts"]: "export const value = 'b';",
     ["c.ts"]: "export const value = 'c';",
   });
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "main.ts"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
-  expect(result.stderr?.toString().trim()).toInclude(
+  const result = await run([bunExe(), "main.ts"], dir);
+  expect(result.stderr.trim()).toInclude(
     "SyntaxError: Export named 'value' cannot be resolved due to ambiguous multiple bindings in module",
   );
   expect(result.exitCode).toBe(1);
@@ -387,14 +353,9 @@ describe("export * from './module'", () => {
         ["b." + fmt]: "export const value = 'b';",
       });
       for (const file of ["main." + fmt, "a." + fmt]) {
-        test(file, () => {
-          const result = Bun.spawnSync({
-            cmd: [bunExe(), file],
-            cwd: dir,
-            env: bunEnv,
-            stdio: ["inherit", "pipe", "pipe"],
-          });
-          expect(result.stderr?.toString().trim()).toBe("");
+        test.concurrent(file, async () => {
+          const result = await run([bunExe(), file], dir);
+          expect(result.stderr.trim()).toBe("");
           expect(result.exitCode).toBe(0);
         });
       }
@@ -411,14 +372,9 @@ describe("export * as ns from './module'", () => {
         ["b." + fmt]: "export const value = 'b';",
       });
       for (const file of ["main." + fmt, "a." + fmt]) {
-        test(file, () => {
-          const result = Bun.spawnSync({
-            cmd: [bunExe(), file],
-            cwd: dir,
-            env: bunEnv,
-            stdio: ["inherit", "pipe", "pipe"],
-          });
-          expect(result.stderr?.toString().trim()).toBe("");
+        test.concurrent(file, async () => {
+          const result = await run([bunExe(), file], dir);
+          expect(result.stderr.trim()).toBe("");
           expect(result.exitCode).toBe(0);
         });
       }
@@ -435,14 +391,9 @@ describe("export type {Type} from './module'", () => {
         ["b." + fmt]: "export type Type = string;",
       });
       for (const file of ["main." + fmt, "a." + fmt]) {
-        test(file, () => {
-          const result = Bun.spawnSync({
-            cmd: [bunExe(), file],
-            cwd: dir,
-            env: bunEnv,
-            stdio: ["inherit", "pipe", "pipe"],
-          });
-          expect(result.stderr?.toString().trim()).toBe("");
+        test.concurrent(file, async () => {
+          const result = await run([bunExe(), file], dir);
+          expect(result.stderr.trim()).toBe("");
           expect(result.exitCode).toBe(0);
         });
       }
@@ -479,20 +430,13 @@ describe("import only used in decorator (#8439)", () => {
   });
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    const testFn = mode === "run" ? test.skip : test;
+    const testFn = mode === "run" ? test.skip : test.concurrent;
 
-    testFn("works", () => {
+    testFn("works", async () => {
       const result =
-        mode === "compile"
-          ? compileAndRun(dir, dir + "/index.ts")
-          : Bun.spawnSync({
-              cmd: [bunExe(), "index.ts"],
-              cwd: dir,
-              env: bunEnv,
-              stdio: ["inherit", "pipe", "pipe"],
-            });
+        mode === "compile" ? await compileAndRun(dir, dir + "/index.ts") : await run([bunExe(), "index.ts"], dir);
 
-      expect(result.stderr?.toString().trim()).toBe("");
+      expect(result.stderr.trim()).toBe("");
       expect(result.exitCode).toBe(0);
     });
   });

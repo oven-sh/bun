@@ -1,29 +1,69 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readdirSync } from "fs";
-import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  canBuildNodeAddons,
+  isCI,
+  isMacOS,
+  isMusl,
+  isWindows,
+  nodeExeMatchingAbi,
+  tempDirWithFiles,
+} from "harness";
 import { join } from "path";
 
-describe.concurrent("napi", () => {
-  beforeAll(() => {
+// The napi-app addons don't link against bun, so existing binaries stay valid
+// across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
+// of every target), so skip it when every target's .node output already exists
+// and is newer than every native source / gyp / package file in napi-app.
+function needsInstall(): boolean {
+  const app = join(__dirname, "napi-app");
+  if (!existsSync(join(app, "node_modules/node-addon-api"))) return true;
+  const targets = [...readFileSync(join(app, "binding.gyp"), "utf8").matchAll(/"target_name":\s*"([\w-]+)"/g)].map(
+    m => m[1],
+  );
+  if (targets.length === 0) return true;
+  const newestInput = Math.max(
+    ...readdirSync(app)
+      .filter(f => /\.(c|cc|cpp|h)$/.test(f) || f === "binding.gyp" || f === "package.json")
+      .map(f => statSync(join(app, f)).mtimeMs),
+  );
+  for (const target of targets) {
+    const built = join(app, `build/Debug/${target}.node`);
+    if (!existsSync(built)) return true;
+    if (statSync(built).mtimeMs < newestInput) return true;
+  }
+  return false;
+}
+
+describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
+  beforeAll(async () => {
+    // Resolve (and possibly download) the ABI-matching node here, under the
+    // generous hook timeout, instead of inside the first test that needs it.
+    await nodeExeMatchingAbi();
     // build gyp
-    console.time("Building node-gyp");
-    const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
-      cwd: join(__dirname, "napi-app"),
-      stderr: "inherit",
-      env: bunEnv,
-      stdout: "inherit",
-      stdin: "inherit",
-    });
-    if (!install.success) {
-      console.error("build failed, bailing out!");
-      process.exit(1);
+    if (needsInstall()) {
+      console.time("Building node-gyp");
+      const install = spawnSync({
+        cmd: [bunExe(), "install", "--verbose"],
+        cwd: join(__dirname, "napi-app"),
+        stderr: "inherit",
+        env: bunEnv,
+        stdout: "inherit",
+        stdin: "inherit",
+      });
+      if (!install.success) {
+        console.error("build failed, bailing out!");
+        process.exit(1);
+      }
+      console.timeEnd("Building node-gyp");
     }
-    console.timeEnd("Building node-gyp");
-    // node-gyp rebuild can take a while under a debug/ASAN binary; default
-    // 5s hook timeout kills the install subprocess mid-build.
-  }, 120_000);
+    // node-gyp rebuild can take a while under a debug/ASAN binary (and the
+    // hook may first download an ABI-matching node); default 5s hook timeout
+    // kills the install subprocess mid-build.
+  }, 300_000);
 
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
@@ -53,7 +93,7 @@ describe.concurrent("napi", () => {
         });
         expect(build.success).toBeTrue();
 
-        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), "node"]) {
+        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
             cmd: [exec, join(dir, "main.js"), "self"],
             env: bunEnv,
@@ -134,7 +174,7 @@ describe.concurrent("napi", () => {
 
         expect(build.logs).toBeEmpty();
 
-        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), "node"]) {
+        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
             cmd: [exec, join(dir, "main.js"), "self"],
             env: bunEnv,
@@ -461,6 +501,61 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_arraybuffer", () => {
+    it("returns zero-filled memory", async () => {
+      const output = await checkSameOutput("test_create_arraybuffer_zeroed", []);
+      expect(output).toBe("PASS: napi_create_arraybuffer memory is zero-filled");
+    });
+  });
+
+  describe("napi_get_typedarray_info", () => {
+    it("reports a zero byte offset for a view over the whole buffer and the view's byte offset for an offset view", async () => {
+      const whole = await checkSameOutput("test_typedarray_info_byte_offset", "[new Uint8Array(new ArrayBuffer(64))]");
+      expect(whole).toBe(
+        "byte_offset=0 length=64 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+      const offset = await checkSameOutput(
+        "test_typedarray_info_byte_offset",
+        "[new Uint8Array(new ArrayBuffer(64), 48)]",
+      );
+      expect(offset).toBe(
+        "byte_offset=48 length=16 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+
+    it("reports the view's byte offset into its backing buffer", async () => {
+      const output = await checkSameOutput(
+        "test_typedarray_info_byte_offset",
+        "[new Uint8Array(new ArrayBuffer(64), 16, 8)]",
+      );
+      expect(output).toBe(
+        "byte_offset=16 length=8 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+
+    it("reports the byte offset in bytes for an element type wider than one byte", async () => {
+      const output = await checkSameOutput(
+        "test_typedarray_info_byte_offset",
+        "[new Int32Array(new ArrayBuffer(64), 32, 4)]",
+      );
+      expect(output).toBe(
+        "byte_offset=32 length=4 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+  });
+
+  describe("napi_get_dataview_info", () => {
+    it("reports the view's byte offset into its backing buffer", async () => {
+      const output = await checkSameOutput(
+        "test_dataview_info_byte_offset",
+        "[new DataView(new ArrayBuffer(64), 24, 8)]",
+      );
+      expect(output).toBe(
+        "byte_offset=24 byte_length=8 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
+      );
+    });
+  });
+
   // TODO(@190n) test allocating in a finalizer from a napi module with the right version
 
   describe("napi_wrap", () => {
@@ -562,12 +657,10 @@ describe.concurrent("napi", () => {
       ["[1, 2, 3]", false],
       ["'hello'", false],
     ];
-    it("returns consistent values with node.js", async () => {
-      for (const [value, expected] of tests) {
-        // main.js does eval then spread so to pass a single value we need to wrap in an array
-        const output = await checkSameOutput(`test_is_${kind}`, "[" + value + "]");
-        expect(output).toBe(`napi_is_${kind} -> ${expected.toString()}`);
-      }
+    // main.js does eval then spread so to pass a single value we need to wrap in an array
+    it.each(tests)("returns consistent values with node.js for %s", async (value, expected) => {
+      const output = await checkSameOutput(`test_is_${kind}`, "[" + value + "]");
+      expect(output).toBe(`napi_is_${kind} -> ${expected.toString()}`);
     });
   });
 
@@ -751,8 +844,11 @@ describe.concurrent("napi", () => {
       expect(bunStderr).toContain("FATAL ERROR");
       expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
 
-      // The error message should NOT contain "Did not crash"
-      expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
+      // The marker must NOT have actually been printed. Only check stdout: the
+      // fixture prints the marker via console.log (stdout), while stderr contains
+      // the debug-build panic report whose "Args:" line echoes the full -e script
+      // source, including the literal "ERROR: Did not crash! Test failed!".
+      expect(bunStdout).not.toContain("ERROR: Did not crash");
     },
     25_000,
   );
@@ -776,6 +872,9 @@ async function checkSameOutput(test: string, args: any[] | string, envArgs: Reco
 
 async function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
   const env = { ...bunEnv, ...envArgs };
+  // "node" means a Node whose addon ABI matches the headers the fixture was
+  // compiled against (the system node may lag the version Bun reports).
+  if (executable === "node") executable = await nodeExeMatchingAbi();
   const exec = spawn({
     cmd: [
       executable,
@@ -805,6 +904,7 @@ async function runOn(executable: string, test: string, args: any[] | string, env
 async function checkBothFail(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
   const [node, bun] = await Promise.all(
     ["node", bunExe()].map(async executable => {
+      if (executable === "node") executable = await nodeExeMatchingAbi();
       const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
       const env = { ...rest, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1", ...envArgs };
       const exec = spawn({
@@ -829,7 +929,7 @@ async function checkBothFail(test: string, args: any[] | string, envArgs: Record
   expect(!!node.signalCode).toEqual(!!bun.signalCode);
 }
 
-describe("cleanup hooks", () => {
+describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
   describe("execution order", () => {
     it("executes in reverse insertion order like Node.js", async () => {
       // Test that cleanup hooks execute in reverse insertion order (LIFO)
@@ -925,6 +1025,27 @@ describe("cleanup hooks", () => {
       // Bun has a check for indexed properties that Node.js doesn't have
       // This might cause different behavior when freezing/sealing arrays
       expect(output).toContain("freeze");
+    });
+  });
+
+  describe("napi_is_arraybuffer", () => {
+    it("distinguishes ArrayBuffer from SharedArrayBuffer and typed arrays", async () => {
+      // https://github.com/oven-sh/bun/issues/32624
+      // napi_is_arraybuffer must report false for a SharedArrayBuffer the way
+      // Node does, even though JSC gives it the same cell type as a plain
+      // ArrayBuffer. napi_get_arraybuffer_info still accepts a SharedArrayBuffer
+      // in Node (napi_ok), so the check below pins that asymmetry too.
+      // napi_ok is 0 and napi_invalid_arg is 1.
+      const output = await checkSameOutput(
+        "test_is_arraybuffer",
+        "[new ArrayBuffer(8), new SharedArrayBuffer(8), new Uint8Array(8)]",
+      );
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_is_arraybuffer=true napi_get_arraybuffer_info=0",
+        "napi_is_arraybuffer=false napi_get_arraybuffer_info=0",
+        "napi_is_arraybuffer=false napi_get_arraybuffer_info=1",
+      ]);
     });
   });
 

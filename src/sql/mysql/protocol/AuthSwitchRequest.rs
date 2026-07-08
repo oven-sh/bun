@@ -34,7 +34,10 @@ impl AuthSwitchRequest {
             return Err(bun_core::err!("InvalidAuthSwitchRequest"));
         }
 
-        let remaining = reader.read((self.packet_size - 1) as usize)?;
+        let Some(remaining_len) = self.packet_size.checked_sub(1) else {
+            return Err(bun_core::err!("InvalidAuthSwitchRequest"));
+        };
+        let remaining = reader.read(remaining_len as usize)?;
         let remaining_slice = remaining.slice();
         debug_assert!(matches!(remaining, Data::Temporary(_)));
 

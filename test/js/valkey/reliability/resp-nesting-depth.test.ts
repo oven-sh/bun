@@ -3,6 +3,82 @@ import { bunEnv, bunExe } from "harness";
 import net from "net";
 
 /**
+ * Count the number of complete RESP commands in a buffer.
+ * Each command starts with '*' (array) followed by the element count.
+ * We count top-level '*' markers that begin a new command frame.
+ */
+function countRespCommands(data: Buffer): number {
+  const str = data.toString();
+  let count = 0;
+  let pos = 0;
+  while (pos < str.length) {
+    if (str[pos] === "*") {
+      count++;
+      // Skip past this command: find the array length line
+      const crlfIdx = str.indexOf("\r\n", pos);
+      if (crlfIdx === -1) break;
+      const arrayLen = parseInt(str.substring(pos + 1, crlfIdx), 10);
+      if (isNaN(arrayLen) || arrayLen < 0) break;
+      // Skip past arrayLen bulk-string elements (each is $<len>\r\n<data>\r\n)
+      let elemPos = crlfIdx + 2;
+      for (let i = 0; i < arrayLen; i++) {
+        if (elemPos >= str.length || str[elemPos] !== "$") break;
+        const lenEnd = str.indexOf("\r\n", elemPos);
+        if (lenEnd === -1) break;
+        const bulkLen = parseInt(str.substring(elemPos + 1, lenEnd), 10);
+        if (isNaN(bulkLen) || bulkLen < 0) break;
+        elemPos = lenEnd + 2 + bulkLen + 2; // skip $<len>\r\n<data>\r\n
+      }
+      pos = elemPos;
+    } else {
+      pos++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Creates a minimal mock Redis server that parses incoming RESP command
+ * frames. The first command (HELLO handshake) gets +OK; each subsequent
+ * command receives the next crafted payload (the last one is repeated when
+ * there are more commands than payloads). Handles the case where multiple
+ * commands arrive in a single TCP chunk.
+ */
+function createMockRedisServer(payload: Buffer | Buffer[]): Promise<{ server: net.Server; port: number }> {
+  const payloads = Array.isArray(payload) ? payload : [payload];
+  return new Promise((resolve, reject) => {
+    const server = net.createServer(socket => {
+      let commandsSeen = 0;
+
+      socket.on("data", (data: Buffer) => {
+        const numCmds = countRespCommands(data);
+        for (let i = 0; i < numCmds; i++) {
+          if (commandsSeen === 0) {
+            // Respond to HELLO handshake with a simple OK
+            socket.write("+OK\r\n");
+          } else {
+            // Each subsequent command gets the next crafted payload
+            socket.write(payloads[Math.min(commandsSeen - 1, payloads.length - 1)]);
+          }
+          commandsSeen++;
+        }
+      });
+
+      socket.on("error", () => {
+        // Ignore socket errors from client disconnecting
+      });
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address() as net.AddressInfo;
+      resolve({ server, port: addr.port });
+    });
+
+    server.on("error", reject);
+  });
+}
+
+/**
  * Test suite for RESP protocol nesting depth limits.
  * Ensures the parser handles deeply nested aggregate types gracefully.
  */
@@ -17,80 +93,6 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
     const prefix = "*1\r\n";
     const leaf = ":0\r\n";
     return Buffer.from(prefix.repeat(depth) + leaf);
-  }
-
-  /**
-   * Count the number of complete RESP commands in a buffer.
-   * Each command starts with '*' (array) followed by the element count.
-   * We count top-level '*' markers that begin a new command frame.
-   */
-  function countRespCommands(data: Buffer): number {
-    const str = data.toString();
-    let count = 0;
-    let pos = 0;
-    while (pos < str.length) {
-      if (str[pos] === "*") {
-        count++;
-        // Skip past this command: find the array length line
-        const crlfIdx = str.indexOf("\r\n", pos);
-        if (crlfIdx === -1) break;
-        const arrayLen = parseInt(str.substring(pos + 1, crlfIdx), 10);
-        if (isNaN(arrayLen) || arrayLen < 0) break;
-        // Skip past arrayLen bulk-string elements (each is $<len>\r\n<data>\r\n)
-        let elemPos = crlfIdx + 2;
-        for (let i = 0; i < arrayLen; i++) {
-          if (elemPos >= str.length || str[elemPos] !== "$") break;
-          const lenEnd = str.indexOf("\r\n", elemPos);
-          if (lenEnd === -1) break;
-          const bulkLen = parseInt(str.substring(elemPos + 1, lenEnd), 10);
-          if (isNaN(bulkLen) || bulkLen < 0) break;
-          elemPos = lenEnd + 2 + bulkLen + 2; // skip $<len>\r\n<data>\r\n
-        }
-        pos = elemPos;
-      } else {
-        pos++;
-      }
-    }
-    return count;
-  }
-
-  /**
-   * Creates a minimal mock Redis server that parses incoming RESP command
-   * frames. The first command (HELLO handshake) gets +OK; all subsequent
-   * commands receive the crafted payload. Handles the case where multiple
-   * commands arrive in a single TCP chunk.
-   */
-  function createMockRedisServer(payload: Buffer): Promise<{ server: net.Server; port: number }> {
-    return new Promise((resolve, reject) => {
-      const server = net.createServer(socket => {
-        let commandsSeen = 0;
-
-        socket.on("data", (data: Buffer) => {
-          const numCmds = countRespCommands(data);
-          for (let i = 0; i < numCmds; i++) {
-            if (commandsSeen === 0) {
-              // Respond to HELLO handshake with a simple OK
-              socket.write("+OK\r\n");
-            } else {
-              // All subsequent commands get the crafted payload
-              socket.write(payload);
-            }
-            commandsSeen++;
-          }
-        });
-
-        socket.on("error", () => {
-          // Ignore socket errors from client disconnecting
-        });
-      });
-
-      server.listen(0, "127.0.0.1", () => {
-        const addr = server.address() as net.AddressInfo;
-        resolve({ server, port: addr.port });
-      });
-
-      server.on("error", reject);
-    });
   }
 
   test("should reject responses that exceed the nesting depth limit", async () => {
@@ -234,5 +236,55 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
     // The process should exit cleanly (not crash with SIGSEGV)
     expect(stdout).toContain("OK:");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("Valkey: RESP push frame routing", () => {
+  test("resolves a pending command with its own reply when an out-of-band push frame precedes it", async () => {
+    const payload = Buffer.from(
+      ">4\r\n$8\r\npmessage\r\n$7\r\npattern\r\n$7\r\nchannel\r\n$7\r\npayload\r\n" + "+PONG\r\n",
+    );
+
+    const { server, port } = await createMockRedisServer(payload);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 2000,
+      });
+
+      try {
+        const result = await client.send("PING", []);
+        expect(result).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a psubscribe ack push consumes its own promise pair without desyncing pipelined replies", async () => {
+    const psubscribeAck = Buffer.from(">3\r\n$10\r\npsubscribe\r\n$6\r\nnews.*\r\n:1\r\n");
+    const pong = Buffer.from("+PONG\r\n");
+
+    const { server, port } = await createMockRedisServer([psubscribeAck, pong]);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 2000,
+      });
+
+      try {
+        const psubscribed = client.psubscribe("news.*");
+        const pinged = client.send("PING", []);
+
+        expect(await psubscribed).toEqual({ type: "psubscribe", data: ["news.*", 1] });
+        expect(await pinged).toBe("PONG");
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
   });
 });

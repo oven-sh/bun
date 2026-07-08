@@ -225,10 +225,8 @@ fn pure_global_identifier_define() -> &'static defines::IdentifierDefine {
 mod identifiers {
     use super::{ExprData, OnceLock, SyncDefineData, defines, js_ast};
 
-    const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
-    const INF_VAL: js_ast::E::Number = js_ast::E::Number {
-        value: f64::INFINITY,
-    };
+    const NAN_VAL: js_ast::E::Number = js_ast::E::Number::new(f64::NAN);
+    const INF_VAL: js_ast::E::Number = js_ast::E::Number::new(f64::INFINITY);
 
     // Step 2. Swap in certain literal values because those can be constant folded
     pub(super) fn undefined() -> &'static defines::IdentifierDefine {

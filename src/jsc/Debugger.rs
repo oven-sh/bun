@@ -602,8 +602,10 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     }));
 
     // Frontends need positions that map back to the original source, so stop
-    // minifying and caching transpiled output for code loaded from now on,
-    // mirroring `configure_debugger` in jsc_hooks.rs.
+    // minifying and caching transpiled output for code loaded from now on.
+    // Left in place after inspector.close(): the debugger thread persists for
+    // reopen, so modules loaded between close() and a later open() must still
+    // have unminified positions.
     crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
     {
         let opts = &mut this.as_mut().transpiler.options;

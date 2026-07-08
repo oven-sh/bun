@@ -4052,12 +4052,10 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     auto* object = constructEmptyObject(globalObject);
 
     // node:inspector serves a CDP endpoint, precise coverage and breakpoint
-    // pausing, but the long tail of CDP domains (Network, NodeWorker, Target,
-    // tracing, DOMStorage, permissions) are not implemented yet. Reporting false
-    // keeps code that feature-detects the inspector (including node's vendored
-    // test suite) on its no-inspector path until enough of those are covered for
-    // the suite to pass.
-    object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(false));
+    // pausing. The long tail of CDP domains (Network, NodeWorker, Target,
+    // tracing, DOMStorage, permissions) are not implemented yet; the vendored
+    // Node inspector test suite is gated per-file in test/common/index.js.
+    object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
 #ifdef BUN_DEBUG
     object->putDirect(vm, Identifier::fromString(vm, "debug"_s), jsBoolean(true));
 #else

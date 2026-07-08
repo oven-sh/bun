@@ -127,6 +127,7 @@ export default function (
     let debug: Debugger | undefined;
     let sessionBackend: Backend | undefined;
     let sessionAdapter: any;
+    let sessionRefs = 0;
     const control = (message: string) => {
       let parsed: any;
       try {
@@ -139,7 +140,21 @@ export default function (
           sessionBackend?.close();
           sessionBackend = undefined;
           sessionAdapter = undefined;
+          sessionRefs = 0;
           debug?.stop();
+          return;
+        case "session-connect":
+          sessionRefs++;
+          return;
+        case "session-disconnect":
+          // Last in-process Session that forwarded Debugger.* commands has
+          // disconnected: release the shared backend so its breakpoints don't
+          // outlive it. Refcounted so one Session can't tear down another's.
+          if (--sessionRefs > 0) return;
+          sessionRefs = 0;
+          sessionBackend?.close();
+          sessionBackend = undefined;
+          sessionAdapter = undefined;
           return;
         case "open": {
           // inspector.open() after inspector.close() or after a failed start:
@@ -436,15 +451,12 @@ class Debugger {
   // Node-shaped /json/list payload describing the single debuggable target.
   // `host` is the request's Host header: a client reaching the server through a
   // tunnel or port-forward needs URLs for the address it actually connected to,
-  // not the bind address, matching Node's discovery endpoints. Node only honors
-  // Host values that are localhost or IP literals (it rejects other hostnames
-  // to prevent DNS rebinding); anything else falls back to the bind address
-  // instead of being reflected into the response.
+  // not the bind address, matching Node's discovery endpoints. Disallowed Host
+  // values are rejected in #fetch before this is called.
   #nodeInspectorTargets(host: string | null): unknown[] {
     const { hostname, port, pathname } = this.#url!;
     const id = pathname.slice(1);
-    const requestHost = host !== null && isAllowedHostHeader(host) ? host : null;
-    const wsAddress = `${requestHost || `${hostname}:${port}`}${pathname}`;
+    const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
     return [
       {
         description: "bun instance",
@@ -468,6 +480,16 @@ class Debugger {
       return new Response(null, {
         status: 405, // Method Not Allowed
       });
+    }
+
+    // node:inspector servers gate every request (including the WS upgrade) on
+    // the Host header, matching Node's inspector_socket.cc IsAllowedHost, so a
+    // DNS-rebound page cannot reach a bound-all inspector.
+    if (this.#nodeInspector) {
+      const host = headers.get("Host");
+      if (host !== null && !isAllowedHostHeader(host)) {
+        return new Response(null, { status: 400 });
+      }
     }
 
     switch (pathname) {
@@ -804,11 +826,11 @@ function isOriginAllowed(origin: string | null): boolean {
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
 }
 
-// Host header values the /json discovery endpoints may reflect into their
-// responses: "localhost", an IPv4 literal, or a bracketed IPv6 literal, each
-// with an optional port — the same set Node's inspector accepts. The bracketed
-// alternative permits dots so IPv4-mapped IPv6 literals like
-// `[::ffff:127.0.0.1]` are accepted, matching uv_inet_pton(AF_INET6, ...).
+// Host header values the node:inspector server accepts (both /json discovery
+// and the WebSocket upgrade): "localhost", an IPv4 literal, or a bracketed
+// IPv6 literal, each with an optional port — Node's inspector_socket.cc
+// IsAllowedHost. The bracketed alternative permits dots so IPv4-mapped IPv6
+// literals like `[::ffff:127.0.0.1]` are accepted.
 function isAllowedHostHeader(host: string): boolean {
   return /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\])(:\d{1,5})?$/i.test(host);
 }

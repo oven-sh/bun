@@ -4,6 +4,7 @@
 // and open()/url()/close()/waitForDebugger() backed by a Chrome DevTools
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
+const { validateString, validateFunction } = require("internal/validators");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
@@ -36,7 +37,8 @@ function open(port?: number, host?: string, wait?: boolean) {
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
   if (!Bun.isMainThread) {
-    throw new Error("inspector.open() is not supported in worker threads");
+    // Node supports per-worker inspectors; Bun does not yet.
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("inspector.open()");
   }
 
   if (port !== undefined && port !== null) {
@@ -91,8 +93,9 @@ function waitForDebugger() {
   waitForNodeInspectorConnection();
 }
 
-// Sessions with the Runtime domain enabled receive Runtime.consoleAPICalled
-// notifications for console calls, like Node's in-process inspector sessions.
+// Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
+// calls. This monkey-patches globalThis.console (not JSC's ConsoleClient as
+// cdp.ts does), so pre-captured refs bypass it and no stackTrace is emitted.
 const runtimeEnabledSessions = new Set<Session>();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
@@ -115,6 +118,7 @@ function toRemoteObject(arg: unknown): object {
     case "string":
       return { type: "string", value: arg };
     case "number":
+      if (Object.is(arg, -0)) return { type: "number", unserializableValue: "-0", description: "-0" };
       return Number.isFinite(arg)
         ? { type: "number", value: arg, description: String(arg) }
         : {
@@ -329,9 +333,10 @@ function buildScriptCoverageList(
       }
 
       const ownBlocks = blocksPerFunction[i];
-      // The block with the smallest start offset is the function's entry
-      // block; it runs exactly once per invocation, so its execution count is
-      // the call count.
+      // Approximate the call count from the entry block (the one with the
+      // smallest start offset). Diverges from V8 for generators/async
+      // functions, which JSC compiles as two nested CodeBlocks whose body
+      // entry counts state-0 resumes rather than user-visible calls.
       let count = 1;
       if (ownBlocks.length > 0) {
         let entryBlock = ownBlocks[0];
@@ -362,7 +367,7 @@ function collectCoverageScripts(): any[] | Error {
   try {
     return JSON.parse(raw);
   } catch (e) {
-    return new Error(`Failed to parse coverage JSON: ${e}`);
+    return $ERR_INSPECTOR_COMMAND(`-32000: Failed to parse coverage JSON: ${e}`);
   }
 }
 
@@ -372,15 +377,22 @@ class Session extends EventEmitter {
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
+  #forwardedDebugger = false;
+  // Baseline for delta semantics: takePreciseCoverage must reset counters, but
+  // JSC has no counter-reset API, so subtract the previous take instead.
+  #coverageBaseline: Map<string, number> = new Map();
 
   connect() {
     if (this.#connected) {
-      throw new Error("Session is already connected");
+      throw $ERR_INSPECTOR_ALREADY_CONNECTED();
     }
     this.#connected = true;
   }
 
   connectToMainThread() {
+    if (Bun.isMainThread) {
+      throw $ERR_INSPECTOR_NOT_WORKER();
+    }
     this.connect();
   }
 
@@ -393,8 +405,16 @@ class Session extends EventEmitter {
     }
     this.#profilerEnabled = false;
     this.#connected = false;
+    this.#coverageBaseline.clear();
     runtimeEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
+    // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
+    // on the debugger thread; release it so a disconnected session cannot keep
+    // pausing the process, matching Node's disconnect() contract.
+    if (this.#forwardedDebugger && activeInspectorUrl !== undefined) {
+      postNodeInspectorControl(JSON.stringify({ type: "session-disconnect" }));
+    }
+    this.#forwardedDebugger = false;
   }
 
   post(
@@ -402,14 +422,19 @@ class Session extends EventEmitter {
     params?: object | ((err: Error | null, result?: any) => void),
     callback?: (err: Error | null, result?: any) => void,
   ) {
+    validateString(method, "method");
     // Handle overloaded signature: post(method, callback)
     if (typeof params === "function") {
       callback = params;
       params = undefined;
     }
+    if (params !== undefined && params !== null && typeof params !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("params", "Object", params);
+    }
+    if (callback !== undefined) validateFunction(callback, "callback");
 
     if (!this.#connected) {
-      const error = new Error("Session is not connected");
+      const error = $ERR_INSPECTOR_NOT_CONNECTED();
       if (callback) {
         queueMicrotask(() => callback(error));
         return;
@@ -467,50 +492,68 @@ class Session extends EventEmitter {
         return {};
 
       case "Profiler.start":
-        if (!this.#profilerEnabled) return new Error("Profiler is not enabled. Call Profiler.enable first.");
+        if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
         if (!isCPUProfilerRunning()) startCPUProfiler();
         return {};
 
       case "Profiler.stop":
-        if (!isCPUProfilerRunning()) return new Error("Profiler is not started. Call Profiler.start first.");
+        if (!isCPUProfilerRunning()) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
         try {
           return { profile: JSON.parse(stopCPUProfiler()) };
         } catch (e) {
-          return new Error(`Failed to parse profile JSON: ${e}`);
+          return $ERR_INSPECTOR_COMMAND(`-32000: Failed to parse profile JSON: ${e}`);
         }
 
       case "Profiler.setSamplingInterval": {
-        if (isCPUProfilerRunning()) return new Error("Cannot change sampling interval while profiler is running");
+        if (isCPUProfilerRunning())
+          return $ERR_INSPECTOR_COMMAND("-32000: Cannot change sampling interval while profiler is running");
         const interval = (params as any)?.interval;
-        if (typeof interval !== "number" || interval <= 0) return new Error("interval must be a positive number");
+        if (typeof interval !== "number" || interval <= 0)
+          return $ERR_INSPECTOR_COMMAND("-32602: interval must be a positive number");
         setCPUSamplingInterval(interval);
         return {};
       }
 
       case "Profiler.startPreciseCoverage": {
-        if (!this.#profilerEnabled) return new Error("Profiler is not enabled");
+        if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
         if (!this.#preciseCoverageEnabled) {
           startPreciseCoverage();
           this.#preciseCoverageEnabled = true;
         }
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
+        this.#coverageBaseline.clear();
         return { timestamp: Date.now() / 1000 };
       }
 
       case "Profiler.stopPreciseCoverage": {
-        if (!this.#profilerEnabled) return new Error("Profiler is not enabled");
+        if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
         if (this.#preciseCoverageEnabled) {
           stopPreciseCoverage();
           this.#preciseCoverageEnabled = false;
         }
+        this.#coverageBaseline.clear();
         return {};
       }
 
       case "Profiler.takePreciseCoverage": {
-        if (!this.#preciseCoverageEnabled) return new Error("Precise coverage has not been started.");
+        if (!this.#preciseCoverageEnabled)
+          return $ERR_INSPECTOR_COMMAND("-32000: Precise coverage has not been started.");
         const scripts = collectCoverageScripts();
         if (scripts instanceof Error) return scripts;
+        // CDP contract: takePreciseCoverage resets execution counters, so a
+        // second take reports the delta. JSC has no counter reset, so subtract
+        // the previous take's raw block counts (function-level call counts are
+        // derived from the entry block, so they follow automatically).
+        const baseline = this.#coverageBaseline;
+        for (const script of scripts) {
+          for (const block of script.blocks) {
+            const key = `${script.scriptId}:${block[0]}:${block[1]}`;
+            const raw = block[2];
+            block[2] = Math.max(0, raw - (baseline.get(key) ?? 0));
+            baseline.set(key, raw);
+          }
+        }
         return {
           result: buildScriptCoverageList(scripts, this.#preciseCoverageCallCount, this.#preciseCoverageDetailed),
           timestamp: Date.now() / 1000,
@@ -518,8 +561,8 @@ class Session extends EventEmitter {
       }
 
       case "Profiler.getBestEffortCoverage": {
-        // Best-effort coverage reports whatever execution data already exists,
-        // at function granularity with 0/1 counts, like V8 does.
+        // JSC has no always-on invocation counters, so unlike V8 this returns
+        // [] unless startPreciseCoverage has run in this VM.
         const scripts = collectCoverageScripts();
         if (scripts instanceof Error) return scripts;
         return { result: buildScriptCoverageList(scripts, false, false) };
@@ -540,14 +583,20 @@ class Session extends EventEmitter {
       case "Debugger.setAsyncCallStackDepth":
       case "Debugger.setBlackboxPatterns": {
         if (activeInspectorUrl === undefined) {
-          return new Error(`Inspector method "${method}" requires an active inspector (call inspector.open() first)`);
+          return $ERR_INSPECTOR_COMMAND(
+            `-32000: Inspector method "${method}" requires an active inspector (call inspector.open() first)`,
+          );
+        }
+        if (!this.#forwardedDebugger) {
+          this.#forwardedDebugger = true;
+          postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
         }
         postNodeInspectorControl(JSON.stringify({ type: "command", method, params }));
         return {};
       }
 
       default:
-        return new Error(`Inspector method "${method}" is not supported`);
+        return $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
     }
   }
 }

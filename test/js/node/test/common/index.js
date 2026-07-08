@@ -810,9 +810,26 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+// Bun implements node:inspector's core surface (open/close/url, Session,
+// Profiler CPU + precise coverage, breakpoint pausing over CDP) but not the
+// long tail of V8-specific CDP domains many of these tests exercise. Un-gate
+// the tests that cover implemented behavior and skip the rest so they don't
+// silently pass in CI without executing any assertions.
+const bunInspectorPassing = new Set([
+  'test-inspector-open-coverage.js',
+  'test-inspector-open-port-integer-overflow.js',
+  'test-inspector-reported-host.js',
+]);
+
 function skipIfInspectorDisabled() {
   if (!process.features.inspector) {
     skip('V8 inspector is disabled');
+  }
+  if ('Bun' in globalThis && !process.env.BUN_RUN_NODE_INSPECTOR_TESTS) {
+    const name = path.basename(require.main?.filename ?? '');
+    if (!bunInspectorPassing.has(name)) {
+      skip('Bun: CDP domain not implemented; set BUN_RUN_NODE_INSPECTOR_TESTS=1 to run');
+    }
   }
 }
 

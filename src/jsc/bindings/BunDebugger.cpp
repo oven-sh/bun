@@ -10,6 +10,7 @@
 #include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/IsoCellSetInlines.h>
 #include <wtf/Condition.h>
+#include <wtf/NeverDestroyed.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
@@ -677,14 +678,17 @@ struct NodeInspectorState {
     WTF::String url;
     WTF::String error;
     bool serverStarted { false };
-    // Owned by the debugger thread's VM; only created and cleared there.
+    // Owned by the debugger thread's VM; process-lifetime once set (the
+    // debugger thread is never joined).
     JSC::Strong<JSC::Unknown> controlCallback {};
 };
 
 static NodeInspectorState& nodeInspectorState()
 {
-    static NodeInspectorState instance;
-    return instance;
+    // NeverDestroyed: the debugger thread and its VM outlive main(), so
+    // ~Strong() at exit() would touch a live foreign HandleSet without JSLock.
+    static NeverDestroyed<NodeInspectorState> instance;
+    return instance.get();
 }
 
 // Called by internal/debugger.ts on the debugger thread once the node:inspector
@@ -798,12 +802,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     String error;
     {
         Locker<Lock> locker(state.lock);
-        // The debugger thread reports back as soon as Bun.serve is listening;
-        // the timeout is only a safety net so a debugger-thread crash cannot
-        // hang the caller forever.
+        // internal/debugger.ts's try/catch guarantees this is signalled on
+        // every path; a timeout would leave this.debugger set with no
+        // controlCallback, which nothing can recover from.
         while (!state.serverStarted) {
-            if (!state.condition.waitFor(state.lock, Seconds(30)))
-                break;
+            state.condition.wait(state.lock);
         }
         resolvedUrl = state.url.isolatedCopy();
         error = state.error.isolatedCopy();

@@ -717,9 +717,19 @@ impl ErrorCode {
     pub const INSPECTOR_ALREADY_ACTIVATED: ErrorCode = ErrorCode(329);
     /// `ERR_INSPECTOR_NOT_ACTIVE` (instanceof Error)
     pub const INSPECTOR_NOT_ACTIVE: ErrorCode = ErrorCode(330);
+    /// `ERR_INSPECTOR_ALREADY_CONNECTED` (instanceof Error)
+    pub const INSPECTOR_ALREADY_CONNECTED: ErrorCode = ErrorCode(331);
+    /// `ERR_INSPECTOR_NOT_CONNECTED` (instanceof Error)
+    pub const INSPECTOR_NOT_CONNECTED: ErrorCode = ErrorCode(332);
+    /// `ERR_INSPECTOR_NOT_WORKER` (instanceof Error)
+    pub const INSPECTOR_NOT_WORKER: ErrorCode = ErrorCode(333);
+    /// `ERR_INSPECTOR_CLOSED` (instanceof Error)
+    pub const INSPECTOR_CLOSED: ErrorCode = ErrorCode(334);
+    /// `ERR_INSPECTOR_COMMAND` (instanceof Error)
+    pub const INSPECTOR_COMMAND: ErrorCode = ErrorCode(335);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 331;
+    pub const COUNT: u16 = 336;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1441,6 +1451,11 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_INVALID_BUFFER_SIZE",
     "ERR_INSPECTOR_ALREADY_ACTIVATED",
     "ERR_INSPECTOR_NOT_ACTIVE",
+    "ERR_INSPECTOR_ALREADY_CONNECTED",
+    "ERR_INSPECTOR_NOT_CONNECTED",
+    "ERR_INSPECTOR_NOT_WORKER",
+    "ERR_INSPECTOR_CLOSED",
+    "ERR_INSPECTOR_COMMAND",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

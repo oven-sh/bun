@@ -51,30 +51,48 @@ const version = await (await fetch(httpBase + "/json/version")).json();
 const list = await (await fetch(httpBase + "/json/list")).json();
 
 // /json/list reflects a localhost/IP-literal Host header (port-forwards,
-// tunnels), like Node, but never reflects other hostnames into the response.
-function fetchListWithHost(hostHeader) {
+// tunnels), like Node; other hostnames are rejected outright (Node's
+// IsAllowedHost / DNS-rebinding guard).
+function fetchWithHost(path, hostHeader) {
   return new Promise((resolve, reject) => {
     http
       .get(
         {
           host: "127.0.0.1",
           port: Number(new URL(url).port),
-          path: "/json/list",
+          path,
           headers: { Host: hostHeader },
         },
         response => {
           let body = "";
           response.on("data", chunk => (body += chunk));
-          response.on("end", () => resolve(JSON.parse(body)));
+          response.on("end", () =>
+            resolve(response.statusCode === 200 ? JSON.parse(body) : { statusCode: response.statusCode }),
+          );
           response.on("error", reject);
         },
       )
       .on("error", reject);
   });
 }
-const listWithIpHost = await fetchListWithHost("127.0.0.1:19229");
-const listWithMappedIpv6Host = await fetchListWithHost("[::ffff:127.0.0.1]:19229");
-const listWithDnsHost = await fetchListWithHost("tunnel.example:9229");
+const listWithIpHost = await fetchWithHost("/json/list", "127.0.0.1:19229");
+const listWithMappedIpv6Host = await fetchWithHost("/json/list", "[::ffff:127.0.0.1]:19229");
+const listWithDnsHost = await fetchWithHost("/json/list", "tunnel.example:9229");
+const versionWithDnsHost = await fetchWithHost("/json/version", "tunnel.example:9229");
+// The WS upgrade is gated on the same Host check (Node's HostCheckedForUPGRADE).
+const wsBadHostStatus = await new Promise((resolve, reject) => {
+  const request = http.get(
+    {
+      host: "127.0.0.1",
+      port: Number(new URL(url).port),
+      path: new URL(url).pathname,
+      headers: { Host: "tunnel.example:9229", Connection: "Upgrade", Upgrade: "websocket" },
+    },
+    response => resolve(response.statusCode),
+  );
+  request.on("upgrade", () => resolve("upgraded"));
+  request.on("error", reject);
+});
 
 const ws = new WebSocket(url);
 const pending = new Map();
@@ -105,6 +123,17 @@ await new Promise(resolve => (ws.onopen = resolve));
 await send("Runtime.enable", {});
 const debuggerEnable = await send("Debugger.enable", {});
 const evaluate = await send("Runtime.evaluate", { expression: "6 * 7" });
+const awaitedResolve = await send("Runtime.evaluate", {
+  expression: "Promise.resolve(42)",
+  awaitPromise: true,
+  returnByValue: true,
+});
+// awaitPromise on a non-promise result returns it as-is.
+const awaitedNonPromise = await send("Runtime.evaluate", {
+  expression: "6 * 7",
+  awaitPromise: true,
+  returnByValue: true,
+});
 console.log("tagged-console-call", { tagged: true });
 const consoleEvent = await consoleEventPromise;
 const unknown = await send("Totally.bogus", {});
@@ -118,11 +147,15 @@ console.log(
     list,
     listWithIpHostUrl: listWithIpHost[0]?.webSocketDebuggerUrl,
     listWithMappedIpv6HostUrl: listWithMappedIpv6Host[0]?.webSocketDebuggerUrl,
-    listWithDnsHostUrl: listWithDnsHost[0]?.webSocketDebuggerUrl,
+    listWithDnsHost,
+    versionWithDnsHost,
+    wsBadHostStatus,
     executionContextCreated: events.some(event => event.method === "Runtime.executionContextCreated"),
     scriptParsedCount: events.filter(event => event.method === "Debugger.scriptParsed").length,
     debuggerEnable: debuggerEnable.result,
     evaluateValue: evaluate.result?.result?.value,
+    awaitedResolveValue: awaitedResolve.result?.result?.value,
+    awaitedNonPromiseValue: awaitedNonPromise.result?.result?.value,
     consoleEventType: consoleEvent.type,
     unknownError: unknown.error,
     urlAfterClose: inspector.url() ?? null,
@@ -161,14 +194,21 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
     }),
   ]);
   // Node reflects localhost/IP-literal Host headers into /json/list; other
-  // hostnames must not be reflected (Bun falls back to the bind address).
+  // hostnames are rejected (Node's IsAllowedHost / DNS-rebinding guard) for
+  // both discovery and the WebSocket upgrade.
   expect(summary.listWithIpHostUrl).toBe(`ws://127.0.0.1:19229${new URL(summary.url).pathname}`);
   expect(summary.listWithMappedIpv6HostUrl).toBe(`ws://[::ffff:127.0.0.1]:19229${new URL(summary.url).pathname}`);
-  expect(summary.listWithDnsHostUrl).toBe(summary.url);
+  expect(summary.listWithDnsHost).toEqual({ statusCode: 400 });
+  expect(summary.versionWithDnsHost).toEqual({ statusCode: 400 });
+  expect(summary.wsBadHostStatus).toBe(400);
   expect(summary.executionContextCreated).toBe(true);
   expect(summary.scriptParsedCount).toBeGreaterThan(0);
   expect(summary.debuggerEnable).toEqual({ debuggerId: expect.any(String) });
   expect(summary.evaluateValue).toBe(42);
+  // JSC has no awaitPromise on Runtime.evaluate; the adapter chains
+  // Runtime.awaitPromise so DevTools top-level-await works.
+  expect(summary.awaitedResolveValue).toBe(42);
+  expect(summary.awaitedNonPromiseValue).toBe(42);
   expect(summary.consoleEventType).toBe("log");
   expect(summary.unknownError).toEqual({ code: -32601, message: "'Totally.bogus' wasn't found" });
   expect(summary.urlAfterClose).toBeNull();
@@ -383,6 +423,53 @@ test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", 
   } finally {
     session.disconnect();
   }
+});
+
+test("Runtime.consoleAPICalled encodes -0/NaN/Infinity/bigint as unserializableValue like Node", () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    let seen: any;
+    session.on("Runtime.consoleAPICalled", message => (seen = message));
+    session.post("Runtime.enable");
+    console.log(-0, NaN, Infinity, -Infinity, 1n);
+    expect(seen.params.args).toEqual([
+      { type: "number", unserializableValue: "-0", description: "-0" },
+      { type: "number", unserializableValue: "NaN", description: "NaN" },
+      { type: "number", unserializableValue: "Infinity", description: "Infinity" },
+      { type: "number", unserializableValue: "-Infinity", description: "-Infinity" },
+      { type: "bigint", unserializableValue: "1n", description: "1n" },
+    ]);
+  } finally {
+    session.disconnect();
+  }
+});
+
+test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", () => {
+  const session = new inspector.Session();
+  expect(() => session.post("Runtime.enable")).toThrow(
+    expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED", message: "Session is not connected" }),
+  );
+  session.connect();
+  expect(() => session.connect()).toThrow(
+    expect.objectContaining({
+      code: "ERR_INSPECTOR_ALREADY_CONNECTED",
+      message: "The inspector session is already connected",
+    }),
+  );
+  expect(() => session.post(123 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(() => session.post("Runtime.enable", "not an object" as any)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => session.post("Runtime.enable", {}, "not a function" as any)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(() => session.post("Nonexistent.domain")).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
+  session.disconnect();
+
+  // connectToMainThread() throws ERR_INSPECTOR_NOT_WORKER on the main thread.
+  const s2 = new inspector.Session();
+  expect(() => s2.connectToMainThread()).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_NOT_WORKER" }));
 });
 
 test("the method-specific event fires before inspectorNotification, like Node", () => {

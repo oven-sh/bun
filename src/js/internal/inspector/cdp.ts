@@ -93,7 +93,10 @@ class InspectorCDPAdapter {
   #writeToClient: (message: string) => void;
   #nextBackendId = 1;
   #nextExceptionId = 1;
-  #pending = new Map<number, { clientId: number | string | null; method: string }>();
+  #pending = new Map<
+    number,
+    { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
+  >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
 
   constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
@@ -129,7 +132,11 @@ class InspectorCDPAdapter {
       const pending = this.#pending.get(id);
       if (!pending) return;
       this.#pending.delete(id);
-      const { clientId } = pending;
+      const { clientId, onResult } = pending;
+      if (onResult) {
+        onResult(parsed.result || {}, error);
+        return;
+      }
       if (clientId === null || clientId === undefined) return;
       if (error) {
         this.#replyErrorToClient(clientId, error.code ?? -32000, error.message ?? "Unknown error");
@@ -156,15 +163,17 @@ class InspectorCDPAdapter {
   }
 
   // `clientId` undefined/null marks an adapter-internal command whose response
-  // is dropped instead of being forwarded to the client.
+  // is dropped instead of being forwarded to the client. `onResult` intercepts
+  // the response for adapter-side chaining (e.g. Runtime.evaluate awaitPromise).
   #sendToBackend(
     method: string,
     params?: AnyObject,
     clientId: number | string | null = null,
     clientMethod = method,
+    onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
     const id = this.#nextBackendId++;
-    this.#pending.set(id, { clientId, method: clientMethod });
+    this.#pending.set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }
 
@@ -199,21 +208,54 @@ class InspectorCDPAdapter {
         this.#replyToClient(id, {});
         return;
 
-      case "Runtime.evaluate":
-        this.#sendToBackend(
-          "Runtime.evaluate",
-          {
-            expression: params.expression,
-            objectGroup: params.objectGroup,
-            includeCommandLineAPI: params.includeCommandLineAPI,
-            doNotPauseOnExceptionsAndMuteConsole: params.silent,
-            returnByValue: params.returnByValue,
-            generatePreview: params.generatePreview,
-          },
-          id,
-          method,
-        );
+      case "Runtime.evaluate": {
+        const jscParams = {
+          expression: params.expression,
+          objectGroup: params.objectGroup,
+          includeCommandLineAPI: params.includeCommandLineAPI,
+          doNotPauseOnExceptionsAndMuteConsole: params.silent,
+          returnByValue: params.returnByValue,
+          generatePreview: params.generatePreview,
+          contextId: params.contextId,
+          emulateUserGesture: params.userGesture,
+        };
+        // JSC has no `awaitPromise` on Runtime.evaluate; emulate it by
+        // chaining Runtime.awaitPromise when the result is a promise. The
+        // initial evaluate must not use returnByValue (it would serialize the
+        // Promise itself instead of returning the objectId to await on).
+        if (params.awaitPromise === true) {
+          const firstStep = { ...jscParams, returnByValue: false };
+          this.#sendToBackend("Runtime.evaluate", firstStep, null, method, (result, error) => {
+            if (error) {
+              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+              return;
+            }
+            const remote = result.result;
+            if (!result.wasThrown && remote?.type === "object" && remote.objectId) {
+              // JSC's Runtime.awaitPromise resolves any thenable and returns
+              // non-thenable objects as-is, so no subtype check is needed.
+              this.#sendToBackend(
+                "Runtime.awaitPromise",
+                {
+                  promiseObjectId: remote.objectId,
+                  returnByValue: params.returnByValue,
+                  generatePreview: params.generatePreview,
+                  saveResult: params.saveResult,
+                },
+                id,
+                method,
+              );
+              return;
+            }
+            // Primitive / thrown: nothing to await; primitives already carry
+            // value regardless of returnByValue.
+            this.#replyToClient(id, this.#translateResult(method, result));
+          });
+          return;
+        }
+        this.#sendToBackend("Runtime.evaluate", jscParams, id, method);
         return;
+      }
 
       case "Runtime.getProperties":
         if (params.accessorPropertiesOnly) {

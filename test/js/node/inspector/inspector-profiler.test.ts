@@ -152,8 +152,10 @@ describe("node:inspector", () => {
       expect(() => session.connect()).toThrow("already connected");
     });
 
-    test("connectToMainThread() works like connect()", () => {
-      expect(() => session.connectToMainThread()).not.toThrow();
+    test("connectToMainThread() throws ERR_INSPECTOR_NOT_WORKER on the main thread", () => {
+      expect(() => session.connectToMainThread()).toThrow(
+        expect.objectContaining({ code: "ERR_INSPECTOR_NOT_WORKER" }),
+      );
     });
 
     test("disconnect() closes connection cleanly", () => {
@@ -417,10 +419,12 @@ describe("node:inspector", () => {
   });
 
   describe("unsupported methods", () => {
-    test("unsupported method throws", () => {
+    test("unsupported method throws ERR_INSPECTOR_COMMAND", () => {
       const session = new inspector.Session();
       session.connect();
-      expect(() => session.post("Runtime.evaluate")).toThrow("not supported");
+      expect(() => session.post("Runtime.evaluate")).toThrow(
+        expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }),
+      );
       session.disconnect();
     });
   });
@@ -453,12 +457,51 @@ describe("node:inspector", () => {
       session.disconnect();
     });
 
-    test("getBestEffortCoverage returns a result array", () => {
+    // Unlike V8 (which has always-on invocation counters), JSC has none, so
+    // best-effort coverage is empty until startPreciseCoverage has run.
+    test("getBestEffortCoverage returns [] without a prior startPreciseCoverage", () => {
       const session = new inspector.Session();
       session.connect();
-      const result = session.post("Profiler.getBestEffortCoverage");
-      expect(result).toEqual({ result: expect.any(Array) });
+      const { result } = session.post("Profiler.getBestEffortCoverage");
+      expect(result).toEqual([]);
       session.disconnect();
+    });
+
+    // CDP contract: takePreciseCoverage resets execution counters, so a second
+    // take reports the delta rather than the cumulative count.
+    test.concurrent("takePreciseCoverage reports counts since the previous take", async () => {
+      using dir = tempDir("inspector-coverage-delta", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = "file:///delta-fixture/virtual.js";
+const f = vm.runInThisContext("function f(){return 1}; f", { filename: url });
+f(); f(); f();
+const first = await session.post("Profiler.takePreciseCoverage");
+f();
+const second = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+const bodyOffset = "function f(){".length;
+const countFor = c => {
+  const entry = c.result.find(s => s.url === url);
+  // Innermost function entry that covers the body of f().
+  const fn = entry?.functions
+    .filter(f => f.ranges[0].startOffset <= bodyOffset && bodyOffset < f.ranges[0].endOffset)
+    .sort((a, b) => a.ranges[0].endOffset - b.ranges[0].endOffset)[0];
+  return fn?.ranges[0].count;
+};
+console.log(JSON.stringify({ first: countFor(first), second: countFor(second) }));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual({ first: 3, second: 1 });
     });
 
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {

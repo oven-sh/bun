@@ -56,10 +56,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
 }
 
-// Precise code coverage for the inspector Profiler domain, backed by JSC's
-// control flow profiler. Only code compiled while the profiler is enabled is
-// instrumented, which matches the V8 contract that coverage starts at
-// Profiler.startPreciseCoverage.
+// Precise code coverage via JSC's control-flow profiler. Unlike V8 (which
+// deopts and instruments already-compiled code), only functions compiled from
+// this point on are instrumented; recompiling would corrupt live TLA modules.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -86,10 +85,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     if (!profiler)
         return JSValue::encode(jsNull());
 
-    // The profiler keys its data by SourceID but cannot enumerate the scripts
-    // themselves, so walk the heap for live script executables and collect
-    // their source providers. A provider whose executables have all been
-    // collected is not reported; its functions are no longer reachable.
+    // Walk the heap for live script executables to enumerate SourceIDs. Unlike
+    // V8, providers whose executables were all GC'd are not reported, and
+    // offsets index the transpiled (not on-disk) source for Bun-loaded modules.
     Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
     {

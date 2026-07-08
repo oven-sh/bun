@@ -410,6 +410,15 @@ describe("Bun.semver.satisfies()", () => {
       "~=",
       ">=v",
       "^\t",
+      "xy",
+      "*a",
+      "^xy",
+      "xoop",
+      "^0.0.0 - x",
+      "~0.0.0 - x",
+      ">0.0.0 - x",
+      "<0.0.0 - x",
+      "<=0.0.0 - x",
     ]) {
       testSatisfies(`1.2.3-alpha.1 || ${op}`, "1.2.3-alpha.1", true);
       testSatisfies(`${op} || 1.2.3-alpha.1`, "1.2.3-alpha.1", true);

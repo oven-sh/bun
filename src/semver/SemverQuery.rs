@@ -1104,7 +1104,11 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     },
                 };
 
-                if !range.is_match_all() {
+                // npm's hyphen-range grammar only accepts a `[v=\s]*` prefix;
+                // an operator-prefixed left side is not a hyphen range there.
+                if !range.is_match_all()
+                    || !matches!(token.tag, TokenTag::Version | TokenTag::Gte)
+                {
                     branch_has_non_any = true;
                 }
                 if is_or {
@@ -1135,7 +1139,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // An operator whose operand is not a real version or wildcard
                 // char (`^`, `~`, `>=`, `^v`, `vv`, ...) is dropped by
                 // node-semver loose mode before the collapse step.
-                if !range.is_match_all() || !has_real_operand {
+                if !range.is_match_all() || !has_real_operand || !parse_result.valid {
                     branch_has_non_any = true;
                 }
                 if count == 0 && token.tag == TokenTag::Version {

@@ -1,7 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
 use core::cell::Cell;
-use core::ffi::c_uint;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
@@ -1663,10 +1662,6 @@ impl Request {
         // Box<Request> drops on the error path automatically
         self.clone_into(&mut req, global_this, false)?;
         Ok(req)
-    }
-
-    pub fn set_timeout(&self, seconds: c_uint) {
-        let _ = self.request_context.set_timeout(seconds);
     }
 }
 

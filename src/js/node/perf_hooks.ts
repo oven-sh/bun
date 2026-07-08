@@ -237,11 +237,13 @@ function timerify(fn, options = {}) {
 
   Object.defineProperties(timerified, {
     length: {
+      __proto__: null,
       configurable: false,
       enumerable: true,
       value: fn.length,
     },
     name: {
+      __proto__: null,
       configurable: false,
       enumerable: true,
       value: `timerified ${fn.name}`,
@@ -323,7 +325,6 @@ export default {
   PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  timerify,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");
     return impl(options);

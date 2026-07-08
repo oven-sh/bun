@@ -404,6 +404,7 @@ class AsyncResource {
     }
     Object.defineProperties(bound, {
       length: {
+        __proto__: null,
         configurable: true,
         enumerable: false,
         value: fn.length,

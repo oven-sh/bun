@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import net from "net";
 import perf, { PerformanceObserver } from "perf_hooks";
 
@@ -51,6 +52,37 @@ test("timerify entry shape", async () => {
     duration: entry.duration,
     detail: [42, "hello"],
   });
+});
+
+test("timerify is only exposed on performance, not as a top-level export", () => {
+  expect(perf.performance.timerify).toBeFunction();
+  // @ts-expect-error — verifying the export is absent, matching Node.
+  expect(perf.timerify).toBeUndefined();
+});
+
+test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { performance } = require("perf_hooks");
+       const { AsyncResource } = require("async_hooks");
+       // Pollute after module load: this test targets the two defineProperties
+       // sites that timerify()/bind() call per invocation, not module init.
+       Object.prototype.get = function () {};
+       const t = performance.timerify(function f(_a) {});
+       console.log("timerified name=" + t.name + " length=" + t.length);
+       const bound = new AsyncResource("R").bind(function g(_a, _b) {});
+       console.log("bound length=" + bound.length);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Invalid property descriptor");
+  expect(stdout).toBe("timerified name=timerified f length=1\nbound length=2\n");
+  expect(exitCode).toBe(0);
 });
 
 test("net entries are instanceof PerformanceEntry", async () => {

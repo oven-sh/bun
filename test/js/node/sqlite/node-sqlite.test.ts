@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, statSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import path from "node:path";
@@ -601,7 +601,10 @@ describe("DatabaseSync.prototype.function()", () => {
           console.log(JSON.stringify({ rows: rows.length, calls: n, isOpen: db.isOpen }));
         `,
       ],
-      env: { ...bunEnv, Malloc: "1" },
+      // Malloc=1 forces bmalloc's SystemHeap so ASAN catches a regression.
+      // WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
+      // so the child would trap at JSC init before running any test code.
+      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -633,7 +636,10 @@ describe("DatabaseSync.prototype.function()", () => {
           console.log(JSON.stringify({ isOpen: db.isOpen, err, haveStmt: !!stmt }));
         `,
       ],
-      env: { ...bunEnv, Malloc: "1" },
+      // Malloc=1 forces bmalloc's SystemHeap so ASAN catches a regression.
+      // WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
+      // so the child would trap at JSC init before running any test code.
+      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

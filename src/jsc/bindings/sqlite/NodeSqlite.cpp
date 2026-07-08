@@ -154,6 +154,21 @@ static void throwSqliteMessage(JSGlobalObject* globalObject, ThrowScope& scope, 
     scope.throwException(globalObject, error);
 }
 
+// The session extension, sqlite3_deserialize, sqlite3_db_config, and friends
+// report failure only in their RETURN code, so `r` is truth. Use the handle's
+// richer extended code/message only when its primary code AGREES with `r`.
+static void throwSqliteReturnCodeError(JSGlobalObject* globalObject, ThrowScope& scope, sqlite3* db, int r)
+{
+    // A stale prior error or a benign SQLITE_ROW/DONE left on the handle
+    // never matches `r`, so neither can ever be reported in place of it.
+    int onHandle = db ? sqlite3_extended_errcode(db) : SQLITE_OK;
+    if ((onHandle & 0xff) == (r & 0xff)) {
+        throwSqliteError(globalObject, scope, db);
+        return;
+    }
+    throwSqliteMessage(globalObject, scope, r, sqliteText(sqlite3_errstr(r)));
+}
+
 // Node's THROW_ERR_INVALID_STATE(...) emits the message verbatim; Bun's
 // generic helper prepends "Invalid state: ". Several upstream tests
 // (test-sqlite-session.js, test-sqlite-template-tag.js, …) assert the
@@ -1029,15 +1044,15 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     sqlite3_db_config(m_db, SQLITE_DBCONFIG_DQS_DDL, v, nullptr);
 
     v = m_config.enableForeignKeyConstraints ? 1 : 0;
-    if (sqlite3_db_config(m_db, SQLITE_DBCONFIG_ENABLE_FKEY, v, nullptr) != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, m_db);
+    if (int r = sqlite3_db_config(m_db, SQLITE_DBCONFIG_ENABLE_FKEY, v, nullptr); r != SQLITE_OK) {
+        throwSqliteReturnCodeError(globalObject, scope, m_db, r);
         closeInternal();
         return false;
     }
 
     v = m_config.enableDefensive ? 1 : 0;
-    if (sqlite3_db_config(m_db, SQLITE_DBCONFIG_DEFENSIVE, v, nullptr) != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, m_db);
+    if (int r = sqlite3_db_config(m_db, SQLITE_DBCONFIG_DEFENSIVE, v, nullptr); r != SQLITE_OK) {
+        throwSqliteReturnCodeError(globalObject, scope, m_db, r);
         closeInternal();
         return false;
     }
@@ -1047,8 +1062,8 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         if (initial >= 0) sqlite3_limit(m_db, info.id, initial);
     }
 
-    if (sqlite3_busy_timeout(m_db, m_config.timeout) != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, m_db);
+    if (int r = sqlite3_busy_timeout(m_db, m_config.timeout); r != SQLITE_OK) {
+        throwSqliteReturnCodeError(globalObject, scope, m_db, r);
         closeInternal();
         return false;
     }
@@ -1062,8 +1077,8 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
             closeInternal();
             return false;
         }
-        if (sqlite3_db_config(m_db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, nullptr) != SQLITE_OK) {
-            throwSqliteError(globalObject, scope, m_db);
+        if (int r = sqlite3_db_config(m_db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, nullptr); r != SQLITE_OK) {
+            throwSqliteReturnCodeError(globalObject, scope, m_db, r);
             closeInternal();
             return false;
         }
@@ -1322,7 +1337,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * gl
     if (LAZY_SQLITE_HAS_LOAD_EXTENSION()) {
         int r = sqlite3_db_config(self->connection(), SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, allow ? 1 : 0, nullptr);
         if (r != SQLITE_OK) {
-            throwSqliteError(globalObject, scope, self->connection());
+            throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
             return {};
         }
     }
@@ -1430,7 +1445,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
         // SQLite owns udf once xDestroy is passed in — it invokes xDestroy
         // on the failure path too (name too long / nArg out of range /
         // SQLITE_BUSY), so a manual delete here would double-free.
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     // SQLite has dropped any previous (name, argc) registration, so release
@@ -1530,7 +1545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
         NodeSqliteAggregate::xStep, NodeSqliteAggregate::xFinal, xValue, xInverse, NodeSqliteAggregate::xDestroy);
     if (r != SQLITE_OK) {
         // SQLite already invoked xDestroy(agg) on the failure path.
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     // SQLite has dropped any previous (name, argc) registration, so release
@@ -1596,14 +1611,14 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
     sqlite3_session* pSession = nullptr;
     int r = sqlite3session_create(self->connection(), dbNameUtf8.data(), &pSession);
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     auto tableUtf8 = table.utf8();
     r = sqlite3session_attach(pSession, table.isEmpty() ? nullptr : tableUtf8.data());
     if (r != SQLITE_OK) {
         sqlite3session_delete(pSession);
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
 
@@ -1760,7 +1775,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
         return JSValue::encode(jsBoolean(false));
     }
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        // An invalid conflict-handler return is SQLITE_MISUSE and a malformed
+        // changeset is SQLITE_CORRUPT; the vendored tests assert both exactly.
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     return JSValue::encode(jsBoolean(true));
@@ -1778,7 +1795,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
     int out = 0;
     int r = sqlite3_db_config(self->connection(), SQLITE_DBCONFIG_DEFENSIVE, enable, &out);
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     return JSValue::encode(jsUndefined());
@@ -1877,7 +1894,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
     self->m_authorizer.set(vm, self, arg0.getObject());
     int r = sqlite3_set_authorizer(self->connection(), nodeSqliteAuthorizerCallback, self);
     if (r != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     return JSValue::encode(jsUndefined());
@@ -2033,7 +2050,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
         // success and failure paths once FREEONCLOSE is set. The
         // connection itself is unchanged on failure, so existing
         // sessions stay valid (Node doesn't touch them here either).
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
     // The schema swap succeeded. Node leaves sessions attached here, but
@@ -3196,7 +3213,7 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
     int r = fn(self->session(), &nChangeset, &pChangeset);
     if (r != SQLITE_OK) {
         if (pChangeset) sqlite3_free(pChangeset);
-        throwSqliteError(globalObject, scope, db->connection());
+        throwSqliteReturnCodeError(globalObject, scope, db->connection(), r);
         return {};
     }
     auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), static_cast<size_t>(nChangeset));

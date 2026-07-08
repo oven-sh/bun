@@ -552,15 +552,16 @@ impl Drop for FileResponseStream {
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {
-    // On macOS, sendfile(2) can park uninterruptibly on an XNU turnstile under
-    // mbuf pressure and stay there after the peer task is torn down, leaving
-    // the process unkillable. The BufferedReader path is fully non-blocking.
-    #[cfg(any(windows, target_os = "macos"))]
+    // Matches the cfg on `on_sendfile`. macOS is intentionally excluded: XNU's
+    // sendfile allocates mbufs with M_WAIT/no PCATCH before the SS_NBIO check,
+    // so under mbuf pressure it sleeps uninterruptibly and the process becomes
+    // unkillable. The BufferedReader path is fully non-blocking.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = (resp, file_type, length);
         return false;
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sendfile() needs a real socket fd; SSL writes go through BIO and H3
         // through lsquic stream frames — neither has one.

@@ -16,13 +16,7 @@ pub struct SendFile {
 impl SendFile {
     pub fn is_eligible(url: &URL) -> bool {
         // `if cfg!()` is fine here: both branches type-check (no platform-only items referenced).
-        // macOS: XNU's sendfile allocates mbufs with M_WAIT/no PCATCH before the
-        // SS_NBIO check, so under mbuf pressure it sleeps uninterruptibly and the
-        // process becomes unkillable. The buffered write path stays non-blocking.
-        if cfg!(windows)
-            || cfg!(target_os = "macos")
-            || !feature_flags::STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT
-        {
+        if cfg!(windows) || !feature_flags::STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT {
             return false;
         }
         url.is_http() && url.href.len() > 0

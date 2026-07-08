@@ -155,6 +155,33 @@ describe("Blob type", () => {
     await f.write("hello", { type: "text/plain" });
     expect(f.type).toBe("text/plain");
   });
+
+  test("typeless slice body omits the Content-Type header", async () => {
+    using dir = tempDir("blob-type-slice-ct", { "f.txt": "hello world" });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new Response(
+          JSON.stringify({ ct: req.headers.get("content-type"), hasCt: req.headers.has("content-type") }),
+        ),
+    });
+    const post = (body: BodyInit) => fetch(server.url, { method: "POST", body }).then(r => r.json());
+
+    // A typeless slice's type is "", so per Fetch "extract a body" the header
+    // is omitted, never sent with an empty value (this was already latently
+    // broken for the non-table-MIME case before this change).
+    expect(await post(Bun.file(path.join(String(dir), "f.txt")).slice(0, 5))).toEqual({ ct: null, hasCt: false });
+    expect(await post(Bun.file(path.join(String(dir), "f.txt"), { type: "custom/x" }).slice(0, 5))).toEqual({
+      ct: null,
+      hasCt: false,
+    });
+    expect(await post(new Blob(["hello"], { type: "text/plain" }).slice(0, 3))).toEqual({ ct: null, hasCt: false });
+    // control: the unsliced file still carries its extension-sniffed type
+    expect(await post(Bun.file(path.join(String(dir), "f.txt")))).toEqual({
+      ct: "text/plain;charset=utf-8",
+      hasCt: true,
+    });
+  });
 });
 
 test("new Blob stringifies non-Blob object parts in order", async () => {

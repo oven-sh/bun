@@ -75,12 +75,10 @@ where
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        if offset > 0 {
-            writer.write_str("\n")?;
-        }
     }
 
     if offset > 0 {
+        writer.write_str("\n")?;
         let mut formatter = formatter.indented();
         formatter.write_indent(writer)?;
 

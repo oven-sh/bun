@@ -12,7 +12,7 @@ use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -47,15 +47,20 @@ bun_output::define_scoped_log!(log, Listener, visible);
 /// `bun_jsc::rare_data::SSLContextCache` slot is an opaque cycle-break stub;
 /// the concrete cache lives on `crate::jsc_hooks::RuntimeState`.
 #[inline]
-fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
+/// Runs `f` against this thread's `SSL_CTX` cache. Takes a callback rather than
+/// handing out a `&'static mut`, which two callers could hold at once.
+fn with_ssl_ctx_cache<R>(
+    f: impl FnOnce(&mut crate::api::SSLContextCache::SSLContextCache) -> R,
+) -> R {
     let state = crate::jsc_hooks::runtime_state();
     debug_assert!(
         !state.is_null(),
         "runtime_state() before init_runtime_state"
     );
     // SAFETY: `state` is the per-thread `RuntimeState` boxed in
-    // `init_runtime_state`; address-stable until VM teardown.
-    unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
+    // `init_runtime_state`, address-stable until VM teardown, and only the JS
+    // thread reaches here — so this `&mut` is unique for `f`'s duration.
+    f(unsafe { &mut (*state).ssl_ctx_cache })
 }
 
 // Route through the codegen'd `toJS` wrapper so we
@@ -655,38 +660,35 @@ impl Listener {
 
         // node:tls passes the native SecureContext (already-built SSL_CTX*) — no
         // re-parse. Bun.listen({tls}) callers may still pass a raw options dict.
-        let sni_ctx: *mut boring_sys::SSL_CTX = if let Some(sc) = SecureContext::from_js(tls) {
-            // SAFETY: from_js returned non-null; SecureContext is live for the call.
-            unsafe { (*sc).borrow() }
-        } else if let Some(ssl_config) = {
-            // SAFETY: per-thread VM; valid for program lifetime.
-            let vm = VirtualMachine::get().as_mut();
-            SSLConfig::from_js(vm, global, tls)?
-        } {
-            // Note: `cfg` cleanup handled by Drop on SSLConfig
-            let mut create_err = uws::create_bun_socket_error_t::none;
-            // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache; only
-            // touched from the JS thread so the `&mut` is unique.
-            let cache = unsafe { &mut *vm_ssl_ctx_cache() };
-            match cache.get_or_create(&ssl_config, &mut create_err) {
-                Some(ctx) => ctx,
-                None => {
-                    if create_err != uws::create_bun_socket_error_t::none {
-                        return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
-                                create_err, global,
-                            ),
-                        ));
+        let sni_ctx: *mut boring_sys::SSL_CTX =
+            if let Some(sc) = tls.as_class_ref::<SecureContext>() {
+                sc.borrow()
+            } else if let Some(ssl_config) = {
+                // SAFETY: per-thread VM; valid for program lifetime.
+                let vm = VirtualMachine::get().as_mut();
+                SSLConfig::from_js(vm, global, tls)?
+            } {
+                // Note: `cfg` cleanup handled by Drop on SSLConfig
+                let mut create_err = uws::create_bun_socket_error_t::none;
+                match with_ssl_ctx_cache(|cache| cache.get_or_create(&ssl_config, &mut create_err))
+                {
+                    Some(ctx) => ctx,
+                    None => {
+                        if create_err != uws::create_bun_socket_error_t::none {
+                            return Err(global.throw_value(
+                                crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                                    create_err, global,
+                                ),
+                            ));
+                        }
+                        let code = boring_sys::ERR_get_error();
+                        return Err(global
+                            .throw_value(crate::crypto::boringssl_jsc::err_to_js(global, code)));
                     }
-                    let code = boring_sys::ERR_get_error();
-                    return Err(
-                        global.throw_value(crate::crypto::boringssl_jsc::err_to_js(global, code))
-                    );
                 }
-            }
-        } else {
-            return Ok(JSValue::UNDEFINED);
-        };
+            } else {
+                return Ok(JSValue::UNDEFINED);
+            };
 
         // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -998,7 +1000,7 @@ impl Listener {
         // `tls.secureContext` so we share its already-built SSL_CTX.
         let mut owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>> = None;
         if ssl_enabled {
-            let native_sc: Option<*mut SecureContext> = 'blk: {
+            let native_sc: Option<&SecureContext> = 'blk: {
                 let Some(tls_js) = opts.get_truthy(global, "tls")? else {
                     break 'blk None;
                 };
@@ -1008,11 +1010,10 @@ impl Listener {
                 let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
                     break 'blk None;
                 };
-                SecureContext::from_js(sc_js)
+                sc_js.as_class_ref::<SecureContext>()
             };
             if let Some(sc) = native_sc {
-                // SAFETY: from_js returned non-null; SecureContext is live for the call.
-                owned_ssl_ctx = NonNull::new(unsafe { (*sc).borrow() });
+                owned_ssl_ctx = NonNull::new(sc.borrow());
             }
         }
         let mut ssl_ctx_guard = scopeguard::guard(owned_ssl_ctx, |c| {
@@ -1255,10 +1256,7 @@ impl Listener {
                 // `requires_custom_request_ctx` gate is gone; the cache makes the
                 // default-vs-custom distinction by content.
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache field
-                // inside the boxed `RuntimeState`; address-stable until VM teardown.
-                let cache = unsafe { &mut *vm_ssl_ctx_cache() };
-                match cache.get_or_create(ssl_cfg, &mut create_err) {
+                match with_ssl_ctx_cache(|cache| cache.get_or_create(ssl_cfg, &mut create_err)) {
                     Some(ctx) => {
                         *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
                     }
@@ -1337,8 +1335,8 @@ impl Listener {
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
-        // SAFETY: socket is non-null (Uws variant invariant).
-        let socket_ref = unsafe { &mut *socket };
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        let socket_ref = bun_opaque::opaque_deref_mut(socket);
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
             Err(_) => return Ok(JSValue::UNDEFINED),
@@ -1787,9 +1785,9 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     if ls.is_null() || hostname.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `ls` is live per the fn contract; the accept group's ext holds
-    // the owning `*mut Listener` for the lifetime of the listen socket.
-    let listener_ptr: *mut Listener = unsafe { (*ls).group().owner::<Listener>() };
+    // The accept group's ext holds the owning `*mut Listener` for the lifetime
+    // of the listen socket. S008: `ListenSocket` is an `opaque_ffi!` ZST.
+    let listener_ptr: *mut Listener = bun_opaque::opaque_deref_mut(ls).group().owner::<Listener>();
     if listener_ptr.is_null() {
         return core::ptr::null_mut();
     }
@@ -1877,10 +1875,9 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     if result.is_undefined_or_null() {
         return core::ptr::null_mut();
     }
-    if let Some(sc) = SecureContext::from_js(result) {
-        // SAFETY: from_js returned non-null; the SecureContext is live for the
-        // call and SSL_set_SSL_CTX takes its own reference to the SSL_CTX.
-        return unsafe { (*sc).borrow() }.cast();
+    if let Some(sc) = result.as_class_ref::<SecureContext>() {
+        // `SSL_set_SSL_CTX` takes its own reference to the returned SSL_CTX.
+        return sc.borrow().cast();
     }
     // Anything else is not a SecureContext: Node treats this as an invalid SNI
     // context and drops the connection.

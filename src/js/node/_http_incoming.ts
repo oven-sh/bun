@@ -378,6 +378,8 @@ function onDataIncomingMessage(
     return;
   }
 
+  this.socket?._unrefTimer?.();
+
   if (chunk && !this._dumped) this.push(chunk);
 
   if (isLast) {

@@ -27,7 +27,6 @@ const {
   kRealListen,
   tlsSymbol,
   optionsSymbol,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -51,7 +50,6 @@ const {
   eofInProgress,
   runSymbol,
   drainMicrotasks,
-  setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
@@ -254,6 +252,7 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
   this[kInternalSocketData] = undefined;
@@ -711,6 +710,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
+        const serverTimeoutMs = server.timeout;
+        if (serverTimeoutMs || socket.timeout) socket.setTimeout(serverTimeoutMs || 0);
         socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
@@ -920,25 +921,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    if (this[kDeferredTimeouts]) {
-      for (const { msecs, callback } of this[kDeferredTimeouts]) {
-        this.setTimeout(msecs, callback);
-      }
-      delete this[kDeferredTimeouts];
-    }
-
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 
+// Like Node.js: the server records the value and applies it to each new
+// connection via socket.setTimeout(); the socket emits 'timeout' and a
+// listener on any of req/res/server vetoes the default destroy.
 Server.prototype.setTimeout = function (msecs, callback) {
-  const server = this[serverSymbol];
-  if (server) {
-    setServerIdleTimeout(server, Math.ceil(msecs / 1000));
-    if (typeof callback === "function") this.once("timeout", callback);
-  } else {
-    (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
-  }
+  this.timeout = msecs;
+  if (typeof callback === "function") this.on("timeout", callback);
   return this;
 };
 
@@ -1042,6 +1034,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _httpMessage;
   _secureEstablished = false;
   #pendingCallback = null;
+  #timeoutTimer = null;
+  #boundOnTimeout = null;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
@@ -1086,6 +1080,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #onDrain() {
+    this._unrefTimer();
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
     const callback = this.#pendingCallback;
@@ -1096,6 +1091,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.emit("drain");
   }
   #onData(chunk, last) {
+    this._unrefTimer();
     if (chunk) {
       this.push(chunk);
     }
@@ -1122,6 +1118,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
+    const timer = this.#timeoutTimer;
+    if (timer) {
+      clearTimeout(timer);
+      this.#timeoutTimer = null;
+    }
     this.server?.[kTrackedConnections]?.delete(this);
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
@@ -1183,12 +1184,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // If there is a response, and it has pending data,
     // we suppress the timeout because a write is in progress.
     if (response && response.writableLength > 0) {
+      this._unrefTimer();
       return;
     }
     this.emit("timeout");
   }
   _unrefTimer() {
-    // for compatibility
+    this.#timeoutTimer?.refresh();
   }
 
   address() {
@@ -1324,7 +1326,18 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(_timeout, _callback) {
+  setTimeout(msecs, callback) {
+    this.timeout = msecs;
+    const existing = this.#timeoutTimer;
+    if (existing) clearTimeout(existing);
+    if (msecs === 0) {
+      this.#timeoutTimer = null;
+      if (callback) this.removeListener("timeout", callback);
+    } else {
+      const bound = (this.#boundOnTimeout ??= this._onTimeout.bind(this));
+      this.#timeoutTimer = setTimeout(bound, msecs).unref();
+      if (callback) this.once("timeout", callback);
+    }
     return this;
   }
 
@@ -1687,6 +1700,8 @@ function stopServerResponsePerf(this: any) {
 function endSocketOnFinishIfNeeded(socket, res) {
   if (res[kMustCloseConnection]) {
     socket?.end();
+  } else {
+    socket?._unrefTimer();
   }
 }
 

@@ -65,8 +65,10 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed { false };
-    // The user's pull() is one-shot (matches the native-sink and one-shot consumers).
-    bool m_pullStarted { false };
+    // An async pull()'s returned promise has not yet settled: onPull must not re-enter
+    // the user's pull() while this is true. Cleared by the pull promise's fulfillment
+    // reaction (onDirectPullFulfilled).
+    bool m_pullInFlight { false };
     // which of the 3 sink flavors this controller runs.
     DirectSinkKind m_sinkKind { DirectSinkKind::ArrayBuffer };
 

@@ -703,10 +703,10 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(value.byteLength).toBe(10);
   });
 
-  // A type:"direct" pull() is one-shot: when it is async and awaits controller.flush(),
-  // subsequent reads on the JS path must not re-invoke it while the first call is still
-  // in flight (or after it has called end()).
-  describe("a direct stream's async pull() is invoked exactly once", () => {
+  // A type:"direct" pull() is re-invoked per read as a demand signal, but never while a
+  // previous async pull() is still pending and never after end(). A pull that writes the
+  // whole body and ends therefore runs exactly once.
+  describe("a direct stream's async pull() is not re-entered while pending", () => {
     const N = 30000;
     const CS = 4096;
     const body = new Uint8Array(N);
@@ -782,6 +782,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
 
     it("a write buffered while no reader is waiting is delivered on the next read", async () => {
+      const { promise: readerIdle, resolve: markReaderIdle } = Promise.withResolvers();
       const { promise: gate, resolve: openGate } = Promise.withResolvers();
       const { promise: wrote, resolve: markWrote } = Promise.withResolvers();
       const rs = new ReadableStream({
@@ -789,7 +790,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
         async pull(c) {
           c.write(new Uint8Array(10));
           await c.flush();
-          await Bun.sleep(1);
+          await readerIdle;
           c.write(new Uint8Array(20));
           markWrote();
           await gate;
@@ -798,12 +799,64 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       });
       const reader = rs.getReader();
       expect((await reader.read()).value.byteLength).toBe(10);
+      markReaderIdle();
       await wrote;
-      await Bun.sleep(1);
-      // The 20 bytes were written while no reader was waiting and the end-of-tick
-      // flush already ran; the next read must still drain them from the sink.
+      // Yield one macrotask so the end-of-tick auto-flush has already run (and found no
+      // waiting reader). The NEXT read must still drain the buffered 20 bytes from the sink.
+      await new Promise(resolve => setImmediate(resolve));
       expect((await reader.read()).value.byteLength).toBe(20);
       openGate();
+      expect((await reader.read()).done).toBe(true);
+    });
+
+    it("a per-call pull() that writes one chunk and returns is re-invoked on each read", async () => {
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          if (pulls > 3) return c.end();
+          await Promise.resolve();
+          c.write(new Uint8Array([pulls]));
+          c.flush();
+        },
+      });
+      const reader = rs.getReader();
+      const out = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const b of value) out.push(b);
+      }
+      expect({ pulls, out }).toEqual({ pulls: 4, out: [1, 2, 3] });
+    });
+
+    it("a read issued while pull() is suspended is serviced by the next pull", async () => {
+      let pulls = 0;
+      const gates = [];
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          if (pulls > 2) return c.end();
+          const { promise, resolve } = Promise.withResolvers();
+          gates.push(resolve);
+          await promise;
+          c.write(new Uint8Array([pulls]));
+          c.flush();
+        },
+      });
+      const reader = rs.getReader();
+      const p1 = reader.read();
+      // Arrives while pull #1 is suspended: must NOT re-enter pull() concurrently.
+      const p2 = reader.read();
+      expect(pulls).toBe(1);
+      gates.shift()();
+      expect((await p1).value[0]).toBe(1);
+      // pull #1 has settled; the waiting p2 triggers pull #2 from the fulfillment reaction.
+      await new Promise(resolve => setImmediate(resolve));
+      gates.shift()();
+      expect((await p2).value[0]).toBe(2);
       expect((await reader.read()).done).toBe(true);
     });
   });

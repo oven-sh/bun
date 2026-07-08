@@ -51,6 +51,14 @@ extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 namespace uWS
 {
 
+/* Declared here (the common include of HttpResponseData.h and HttpContext.h,
+ * which include each other) so the IsNodeHttp default is visible exactly once
+ * and before either of them. IsNodeHttp=false is the Bun.serve layout; the
+ * true specialization adds the node:http-only per-connection state. */
+template <bool SSL, bool IsNodeHttp = false>
+struct HttpResponseData;
+
+
     /* We require at least this much post padding */
     static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
 
@@ -1016,8 +1024,8 @@ namespace uWS
         }
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
-    template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool usingNodeHttpCompat, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    template <bool ConsumeMinimally, bool IsNodeHttp>
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -1033,7 +1041,7 @@ namespace uWS
              * handler set isConnectRequest when it saw the body fin). Everything
              * after the end of that message is opaque data for the 'upgrade'
              * listener's socket, never a pipelined HTTP request. */
-            if (usingNodeHttpCompat && isConnectRequest) [[unlikely]] {
+            if (IsNodeHttp && isConnectRequest) [[unlikely]] {
                 void *returnedUser = dataHandler(user, std::string_view(data, length), false);
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
@@ -1114,7 +1122,7 @@ namespace uWS
              * the request head completes - Node dispatches the 'request' first and the
              * error then surfaces through 'clientError'. The error is deferred until
              * after the request handler below; no body data is ever emitted. */
-            bool deferredTransferEncodingError = usingNodeHttpCompat && transferEncoding.has
+            bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
 
             transferEncoding.invalid = transferEncoding.invalid || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked));
@@ -1174,7 +1182,7 @@ namespace uWS
              * every dispatched request (not only chunked ones) so a pipelined GET
              * cannot read the previous chunked request's trailers via
              * takeRequestTrailers() on this same connection. */
-            if (nodeHttpRequestTrailers) {
+            if constexpr (IsNodeHttp) {
                 nodeHttpRequestTrailers->clear();
             }
 
@@ -1198,7 +1206,7 @@ namespace uWS
             } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
-                if (chunkedExtensionsByteCount) {
+                if constexpr (IsNodeHttp) {
                     *chunkedExtensionsByteCount = 0;
                 }
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
@@ -1208,7 +1216,7 @@ namespace uWS
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
-                        if (chunkedExtensionsByteCount && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                        if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
@@ -1218,7 +1226,7 @@ namespace uWS
                             return HttpParserResult::success(consumedTotal, returnedUser);
                         }
                     }
-                    if (chunkedExtensionsByteCount && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                    if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
@@ -1265,7 +1273,8 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool usingNodeHttpCompat, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    template <bool IsNodeHttp>
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
         const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxHeaderSize : MAX_FALLBACK_SIZE;
@@ -1280,7 +1289,7 @@ public:
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
-                    if (chunkedExtensionsByteCount && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                    if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
@@ -1288,7 +1297,7 @@ public:
                         return HttpParserResult::success(0, returnedUser);
                     }
                 }
-                if (chunkedExtensionsByteCount && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                     return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                 }
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
@@ -1331,7 +1340,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, usingNodeHttpCompat, useInsecureHTTPParser, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -1355,7 +1364,7 @@ public:
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
-                            if (chunkedExtensionsByteCount && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                            if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }
                             void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
@@ -1363,7 +1372,7 @@ public:
                                 return HttpParserResult::success(0, returnedUser);
                             }
                         }
-                        if (chunkedExtensionsByteCount && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                        if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
@@ -1403,7 +1412,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, usingNodeHttpCompat, useInsecureHTTPParser, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

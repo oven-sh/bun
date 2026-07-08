@@ -384,6 +384,13 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("2.0.0 * || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
     testSatisfies("2.0.0 || * 1.2.3-alpha.1", "1.2.3-alpha.1", true);
     testSatisfies("* 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    // A dist-tag/garbage branch is dropped by node-semver loose mode before
+    // the collapse-to-`*` step, so it is not a match-all branch.
+    testSatisfies("1.2.3-alpha.1 || boop", "1.2.3-alpha.1", true);
+    testSatisfies("boop || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("1.2.3-alpha.1 || latest", "1.2.3-alpha.1", true);
+    testSatisfies("latest || 1.2.3-alpha.1", "1.2.3-alpha.1", true);
+    testSatisfies("boop || * || 1.2.3-alpha.1", "1.2.3-alpha.1", false);
 
     const notPassing = [
       "0.1.0",

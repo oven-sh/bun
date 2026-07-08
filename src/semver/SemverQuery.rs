@@ -503,6 +503,7 @@ impl Group {
     pub fn is_exact(&self) -> bool {
         self.head.next.is_none()
             && self.head.head.next.is_none()
+            && !self.flags.is_set(Flags::MATCH_ALL_BRANCH)
             && !self.head.head.range.has_right()
             && self.head.head.range.left.op == RangeOp::Eql
     }
@@ -970,6 +971,9 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 while i < input.len() && input[i] != b' ' && input[i] != b'|' {
                     i += 1;
                 }
+                // node-semver loose mode drops these tokens via `.filter(c => c.length)`
+                // before the collapse-to-`*` step, so a garbage-only branch is not ANY.
+                branch_has_non_any = true;
                 skip_round = true;
             }
         }

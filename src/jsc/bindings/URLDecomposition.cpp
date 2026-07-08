@@ -25,6 +25,7 @@
 
 #include "URLDecomposition.h"
 
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
@@ -104,8 +105,54 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
+static inline bool isASCIITabOrNewline(char32_t c)
+{
+    return c == 0x0009 || c == 0x000A || c == 0x000D;
+}
+
+// WTF::URL::setHost IDNA-encodes non-ASCII input without the spec's tab/newline strip or
+// percent-decode. Strip tab/newline and percent-encode non-ASCII so it takes the ASCII
+// passthrough and the full URLParser (which does both) runs on reparse.
+static String preprocessHostSetterValue(StringView value)
+{
+    bool needsWork = false;
+    for (auto codePoint : value.codePoints()) {
+        if (!isASCII(codePoint) || isASCIITabOrNewline(codePoint)) {
+            needsWork = true;
+            break;
+        }
+    }
+    if (!needsWork)
+        return { };
+
+    StringBuilder builder;
+    builder.reserveCapacity(value.length());
+    for (auto codePoint : value.codePoints()) {
+        if (isASCIITabOrNewline(codePoint))
+            continue;
+        if (isASCII(codePoint)) {
+            builder.append(static_cast<Latin1Character>(codePoint));
+            continue;
+        }
+        uint8_t utf8[U8_MAX_LENGTH];
+        unsigned utf8Length = 0;
+        // Input is IDLUSVString, so no unpaired surrogates.
+        U8_APPEND_UNSAFE(utf8, utf8Length, codePoint);
+        for (unsigned i = 0; i < utf8Length; ++i) {
+            builder.append('%');
+            builder.append(static_cast<Latin1Character>(upperNibbleToASCIIHexDigit(utf8[i])));
+            builder.append(static_cast<Latin1Character>(lowerNibbleToASCIIHexDigit(utf8[i])));
+        }
+    }
+    return builder.toString();
+}
+
 void URLDecomposition::setHost(StringView value)
 {
+    String preprocessed = preprocessHostSetterValue(value);
+    if (!preprocessed.isNull())
+        value = preprocessed;
+
     auto fullURL = this->fullURL();
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
@@ -147,6 +194,10 @@ String URLDecomposition::hostname() const
 
 void URLDecomposition::setHostname(StringView host)
 {
+    String preprocessed = preprocessHostSetterValue(host);
+    if (!preprocessed.isNull())
+        host = preprocessed;
+
     auto fullURL = this->fullURL();
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;

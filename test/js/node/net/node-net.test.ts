@@ -1459,3 +1459,106 @@ it("onread: a buffer factory that never yields a Uint8Array hands the callback `
     server.close();
   }
 });
+
+it("onread: `false` from a callback holding the `true` sentinel still pauses until resume()", async () => {
+  // Node runs the readStop-on-false logic even when the factory has not yet
+  // produced a Uint8Array and the callback is handed the literal `true`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L177-L198
+  const seen: unknown[] = [];
+  const paused = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let sock: Socket | undefined;
+  const server = createServer(c => {
+    sock = c;
+    c.on("data", () => {});
+    c.write("aaaa");
+  });
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: () => 42 as any,
+        callback(n: number, buf: unknown) {
+          seen.push(buf);
+          if (seen.length === 1) {
+            paused.resolve();
+            return false;
+          }
+          done.resolve();
+          return true;
+        },
+      },
+    });
+    client.on("error", done.reject);
+    await paused.promise;
+    // A second write while paused must not reach the callback...
+    sock!.write("bbbb");
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    expect(seen).toEqual([true]);
+    // ...until resume().
+    client.resume();
+    await done.promise;
+    expect(seen).toEqual([true, true]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("onread: a callback that throws mid-chunk destroys the socket instead of leaving a byte gap", async () => {
+  // Node has no catch here (the throw is an uncaughtException). bun fails the
+  // socket closed: without that, the undelivered rest of the thrown-on chunk
+  // ("efghijkl") is dropped and the NEXT write is delivered after a silent gap.
+  const calls: string[] = [];
+  const errored = Promise.withResolvers<Error>();
+  // 12 bytes through a 4-byte buffer; the connection stays open, and the
+  // server answers any client byte with a second write.
+  const server = createServer(c => {
+    c.on("data", () => c.write("XYZ"));
+    c.write(Buffer.from("abcdefghijkl"));
+  });
+  let client: Socket | undefined;
+  try {
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, () => {
+      server.off("error", listening.reject);
+      listening.resolve();
+    });
+    await listening.promise;
+    client = createConnection({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      onread: {
+        buffer: Buffer.alloc(4),
+        callback(n: number, buf: Buffer) {
+          calls.push(buf.toString("latin1", 0, n));
+          if (calls.length === 1) throw new Error("boom");
+          return true;
+        },
+      },
+    });
+    client.on("error", e => {
+      errored.resolve(e as Error);
+      // A destroyed (fail-closed) socket cannot solicit the second write.
+      if (!client!.destroyed) client!.write("ping");
+    });
+    const err = await errored.promise;
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    expect({ message: err.message, calls, destroyed: client.destroyed }).toEqual({
+      message: "boom",
+      calls: ["abcd"],
+      destroyed: true,
+    });
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});

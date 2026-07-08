@@ -1602,8 +1602,12 @@ function Socket(options?) {
           const dest = self[kOnreadBuffer];
           if (dest === true) {
             // No buffer to copy into: Node hands the callback the raw `true`
-            // and the bytes of that read are dropped.
-            onreadCallback(total - offset, true);
+            // and the bytes of that read are dropped - but a `false` return
+            // must still readStop until resume(), like the sliced branch.
+            if (onreadCallback(total - offset, true) === false) {
+              self[kOnreadTail] = kOnreadEmptyTail;
+              self._handle?.pause?.();
+            }
             return;
           }
           // A zero-length buffer makes libuv report ENOBUFS for the read,
@@ -1635,7 +1639,11 @@ function Socket(options?) {
           offset += n;
         }
       } catch (e) {
-        self.emit("error", e);
+        // Fail closed like the ENOBUFS branch: a callback that threw mid-chunk
+        // has undelivered bytes behind it, and letting the next native read
+        // through would hand the user a stream with a silent gap. (Node has no
+        // catch at all here - the throw is an uncaughtException.)
+        self.destroy(e);
       }
     };
     // when the onread option is specified we use a different handlers object

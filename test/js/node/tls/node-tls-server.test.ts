@@ -1554,6 +1554,13 @@ describe("tls.Server secure-context options", () => {
     const tlsServer = createServer({ key: agent6Key, cert: agent6CertChain }, s => s.end());
     const closes: number[] = [];
     tlsServer.on("close", () => closes.push(1));
+    // The decrement under test runs in the server-side wrap's _destroy, so
+    // await that exact socket's 'close' rather than a proxy for it.
+    const wrapClosed = Promise.withResolvers<void>();
+    tlsServer.once("secureConnection", s => {
+      s.once("close", wrapClosed.resolve);
+      s.once("error", wrapClosed.reject);
+    });
     const rawServer = net.createServer(raw => tlsServer.emit("connection", raw));
     let client: TLSSocket | undefined;
     try {
@@ -1562,15 +1569,14 @@ describe("tls.Server secure-context options", () => {
       rawServer.once("error", listening.reject);
       rawServer.listen(0);
       await listening.promise;
-      const wrapClosed = Promise.withResolvers<void>();
       client = connect({ port: (rawServer.address() as AddressInfo).port, rejectUnauthorized: false }, () =>
         client!.end(),
       );
       client.on("error", wrapClosed.reject);
-      client.on("close", wrapClosed.resolve);
       await wrapClosed.promise;
-      // Let the wrap's own deferred teardown run before observing the server.
-      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+      // One tick so _emitCloseIfDrained's nextTick'd spurious 'close' (the bug)
+      // would have fired before the assertion.
+      await new Promise(resolve => setImmediate(resolve));
       expect({ closes, connections: tlsServer._connections }).toEqual({ closes: [], connections: 0 });
     } finally {
       client?.destroy();
@@ -1636,10 +1642,14 @@ describe("tls.Server secure-context options", () => {
   });
 
   it("a failing setSecureContext() leaves the STARTTLS wrap credentials untouched", async () => {
-    // The raw options are published for the `connection` wrap path only after
-    // validation succeeds, so a throwing call cannot desync the two.
+    // `ciphers: "@SECLEVEL=3"` is only rejected by the LATE cipher-content
+    // validator, after every option field would already have been assigned; a
+    // torn call must not let the wrap serve the rejected certificate.
     const tlsServer = createServer({ key: agent6Key, cert: agent6CertChain });
-    expect(() => tlsServer.setSecureContext({ key: agent6Key, cert: agent6CertChain, ciphers: 123 as any })).toThrow();
+    expect(() =>
+      tlsServer.setSecureContext({ key: COMMON_CERT.key, cert: COMMON_CERT.cert, ciphers: "@SECLEVEL=3" }),
+    ).toThrow(/INVALID_COMMAND/);
+    const originalFingerprint = new crypto.X509Certificate(agent6CertChain).fingerprint256;
     const judged = Promise.withResolvers<void>();
     tlsServer.on("secureConnection", s => {
       judged.resolve();
@@ -1663,7 +1673,10 @@ describe("tls.Server secure-context options", () => {
         connected.resolve,
       );
       client.on("error", connected.reject);
-      await Promise.race([connected.promise, judged.promise]);
+      await connected.promise;
+      await judged.promise;
+      // The wrap must present the certificate from BEFORE the rejected call.
+      expect(client.getPeerCertificate().fingerprint256).toBe(originalFingerprint);
     } finally {
       client?.destroy();
       rawServer.close();

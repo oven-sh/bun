@@ -1330,11 +1330,11 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext = function (options) {
-    // The STARTTLS 'connection' listener below wraps plain sockets with
-    // _sharedCreds, built at the end of this function only once validation has
-    // succeeded, so a throwing call cannot leave the wrap path on rejected
-    // options.
+    // Every validated value is staged into `next` and committed onto `this`
+    // only after the LAST validator, so a throwing call leaves the server -
+    // and the STARTTLS wrap, which rebuilds from these fields - untouched.
     const serverTLSOptions = options;
+    const next: Record<string, any> = { __proto__: null };
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
@@ -1344,10 +1344,10 @@ function Server(options, secureConnectionListener): void {
       const { ALPNProtocols } = options;
 
       if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, this);
+        convertALPNProtocols(ALPNProtocols, next);
       } else {
         // An omitted ALPNProtocols clears the previous call's protocols.
-        this.ALPNProtocols = undefined;
+        next.ALPNProtocols = undefined;
       }
 
       let cert = options.cert;
@@ -1357,13 +1357,13 @@ function Server(options, secureConnectionListener): void {
       if (cert) {
         throwOnInvalidTLSArray("options.cert", cert);
       }
-      this.cert = cert;
+      next.cert = cert;
 
       let key = options.key;
       if (key) {
         throwOnInvalidTLSArray("options.key", key);
       }
-      this.key = key;
+      next.key = key;
 
       // BoringSSL rejects a mixed EC/RSA multi-identity configuration while
       // loading the chain. The native context is built lazily at listen time,
@@ -1421,39 +1421,39 @@ function Server(options, secureConnectionListener): void {
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
       }
-      this.ca = ca;
+      next.ca = ca;
 
       const crl = options.crl;
       if (crl) {
         throwOnInvalidTLSArray("options.crl", crl);
       }
-      this.crl = crl;
+      next.crl = crl;
 
       // A truthy allowPartialTrustChain lets store certificates act as anchors
       // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L186);
       // Node never type-checks it, but the strict native converter needs a boolean.
-      this.allowPartialTrustChain = !!options.allowPartialTrustChain;
+      next.allowPartialTrustChain = !!options.allowPartialTrustChain;
 
-      this.sessionTimeout = options.sessionTimeout;
+      next.sessionTimeout = options.sessionTimeout;
 
       const sigalgs = options.sigalgs;
       if (sigalgs !== undefined && sigalgs !== null) {
         validateString(sigalgs, "options.sigalgs");
         if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
       }
-      this.sigalgs = sigalgs;
+      next.sigalgs = sigalgs;
 
       let passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
       }
-      this.passphrase = passphrase;
+      next.passphrase = passphrase;
 
       let servername = options.servername;
       if (servername && typeof servername !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
       }
-      this.servername = servername;
+      next.servername = servername;
 
       let secureOptions = options.secureOptions || 0;
       if (secureOptions && typeof secureOptions !== "number") {
@@ -1462,20 +1462,19 @@ function Server(options, secureConnectionListener): void {
       // Node's server honors its own cipher order unless honorCipherOrder is
       // explicitly disabled; it reaches OpenSSL as a context option.
       if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
-      this.secureOptions = secureOptions;
+      next.secureOptions = secureOptions;
 
       const requestCert = options.requestCert || false;
 
-      if (requestCert) this._requestCert = requestCert;
-      else this._requestCert = undefined;
+      next._requestCert = requestCert || undefined;
 
       const rejectUnauthorized = options.rejectUnauthorized;
 
       if (typeof rejectUnauthorized !== "undefined") {
         // Node's tls.Server applies `rejectUnauthorized !== false`:
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1368
-        this._rejectUnauthorized = rejectUnauthorized !== false;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault();
+        next._rejectUnauthorized = rejectUnauthorized !== false;
+      } else next._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;
       if (typeof ciphers !== "undefined") {
@@ -1486,26 +1485,49 @@ function Server(options, secureConnectionListener): void {
         validateCiphers(ciphers);
       }
       // Unconditional so an omitted `ciphers` clears the previous value.
-      this.ciphers = options.ciphers;
+      next.ciphers = options.ciphers;
 
       // Pin the protocol version range the server will negotiate.
       // validateSecureContextOptions already rejected unknown method names.
       // Assign unconditionally so a later setSecureContext() without these
       // options clears the previous call's version constraints instead of
       // re-applying them on the next listen.
-      this.secureProtocol = options.secureProtocol;
-      this.minVersion = options.minVersion;
-      this.maxVersion = options.maxVersion;
+      next.secureProtocol = options.secureProtocol;
+      next.minVersion = options.minVersion;
+      next.maxVersion = options.maxVersion;
+    }
+    // Validation is complete: commit atomically.
+    if (options) {
+      this.ALPNProtocols = next.ALPNProtocols;
+      this.cert = next.cert;
+      this.key = next.key;
+      this.ca = next.ca;
+      this.crl = next.crl;
+      this.allowPartialTrustChain = next.allowPartialTrustChain;
+      this.sessionTimeout = next.sessionTimeout;
+      this.sigalgs = next.sigalgs;
+      this.passphrase = next.passphrase;
+      this.servername = next.servername;
+      this.secureOptions = next.secureOptions;
+      this._requestCert = next._requestCert;
+      this._rejectUnauthorized = next._rejectUnauthorized;
+      this.ciphers = next.ciphers;
+      this.secureProtocol = next.secureProtocol;
+      this.minVersion = next.minVersion;
+      this.maxVersion = next.maxVersion;
     }
     // Node builds one _sharedCreds per setSecureContext (wrap.js:1520) and
     // reuses it for every connection. The native accept path builds its own
     // SSL_CTX at listen time (via `this[buntls]`) and reports key/cert
-    // failures on the server's 'error' event; keep that lazy contract by
-    // stashing the post-normalized options here and building _sharedCreds on
-    // first STARTTLS wrap so it uses the same secureOptions (with the
-    // server's honorCipherOrder default) as the native path.
+    // failures on the server's 'error' event; keep that lazy contract and
+    // build _sharedCreds on the first STARTTLS wrap. A SNAPSHOT of the user
+    // options is stashed so a later mutation of the caller's object cannot
+    // change what that wrap builds (Node snapshots synchronously).
     this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
-    this[ksharedCredsOptions] = serverTLSOptions;
+    this[ksharedCredsOptions] =
+      serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
+        ? serverTLSOptions
+        : { ...serverTLSOptions };
   };
 
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to

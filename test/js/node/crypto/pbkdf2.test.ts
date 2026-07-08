@@ -139,6 +139,13 @@ describe("invalid inputs", () => {
 
 [Infinity, -Infinity, NaN, 1.5, 0.5].forEach(input => {
   test(`${input} iterations`, () => {
+    expect(() => crypto.pbkdf2("password", "salt", input, 8, "sha256", () => {})).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "iterations" is out of range. It must be an integer. Received ${input}`,
+      }),
+    );
     expect(() => crypto.pbkdf2Sync("password", "salt", input, 8, "sha256")).toThrow(
       expect.objectContaining({
         name: "RangeError",

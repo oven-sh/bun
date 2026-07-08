@@ -885,6 +885,51 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect((await reader.read()).done).toBe(true);
     });
 
+    // Three concurrent reads must each be serviced regardless of where the per-call
+    // producer's write/flush sits relative to its first await.
+    const perCallShapes = {
+      "write without flush": () => {
+        let n = 0;
+        return async c => {
+          n++;
+          await Promise.resolve();
+          c.write(new Uint8Array([n]));
+        };
+      },
+      "write and flush before the first await": () => {
+        let n = 0;
+        return async c => {
+          n++;
+          c.write(new Uint8Array([n]));
+          c.flush();
+          await Promise.resolve();
+        };
+      },
+      "first call async, later calls sync": () => {
+        let n = 0;
+        return c => {
+          n++;
+          if (n === 1)
+            return Promise.resolve().then(() => {
+              c.write(new Uint8Array([1]));
+              c.flush();
+            });
+          c.write(new Uint8Array([n]));
+          c.flush();
+        };
+      },
+    };
+    it.each(Object.keys(perCallShapes))(
+      "three concurrent reads are each serviced by a per-call pull (%s)",
+      async shape => {
+        const rs = new ReadableStream({ type: "direct", pull: perCallShapes[shape]() });
+        const reader = rs.getReader();
+        const reads = [reader.read(), reader.read(), reader.read()];
+        const [r1, r2, r3] = await Promise.all(reads);
+        expect({ r1: r1.value[0], r2: r2.value[0], r3: r3.value[0] }).toEqual({ r1: 1, r2: 2, r3: 3 });
+      },
+    );
+
     it("an async pull() that returns without writing is not re-invoked from its own fulfillment", async () => {
       // Edge-triggered re-pull: a do-nothing pull must not livelock the microtask queue.
       let pulls = 0;

@@ -432,14 +432,16 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         RELEASE_AND_RETURN(scope, readableStreamError(globalObject, stream, error));
 }
 
-// Invokes the user's pull() once. Sets m_pullInFlight when pull() returned a pending
-// promise and attaches the settlement reactions to it. Returns the synchronous abrupt
+// Invokes the user's pull() once. Brackets the call with m_pullInFlight (the spec default
+// controller sets [[pulling]] before invoking pullAlgorithm); leaves it set only when pull()
+// returned a promise, whose settlement reaction clears it. Returns the synchronous abrupt
 // completion (empty when pull() returned normally or threw a termination).
 static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
     JSObject* pullFunction = controller->m_pull.get();
     JSObject* underlyingSource = controller->m_underlyingSource.get();
+    controller->m_pullInFlight = true;
     JSValue result;
     JSValue abrupt;
     {
@@ -450,12 +452,15 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
         if (catchScope.exception()) [[unlikely]]
             abrupt = takeAbruptCompletion(globalObject, catchScope);
     }
-    if (!abrupt.isEmpty())
+    if (!abrupt.isEmpty()) {
+        controller->m_pullInFlight = false;
         return abrupt;
+    }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
-        controller->m_pullInFlight = true;
         auto* runtime = JSStreamsRuntime::from(globalObject);
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onDirectPullFulfilled(), runtime->onDirectPullRejected(), jsUndefined(), controller);
+    } else {
+        controller->m_pullInFlight = false;
     }
     return {};
 }
@@ -727,6 +732,13 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
         m_deferFlush = 1;
 }
 
+static bool takeDirectPullAgain(JSDirectStreamController* controller)
+{
+    bool pullAgain = controller->m_pullAgain;
+    controller->m_pullAgain = false;
+    return pullAgain;
+}
+
 // Settlement reactions of the user pull()'s returned promise ([reaction-convention]).
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -735,17 +747,21 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    controller->m_pullInFlight = false;
-    bool pullAgain = controller->m_pullAgain;
-    controller->m_pullAgain = false;
     auto* stream = controller->m_stream.get();
-    if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable)
+    if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable) {
+        controller->m_pullInFlight = false;
+        controller->m_pullAgain = false;
         return JSValue::encode(jsUndefined());
-    // Drain anything this pull wrote while no reader was waiting.
+    }
+    // Drain anything this pull wrote while no reader was waiting. m_pullInFlight stays set
+    // so onFlush's delivery-branch re-arm fires for a pull that wrote without c.flush().
     controller->onFlush(globalObject);
+    controller->m_pullInFlight = false;
     RETURN_IF_EXCEPTION(scope, {});
-    // Edge-triggered: re-pull only if a NEW read arrived while this pull was in flight.
-    if (pullAgain && !controller->m_closed && !controller->m_pullInFlight) {
+    bool pullAgain = takeDirectPullAgain(controller);
+    // Edge-triggered: re-pull only if a NEW read arrived while a pull was in flight. Loop so
+    // a synchronous re-pull that leaves another consumer queued chains to the next.
+    while (pullAgain && !controller->m_closed && !controller->m_pullInFlight) {
         controller->m_deferClose = -1;
         controller->m_deferFlush = -1;
         JSValue abrupt = callDirectPull(vm, globalObject, controller);
@@ -767,6 +783,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObj
             controller->onFlush(globalObject);
         }
         RETURN_IF_EXCEPTION(scope, {});
+        // An async re-pull left m_pullInFlight set: leave m_pullAgain on the controller for
+        // that pull's own fulfillment reaction instead of consuming it into a dead local.
+        if (controller->m_pullInFlight)
+            break;
+        pullAgain = takeDirectPullAgain(controller);
     }
     return JSValue::encode(jsUndefined());
 }

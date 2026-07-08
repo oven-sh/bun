@@ -603,9 +603,6 @@ const SQL: typeof Bun.SQL = function SQL(
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
       }
-      if (needs_rollback && !transaction_still_open()) {
-        return Promise.$reject(transaction_aborted_error());
-      }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries, preRunGuard);
     }

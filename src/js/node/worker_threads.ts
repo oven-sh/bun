@@ -180,11 +180,22 @@ function injectFakeEmitter(Class) {
 
   function once(event, listener) {
     const wrapper = functionForEventType(event, listener);
-    this.addEventListener(event, wrapper, { once: true });
+    const target = this;
+    // EventTarget drops a {once:true} listener natively, without telling the
+    // registry — so purge it here or listenerCount()/eventNames() keep counting
+    // a listener that already fired.
+    function onceWrapper(ev) {
+      registryFor(target, false)?.get(event)?.delete(onceWrapper);
+      return wrapper(ev);
+    }
+    // off()/removeListener() look the registered function up through the user's
+    // listener, so point it at the wrapper we actually registered.
+    listener[wrappedListener] = onceWrapper;
+    this.addEventListener(event, onceWrapper, { once: true });
     const map = registryFor(this, true)!;
     let set = map.get(event);
     if (!set) map.set(event, (set = new Set()));
-    set.add(wrapper);
+    set.add(onceWrapper);
     return this;
   }
 

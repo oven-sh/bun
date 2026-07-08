@@ -866,6 +866,38 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.close();
 });
 
+// EventTarget removes a {once:true} listener natively, so the JS-side registry
+// backing listenerCount()/eventNames() has to drop it too.
+test("a fired once() listener stops being counted", async () => {
+  const { port1, port2 } = new MessageChannel();
+  let fired = 0;
+  port1.once("message", () => fired++);
+  expect(port1.listenerCount("message")).toBe(1);
+  port2.postMessage(1);
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  expect({ fired, count: port1.listenerCount("message"), named: port1.eventNames().includes("message") }).toEqual({
+    fired: 1,
+    count: 0,
+    named: false,
+  });
+  port1.close();
+  port2.close();
+});
+
+// once() re-points listener[wrappedListener] at the self-purging wrapper, so
+// off() must still find it through the user's original function.
+test("off() removes a pending once() listener", () => {
+  const { port1, port2 } = new MessageChannel();
+  const fn = () => {};
+  port1.once("message", fn);
+  expect(port1.listenerCount("message")).toBe(1);
+  port1.off("message", fn);
+  expect(port1.listenerCount("message")).toBe(0);
+  port1.close();
+  port2.close();
+});
+
 test("close(cb) fires cb asynchronously after this tick's setImmediate", async () => {
   const { port1 } = new MessageChannel();
   const order: string[] = [];

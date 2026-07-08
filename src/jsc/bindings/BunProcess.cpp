@@ -1390,14 +1390,13 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 
 #if OS(LINUX)
 static struct sigaction s_jscSuspendResumeAction;
-static pid_t s_jscSuspendResumePid;
 
 static void Bun__sigThreadSuspendResumeGuard(int signalNumber, siginfo_t* info, void* ucontext)
 {
     // JSC's GC suspend/resume always uses pthread_kill from this process (si_code == SI_TKILL,
     // si_pid == us). Any other delivery is unsolicited and would null-deref targetThread in
     // WTF::Thread::signalHandlerSuspendResume, so forward it to JS listeners instead.
-    if (info && info->si_code == SI_TKILL && info->si_pid == s_jscSuspendResumePid) [[likely]] {
+    if (info && info->si_code == SI_TKILL && info->si_pid == getpid()) [[likely]] {
         s_jscSuspendResumeAction.sa_sigaction(signalNumber, info, ucontext);
         return;
     }
@@ -1413,7 +1412,6 @@ extern "C" void Bun__installSigThreadSuspendResumeGuard()
         return;
     if (!(s_jscSuspendResumeAction.sa_flags & SA_SIGINFO))
         return;
-    s_jscSuspendResumePid = getpid();
     struct sigaction action = s_jscSuspendResumeAction;
     action.sa_sigaction = &Bun__sigThreadSuspendResumeGuard;
     sigaction(signalNumber, &action, nullptr);

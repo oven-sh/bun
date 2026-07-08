@@ -747,13 +747,13 @@ public:
     }
     void setOnSocketData(typename HttpContextData<SSL, NODE_HTTP>::OnSocketDataCallback onData) {
         if constexpr (NODE_HTTP) {
-            httpContext->getSocketContextData()->onSocketData = onData;
+            httpContext->getSocketContextData()->nodeCompat.onSocketData = onData;
         }
     }
 
     void setOnClientError(typename HttpContextData<SSL, NODE_HTTP>::OnClientErrorCallback onClientError) {
         if constexpr (NODE_HTTP) {
-            httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+            httpContext->getSocketContextData()->nodeCompat.onClientError = std::move(onClientError);
         }
     }
 

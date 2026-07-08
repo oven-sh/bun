@@ -4501,14 +4501,12 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             }
         }
 
-        if !blob.content_type().is_empty() {
-            bun_http_types::MimeType::by_name(blob.content_type())
+        if let Some(ct) = blob.content_type_or_mime_type().filter(|ct| !ct.is_empty()) {
+            bun_http_types::MimeType::by_name(ct)
         } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
             content
         } else if blob.was_string() {
             bun_http_types::MimeType::TEXT
-            // TODO: should we get the mime type off of the Blob.Store if it exists?
-            // A little wary of doing this right now due to causing some breaking change
         } else {
             bun_http_types::MimeType::OTHER
         }

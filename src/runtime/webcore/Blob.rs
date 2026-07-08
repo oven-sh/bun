@@ -6732,6 +6732,15 @@ impl Any {
         }
     }
 
+    /// `content_type()`, or for a File-/S3-backed Blob with no explicit type,
+    /// the extension-sniffed `mime_type` held on the store.
+    pub fn content_type_or_mime_type(&self) -> Option<&[u8]> {
+        match self {
+            Any::Blob(b) => b.content_type_or_mime_type(),
+            _ => Some(self.content_type()),
+        }
+    }
+
     pub fn was_string(&self) -> bool {
         match self {
             Any::Blob(b) => b.charset.get() == strings::AsciiStatus::AllAscii,

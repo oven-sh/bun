@@ -181,6 +181,26 @@ describe("Blob type", () => {
       hasCt: true,
     });
   });
+
+  test("serving a typeless file slice from a dynamic handler falls back to the file's mime type", async () => {
+    using dir = tempDir("blob-type-slice-serve", { "f.txt": "hello world" });
+    const file = path.join(String(dir), "f.txt");
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new URL(req.url).pathname === "/slice"
+          ? new Response(Bun.file(file).slice(0, 5))
+          : new Response(Bun.file(file)),
+    });
+    const headers = async (p: string) => {
+      const r = await fetch(server.url.href + p);
+      return { ct: r.headers.get("content-type"), cd: r.headers.get("content-disposition"), body: await r.text() };
+    };
+    // Matches the unsliced file: extension-sniffed type, no Content-Disposition
+    // (not application/octet-stream, not an empty-valued header).
+    expect(await headers("slice")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello" });
+    expect(await headers("full")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello world" });
+  });
 });
 
 test("new Blob stringifies non-Blob object parts in order", async () => {

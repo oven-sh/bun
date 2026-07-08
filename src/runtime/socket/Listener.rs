@@ -196,13 +196,14 @@ impl Listener {
                 normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice())
             {
                 // Note: reshaped — `pipe_name` borrows `buf`; copy to an owned
-                // buffer so the borrow ends before we move `socket_config` below.
+                // buffer so the borrow ends before we `mem::take` from
+                // `socket_config` below.
                 let mut pipe_buf = PathBuffer::uninit();
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
-                // Transfer the allocation out of `socket_config` so the
-                // `mem::forget` below doesn't leak it.
+                // Move the hostname bytes into `connection`; `socket_config`
+                // drops the emptied slice.
                 let connection = UnixOrHost::Unix(
                     core::mem::take(&mut socket_config.hostname_or_unix)
                         .into_vec()
@@ -957,8 +958,8 @@ impl Listener {
                     break 'blk UnixOrHost::Fd(fd);
                 }
             }
-            // Transfer the allocation out of `socket_config` so the later
-            // `mem::forget` doesn't leak it.
+            // Move the hostname bytes into `host`; `socket_config` drops the
+            // emptied slice.
             let host: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
                 .into_vec()
                 .into_boxed_slice();

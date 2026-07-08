@@ -1489,7 +1489,10 @@ describe("duplicate Host header field lines", () => {
     try {
       await new Promise<void>(resolve => server.listen(0, resolve));
       const { port } = server.address() as { port: number };
-      const response = await sendRaw(port, "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n");
+      const response = await sendRaw(
+        port,
+        "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+      );
       expect(response).toContain("HTTP/1.1 400");
       expect(handlerReached).toBe(false);
     } finally {
@@ -1508,7 +1511,10 @@ describe("duplicate Host header field lines", () => {
     try {
       await new Promise<void>(resolve => server.listen(0, resolve));
       const { port } = server.address() as { port: number };
-      const response = await sendRaw(port, "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n");
+      const response = await sendRaw(
+        port,
+        "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+      );
       expect(response).toContain("HTTP/1.1 200");
       expect(seen).toEqual([
         {

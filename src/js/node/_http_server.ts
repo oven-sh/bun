@@ -819,7 +819,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!requestShouldKeepAlive(http_req)) {
           http_res[kMustCloseConnection] = true;
         }
-        http_res.once("finish", onResponseFinishHandleSocket.bind(undefined, server, socket, http_res));
+        http_res.once("finish", emitResponseFinishHandleSocket);
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -1046,8 +1046,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           return;
         }
         if (http_res.socket) {
-          http_res.on("finish", http_res.detachSocket.bind(http_res, socket));
-          http_res.once("finish", advanceResponsePipeline.bind(undefined, server, socket));
+          // Detach the socket first, then advance the response pipeline on
+          // the connection it was on (the same order as the two listeners
+          // this replaces). One shared function instead of two per-request
+          // bind() closures.
+          http_res.once("finish", emitAsyncResponseFinish);
         }
 
         const { resolve, promise } = $newPromiseCapability(Promise);
@@ -2104,7 +2107,6 @@ $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 // the user actually set, even after the headers have been flushed.
 function renderNativeHeaders(res) {
   const headersMap = res[kOutHeaders];
-  const uniqueHeaders = res[kUniqueHeaders];
   const flat: string[] = [];
   let hasDate = false;
   let hasConnection = false;
@@ -2129,7 +2131,10 @@ function renderNativeHeaders(res) {
         // Like Node's _storeHeader: array values become one line each, except
         // "cookie" and headers listed in the uniqueHeaders option, which are
         // sent as a single line joined with "; ".
-        if (valueLength >= 2 && (key === "cookie" || (uniqueHeaders != null && uniqueHeaders.$has(key)))) {
+        // res[kUniqueHeaders] is only consulted for multi-valued headers, so
+        // read it here rather than once per render: it is a prototype-chain
+        // miss for every response whose server did not set `uniqueHeaders`.
+        if (valueLength >= 2 && (key === "cookie" || (res[kUniqueHeaders] != null && res[kUniqueHeaders].$has(key)))) {
           flat.push(name, value.join("; "));
         } else {
           for (let i = 0; i < valueLength; i++) {
@@ -2255,6 +2260,25 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
+// `once("finish", fn.bind(server, socket, ...))` allocated a bound closure
+// per request. Inside a "finish" listener `this` is the response, and the
+// connection socket is `this.req.socket` (which carries its owning server) —
+// NOT `this.socket`, which is the response's own transport facade and has no
+// `.server`. So a single shared function needs no per-request state at all.
+function emitResponseFinishHandleSocket() {
+  const socket = this.req?.socket;
+  onResponseFinishHandleSocket(socket?.server, socket, this);
+}
+
+// The async-response half of Node.js's resOnFinish. Detach before advancing,
+// in the same order as the two separate listeners this replaces.
+// advanceResponsePipeline already bails on a missing socket.
+function emitAsyncResponseFinish() {
+  const socket = this.req?.socket;
+  if (socket != null) this.detachSocket(socket);
+  advanceResponsePipeline(socket?.server, socket);
+}
+
 // Runs when a response has finished, like the transport-related half of
 // Node.js's resOnFinish: either end the connection (responses that must
 // close) or arm the keep-alive idle timeout so an idle kept-alive connection
@@ -2363,8 +2387,7 @@ function advanceResponsePipeline(server, socket) {
     res.assignSocket(socket);
   }
   socket[kRequest] = res.req;
-  res.on("finish", res.detachSocket.bind(res, socket));
-  res.once("finish", advanceResponsePipeline.bind(undefined, server, socket));
+  res.once("finish", emitAsyncResponseFinish);
 
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no

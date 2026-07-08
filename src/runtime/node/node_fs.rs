@@ -5697,8 +5697,80 @@ impl NodeFS {
         }
         // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
         #[cfg(not(windows))]
+        {
+            let rc = unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) };
+            // OHOS: hard links are blocked by seccomp (EPERM).
+            // Fall back to copying file data so `fs.link()` still works.
+            #[cfg(target_env = "ohos")]
+            if rc < 0 {
+                let errno = SystemErrno::from_i32(sys::last_errno());
+                if errno == E::EPERM {
+                    return Self::link_copy_fallback(from, to, args);
+                }
+            }
+            Maybe::<ret::Link>::errno_sys_pd(
+                rc,
+                sys::Tag::link,
+                args.old_path.slice(),
+                args.new_path.slice(),
+            )
+            .unwrap_or(Ok(()))
+        }
+    }
+
+    /// Copy file data from `src` to `dest` using a read-write loop.
+    /// Used as a fallback when the native operation (hardlink, rename across
+    /// devices) is not supported.
+    fn copy_file_data(src: &ZStr, dest: &ZStr) -> Maybe<()> {
+        const BUF_SIZE: usize = 64 * 1024;
+        let src_fd = match sys::open(src, sys::O::RDONLY, 0) {
+            Ok(fd) => fd,
+            Err(e) => return Err(e),
+        };
+        let dest_fd = match sys::open(dest, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
+            Ok(fd) => fd,
+            Err(e) => {
+                let _ = sys::close(src_fd);
+                return Err(e);
+            }
+        };
+        let result = (|| -> Maybe<()> {
+            let mut buf = vec![0u8; BUF_SIZE];
+            loop {
+                let n = match sys::read(src_fd, &mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => return Err(e),
+                };
+                let mut written = 0;
+                while written < n {
+                    match sys::write(dest_fd, &buf[written..n]) {
+                        Ok(m) => written += m,
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            Ok(())
+        })();
+        let _ = sys::close(src_fd);
+        let _ = sys::close(dest_fd);
+        result
+    }
+
+    /// OHOS fallback for `link()`: copy source file to destination instead of
+    /// creating a hard link (which the OHOS kernel blocks with EPERM).
+    #[cfg(target_env = "ohos")]
+    fn link_copy_fallback(
+        src: &ZStr,
+        dest: &ZStr,
+        args: &args::Link,
+    ) -> Maybe<ret::Link> {
+        Self::copy_file_data(src, dest).map_err(|e| {
+            // Re-attach path context since copy_file_data uses bare errors
+            e.with_path_dest(args.old_path.slice(), args.new_path.slice())
+        })?;
         Maybe::<ret::Link>::errno_sys_pd(
-            unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
+            0,
             sys::Tag::link,
             args.old_path.slice(),
             args.new_path.slice(),
@@ -7757,7 +7829,18 @@ impl NodeFS {
         let to = args.new_path.slice_z(&mut to_buf);
         match Syscall::rename(from, to) {
             Ok(result) => Ok(result),
-            Err(err) => Err(err.with_path_dest(args.old_path.slice(), args.new_path.slice())),
+            Err(err) => {
+                // EXDEV: cross-device rename — fall back to copy + unlink.
+                if err.get_errno() == E::EXDEV {
+                    Self::copy_file_data(from, to).map_err(|e| {
+                        e.with_path_dest(args.old_path.slice(), args.new_path.slice())
+                    })?;
+                    // Unlink source after successful copy.
+                    let _ = sys::unlink(from);
+                    return Ok(());
+                }
+                Err(err.with_path_dest(args.old_path.slice(), args.new_path.slice()))
+            }
         }
     }
 
@@ -8536,7 +8619,22 @@ impl NodeFS {
         result
     }
 
-    fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
+    /// Try `symlink(2)`; on OHOS EPERM (seccomp blocked), fall back to
+    /// copying the source file content so `fs.cp()` still works.
+    fn symlink_or_copy(src: &ZStr, dest: &ZStr) -> Maybe<()> {
+        match Syscall::symlink(src, dest) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                #[cfg(target_env = "ohos")]
+                if e.get_errno() == E::EPERM {
+                    return Self::copy_file_data(src, dest);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn copy_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
         // `bun_sys::readlink` returns the byte length on every
         // platform (the `Syscall` alias = `sys_uv` on Windows would return the
@@ -8552,7 +8650,8 @@ impl NodeFS {
         // SAFETY: NUL written at `target_buf[link_len]`.
         let link_target = ZStr::from_buf(&target_buf[..], link_len);
         if paths::is_absolute(link_target.as_bytes()) {
-            return Syscall::symlink(link_target, dest);
+            Self::symlink_or_copy(link_target, dest)?;
+            return Ok(());
         }
         let mut cwd_buf = PathBuffer::uninit();
         let mut resolved_buf = PathBuffer::uninit();
@@ -8560,7 +8659,8 @@ impl NodeFS {
         let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) else {
             // If we can't resolve cwd, preserve the link target as-is rather
             // than pointing the copied link back at the source path.
-            return Syscall::symlink(link_target, dest);
+            Self::symlink_or_copy(link_target, dest)?;
+            return Ok(());
         };
         let cwd = &cwd_buf[..cwd_len];
         let resolved_buf_len = resolved_buf.len();
@@ -8582,7 +8682,8 @@ impl NodeFS {
         let resolved_len = resolved.len();
         resolved_buf[resolved_len] = 0;
         // SAFETY: NUL written at `resolved_buf[resolved_len]`.
-        Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
+        Self::symlink_or_copy(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)?;
+        Ok(())
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -8746,7 +8847,7 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self._cp_symlink(src, dest);
+                        return self.copy_symlink(src, dest);
                     }
                     return Err(err);
                 }
@@ -8918,7 +9019,7 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self._cp_symlink(src, dest);
+                        return self.copy_symlink(src, dest);
                     }
                     return Err(err);
                 }
@@ -9676,6 +9777,9 @@ fn map_rm_errno_narrow(e: E) -> E {
     match e {
         E::EACCES => E::EACCES,
         E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
+        // OHOS: blocked syscalls can surface EPERM from unlink/rmdir.
+        // Preserve it instead of falling through to EFAULT.
+        E::EPERM => E::EPERM,
         _ => E::EFAULT,
     }
 }

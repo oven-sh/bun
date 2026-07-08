@@ -7,6 +7,7 @@
  */
 import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
 import http, {
@@ -28,7 +29,6 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { AsyncLocalStorage } from "node:async_hooks";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);

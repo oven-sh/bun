@@ -665,13 +665,17 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     );
   }
 
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`. Pin it
+  // so the patched cache directory is created where the assertions look.
+  const cacheDir = join(packageDir, ".bun-cache");
+
   // Force the hardlink backend so the inode assertions below hold on every
   // platform (macOS defaults to clonefile, which copies).
   async function install() {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--backend", "hardlink"],
       cwd: packageDir,
-      env: bunEnv,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -688,11 +692,11 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(storeDirs.length).toBe(noDepsVersions.length);
 
     // Exactly one patched cache directory exists for the package.
-    const cacheDirs = (await readdirSorted(join(packageDir, ".bun-cache"))).filter(
+    const cacheDirs = (await readdirSorted(cacheDir)).filter(
       dir => dir.startsWith("peer-deps@1.0.0") && dir.includes("_patch_hash="),
     );
     expect(cacheDirs.length).toBe(1);
-    const cacheFile = join(packageDir, ".bun-cache", cacheDirs[0], "index.js");
+    const cacheFile = join(cacheDir, cacheDirs[0], "index.js");
 
     // The patch is applied in every variant, and every variant is hardlinked
     // from the single patched cache materialization. Before the fix each

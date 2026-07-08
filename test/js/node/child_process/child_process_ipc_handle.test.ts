@@ -279,4 +279,70 @@ process.on('message', (m, server) => {
         response: true,
       });
     });
+
+  // send(msg, socket, {keepOpen: true}): both parent and child hold a live
+  // dup of the connection. Node's test/parallel/test-child-process-send-keep-open.js.
+  test.concurrent("net.Socket handle sent with {keepOpen: true} stays open in the sender", async () => {
+    using dir = tempDir("ipc-handle-keepopen", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+
+const child = fork('child.js');
+let closed = false;
+const server = net.createServer(socket => {
+  socket.on('close', () => { closed = true; });
+  child.send('socket', socket, { keepOpen: true }, err => {
+    if (err) return finish(false, 'send:' + err.message);
+    // The parent's copy must still be usable after the ack.
+    socket.write('parent', () => {});
+  });
+  child.on('message', m => {
+    if (m !== 'child-wrote') return;
+    // Only end after the child has also written.
+    setTimeout(() => {
+      if (closed) return finish(false, 'parent socket closed by keepOpen send');
+      socket.end();
+    }, 50);
+  });
+}).listen(0, '127.0.0.1', () => {
+  const client = net.connect(server.address().port, '127.0.0.1');
+  client.setEncoding('utf8');
+  let data = '';
+  client.on('data', c => (data += c));
+  client.on('end', () => finish(data.includes('parent') && data.includes('child'), data));
+  client.on('error', e => finish(false, 'client:' + e.message));
+});
+
+function finish(ok, detail) {
+  console.log(ok ? 'RESPONSE:' + detail : 'FAILED:' + detail);
+  try { child.kill(); } catch {}
+  try { server.close(); } catch {}
+  process.exit(ok ? 0 : 1);
+}
+`,
+      "child.js": `
+const net = require('node:net');
+process.on('message', (m, socket) => {
+  if (!(socket instanceof net.Socket)) return process.send({ error: 'handle was ' + typeof socket });
+  socket.write('child', () => process.send('child-wrote'));
+});
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stderr, hasParent: stdout.includes("parent"), hasChild: stdout.includes("child") }).toEqual({
+      exitCode: 0,
+      stderr: expect.any(String),
+      hasParent: true,
+      hasChild: true,
+    });
+  });
 });

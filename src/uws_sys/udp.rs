@@ -69,7 +69,7 @@ impl Socket {
                 close_cb,
                 recv_error_cb,
                 fd,
-                err.map_or(core::ptr::null_mut(), |e| e as *mut _),
+                err.map_or(core::ptr::null_mut(), core::ptr::from_mut),
                 user_data,
             )
         }

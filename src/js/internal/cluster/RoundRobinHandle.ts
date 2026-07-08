@@ -5,6 +5,7 @@ let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
+const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
 
 const ArrayIsArray = Array.isArray;
 
@@ -91,8 +92,8 @@ export default class RoundRobinHandle {
       // getSystemErrorName) expects. On Windows the WSA code goes through
       // uv_translate_sys_error so `getSystemErrorName(errno)` matches
       // `err.code` — same as node's send(err.errno, null).
-      const errno = uvTranslateSysError(typeof err.errno === "number" ? err.errno : 0) || uvTranslateSysError(-1);
-      send(errno, null, null);
+      const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
+      send(raw != null ? uvTranslateSysError(raw) : einvalErrorCode(), null, null);
     });
   }
 

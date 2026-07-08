@@ -1510,7 +1510,7 @@ impl SendQueue {
         // close_on_complete and re-fire the callback with null.
         let will_push_fresh = handle.is_some()
             || self.queue.is_empty()
-            || self.queue.last().map_or(true, |l| {
+            || self.queue.last().is_none_or(|l| {
                 l.handle.is_some()
                     || l.is_ack_nack()
                     || (self.queue.len() == 1 && self.write_in_progress)

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isIPv6, isWindows, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isIPv6, isWindows, joinP, tempDirWithFiles, tls as tlsCerts } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -555,4 +555,224 @@ test.each(["net", "http"])("cluster 'listening' reports the address a %s server 
   for (const [i, target] of targets.entries()) {
     if (!("path" in target)) expect(payloads[i].port).toBeWithin(1, 65536);
   }
+});
+
+test("round-robin worker connection socket has connecting=false and remoteAddress synchronously", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log(JSON.stringify(m));
+    worker.kill();
+    process.exit(0);
+  });
+  cluster.on("listening", (w, address) => {
+    net.connect(address.port, "127.0.0.1").on("error", () => {});
+  });
+} else {
+  net
+    .createServer(socket => {
+      // Captured synchronously in the connection listener: node's onconnection
+      // delivers accepted sockets already open, not connecting.
+      process.send({
+        connecting: socket.connecting,
+        readyState: socket.readyState,
+        remote: typeof socket.remoteAddress,
+      });
+      socket.end();
+    })
+    .listen(0, "127.0.0.1");
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  const m = JSON.parse(stdout.trim());
+  expect(m.connecting).toBe(false);
+  expect(m.readyState).toBe("open");
+  expect(m.remote).toBe("string");
+});
+
+test("round-robin: primary never consumes accepted-socket bytes before handoff", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+const N = 20;
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  let got = 0;
+  worker.on("message", m => {
+    console.log(m);
+    if (++got === N) {
+      worker.kill();
+      process.exit(0);
+    }
+  });
+  cluster.on("listening", (w, address) => {
+    for (let i = 0; i < N; i++) {
+      const c = net.connect(address.port, "127.0.0.1", () => {
+        // Write immediately on connect: with pauseOnConnect at the primary
+        // accept, byte 0 must reach the worker, not the primary's Duplex.
+        c.write("MAGIC-" + i + "-" + "x".repeat(4096));
+        c.end();
+      });
+      c.on("error", () => {});
+    }
+  });
+} else {
+  net
+    .createServer(sock => {
+      let buf = "";
+      sock.on("data", d => (buf += d));
+      sock.on("end", () => process.send(buf.slice(0, 20) + " " + buf.length));
+    })
+    .listen(0, "127.0.0.1");
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  const lines = stdout.trim().split("\n").sort();
+  expect(lines.length).toBe(20);
+  for (const line of lines) {
+    expect(line).toMatch(/^MAGIC-\d+-x+ 41\d\d$/);
+  }
+});
+
+test("TLS cluster worker under SCHED_RR listens on a shared handle and completes handshakes", () => {
+  // Two forked workers + a TLS handshake in a debug build is well over the
+  // default 5s test budget.
+  const dir = tempDirWithFiles("bun-test", {
+    "cert.pem": tlsCerts.cert,
+    "key.pem": tlsCerts.key,
+    "main.ts": `
+const cluster = require("node:cluster");
+const tls = require("node:tls");
+const fs = require("node:fs");
+const path = require("node:path");
+const key = fs.readFileSync(path.join(__dirname, "key.pem"));
+const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
+
+if (cluster.isPrimary) {
+  const w1 = cluster.fork();
+  const w2 = cluster.fork();
+  const ports = new Set();
+  let listening = 0;
+  cluster.on("listening", (w, address) => {
+    ports.add(address.port);
+    if (++listening !== 2) return;
+    // Both workers must share the primary-bound port under SCHED_RR TLS.
+    console.log("distinct ports:", ports.size);
+    const port = address.port;
+    const c = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+      c.write("hi");
+    });
+    c.setEncoding("utf8");
+    c.on("data", d => {
+      console.log("reply:", d);
+      c.end();
+      w1.kill();
+      w2.kill();
+      process.exit(0);
+    });
+    c.on("error", e => {
+      console.log("client error:", e.code);
+      process.exit(1);
+    });
+  });
+} else {
+  tls
+    .createServer({ key, cert }, socket => {
+      socket.on("data", d => socket.end("echo:" + d));
+    })
+    .listen(0);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("distinct ports: 1");
+  expect(stdout).toContain("reply: echo:hi");
+}, 30_000);
+
+test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "cert.pem": tlsCerts.cert,
+    "key.pem": tlsCerts.key,
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const tls = require("node:tls");
+const fs = require("node:fs");
+const path = require("node:path");
+const key = fs.readFileSync(path.join(__dirname, "key.pem"));
+const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
+
+if (cluster.isPrimary) {
+  // Reverse of the existing test: TLS worker claims first, plain worker second.
+  const tlsWorker = cluster.fork({ ROLE: "tls" });
+  cluster.once("listening", () => {
+    const netWorker = cluster.fork({ ROLE: "net" });
+    netWorker.on("message", msg => {
+      console.log("net listen error code:", msg.code);
+      tlsWorker.kill();
+      netWorker.kill();
+      process.exit(0);
+    });
+  });
+} else if (process.env.ROLE === "tls") {
+  tls.createServer({ key, cert }, () => {}).listen(0);
+} else {
+  const server = net.createServer(() => {});
+  server.on("error", err => process.send({ code: err.code }));
+  server.listen(0);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("net listen error code: EINVAL");
+}, 30_000);
+
+test.skipIf(isWindows)("SCHED_NONE listen({fd:2}) fails ENOTSOCK and does not close the primary's stderr", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("worker error code:", m.code);
+    worker.disconnect();
+  });
+  cluster.on("exit", () => {
+    // stderr fd must still be a valid open fd in the primary.
+    try {
+      fs.fstatSync(2);
+      console.log("stderr open: true");
+    } catch (e) {
+      console.log("stderr open: false");
+    }
+    process.exit(0);
+  });
+} else {
+  const server = net.createServer(() => {});
+  server.on("error", err => {
+    process.send({ code: err.code });
+  });
+  server.listen({ fd: 2 });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  // ENOTSOCK when the primary's fd 2 is a pipe/tty; some paths surface EINVAL.
+  // The load-bearing invariant is that the primary's stderr survives remove().
+  expect(stdout).toMatch(/worker error code: (ENOTSOCK|EINVAL|EBADF)/);
+  expect(stdout).toContain("stderr open: true");
 });

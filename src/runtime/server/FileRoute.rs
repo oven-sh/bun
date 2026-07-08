@@ -220,8 +220,8 @@ impl FileRoute {
 
         debug_assert_eq!(names.len(), values.len());
         // S008: variant payloads are ZST opaques — safe `*mut → &mut` deref.
-        match resp {
-            AnyResponse::SSL(s) => {
+        match resp.kind() {
+            bun_uws::AnyResponseKind::SSL(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
@@ -232,7 +232,7 @@ impl FileRoute {
                     }
                 }
             }
-            AnyResponse::TCP(s) => {
+            bun_uws::AnyResponseKind::TCP(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
@@ -243,7 +243,7 @@ impl FileRoute {
                     }
                 }
             }
-            AnyResponse::H3(s) => {
+            bun_uws::AnyResponseKind::H3(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
@@ -268,10 +268,10 @@ impl FileRoute {
     }
 
     fn write_status_code(&self, status: u16, resp: AnyResponse) {
-        match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(r) => {
+        match resp.kind() {
+            bun_uws::AnyResponseKind::SSL(r) => write_status::<true>(r, status),
+            bun_uws::AnyResponseKind::TCP(r) => write_status::<false>(r, status),
+            bun_uws::AnyResponseKind::H3(r) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.

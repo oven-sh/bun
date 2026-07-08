@@ -1476,6 +1476,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_flags(
+                self.config.is_node_http,
                 require_host_header,
                 use_strict_method_validation,
                 use_insecure_http_parser,
@@ -1487,7 +1488,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
+            bun_opaque::opaque_deref_mut(app)
+                .set_max_http_header_size(self.config.is_node_http, max_header_size);
         }
     }
 
@@ -1574,7 +1576,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             self.flags.insert(ServerFlags::TERMINATED);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
+            bun_opaque::opaque_deref_mut(self.app.unwrap()).close(self.config.is_node_http);
         }
     }
 
@@ -1671,7 +1673,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if let Some(dev) = self.dev_server.take() {
                 if let Some(app) = self.app {
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).clear_routes();
+                    bun_opaque::opaque_deref_mut(app).clear_routes(self.config.is_node_http);
                 }
                 drop(dev); // dev.deinit()
             }
@@ -1701,11 +1703,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
             let app = self.app.unwrap();
-            vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
+            // ManagedTask::new takes a fn item; select the NODE_HTTP arm here.
+            fn close_app<const SSL: bool, const NH: bool>(
+                app: *mut uws_sys::NewApp<SSL>,
+            ) -> bun_event_loop::JsResult<()> {
                 // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).close();
+                bun_opaque::opaque_deref_mut(app).close(NH);
                 Ok(())
-            }));
+            }
+            let close = if self.config.is_node_http {
+                close_app::<SSL, true>
+            } else {
+                close_app::<SSL, false>
+            };
+            vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, close));
         }
 
         vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
@@ -1873,7 +1884,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if let Some(app) = this_ref.app.take() {
             // SAFETY: live uws App handle owned by this server.
-            unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
+            unsafe { uws_sys::NewApp::<SSL>::destroy(app, this_ref.config.is_node_http) };
         }
 
         // SAFETY: paired with heap::alloc in `init()`.
@@ -2002,6 +2013,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
+        let nh = self.config.is_node_http;
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
         // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
@@ -2062,6 +2074,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .handler
                 .flags
                 .set(web_socket_server_context::HandlerFlags::SSL, SSL);
+            websocket
+                .handler
+                .flags
+                .set(web_socket_server_context::HandlerFlags::NODE_HTTP, nh);
         }
 
         // --- 3. Register compiled user routes & track "/*" coverage ---
@@ -2096,6 +2112,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             match user_route.route.method {
                 server_config::RouteMethod::Any => {
                     app.any(
+                        nh,
                         path,
                         Some(trampoline::on_user_route_request::<SSL, DEBUG>),
                         ud,
@@ -2118,6 +2135,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             has_any_ws_route_for_star_path = true;
                         }
                         app.ws(
+                            nh,
                             path,
                             ud,
                             1, // id 1 means is a user route
@@ -2127,6 +2145,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 server_config::RouteMethod::Specific(method_val) => {
                     app.method(
+                        nh,
                         method_val,
                         path,
                         Some(trampoline::on_user_route_request::<SSL, DEBUG>),
@@ -2151,6 +2170,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // Websocket upgrade is a GET request
                         if method_val == http_method::Method::GET {
                             app.ws(
+                                nh,
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
@@ -2166,11 +2186,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         for route_path in self.config.negative_routes.iter() {
             let p = route_path.as_bytes();
             app.head(
+                nh,
                 p,
                 Some(trampoline::on_request::<SSL, DEBUG>),
                 self_ptr.cast(),
             );
             app.any(
+                nh,
                 p,
                 Some(trampoline::on_request::<SSL, DEBUG>),
                 self_ptr.cast(),
@@ -2229,6 +2251,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, StaticRoute>(
                         any_server,
                         app,
+                        nh,
                         p.as_ptr(),
                         &entry.path,
                         entry.method,
@@ -2252,6 +2275,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, FileRoute>(
                         any_server,
                         app,
+                        nh,
                         p.as_ptr(),
                         &entry.path,
                         entry.method,
@@ -2275,6 +2299,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
                         any_server,
                         app,
+                        nh,
                         r.as_ptr(),
                         &entry.path,
                         entry.method,
@@ -2333,6 +2358,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 7. Debug-mode specific routes ---
         if DEBUG {
             app.get(
+                nh,
                 b"/bun:info",
                 Some(trampoline::on_bun_info_request::<SSL, DEBUG>),
                 self_ptr.cast(),
@@ -2364,6 +2390,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !has_any_ws_route_for_star_path {
             if let Some(websocket) = websocket_ptr {
                 app.ws(
+                    nh,
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
@@ -2388,6 +2415,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             for method_to_cover in !star_methods_covered_by_user {
                 if has_node_http {
                     app.method(
+                        nh,
                         method_to_cover,
                         b"/*",
                         Some(trampoline::on_node_http_request::<SSL, DEBUG>),
@@ -2395,6 +2423,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     );
                 } else if has_on_request {
                     app.method(
+                        nh,
                         method_to_cover,
                         b"/*",
                         Some(trampoline::on_request::<SSL, DEBUG>),
@@ -2402,6 +2431,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     );
                 } else {
                     app.method(
+                        nh,
                         method_to_cover,
                         b"/*",
                         Some(trampoline::on_404::<SSL, DEBUG>),
@@ -2411,14 +2441,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         } else if has_node_http {
             app.any(
+                nh,
                 b"/*",
                 Some(trampoline::on_node_http_request::<SSL, DEBUG>),
                 ud,
             );
         } else if has_on_request {
-            app.any(b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
+            app.any(nh, b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
         } else {
-            app.any(b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
+            app.any(nh, b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
         }
 
         // H3 fallback — same three-way as H1 above, but driven by user/static
@@ -2447,6 +2478,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if should_add_chrome_devtools_json_route {
             app.get(
+                nh,
                 CHROME_DEVTOOLS_ROUTE,
                 Some(trampoline::on_chrome_devtools_json_request::<SSL, DEBUG>),
                 ud,
@@ -2515,7 +2547,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return JSValue::ZERO;
             };
 
-            app = match uws_sys::NewApp::<SSL>::create(&ssl_options) {
+            app = match uws_sys::NewApp::<SSL>::create(&ssl_options, this_ref.config.is_node_http) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2573,7 +2605,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(server_name, &ssl_options)
+                    .add_server_name_with_options(this_ref.config.is_node_http, server_name, &ssl_options)
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2595,7 +2627,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
+                bun_opaque::opaque_deref_mut(app).domain(this_ref.config.is_node_http, z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
                     Self::deinit(this);
@@ -2655,7 +2687,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(sni_name, &sni_opts)
+                    .add_server_name_with_options(this_ref.config.is_node_http, sni_name, &sni_opts)
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2669,7 +2701,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return JSValue::ZERO;
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
+                bun_opaque::opaque_deref_mut(app).domain(this_ref.config.is_node_http, z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
                     Self::deinit(this);
@@ -2679,8 +2711,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { &mut *this }.set_routes();
             }
         } else {
-            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
-            {
+            app = match uws_sys::NewApp::<SSL>::create(
+                &uws_sys::BunSocketContextOptions::default(),
+                this_ref.config.is_node_http,
+            ) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {
@@ -2767,6 +2801,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // `&mut *this` is the sole borrow while it runs.
                         unsafe {
                             (*app).listen_with_config(
+                                this_ref.config.is_node_http,
                                 Some(trampoline::on_listen::<SSL, DEBUG>),
                                 this.cast::<c_void>(),
                                 uws_app_c::uws_app_listen_config_t {
@@ -2854,6 +2889,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // `&*this` is live across this call.
                 unsafe {
                     (*app).listen_on_unix_socket(
+                        this_ref.config.is_node_http,
                         trampoline::on_listen_unix::<SSL, DEBUG>,
                         this.cast::<c_void>(),
                         z,
@@ -3534,7 +3570,8 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
+            Some(app) =>
+                bun_opaque::opaque_deref_mut(app).num_subscribers(s.config.is_node_http, topic),
             // Defensive 0
             // here for the post-stop window; assert in debug to catch misuse.
             None => {
@@ -3554,8 +3591,8 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) =>
-                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
+            Some(app) => bun_opaque::opaque_deref_mut(app)
+                .publish(s.config.is_node_http, topic, message, opcode, compress),
             // Defensive for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "publish on server with no app");

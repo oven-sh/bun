@@ -1359,9 +1359,11 @@ impl DevServer {
         // shim parameterized on the handler type `H` (which is zero-sized for
         // a fn-item), so each `tramp::<H, SSL>` lowers to a distinct C
         // function pointer with the handler baked in.
+        // bake dev server is never a node:http-compat server.
+        let nh = server.config.is_node_http;
         macro_rules! route {
             ($method:ident, $pattern:expr, $id:expr) => {{
-                app.$method($pattern, Some(dev_route_tramp::<SSL, { $id }>), dev);
+                app.$method(nh, $pattern, Some(dev_route_tramp::<SSL, { $id }>), dev);
             }};
         }
 
@@ -1393,6 +1395,7 @@ impl DevServer {
         route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
         app.ws(
+            nh,
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
             dev,
             0,
@@ -1612,27 +1615,27 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 
 fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     use bun_uws_sys::thunk::OpaqueHandle as _;
-    match resp {
-        AnyResponse::SSL(r) => {
+    match resp.kind() {
+        uws::AnyResponseKind::SSL(r) => {
             ErrorReportRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
         }
-        AnyResponse::TCP(r) => {
+        uws::AnyResponseKind::TCP(r) => {
             ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        uws::AnyResponseKind::H3(_) => not_found(resp),
     }
 }
 
 fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     use bun_uws_sys::thunk::OpaqueHandle as _;
-    match resp {
-        AnyResponse::SSL(r) => {
+    match resp.kind() {
+        uws::AnyResponseKind::SSL(r) => {
             UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
         }
-        AnyResponse::TCP(r) => {
+        uws::AnyResponseKind::TCP(r) => {
             UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        uws::AnyResponseKind::H3(_) => not_found(resp),
     }
 }
 

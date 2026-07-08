@@ -326,6 +326,7 @@ impl ServerConfig {
 pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
+    node_http: bool,
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
@@ -385,16 +386,16 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
     if !path_has_user_head_route && serves_head(&method) {
-        app.head(path, Some(head::<SSL, T>), user_data);
+        app.head(node_http, path, Some(head::<SSL, T>), user_data);
     }
     match method {
         http_method::Optional::Any => {
-            app.any(path, Some(handler::<SSL, T>), user_data);
+            app.any(node_http, path, Some(handler::<SSL, T>), user_data);
         }
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method(method_, path, Some(handler::<SSL, T>), user_data);
+                app.method(node_http, method_, path, Some(handler::<SSL, T>), user_data);
             }
         }
     }
@@ -1328,6 +1329,7 @@ impl ServerConfig {
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_node_http_request = Some(Strong::create(on_request, global));
+            args.is_node_http = true;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {

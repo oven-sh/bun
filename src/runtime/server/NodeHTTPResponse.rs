@@ -255,10 +255,10 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
-/// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
+/// AnyResponse `is_ssl()` shim.
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
-    matches!(r, uws::AnyResponse::SSL(_))
+    r.is_ssl()
 }
 
 // uSockets callback adapters: AnyResponse::on_data/on_timeout/on_writable expect
@@ -904,22 +904,22 @@ fn write_head_internal(
         "writeHeadInternal({})",
         BStr::new(status_message)
     );
-    match response {
-        uws::AnyResponse::TCP(tcp) => NodeHTTPServer__writeHead_http(
+    match response.kind() {
+        uws::AnyResponseKind::TCP(tcp) => NodeHTTPServer__writeHead_http(
             global_object,
             status_message.as_ptr(),
             status_message.len(),
             headers,
-            (*tcp).cast::<c_void>(),
+            tcp.cast::<c_void>(),
         ),
-        uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
+        uws::AnyResponseKind::SSL(ssl) => NodeHTTPServer__writeHead_https(
             global_object,
             status_message.as_ptr(),
             status_message.len(),
             headers,
-            (*ssl).cast::<c_void>(),
+            ssl.cast::<c_void>(),
         ),
-        uws::AnyResponse::H3(_) => {
+        uws::AnyResponseKind::H3(_) => {
             bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
         }
     }
@@ -2202,10 +2202,11 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
         *has_body = req_len > 0 || request_ref.header(b"transfer-encoding").is_some();
     }
 
+    // NodeHTTPResponse is always backed by the NODE_HTTP=true C++ instantiation.
     let raw_response = if is_ssl != 0 {
-        uws::AnyResponse::SSL(response_ptr.cast())
+        uws::AnyResponse::SSL_node(response_ptr.cast())
     } else {
-        uws::AnyResponse::TCP(response_ptr.cast())
+        uws::AnyResponse::TCP_node(response_ptr.cast())
     };
 
     let response = bun_core::heap::into_raw(Box::new(NodeHTTPResponse {

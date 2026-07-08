@@ -233,13 +233,14 @@ impl ServerWebSocket {
     /// log + `0` return is the caller's responsibility (it varies in nothing,
     /// but keeping it inline preserves the per-method `scoped_log!` callsite).
     #[inline]
-    fn publish_ctx(&self) -> Option<(*mut c_void, bool, bool)> {
+    fn publish_ctx(&self) -> Option<(*mut c_void, bool, bool, bool)> {
         let handler = self.handler();
         let app = handler.app?;
         let flags = handler.flags;
         Some((
             app,
             flags.contains(HandlerFlags::SSL),
+            flags.contains(HandlerFlags::NODE_HTTP),
             flags.contains(HandlerFlags::PUBLISH_TO_SELF),
         ))
     }
@@ -271,6 +272,7 @@ impl ServerWebSocket {
     fn do_publish(
         &self,
         ssl: bool,
+        node_http: bool,
         app: *mut c_void,
         publish_to_self: bool,
         topic: &[u8],
@@ -281,7 +283,7 @@ impl ServerWebSocket {
         let status = if !publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
         } else {
-            AnyWebSocket::publish_with_options(ssl, app, topic, buffer, opcode, compress)
+            AnyWebSocket::publish_with_options(ssl, node_http, app, topic, buffer, opcode, compress)
         };
         send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
@@ -765,7 +767,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some((app, ssl, node_http, publish_to_self)) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -794,6 +796,7 @@ impl ServerWebSocket {
             let buffer = array_buffer.slice();
             return Ok(self.do_publish(
                 ssl,
+                node_http,
                 app,
                 publish_to_self,
                 topic_slice.slice(),
@@ -810,6 +813,7 @@ impl ServerWebSocket {
 
             let ret = self.do_publish(
                 ssl,
+                node_http,
                 app,
                 publish_to_self,
                 topic_slice.slice(),
@@ -835,7 +839,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some((app, ssl, node_http, publish_to_self)) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -864,6 +868,7 @@ impl ServerWebSocket {
 
         let ret = self.do_publish(
             ssl,
+            node_http,
             app,
             publish_to_self,
             topic_slice.slice(),
@@ -890,7 +895,7 @@ impl ServerWebSocket {
             );
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some((app, ssl, node_http, publish_to_self)) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -923,6 +928,7 @@ impl ServerWebSocket {
 
         Ok(self.do_publish(
             ssl,
+            node_http,
             app,
             publish_to_self,
             topic_slice.slice(),
@@ -938,7 +944,7 @@ impl ServerWebSocket {
         topic_str: &JSString,
         array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some((app, ssl, node_http, publish_to_self)) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -955,6 +961,7 @@ impl ServerWebSocket {
 
         Ok(self.do_publish(
             ssl,
+            node_http,
             app,
             publish_to_self,
             topic_slice.slice(),
@@ -970,7 +977,7 @@ impl ServerWebSocket {
         topic_str: &JSString,
         str: &JSString,
     ) -> JsResult<JSValue> {
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some((app, ssl, node_http, publish_to_self)) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -989,6 +996,7 @@ impl ServerWebSocket {
 
         Ok(self.do_publish(
             ssl,
+            node_http,
             app,
             publish_to_self,
             topic_slice.slice(),

@@ -60,11 +60,7 @@ pub trait AnyResponseExt {
 /// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
 #[inline]
 fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
-    match r {
-        uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
-        uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
-        uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-    }
+    r.as_raw_ptr()
 }
 
 impl AnyResponseExt for uws::AnyResponse {
@@ -73,22 +69,22 @@ impl AnyResponseExt for uws::AnyResponse {
         // S012: variant payloads are ZST opaques (`Response<SSL>` / `H3Response`);
         // route the `*mut → &mut` deref through the const-asserted
         // `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
-        match self {
-            uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+        match self.kind() {
+            uws::AnyResponseKind::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+            uws::AnyResponseKind::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+            uws::AnyResponseKind::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
         }
     }
     #[inline]
     fn override_write_offset(self, offset: u64) {
-        match self {
-            uws::AnyResponse::SSL(p) => {
+        match self.kind() {
+            uws::AnyResponseKind::SSL(p) => {
                 bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
             }
-            uws::AnyResponse::TCP(p) => {
+            uws::AnyResponseKind::TCP(p) => {
                 bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
             }
-            uws::AnyResponse::H3(p) => {
+            uws::AnyResponseKind::H3(p) => {
                 bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
             }
         }
@@ -2017,11 +2013,7 @@ where
 
         // `HTTPServerWritable::res` stores the type-erased uws response handle;
         // `any_res()` reconstructs the variant from the const generics.
-        let raw_res: *mut c_void = match resp {
-            uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
-            uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
-            uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-        };
+        let raw_res: *mut c_void = resp.as_raw_ptr();
 
         let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED, HTTP3> {
             sink: ResponseStream::<SSL_ENABLED, HTTP3> {

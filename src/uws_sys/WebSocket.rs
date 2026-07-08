@@ -382,6 +382,7 @@ impl AnyWebSocket {
 
     pub fn publish_with_options(
         ssl: bool,
+        node_http: bool,
         app: *mut c_void,
         topic: &[u8],
         message: &[u8],
@@ -395,6 +396,7 @@ impl AnyWebSocket {
         if ssl {
             uws::NewApp::<true>::publish_with_options(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
+                node_http,
                 topic,
                 message,
                 opcode,
@@ -403,6 +405,7 @@ impl AnyWebSocket {
         } else {
             uws::NewApp::<false>::publish_with_options(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<false>>()),
+                node_http,
                 topic,
                 message,
                 opcode,
@@ -725,6 +728,7 @@ pub mod c {
         pub(crate) safe fn uws_ws_memory_cost(ssl: i32, ws: &mut RawWebSocket) -> usize;
         pub(crate) fn uws_ws(
             ssl: i32,
+            node_http: i32,
             app: *mut uws_app_t,
             ctx: *mut c_void,
             pattern: *const u8,

@@ -454,9 +454,8 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 }
 
 template<bool isSSL>
-static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
+static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL, true>* app)
 {
-    app->setUsingNodeHttpCompat(true);
     app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
@@ -483,18 +482,18 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
 extern "C" void NodeHTTP_assignOnNodeJSCompat(bool is_ssl, void* uws_app)
 {
     if (is_ssl) {
-        assignOnNodeJSCompat<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
+        assignOnNodeJSCompat<true>(reinterpret_cast<uWS::NodeHttpSSLApp*>(uws_app));
     } else {
-        assignOnNodeJSCompat<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
+        assignOnNodeJSCompat<false>(reinterpret_cast<uWS::NodeHttpApp*>(uws_app));
     }
 }
 
 extern "C" void NodeHTTP_setUsingCustomExpectHandler(bool is_ssl, void* uws_app, bool value)
 {
     if (is_ssl) {
-        reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app)->setUsingCustomExpectHandler(value);
+        reinterpret_cast<uWS::NodeHttpSSLApp*>(uws_app)->setUsingCustomExpectHandler(value);
     } else {
-        reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app)->setUsingCustomExpectHandler(value);
+        reinterpret_cast<uWS::NodeHttpApp*>(uws_app)->setUsingCustomExpectHandler(value);
     }
 }
 
@@ -508,7 +507,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     JSValue callback,
     JSValue methodString,
     uWS::HttpRequest* request,
-    uWS::HttpResponse<isSSL>* response,
+    uWS::HttpResponse<isSSL, true>* response,
     void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
@@ -532,8 +531,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // HTTP/1.1 pipelining: this request arrived while an earlier response on
     // the connection is still in flight. It is queued on the server socket
     // (and in JS) instead of becoming the connection's current response.
-    const bool isPipelinedDispatch = httpResponseData->isNodeHttpPipelinedDispatch;
-    auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(httpResponseData->socketData);
+    const bool isPipelinedDispatch = httpResponseData->nodeCompat.isNodeHttpPipelinedDispatch;
+    auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(httpResponseData->nodeCompat.socketData);
 
     if (currentSocketDataPtr) {
         auto* thisSocket = uncheckedDowncast<JSNodeHTTPServerSocket>(currentSocketDataPtr);
@@ -554,7 +553,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 
         socket->strongThis.set(vm, socket);
 
-        response->getHttpResponseData()->socketData = socket;
+        response->getHttpResponseData()->nodeCompat.socketData = socket;
 
         args.append(socket);
         args.append(jsBoolean(true));
@@ -579,8 +578,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     return JSValue::encode(returnValue);
 }
 
-template<bool isSSL>
-static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::StringView& name, const WTF::StringView& value)
+template<bool isSSL, bool isNodeHttp>
+static void writeResponseHeader(uWS::HttpResponse<isSSL, isNodeHttp>* res, const WTF::StringView& name, const WTF::StringView& value)
 {
     WTF::CString nameStr;
     WTF::CString valueStr;
@@ -625,8 +624,8 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-template<bool isSSL>
-static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
+template<bool isSSL, bool isNodeHttp>
+static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL, isNodeHttp>* res)
 {
     auto& internalHeaders = headers.internalHeaders();
 
@@ -667,20 +666,20 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // <
         //
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+            if (!(data->state & uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                 res->writeMark();
             }
         }
 
         // Prevent automatic Date header insertion when user provides one
         if (header.key == WebCore::HTTPHeaderName::Date) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+            data->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_DATE_HEADER;
         }
 
         // Prevent automatic Transfer-Encoding: chunked insertion when user provides one
         if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+            data->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
 
         // RFC 9112 §9.6: a server that sends the "close" connection option MUST
@@ -688,16 +687,16 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // end()/tryEnd() shut the socket down instead of returning it to the
         // keep-alive pool.
         if (header.key == WebCore::HTTPHeaderName::Connection && connectionValueHasClose(value)) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+            data->state |= uWS::HttpResponseData<isSSL, true>::HTTP_CONNECTION_CLOSE;
         }
-        writeResponseHeader<isSSL>(res, name, value);
+        writeResponseHeader<isSSL, isNodeHttp>(res, name, value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         const auto& name = header.key;
         const auto& value = header.value;
 
-        writeResponseHeader<isSSL>(res, name, value);
+        writeResponseHeader<isSSL, isNodeHttp>(res, name, value);
     }
 }
 
@@ -707,7 +706,7 @@ static void NodeHTTPServer__writeHead(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
-    uWS::HttpResponse<isSSL>* response)
+    uWS::HttpResponse<isSSL, true>* response)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -721,7 +720,7 @@ static void NodeHTTPServer__writeHead(
     // node:http's ServerResponse owns the Date header entirely (it honors
     // res.sendDate / removeHeader("date") in JS), so never let uWS write its
     // own Date header for these responses.
-    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_DATE_HEADER;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the
@@ -733,7 +732,7 @@ static void NodeHTTPServer__writeHead(
 
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
-            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            writeFetchHeadersToUWSResponse<isSSL, true>(fetchHeaders->wrapped(), response);
             return;
         }
 
@@ -771,18 +770,18 @@ static void NodeHTTPServer__writeHead(
                 WebCore::HTTPHeaderName headerName;
                 if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
                     if (headerName == WebCore::HTTPHeaderName::ContentLength) {
-                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                            httpResponseData->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                             response->writeMark();
                         }
                     } else if (headerName == WebCore::HTTPHeaderName::Date) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_DATE_HEADER;
                     } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL, true>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
                     }
                 }
 
-                writeResponseHeader<isSSL>(response, name, value);
+                writeResponseHeader<isSSL, true>(response, name, value);
             }
             return;
         }
@@ -806,7 +805,7 @@ static void NodeHTTPServer__writeHead(
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                writeResponseHeader<isSSL>(response, key, value);
+                writeResponseHeader<isSSL, true>(response, key, value);
 
                 return true;
             });
@@ -826,7 +825,7 @@ static void NodeHTTPServer__writeHead(
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
 
-                writeResponseHeader<isSSL>(response, key, value);
+                writeResponseHeader<isSSL, true>(response, key, value);
             }
         }
     }
@@ -839,7 +838,7 @@ extern "C" void NodeHTTPServer__writeHead_http(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
-    uWS::HttpResponse<false>* response)
+    uWS::HttpResponse<false, true>* response)
 {
     return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
 }
@@ -849,7 +848,7 @@ extern "C" void NodeHTTPServer__writeHead_https(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
-    uWS::HttpResponse<true>* response)
+    uWS::HttpResponse<true, true>* response)
 {
     return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
 }
@@ -861,7 +860,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
-    uWS::HttpResponse<false>* response,
+    uWS::HttpResponse<false, true>* response,
     void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
@@ -884,7 +883,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
-    uWS::HttpResponse<true>* response,
+    uWS::HttpResponse<true, true>* response,
     void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
@@ -1324,10 +1323,10 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
 {
     switch (kind) {
     case UWSResponseKind::TCP:
-        writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        writeFetchHeadersToUWSResponse<false, false>(*arg0, reinterpret_cast<uWS::HttpResponse<false, false>*>(arg2));
         break;
     case UWSResponseKind::SSL:
-        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        writeFetchHeadersToUWSResponse<true, false>(*arg0, reinterpret_cast<uWS::HttpResponse<true, false>*>(arg2));
         break;
     case UWSResponseKind::H3:
         writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));

@@ -469,10 +469,10 @@ impl StaticRoute {
     }
 
     fn do_write_status(&self, status: u16, resp: AnyResponse) {
-        match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(r) => {
+        match resp.kind() {
+            bun_uws::AnyResponseKind::SSL(r) => write_status::<true>(r, status),
+            bun_uws::AnyResponseKind::TCP(r) => write_status::<false>(r, status),
+            bun_uws::AnyResponseKind::H3(r) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
@@ -495,7 +495,7 @@ impl StaticRoute {
                 &buf[value.offset as usize..][..value.length as usize],
             );
         }
-        if !matches!(resp, AnyResponse::H3(_)) {
+        if !resp.is_h3() {
             if let Some(srv) = self.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
                     resp.write_header(b"alt-svc", alt);

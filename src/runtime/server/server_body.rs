@@ -1468,7 +1468,8 @@ where
         }
 
         Ok(JSValue::js_number(f64::from(
-            self.app_mut().num_subscribers(topic.slice()),
+            self.app_mut()
+                .num_subscribers(self.config.is_node_http, topic.slice()),
         )))
     }
 
@@ -1682,6 +1683,7 @@ where
         if let Some(buffer) = message_value.as_array_buffer(global) {
             let status = AnyWebSocket::publish_with_options(
                 SSL,
+                self.config.is_node_http,
                 app,
                 topic_slice.slice(),
                 buffer.slice(),
@@ -1708,6 +1710,7 @@ where
             let buffer = slice.slice();
             let status = AnyWebSocket::publish_with_options(
                 SSL,
+                self.config.is_node_http,
                 app,
                 topic_slice.slice(),
                 buffer,
@@ -2155,7 +2158,7 @@ where
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
-        self.app_mut().clear_routes();
+        self.app_mut().clear_routes(self.config.is_node_http);
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app {
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
@@ -2192,6 +2195,10 @@ where
             ws.handler
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
+            ws.handler.flags.set(
+                super::web_socket_server_context::HandlerFlags::NODE_HTTP,
+                self.config.is_node_http,
+            );
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
                 if let Some(old_ws) = self.config.websocket.as_ref() {
                     old_ws.unprotect();
@@ -2249,7 +2256,7 @@ where
             return Ok(false);
         }
         self.config = self.config.clone_for_reloading_static_routes()?;
-        self.app_mut().clear_routes();
+        self.app_mut().clear_routes(self.config.is_node_http);
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app {
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
@@ -2495,7 +2502,8 @@ where
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
-        self.app_mut().close_idle_connections();
+        self.app_mut()
+            .close_idle_connections(self.config.is_node_http);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3751,8 +3759,11 @@ pub(super) fn server_set_on_connection_(
                         this.on_connection_callback(socket.cast::<c_void>());
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app)
-                        .filter(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                    bun_opaque::opaque_deref_mut(app).filter(
+                        this.config.is_node_http,
+                        thunk,
+                        core::ptr::from_mut::<$T>(this).cast::<c_void>(),
+                    );
                 }
                 return Ok(JSValue::UNDEFINED);
             }

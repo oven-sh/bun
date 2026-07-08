@@ -453,7 +453,7 @@ pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
-pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
+pub use response::{AnyResponse, AnyResponseKind, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;

@@ -1440,5 +1440,6 @@ pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 /// Variants: `SSL(*mut Response<true>)`, `TCP(*mut Response<false>)`,
 /// `H3(*mut H3::Response)`.
 pub use bun_uws_sys::AnyResponse;
+pub use bun_uws_sys::AnyResponseKind;
 
 pub use bun_uws_sys::response::WriteResult;

@@ -649,9 +649,9 @@ describe("otp", () => {
       201,
     );
     expect(await versions()).toEqual(["1.0.0"]);
-    expect(
-      (await fetch(`${registry.url}p/-rev/1-x`, { method: "DELETE", headers: headers("123456") })).status,
-    ).toBe(200);
+    expect((await fetch(`${registry.url}p/-rev/1-x`, { method: "DELETE", headers: headers("123456") })).status).toBe(
+      200,
+    );
     expect(await versions()).toEqual([]);
   });
 });

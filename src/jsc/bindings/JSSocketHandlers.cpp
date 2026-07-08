@@ -37,12 +37,14 @@ JSSocketHandlers::JSSocketHandlers(JSC::VM& vm, JSC::Structure* structure)
 {
 }
 
-void JSSocketHandlers::finishCreation(JSC::VM& vm)
+void JSSocketHandlers::finishCreation(JSC::VM& vm, const JSC::EncodedJSValue* callbacks)
 {
     Base::finishCreation(vm);
-    auto values = initialValues();
-    for (unsigned i = 0; i < values.size(); i++)
-        Base::internalField(i).set(vm, this, values[i]);
+    for (unsigned i = 0; i < numberOfCallbacks; i++) {
+        JSC::JSValue value = JSC::JSValue::decode(callbacks[i]);
+        Base::internalField(i).setWithoutWriteBarrier(value.isEmpty() ? jsUndefined() : value);
+    }
+    Base::internalField(static_cast<unsigned>(Field::Promise)).setWithoutWriteBarrier(jsUndefined());
 }
 
 template<typename Visitor>
@@ -55,7 +57,7 @@ void JSSocketHandlers::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSSocketHandlers);
 
-JSSocketHandlers* JSSocketHandlers::create(JSC::JSGlobalObject* globalObject)
+JSSocketHandlers* JSSocketHandlers::create(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* callbacks)
 {
     auto& vm = JSC::getVM(globalObject);
     // Resolve the cached structure before allocateCell(): allocating any
@@ -63,15 +65,15 @@ JSSocketHandlers* JSSocketHandlers::create(JSC::JSGlobalObject* globalObject)
     // initialized structure allocates on first use.
     auto* structure = defaultGlobalObject(globalObject)->JSSocketHandlersStructure();
     auto* cell = new (NotNull, allocateCell<JSSocketHandlers>(vm)) JSSocketHandlers(vm, structure);
-    cell->finishCreation(vm);
+    cell->finishCreation(vm, callbacks);
     return cell;
 }
 
 } // namespace Bun
 
-extern "C" JSC::EncodedJSValue Bun__SocketHandlers__create(JSC::JSGlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__SocketHandlers__create(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* callbacks)
 {
-    return JSC::JSValue::encode(Bun::JSSocketHandlers::create(globalObject));
+    return JSC::JSValue::encode(Bun::JSSocketHandlers::create(globalObject, callbacks));
 }
 
 extern "C" JSC::EncodedJSValue Bun__SocketHandlers__getField(JSC::EncodedJSValue cellValue, uint32_t index)
@@ -88,4 +90,15 @@ extern "C" void Bun__SocketHandlers__setField(JSC::JSGlobalObject* globalObject,
     ASSERT(index < Bun::JSSocketHandlers::numberOfInternalFields);
     JSC::JSValue incoming = JSC::JSValue::decode(value);
     cell->internalField(index).set(vm, cell, incoming.isEmpty() ? JSC::jsUndefined() : incoming);
+}
+
+extern "C" void Bun__SocketHandlers__setCallbacks(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue cellValue, const JSC::EncodedJSValue* callbacks)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* cell = uncheckedDowncast<Bun::JSSocketHandlers>(JSC::JSValue::decode(cellValue).asCell());
+    for (unsigned i = 0; i < Bun::JSSocketHandlers::numberOfCallbacks; i++) {
+        JSC::JSValue value = JSC::JSValue::decode(callbacks[i]);
+        cell->internalField(i).setWithoutWriteBarrier(value.isEmpty() ? JSC::jsUndefined() : value);
+    }
+    vm.writeBarrier(cell);
 }

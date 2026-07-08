@@ -14,7 +14,7 @@ use bun_uws as uws;
 
 use super::Listener as SocketListener;
 use super::SocketMode;
-use super::js_socket_handlers::{Callbacks, JSSocketHandlers};
+use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers};
 use super::listener::ListenerType;
 use super::{SSLConfig, SSLConfigFromJs};
 
@@ -36,9 +36,8 @@ bun_output::declare_scope!(Listener, visible);
 /// frame still holds it cannot free it out from under that frame.
 pub struct Handlers {
     /// The cell holding every callback and the pending connect promise. Read
-    /// via the named accessors ([`on_data`](Self::on_data), ...); written by
-    /// [`store_callbacks`](Self::store_callbacks), which `reload` also uses to
-    /// update live sockets in place.
+    /// via the named accessors ([`on_data`](Self::on_data), ...); `reload`
+    /// rewrites it in place via [`apply_reload`](Self::apply_reload).
     ///
     /// See [`JSSocketHandlers`] for what keeps it alive; entry points that
     /// build a `Handlers` hold a [`root_cell`](Self::root_cell) handle until
@@ -70,7 +69,7 @@ pub struct Handlers {
 /// Output of [`Handlers::prepare_reload`]: everything `reload` needs, parsed
 /// and validated before any `Handlers` is touched.
 pub struct ReloadedHandlers {
-    callbacks: Callbacks,
+    callbacks: [JSValue; CALLBACK_COUNT],
     pub binary_type: BinaryType,
 }
 
@@ -166,34 +165,20 @@ impl Handlers {
         self.cell.clear_on_open(&self.global_object);
     }
 
-    /// Writes `callbacks` into the cell, wrapping each provided one with the
-    /// current async context.
-    fn store_callbacks(&self, global_object: &JSGlobalObject, callbacks: &Callbacks) {
-        let with_context = |value: JSValue| {
+    /// Wraps each provided callback with the current async context so it
+    /// dispatches in the right `AsyncLocalStorage` state. Runs before the cell
+    /// exists (create) or before any write to a live cell (reload).
+    fn wrap_with_context(
+        global_object: &JSGlobalObject,
+        callbacks: &[JSValue; CALLBACK_COUNT],
+    ) -> [JSValue; CALLBACK_COUNT] {
+        callbacks.map(|value| {
             if value.is_empty() {
                 JSValue::ZERO
             } else {
                 AsyncContextFrame__withAsyncContextIfNeeded(global_object, value)
             }
-        };
-        self.cell.set_callbacks(
-            global_object,
-            &Callbacks {
-                on_open: with_context(callbacks.on_open),
-                on_close: with_context(callbacks.on_close),
-                on_data: with_context(callbacks.on_data),
-                on_writable: with_context(callbacks.on_writable),
-                on_timeout: with_context(callbacks.on_timeout),
-                on_connect_error: with_context(callbacks.on_connect_error),
-                on_end: with_context(callbacks.on_end),
-                on_error: with_context(callbacks.on_error),
-                on_handshake: with_context(callbacks.on_handshake),
-                on_session: with_context(callbacks.on_session),
-                on_keylog: with_context(callbacks.on_keylog),
-                on_server_name: with_context(callbacks.on_server_name),
-                on_alpn_callback: with_context(callbacks.on_alpn_callback),
-            },
-        );
+        })
     }
 
     /// Stores the pending `Bun.connect` promise in the cell. Rooted by the cell
@@ -331,11 +316,12 @@ impl Handlers {
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
         let callbacks = Self::validate_callbacks(global_object, generated)?;
+        let wrapped = Self::wrap_with_context(global_object, &callbacks);
 
         // Everything fallible is done; the cell is infallible, so a constructed
         // `Handlers` is always fully initialized.
-        let result = Rc::new(Handlers {
-            cell: JSSocketHandlers::create(global_object),
+        Ok(Rc::new(Handlers {
+            cell: JSSocketHandlers::create(global_object, &wrapped),
             binary_type: Cell::new(binary_type_from_generated(generated.binary_type)),
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
             // VM outlives every `Handlers` (process-lifetime singleton).
@@ -344,21 +330,16 @@ impl Handlers {
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
-        });
-        // `store_callbacks`' async-context wrapping can allocate: root the cell
-        // across it for the same reason the callers hold one past this return.
-        let _cell_root = result.root_cell(global_object);
-        result.store_callbacks(global_object, &callbacks);
-        Ok(result)
+        }))
     }
 
     /// Validates the user-supplied callbacks without constructing or storing
     /// anything. Callbacks the user did not provide come back as
-    /// `JSValue::ZERO`.
+    /// `JSValue::ZERO`. Array order matches `Bun::JSSocketHandlers::Field`.
     fn validate_callbacks(
         global_object: &JSGlobalObject,
         generated: &GeneratedSocketConfigHandlers,
-    ) -> JsResult<Callbacks> {
+    ) -> JsResult<[JSValue; CALLBACK_COUNT]> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
                 let value = generated.$field;
@@ -394,7 +375,7 @@ impl Handlers {
             )));
         }
 
-        Ok(Callbacks {
+        Ok([
             on_open,
             on_close,
             on_data,
@@ -408,7 +389,7 @@ impl Handlers {
             on_keylog,
             on_server_name,
             on_alpn_callback,
-        })
+        ])
     }
 
     /// Parses and validates `opts` for `reload` without touching any
@@ -431,7 +412,8 @@ impl Handlers {
     /// Writes the validated callbacks into the existing cell, so the listener
     /// and every live socket sharing it pick them up in place. Runs no user JS.
     pub fn apply_reload(&self, global_object: &JSGlobalObject, reloaded: &ReloadedHandlers) {
-        self.store_callbacks(global_object, &reloaded.callbacks);
+        let wrapped = Self::wrap_with_context(global_object, &reloaded.callbacks);
+        self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
     }
 }

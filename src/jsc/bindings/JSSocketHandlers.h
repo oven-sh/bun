@@ -40,23 +40,18 @@ public:
     };
     static_assert(static_cast<uint32_t>(Field::Promise) + 1 == numberOfInternalFields);
 
+    static constexpr unsigned numberOfCallbacks = static_cast<unsigned>(Field::Promise);
+
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
-    static JSSocketHandlers* create(JSC::JSGlobalObject* globalObject);
+    static JSSocketHandlers* create(JSC::JSGlobalObject*, const JSC::EncodedJSValue* callbacks);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        std::array<JSValue, numberOfInternalFields> values;
-        values.fill(jsUndefined());
-        return values;
-    }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
     JSSocketHandlers(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, const JSC::EncodedJSValue* callbacks);
 };
 
 } // namespace Bun

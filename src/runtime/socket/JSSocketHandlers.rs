@@ -10,8 +10,12 @@
 use bun_jsc::{JSGlobalObject, JSValue, Strong};
 
 unsafe extern "C" {
-    /// Allocates the cell. Fields start as `undefined`.
-    safe fn Bun__SocketHandlers__create(global: &JSGlobalObject) -> JSValue;
+    /// Allocates the cell with the 13 callback fields populated barrier-free
+    /// (the cell is not yet GC-visible); the promise field starts `undefined`.
+    safe fn Bun__SocketHandlers__create(
+        global: &JSGlobalObject,
+        callbacks: *const JSValue,
+    ) -> JSValue;
     /// `cell` must come from [`Bun__SocketHandlers__create`]; `index` must be
     /// < `numberOfInternalFields` (asserted in debug C++).
     safe fn Bun__SocketHandlers__getField(cell: JSValue, index: u32) -> JSValue;
@@ -20,6 +24,13 @@ unsafe extern "C" {
         cell: JSValue,
         index: u32,
         value: JSValue,
+    );
+    /// Overwrites all 13 callback fields on a live cell with one trailing
+    /// write barrier.
+    safe fn Bun__SocketHandlers__setCallbacks(
+        global: &JSGlobalObject,
+        cell: JSValue,
+        callbacks: *const JSValue,
     );
 }
 
@@ -47,24 +58,9 @@ enum Field {
     Promise,
 }
 
-/// The socket callbacks a user passed to `Bun.connect` / `Bun.listen` /
-/// `socket.reload()`. `JSValue::ZERO` for any the user did not provide.
-#[derive(Clone, Copy)]
-pub struct Callbacks {
-    pub on_open: JSValue,
-    pub on_close: JSValue,
-    pub on_data: JSValue,
-    pub on_writable: JSValue,
-    pub on_timeout: JSValue,
-    pub on_connect_error: JSValue,
-    pub on_end: JSValue,
-    pub on_error: JSValue,
-    pub on_handshake: JSValue,
-    pub on_session: JSValue,
-    pub on_keylog: JSValue,
-    pub on_server_name: JSValue,
-    pub on_alpn_callback: JSValue,
-}
+/// Number of callback fields (everything before `Promise`). Matches
+/// `Bun::JSSocketHandlers::numberOfCallbacks`.
+pub const CALLBACK_COUNT: usize = Field::Promise as usize;
 
 /// A `Bun::JSSocketHandlers` cell.
 ///
@@ -88,8 +84,10 @@ macro_rules! callback_getters {
 }
 
 impl JSSocketHandlers {
-    pub fn create(global: &JSGlobalObject) -> Self {
-        Self(Bun__SocketHandlers__create(global))
+    /// Allocates the cell with `callbacks` stored via the barrier-free
+    /// early-init path. `JSValue::ZERO` entries are stored as `undefined`.
+    pub fn create(global: &JSGlobalObject, callbacks: &[JSValue; CALLBACK_COUNT]) -> Self {
+        Self(Bun__SocketHandlers__create(global, callbacks.as_ptr()))
     }
 
     /// The cell as a `JSValue`, to store in a wrapper's visited slot.
@@ -127,38 +125,11 @@ impl JSSocketHandlers {
         on_alpn_callback => AlpnCallback,
     }
 
-    /// Replaces every callback. Fields whose `Callbacks` entry is `JSValue::ZERO`
-    /// are cleared, so `socket.reload()` also drops callbacks the new options
-    /// omit.
-    pub fn set_callbacks(self, global: &JSGlobalObject, callbacks: &Callbacks) {
-        let Callbacks {
-            on_open,
-            on_close,
-            on_data,
-            on_writable,
-            on_timeout,
-            on_connect_error,
-            on_end,
-            on_error,
-            on_handshake,
-            on_session,
-            on_keylog,
-            on_server_name,
-            on_alpn_callback,
-        } = *callbacks;
-        self.set(global, Field::Open, on_open);
-        self.set(global, Field::Close, on_close);
-        self.set(global, Field::Data, on_data);
-        self.set(global, Field::Writable, on_writable);
-        self.set(global, Field::Timeout, on_timeout);
-        self.set(global, Field::ConnectError, on_connect_error);
-        self.set(global, Field::End, on_end);
-        self.set(global, Field::Error, on_error);
-        self.set(global, Field::Handshake, on_handshake);
-        self.set(global, Field::Session, on_session);
-        self.set(global, Field::Keylog, on_keylog);
-        self.set(global, Field::ServerName, on_server_name);
-        self.set(global, Field::AlpnCallback, on_alpn_callback);
+    /// Replaces every callback on a live cell. `JSValue::ZERO` entries clear
+    /// the field, so `socket.reload()` also drops callbacks the new options
+    /// omit. One write barrier for the whole batch.
+    pub fn set_callbacks(self, global: &JSGlobalObject, callbacks: &[JSValue; CALLBACK_COUNT]) {
+        Bun__SocketHandlers__setCallbacks(global, self.0, callbacks.as_ptr());
     }
 
     /// Drops the `open` callback: a client socket clears it after its first TLS

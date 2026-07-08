@@ -149,8 +149,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return this;
     }
 
-    await Promise.$resolve();
-
+    // Hand the query to the pool synchronously so a same-tick close() sees it
+    // as pending; the executed flag above guards re-entry from then()/finally().
     try {
       return handler(this, handle);
     } catch (err) {

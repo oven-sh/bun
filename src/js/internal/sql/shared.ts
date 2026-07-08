@@ -1304,7 +1304,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
 
     let timeout = options?.timeout;
-    const hasTimeout = !!timeout;
+    const hasTimeout = timeout != null;
     if (hasTimeout) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {

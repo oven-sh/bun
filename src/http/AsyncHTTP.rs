@@ -196,6 +196,7 @@ fn make_client<'a>(
         prev_redirect: Vec::new(),
         progress_node: None,
         flags: Flags::default(),
+        idle_timeout_seconds: None,
         state: InternalState::default(),
         tls_props: None,
         custom_ssl_ctx: None,
@@ -267,6 +268,9 @@ pub struct Options<'a> {
     pub signals: Option<Signals>,
     pub unix_socket_path: Option<ZigStringSlice>,
     pub disable_timeout: Option<bool>,
+    /// Per-request idle timeout override in seconds; see
+    /// `HTTPClient::idle_timeout_seconds`.
+    pub idle_timeout_seconds: Option<core::ffi::c_uint>,
     pub verbose: Option<HTTPVerboseLevel>,
     pub disable_keepalive: Option<bool>,
     pub disable_decompression: Option<bool>,
@@ -515,6 +519,10 @@ impl<'a> AsyncHTTP<'a> {
         }
         if let Some(val) = options.disable_timeout {
             this.client.flags.disable_timeout = val;
+        }
+        if let Some(val) = options.idle_timeout_seconds {
+            this.client.idle_timeout_seconds =
+                Some(crate::normalize_idle_timeout_seconds(val.into()));
         }
         if let Some(val) = options.verbose {
             this.client.verbose = val;

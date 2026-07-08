@@ -800,7 +800,13 @@ it("skips checkServerIdentity on a resumed session (Node parity)", async () => {
   // A counting checkServerIdentity is not invoked on the resumed connection.
   let calls = 0;
   const a = await resume({ checkServerIdentity: () => (calls++, undefined) });
-  expect({ ...a, calls }).toEqual({ reused: true, authorized: true, authorizationError: undefined, result: "ok", calls: 0 });
+  expect({ ...a, calls }).toEqual({
+    reused: true,
+    authorized: true,
+    authorizationError: undefined,
+    result: "ok",
+    calls: 0,
+  });
 
   // A checkServerIdentity that returns an Error (certificate pinning) does not
   // run, so the resumed connection succeeds and is authorized.

@@ -2,12 +2,11 @@ import { expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 
-// The native TCP socket captures the async context once at connect time; a
-// keep-alive agent reuses that socket for later requests, so 'response'/'data'
-// /'end' must re-enter the owning request's AsyncLocalStorage scope rather
-// than inherit the first request's.
+// A keep-alive agent reuses one TCP socket for later requests, so
+// 'response'/'data'/'end' must re-enter the owning request's ALS scope
+// rather than inherit whichever request first connected the socket.
 test("AsyncLocalStorage context is preserved across keep-alive socket reuse", async () => {
   const als = new AsyncLocalStorage<string>();
   const server = http.createServer((req, res) => res.end("ok"));
@@ -55,6 +54,55 @@ test("AsyncLocalStorage context is preserved across keep-alive socket reuse", as
       R2: { socket: "R2", response: "R2", data: "R2", end: "R2" },
       R3: { socket: "R3", response: "R3", data: "R3", end: "R3" },
     });
+  } finally {
+    agent.destroy();
+    server.close();
+  }
+});
+
+test("AsyncLocalStorage context is preserved for 'error' on a reused keep-alive socket", async () => {
+  const als = new AsyncLocalStorage<string>();
+  // net.Server so the second request can be answered with a raw socket destroy.
+  const server = net.createServer(sock => {
+    let reqs = 0;
+    sock.on("data", () => {
+      reqs++;
+      if (reqs === 1) sock.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+      else sock.destroy();
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  const sockets: unknown[] = [];
+
+  try {
+    await new Promise<void>((resolve, reject) =>
+      als.run("R1", () => {
+        const q = http.request({ host: "127.0.0.1", port, agent }, res => {
+          res.resume();
+          res.on("end", resolve);
+          res.on("error", reject);
+        });
+        q.on("socket", s => sockets.push(s));
+        q.on("error", reject);
+        q.end();
+      }),
+    );
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+    const errorStore = await new Promise<string | undefined>((resolve, reject) =>
+      als.run("R2", () => {
+        const q = http.request({ host: "127.0.0.1", port, agent });
+        q.on("socket", s => sockets.push(s));
+        q.on("response", () => reject(new Error("expected a socket error, got a response")));
+        q.on("error", () => resolve(als.getStore()));
+        q.end();
+      }),
+    );
+
+    expect({ reused: sockets[0] === sockets[1], errorStore }).toEqual({ reused: true, errorStore: "R2" });
   } finally {
     agent.destroy();
     server.close();

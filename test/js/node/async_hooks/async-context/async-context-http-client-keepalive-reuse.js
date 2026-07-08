@@ -2,10 +2,9 @@ process.exitCode = 1;
 const { AsyncLocalStorage } = require("async_hooks");
 const http = require("http");
 
-// A keep-alive agent reuses the same TCP socket for sequential requests. The
-// native socket's data callback captures the async context at connect time,
-// so on a reused connection the 'response'/'data'/'end' path must re-enter the
-// owning ClientRequest's context rather than inherit the first request's.
+// A keep-alive agent reuses one TCP socket for sequential requests, so the
+// 'response'/'data'/'end' path must re-enter the owning ClientRequest's
+// context rather than inherit whichever request first connected the socket.
 
 const als = new AsyncLocalStorage();
 let failed = false;

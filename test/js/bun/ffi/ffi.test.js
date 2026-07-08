@@ -666,10 +666,13 @@ it("dlopen throws an error instead of returning it", () => {
   expect(err).toBeTruthy();
 });
 
+// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
+const isFFIUnavailable = isWindows && isArm64;
+
 // Windows: dlopen must accept paths with non-ASCII characters. Previously the
 // path was handed to LoadLibraryA as UTF-8, which the OS decodes as the system
 // ANSI codepage, so any non-ASCII byte mangled the path.
-it.skipIf(!isWindows)("dlopen accepts non-ASCII library paths on Windows", async () => {
+it.skipIf(!isWindows || isFFIUnavailable)("dlopen accepts non-ASCII library paths on Windows", async () => {
   const fixture = `
     const { dlopen, FFIType } = require("bun:ffi");
     const { mkdirSync, copyFileSync } = require("node:fs");
@@ -714,9 +717,6 @@ it(".ptr is not leaked", () => {
     expect(fn.ptr).toBeUndefined();
   }
 });
-
-// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
-const isFFIUnavailable = isWindows && isArm64;
 
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.

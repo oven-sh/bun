@@ -896,18 +896,19 @@ namespace uWS
                     hostHeaderCount++;
                 }
             }
-            /* RFC 9112 5.4: an HTTP/1.1 request with no Host header, or with more than one,
-             * MUST be answered with 400. Upgrade and CONNECT requests are exempt: Node.js
-             * dispatches them through the 'upgrade'/'connect' events before its Host
-             * requirement is enforced. An empty Host value is permitted (it is not absent). */
-            if (!req->ancientHttp && requireHostHeader
+            /* RFC 9112 5.4: a request with more than one Host header field line MUST be
+             * answered with 400. Not exempted for Upgrade/CONNECT/HTTP-1.0: the duplicate
+             * makes the request's authority ambiguous regardless of method or version. */
+            if (requireHostHeader && hostHeaderCount > 1) {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER);
+            }
+            /* RFC 9112 5.4: an HTTP/1.1 request with no Host header MUST be answered with
+             * 400 (an empty value is permitted; it is not absent). Upgrade and CONNECT are
+             * exempt from the missing-Host check: Node.js dispatches them through the
+             * 'upgrade'/'connect' events before its Host requirement is enforced. */
+            if (!req->ancientHttp && requireHostHeader && hostHeaderCount == 0
                 && !isConnectRequest && !req->getHeader("upgrade").data()) {
-                if (hostHeaderCount == 0) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
-                }
-                if (hostHeaderCount > 1) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER);
-                }
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
             /* RFC 9112 6.3

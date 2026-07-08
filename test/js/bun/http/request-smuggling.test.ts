@@ -1465,6 +1465,43 @@ describe("duplicate Host header field lines", () => {
     expect(handlerReached).toBe(false);
   });
 
+  test("Bun.serve rejects two Host header lines on a request carrying an Upgrade header", async () => {
+    // An Upgrade header exempts the request from the missing-Host check (so node:http can
+    // dispatch 'upgrade' before enforcing Host), but not from the duplicate-Host check:
+    // otherwise one attacker-controlled header would bypass the RFC 9112 5.4 MUST.
+    let handlerReached = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        handlerReached = true;
+        return Response.json({ url: req.url, host: req.headers.get("host") });
+      },
+    });
+
+    const response = await sendRaw(
+      server.port,
+      "GET /x HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nUpgrade: h2c\r\nConnection: close\r\n\r\n",
+    );
+    expect(response).toContain("HTTP/1.1 400");
+    expect(handlerReached).toBe(false);
+  });
+
+  test("Bun.serve rejects two Host header lines on an HTTP/1.0 request", async () => {
+    // HTTP/1.0 may omit Host, but a present-and-duplicated Host is ambiguous on any version.
+    let handlerReached = false;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        handlerReached = true;
+        return new Response("OK");
+      },
+    });
+
+    const response = await sendRaw(server.port, "GET / HTTP/1.0\r\nHost: a.test\r\nHost: b.test\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 400");
+    expect(handlerReached).toBe(false);
+  });
+
   test("Bun.serve accepts a single Host header line (control)", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -1492,6 +1529,28 @@ describe("duplicate Host header field lines", () => {
       const response = await sendRaw(
         port,
         "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+      );
+      expect(response).toContain("HTTP/1.1 400");
+      expect(handlerReached).toBe(false);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("node:http rejects two Host header lines even when an Upgrade header is present", async () => {
+    // An Upgrade header without Connection: upgrade falls through to normal dispatch in
+    // node:http; the duplicate-Host rejection must still apply on that path.
+    let handlerReached = false;
+    const server = createServer((req, res) => {
+      handlerReached = true;
+      res.end("OK");
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+      const response = await sendRaw(
+        port,
+        "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nUpgrade: h2c\r\nConnection: close\r\n\r\n",
       );
       expect(response).toContain("HTTP/1.1 400");
       expect(handlerReached).toBe(false);

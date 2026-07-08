@@ -135,11 +135,18 @@ function isInt32(value) {
   return value === (value | 0);
 }
 
-// libuv error codes used where Node reports uv errnos, from the same native
-// surface node:net uses: the negated libc errno on POSIX and libuv's own
-// synthetic values on Windows. Not literals: ECANCELED in particular has a
-// different number on every POSIX platform (Linux 125, Darwin 89, FreeBSD 85).
-const { UV_EBADF, UV_EEXIST, UV_EINVAL, UV_ECANCELED } = process.binding("uv");
+// libuv-style negative errnos used where Node reports uv error codes (the POSIX
+// values match every supported platform; Windows uses libuv's own values).
+// NOT from process.binding("uv"): Bun's ProcessBindingUV.cpp negates the
+// COMPILING HOST's <errno.h> value, so on Windows it reports -9/-22/-105
+// where Node/libuv report the synthetic -4083/-4071/-4081.
+const UV_EBADF = process.platform === "win32" ? -4083 : -9;
+const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+// Unlike the codes above, ECANCELED's number differs across the POSIX
+// platforms (Linux 125, Darwin 89, FreeBSD 85) and is a libuv-synthetic
+// -4081 on Windows, so it has to come from native.
+const UV_ECANCELED = $newRustFunction("node_util_binding.rs", "ecanceledErrorCode", 0)();
 
 const getFdFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsGetFd", 0);
 // Read-only query of the process-wide DGRAM_FDS registry the native layer

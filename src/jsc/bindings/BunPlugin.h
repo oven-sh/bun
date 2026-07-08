@@ -29,7 +29,6 @@ public:
         BunPluginTarget target { BunPluginTargetBun };
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func);
-        JSObject* find(JSC::JSGlobalObject* globalObj, String& path);
         void clear()
         {
             filters.clear();

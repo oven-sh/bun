@@ -384,18 +384,6 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
     }
 }
 
-JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& path)
-{
-    size_t count = filters.size();
-    for (size_t i = 0; i < count; i++) {
-        if (filters[i].get()->match(globalObject, path, 0)) {
-            return callbacks[i].get();
-        }
-    }
-
-    return nullptr;
-}
-
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());

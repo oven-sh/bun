@@ -1593,17 +1593,29 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     }
                 } else {
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
-
-#if !OS(WINDOWS)
-                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                            // Don't uninstall the old handler if it's not the one we installed.
-                            signal(signalNumber, oldHandler);
+                        // A single signal number can be registered under multiple names
+                        // (SIGABRT/SIGIOT, SIGIO/SIGPOLL). Only restore the default
+                        // disposition once no alias has a listener left.
+                        auto& vm = JSC::getVM(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+                        bool anyAliasRemaining = false;
+                        for (auto& entry : *signalNameToNumberMap) {
+                            if (entry.value == signalNumber && eventEmitter.listenerCount(Identifier::fromString(vm, entry.key)) > 0) {
+                                anyAliasRemaining = true;
+                                break;
+                            }
                         }
+                        if (!anyAliasRemaining) {
+#if !OS(WINDOWS)
+                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                                // Don't uninstall the old handler if it's not the one we installed.
+                                signal(signalNumber, oldHandler);
+                            }
 #else
-                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-                        Bun__UVSignalHandle__close(signal_handle.handle);
+                            SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+                            Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
-                        signalToContextIdsMap->remove(signalNumber);
+                            signalToContextIdsMap->remove(signalNumber);
+                        }
                     }
                 }
             }

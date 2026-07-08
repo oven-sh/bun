@@ -1010,6 +1010,38 @@ describe.concurrent(() => {
         expect(exitCode).toBe(0);
       },
     );
+
+    // Removing the listener for one alias must not uninstall the OS handler
+    // while another alias of the same signal number still has a listener.
+    it.skipIf(isWindows)(
+      "removing one alias's listener keeps the handler installed for the other alias",
+      async () => {
+        const script = /*js*/ `
+          const { promise, resolve } = Promise.withResolvers();
+          function a() { console.log("SIGABRT handler (removed) fired"); }
+          function b(name, num) { console.log("SIGIOT handler", name, num); resolve(); }
+          process.on("SIGABRT", a);
+          process.on("SIGIOT", b);
+          process.removeListener("SIGABRT", a);
+          process.kill(process.pid, "SIGABRT");
+          await promise;
+          console.log("survived");
+        `;
+        await using child = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+        expect({ stdout, stderr, signalCode: child.signalCode }).toEqual({
+          stdout: "SIGIOT handler SIGIOT 6\nsurvived\n",
+          stderr: "",
+          signalCode: null,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   const undefinedStubs = [

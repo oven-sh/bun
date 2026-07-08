@@ -10,7 +10,13 @@ function isPemArray(obj: unknown): obj is [{ pem: unknown }] {
 }
 
 function isValidTLSItem(obj: unknown) {
-  if (typeof obj === "string" || isArrayBufferView(obj) || isArrayBuffer(obj) || $inheritsBlob(obj) || isPemArray(obj)) {
+  if (
+    typeof obj === "string" ||
+    isArrayBufferView(obj) ||
+    isArrayBuffer(obj) ||
+    $inheritsBlob(obj) ||
+    isPemArray(obj)
+  ) {
     return true;
   }
 

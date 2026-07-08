@@ -30,12 +30,9 @@ describe("tls.createSecureContext key/cert/ca input types", () => {
   });
 
   it("DataView key/cert/ca produce a working TLS connection", async () => {
-    const server = tls.createServer(
-      { key: asDataView(agent1Key), cert: asDataView(agent1Cert) },
-      socket => {
-        socket.end("hello");
-      },
-    );
+    const server = tls.createServer({ key: asDataView(agent1Key), cert: asDataView(agent1Cert) }, socket => {
+      socket.end("hello");
+    });
     try {
       server.listen(0);
       await once(server, "listening");

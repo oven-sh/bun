@@ -119,9 +119,15 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
         return;
     }
 
+    let global_this = this.global_this.get();
+    // on_data in the same poll dispatch may have left a TerminationException
+    // pending (tryClearException refuses to clear it); entering JS with it set
+    // trips executeCallImpl's assertNoException().
+    if global_this.has_exception() {
+        return;
+    }
     let event_loop = VirtualMachine::get().event_loop_mut();
     event_loop.enter();
-    let global_this = this.global_this.get();
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
         this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
@@ -151,6 +157,13 @@ extern "C" fn on_data(
 
     let mut i: c_int = 0;
     while i < packets {
+        // A prior iteration's callback may have closed this socket or left a
+        // TerminationException pending; stop the batch so no 'data' fires
+        // after 'close' and no JS call is entered with a pending exception.
+        if udp_socket.closed.get() || global_this.has_exception() {
+            break;
+        }
+
         let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];

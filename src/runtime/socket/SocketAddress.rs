@@ -218,7 +218,7 @@ impl SocketAddress {
         // `BackRef` liveness invariant holds; `Deref` encapsulates the single
         // `NonNull::as_ref` site.
         let url = bun_ptr::BackRef::from(url_ptr);
-        let host: BunString = url.host();
+        let host = url.host();
         let port_: u16 = {
             let port32 = url.port();
             if port32 > u32::from(u16::MAX) {

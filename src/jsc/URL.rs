@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_core::String;
+use bun_core::{OwnedString, String};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
@@ -12,56 +12,60 @@ bun_opaque::opaque_ffi! {
 // mutates the WTF::URL on read). `&mut String` for the in/out params is
 // ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
 // allocation, so it keeps a raw pointer and stays `unsafe fn`.
+//
+// Every string return is a +1 (`Bun::toStringRef`). `OwnedString` is
+// `#[repr(transparent)]` over `String`, so declaring these as `-> OwnedString`
+// is ABI-identical and gives every caller scope-exit deref for free.
 unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
-    safe fn URL__protocol(url: &URL) -> String;
-    safe fn URL__href(url: &URL) -> String;
-    safe fn URL__username(url: &URL) -> String;
-    safe fn URL__password(url: &URL) -> String;
-    safe fn URL__search(url: &URL) -> String;
-    safe fn URL__host(url: &URL) -> String;
-    safe fn URL__hostname(url: &URL) -> String;
+    safe fn URL__protocol(url: &URL) -> OwnedString;
+    safe fn URL__href(url: &URL) -> OwnedString;
+    safe fn URL__username(url: &URL) -> OwnedString;
+    safe fn URL__password(url: &URL) -> OwnedString;
+    safe fn URL__search(url: &URL) -> OwnedString;
+    safe fn URL__host(url: &URL) -> OwnedString;
+    safe fn URL__hostname(url: &URL) -> OwnedString;
     safe fn URL__port(url: &URL) -> u32;
     fn URL__deinit(url: *mut URL);
-    safe fn URL__pathname(url: &URL) -> String;
-    safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
-    safe fn URL__getHref(input: &mut String) -> String;
-    safe fn URL__getFileURLString(input: &mut String) -> String;
-    safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
-    safe fn URL__pathFromFileURL(input: &mut String) -> String;
-    safe fn URL__hash(url: &URL) -> String;
-    safe fn URL__fragmentIdentifier(url: &URL) -> String;
+    safe fn URL__pathname(url: &URL) -> OwnedString;
+    safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> OwnedString;
+    safe fn URL__getHref(input: &mut String) -> OwnedString;
+    safe fn URL__getFileURLString(input: &mut String) -> OwnedString;
+    safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> OwnedString;
+    safe fn URL__pathFromFileURL(input: &mut String) -> OwnedString;
+    safe fn URL__hash(url: &URL) -> OwnedString;
+    safe fn URL__fragmentIdentifier(url: &URL) -> OwnedString;
 }
 
 impl URL {
     /// Includes the leading '#'.
-    pub fn hash(&self) -> String {
+    pub fn hash(&self) -> OwnedString {
         URL__hash(self)
     }
 
     /// Exactly the same as hash, excluding the leading '#'.
-    pub fn fragment_identifier(&self) -> String {
+    pub fn fragment_identifier(&self) -> OwnedString {
         URL__fragmentIdentifier(self)
     }
 
-    pub fn href_from_string(str: String) -> String {
+    pub fn href_from_string(str: String) -> OwnedString {
         let mut input = str;
         URL__getHref(&mut input)
     }
 
-    pub fn join(base: String, relative: String) -> String {
+    pub fn join(base: String, relative: String) -> OwnedString {
         let mut base_str = base;
         let mut relative_str = relative;
         URL__getHrefJoin(&mut base_str, &mut relative_str)
     }
 
-    pub fn file_url_from_string(str: String) -> String {
+    pub fn file_url_from_string(str: String) -> OwnedString {
         let mut input = str;
         URL__getFileURLString(&mut input)
     }
 
-    pub fn path_from_file_url(str: String) -> String {
+    pub fn path_from_file_url(str: String) -> OwnedString {
         let mut input = str;
         URL__pathFromFileURL(&mut input)
     }
@@ -69,7 +73,7 @@ impl URL {
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
     #[track_caller]
-    pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
+    pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<OwnedString> {
         crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 
@@ -89,23 +93,23 @@ impl URL {
     // from_js/from_string/from_utf8 return an owned C++ heap pointer that the
     // caller must destroy().
 
-    pub fn protocol(&self) -> String {
+    pub fn protocol(&self) -> OwnedString {
         URL__protocol(self)
     }
 
-    pub fn href(&self) -> String {
+    pub fn href(&self) -> OwnedString {
         URL__href(self)
     }
 
-    pub fn username(&self) -> String {
+    pub fn username(&self) -> OwnedString {
         URL__username(self)
     }
 
-    pub fn password(&self) -> String {
+    pub fn password(&self) -> OwnedString {
         URL__password(self)
     }
 
-    pub fn search(&self) -> String {
+    pub fn search(&self) -> OwnedString {
         URL__search(self)
     }
 
@@ -117,7 +121,7 @@ impl URL {
     /// ```text
     /// URL("http://example.com:8080").host() => "example.com"
     /// ```
-    pub fn host(&self) -> String {
+    pub fn host(&self) -> OwnedString {
         URL__host(self)
     }
 
@@ -129,7 +133,7 @@ impl URL {
     /// ```text
     /// URL("http://example.com:8080").hostname() => "example.com:8080"
     /// ```
-    pub fn hostname(&self) -> String {
+    pub fn hostname(&self) -> OwnedString {
         URL__hostname(self)
     }
 
@@ -146,7 +150,7 @@ impl URL {
         unsafe { URL__deinit(this) }
     }
 
-    pub fn pathname(&self) -> String {
+    pub fn pathname(&self) -> OwnedString {
         URL__pathname(self)
     }
 }

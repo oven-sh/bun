@@ -56,7 +56,7 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
-use bun_core::{OwnedString, strings};
+use bun_core::strings;
 use bun_url::PercentEncoding;
 use bun_url::whatwg::URL as JscUrl;
 use enum_map::{Enum, EnumMap};
@@ -990,7 +990,7 @@ impl HostProvider {
 
     /// Parse a URL and return the appropriate host provider, if any.
     fn from_url(url: &JscUrl) -> Option<HostProvider> {
-        let proto_str = OwnedString::new(url.protocol());
+        let proto_str = url.protocol();
 
         // Try shortcut first (github:, gitlab:, etc.)
         if let Some(provider) = HostProvider::from_shortcut(proto_str.byte_slice(), false) {
@@ -1004,7 +1004,7 @@ impl HostProvider {
     fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
         const _MAX_HOSTNAME_LEN: usize = 253;
 
-        let hostname_str = OwnedString::new(url.hostname());
+        let hostname_str = url.hostname();
 
         let hostname_utf8 = hostname_str.to_utf8();
         let hostname = strings::without_prefix(hostname_utf8.slice(), b"www.");
@@ -1379,7 +1379,7 @@ pub mod formatters {
             // valid until it's copied into the StringBuilder.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
-                let fragment_str = OwnedString::new(url.fragment_identifier());
+                let fragment_str = url.fragment_identifier();
                 fragment_utf8 = fragment_str.to_utf8();
                 let fragment = fragment_utf8.slice();
                 if !fragment.is_empty() {
@@ -1440,7 +1440,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> = if !fragment.is_empty() {
@@ -1495,7 +1495,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let committish = fragment_utf8.slice();
 
@@ -1560,7 +1560,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> = if !fragment.is_empty() {
@@ -1637,7 +1637,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> = if !fragment.is_empty() {

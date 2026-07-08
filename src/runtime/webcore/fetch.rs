@@ -254,9 +254,7 @@ pub(crate) fn bun_fetch_preconnect(
         ));
     }
 
-    // `href_from_js` returns a +1 (`Bun::toStringRef`). `bun_core::String` is
-    // `Copy` with no `Drop`, so wrap in `OwnedString` for the scope-exit deref.
-    let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
+    let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -341,7 +339,7 @@ impl StringOrURL {
         if out.tag() == BunStringTag::Dead {
             return Ok(None);
         }
-        Ok(Some(out))
+        Ok(Some(out.into_inner()))
     }
 }
 
@@ -1482,7 +1480,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
+            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path)).into_inner();
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a

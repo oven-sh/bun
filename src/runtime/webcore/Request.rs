@@ -939,9 +939,8 @@ impl Request {
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));
-                                href.deref();
                             } else {
-                                self.url.set(href);
+                                self.url.set(href.into_inner());
                             }
                         } else {
                             // TODO: what is the right thing to do for invalid URLS?
@@ -974,7 +973,7 @@ impl Request {
                     let href = bun_url::href_from_string(&self.url.get());
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
-                        self.url.set(href);
+                        self.url.set(href.into_inner());
                     }
 
                     return Ok(());
@@ -1464,7 +1463,7 @@ impl Request {
         // we increment the reference count on usage above, so we must
         // decrement it to be perfectly balanced.
 
-        req.url.set(href);
+        req.url.set(href.into_inner());
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

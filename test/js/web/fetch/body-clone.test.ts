@@ -1019,7 +1019,9 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
 // (migrated into the source wrapper's stream cache at construction) it must
 // consult that cache instead of teeing the now-empty native slot, or the
 // derived request's body is a branch of a disconnected stream and reads hang.
-test("new Request(src, init) with a user ReadableStream body: derived request's body carries the source's bytes", async () => {
+// After the tee, the source's cached stream must also be repointed to its own
+// branch so reading the source still works.
+test("new Request(src, init) with a user ReadableStream body: both derived and source read the bytes", async () => {
   const stream = () =>
     new ReadableStream({
       start(controller) {
@@ -1029,21 +1031,25 @@ test("new Request(src, init) with a user ReadableStream body: derived request's 
     });
   // @ts-expect-error duplex
   const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
+  const bytes = async (r: Request | Response) => [...new Uint8Array(await r.arrayBuffer())];
 
-  const twoArg = new Request(make(), { headers: { "x-a": "1" } });
-  const oneArg = new Request(make());
+  const twoArgSrc = make();
+  const twoArg = new Request(twoArgSrc, { headers: { "x-a": "1" } });
+  const oneArgSrc = make();
+  const oneArg = new Request(oneArgSrc);
   // Bun extension: a Response as the second argument contributes its body via
   // the sibling Response-source branch in construct_into.
+  const responseSrc = new Response(stream());
   // @ts-expect-error Bun accepts a Response as init
-  const fromResponse = new Request("http://example.com/", new Response(stream()));
+  const fromResponse = new Request("http://example.com/", responseSrc);
   expect({
-    twoArg: new Uint8Array(await twoArg.arrayBuffer()),
-    oneArg: new Uint8Array(await oneArg.arrayBuffer()),
-    fromResponse: new Uint8Array(await fromResponse.arrayBuffer()),
+    twoArg: { derived: await bytes(twoArg), src: await bytes(twoArgSrc) },
+    oneArg: { derived: await bytes(oneArg), src: await bytes(oneArgSrc) },
+    fromResponse: { derived: await bytes(fromResponse), src: await bytes(responseSrc) },
   }).toEqual({
-    twoArg: new Uint8Array([1, 2, 3]),
-    oneArg: new Uint8Array([1, 2, 3]),
-    fromResponse: new Uint8Array([1, 2, 3]),
+    twoArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    oneArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    fromResponse: { derived: [1, 2, 3], src: [1, 2, 3] },
   });
 });
 

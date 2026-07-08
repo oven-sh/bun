@@ -1746,19 +1746,33 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     /// Shared `'brk:` block of `clone_into` / `clone_value`: clone the body
-    /// [`Value`], teeing through the JS-side cached stream if one exists.
+    /// [`Value`], teeing through the JS-side cached stream if one exists, then
+    /// repoint this owner's `body`/`stream` cache slots at the fresh first
+    /// branch now in `locked.readable` so the locked tee source is no longer
+    /// returned from `.body` / `get_body_readable_stream`.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        let cloned = 'brk: {
+            if let Some(js_ref) = self.js_ref() {
+                if let Some(stream) = Self::stream_get_cached(js_ref) {
+                    let mut readable = ReadableStream::from_js(stream, global_this)?;
+                    if let Some(r) = readable.as_mut() {
+                        break 'brk self
+                            .get_body_value()
+                            .clone_with_readable_stream(global_this, Some(r))?;
+                    }
+                }
+            }
+            self.get_body_value().clone(global_this)?
+        };
         if let Some(js_ref) = self.js_ref() {
-            if let Some(stream) = Self::stream_get_cached(js_ref) {
-                let mut readable = ReadableStream::from_js(stream, global_this)?;
-                if let Some(r) = readable.as_mut() {
-                    return self
-                        .get_body_value()
-                        .clone_with_readable_stream(global_this, Some(r));
+            if let Value::Locked(locked) = self.get_body_value() {
+                if let Some(readable) = locked.readable.get(global_this) {
+                    Self::body_set_cached(js_ref, global_this, readable.value);
                 }
             }
         }
-        self.get_body_value().clone(global_this)
+        self.check_body_stream_ref(global_this);
+        Ok(cloned)
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

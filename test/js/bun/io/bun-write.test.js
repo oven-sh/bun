@@ -288,6 +288,169 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  // The pre-fix behavior is a hard hang (promise never settles and holds an
+  // event-loop ref), so these run in a subprocess with a watchdog timer.
+  it("Bun.write(path, Response) with a JS ReadableStream body", async () => {
+    using dir = tempDir("bun-write-response-stream", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dst = process.argv[1] + "/out.bin";
+        const timer = setTimeout(() => process.exit(1), 10000);
+        const response = new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array(10).fill(3));
+              c.enqueue(new Uint8Array(6).fill(9));
+              c.close();
+            },
+          }),
+        );
+        const n = await Bun.write(dst, response);
+        clearTimeout(timer);
+        const bytes = await Bun.file(dst).bytes();
+        console.log(JSON.stringify({ n, bytes: Array.from(bytes), used: response.bodyUsed }));
+        `,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ n: 16, bytes: [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 9, 9, 9, 9, 9, 9], used: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("Bun.write(path, Request) with a JS ReadableStream body", async () => {
+    using dir = tempDir("bun-write-request-stream", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dst = process.argv[1] + "/out.bin";
+        const timer = setTimeout(() => process.exit(1), 10000);
+        const request = new Request("http://example.com/", {
+          method: "POST",
+          body: new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+              c.close();
+            },
+          }),
+        });
+        const n = await Bun.write(dst, request);
+        clearTimeout(timer);
+        const bytes = await Bun.file(dst).bytes();
+        console.log(JSON.stringify({ n, bytes: Array.from(bytes) }));
+        `,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ n: 5, bytes: [1, 2, 3, 4, 5] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("Bun.write(path, Response) with an erroring ReadableStream body rejects", async () => {
+    using dir = tempDir("bun-write-response-stream-err", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dst = process.argv[1] + "/out.bin";
+        const timer = setTimeout(() => process.exit(1), 10000);
+        const response = new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array(4));
+              c.error(new Error("stream boom"));
+            },
+          }),
+        );
+        try {
+          await Bun.write(dst, response);
+          console.log("resolved");
+        } catch (e) {
+          console.log("rejected:" + e.message);
+        }
+        clearTimeout(timer);
+        `,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected:stream boom");
+    expect(exitCode).toBe(0);
+  });
+
+  it("Bun.write(path, await fetch(url)) from a chunked origin", async () => {
+    using dir = tempDir("bun-write-fetch-chunked", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dst = process.argv[1] + "/out.bin";
+        const total = 256 * 1024;
+        await using server = Bun.serve({
+          port: 0,
+          async fetch() {
+            let o = 0;
+            return new Response(
+              new ReadableStream({
+                async pull(c) {
+                  if (o >= total) return c.close();
+                  c.enqueue(new Uint8Array(16384).fill(7));
+                  o += 16384;
+                  await Bun.sleep(0);
+                },
+              }),
+            );
+          },
+        });
+        const timer = setTimeout(() => process.exit(1), 10000);
+        const res = await fetch(server.url);
+        const n = await Bun.write(dst, res);
+        clearTimeout(timer);
+        const bytes = await Bun.file(dst).bytes();
+        console.log(JSON.stringify({
+          cl: res.headers.get("content-length"),
+          n,
+          len: bytes.length,
+          allSeven: bytes.every(b => b === 7),
+        }));
+        `,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ cl: null, n: 262144, len: 262144, allSeven: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("Response -> Bun.file -> Response -> text", async () => {
     await gcTick();
     const file = path.join(import.meta.dir, "fetch.js.txt");

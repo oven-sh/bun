@@ -1704,21 +1704,25 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
+                        // SAFETY: `file_sink` is still our live +1 ref.
+                        let written = unsafe { (*file_sink).written.get() } as f64;
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
-                            JSValue::js_number(0.0),
+                            JSValue::js_number(written),
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
+                        let err = promise.result(global_this.vm());
+                        promise.set_handled(global_this.vm());
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            promise.result(global_this.vm()),
+                            err,
                         ));
                     }
                 }
@@ -1734,12 +1738,14 @@ impl BlobExt for Blob {
                 );
             }
         }
+        // SAFETY: `file_sink` is still our live +1 ref.
+        let written = unsafe { (*file_sink).written.get() } as f64;
         // SAFETY: release our +1 ref on the sink.
         unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(0.0),
+            JSValue::js_number(written),
         ))
     }
 
@@ -5273,6 +5279,45 @@ pub fn write_file_internal(
                                 "ReadableStream has already been used"
                             )));
                         }
+                        // If the body already exposes a ReadableStream (a JS
+                        // stream passed to `new Response`, or one cached on
+                        // the wrapper), drive it into a FileSink now; nothing
+                        // else will pump it.
+                        let readable_opt = get_stream(global_this).or_else(|| {
+                            // SAFETY: re-borrow after `get_stream`.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get(global_this)
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "ReadableStream has already been used"
+                                )));
+                            }
+                            return Ok(ControlFlow::Break(
+                                destination_blob.pipe_readable_stream_to_blob(
+                                    global_this,
+                                    readable,
+                                    options.extra_options,
+                                )?,
+                            ));
+                        }
+                        // No stream attached: a native producer (fetch, server
+                        // request, HTMLRewriter) owns `locked.task` and will
+                        // `resolve()` the body later. Kick its buffering hook
+                        // with that original task pointer before we overwrite
+                        // `locked.task` with our own below.
+                        // SAFETY: re-borrow after `get_stream`.
+                        if let BodyValue::Locked(locked) = unsafe { &mut *body_value } {
+                            if let (Some(on_start_buffering), Some(producer_task)) =
+                                (locked.on_start_buffering.take(), locked.task)
+                            {
+                                on_start_buffering(producer_task);
+                            }
+                        }
                         let task =
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
@@ -6020,7 +6065,9 @@ pub fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // SAFETY: `sink` is the live +1 FileSink held for the wrapper's lifetime.
+    let written = unsafe { (*this.sink).written.get() } as f64;
+    this.promise.resolve(global_this, JSValue::js_number(written))?;
     Ok(JSValue::UNDEFINED)
 }
 

@@ -576,6 +576,74 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
     return false;
 }
 
+// Compile-time counterpart of handleException: prepends Node's arrow header
+// (`<url>:<line>\n<src>\n^\n\n`) using ParserError since there is no CodeBlock
+// yet. Node applies this unconditionally at compile time (not displayErrors).
+void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& filename, const JSC::ParserError& parseError, OrdinalNumber lineOffset, OrdinalNumber columnOffset)
+{
+    UNUSED_PARAM(globalObject);
+    auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
+    if (!errorInstance)
+        return;
+
+    errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
+    JSValue stackValue = errorInstance->getDirect(vm, vm.propertyNames->stack);
+    if (!stackValue || !stackValue.isString())
+        return;
+    auto stackHolder = asString(stackValue)->tryGetValue();
+    const String& stack = stackHolder.data;
+    if (stack.isNull())
+        return;
+
+    String url = filename.isEmpty() ? "evalmachine.<anonymous>"_s : filename;
+
+    // parseError.line() is already lineOffset-adjusted (JSC parses against a
+    // SourceCode whose start position carries the offset). Undo it to index
+    // the raw source string.
+    int reportedLine = parseError.line();
+    int64_t physicalLine = static_cast<int64_t>(reportedLine) - lineOffset.zeroBasedInt();
+
+    String sourceLineText;
+    unsigned caretColumn = 0;
+    if (physicalLine >= 1) {
+        size_t lineStart = 0;
+        for (int64_t currentLine = 1; currentLine < physicalLine && lineStart != WTF::notFound; currentLine++) {
+            size_t newline = sourceString.find('\n', lineStart);
+            lineStart = newline == WTF::notFound ? WTF::notFound : newline + 1;
+        }
+        if (lineStart != WTF::notFound) {
+            size_t lineEnd = sourceString.find('\n', lineStart);
+            if (lineEnd == WTF::notFound)
+                lineEnd = sourceString.length();
+            StringView lineView = sourceString.substring(lineStart, lineEnd - lineStart);
+            if (lineView.endsWith('\r'))
+                lineView = lineView.left(lineView.length() - 1);
+            if (lineView.length() <= 1024) {
+                sourceLineText = lineView.toString();
+                int col0 = parseError.token().m_startPosition.column();
+                if (physicalLine == 1)
+                    col0 -= columnOffset.zeroBasedInt();
+                caretColumn = col0 >= 0 ? static_cast<unsigned>(col0) + 1 : 1;
+            }
+        }
+    }
+
+    String prepend;
+    if (!sourceLineText.isNull() && caretColumn >= 1 && caretColumn <= sourceLineText.length() + 1) {
+        StringBuilder caretLine;
+        for (unsigned i = 1; i < caretColumn; i++)
+            caretLine.append(i <= sourceLineText.length() && sourceLineText[i - 1] == '\t' ? '\t' : ' ');
+        caretLine.append('^');
+        prepend = makeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
+    } else {
+        prepend = makeString(url, ':', reportedLine, '\n', stack);
+    }
+
+    const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
+    errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
+    errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+}
+
 // Returns an encoded exception if the options are invalid.
 // Otherwise, returns an empty optional.
 std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer)

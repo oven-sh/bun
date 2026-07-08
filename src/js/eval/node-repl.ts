@@ -23,6 +23,13 @@ if (ext) {
       'Type ".help" for more information.',
   );
 
+  // `node -i -e`: an -e error is fatal (uncaught, exit 1), not caught by the
+  // REPL. Runs before REPL.start so the shim's process-wide capture callback
+  // isn't installed yet; `var`/`function` still land on globalThis.
+  if (evalScript !== undefined) {
+    require("node:vm").runInThisContext(evalScript, { filename: "[eval]", displayErrors: true });
+  }
+
   createInternalRepl(process.env, (err: Error | null, replServer: any) => {
     if (err) throw err;
 
@@ -33,18 +40,5 @@ if (ext) {
       }
       process.exit();
     });
-
-    // `node -i -e`: Node runs the -e script as a separate compilation unit
-    // AFTER the REPL starts, so `var`/`function` land on the global object and
-    // a syntax/runtime error is reported at [eval]:1 with the REPL still live.
-    if (evalScript !== undefined) {
-      try {
-        require("node:vm").runInThisContext(evalScript, { filename: "[eval]", displayErrors: true });
-      } catch (e) {
-        // Route through the REPL's own error printer so `Uncaught …` and the
-        // decorated stack render exactly as if typed at the prompt.
-        replServer._handleError(e);
-      }
-    }
   });
 }

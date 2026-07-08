@@ -554,6 +554,30 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     expect(() => new Script("function {")).toThrow(SyntaxError);
     expect(() => new Script("const x = ")).toThrow(SyntaxError);
   });
+  test("compile-time SyntaxError has arrow-decorated stack (Node DecorateErrorStack)", () => {
+    // Node prepends `<url>:<line>\n<source>\n^\n\n` to compile-time SyntaxErrors
+    // from `new vm.Script`, unconditionally (independent of displayErrors).
+    for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
+      let err: any;
+      try {
+        new Script("%%", opts);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+    }
+
+    // Custom filename + lineOffset: reported line is offset-adjusted, source
+    // line and caret still come from the physical position.
+    let err: any;
+    try {
+      new Script("1;\n%%", { filename: "foo.js", lineOffset: 5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
+  });
   test.todo("can specify timeout", () => {
     //
   });

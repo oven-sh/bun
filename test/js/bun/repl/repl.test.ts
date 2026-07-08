@@ -1277,9 +1277,9 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `node -i -e 'code'`: -e runs as a separate Script after REPL.start(), so
-  // `var`/`function` declarations land on globalThis and are visible in the REPL.
-  test("-e runs after REPL start; var/function declarations are visible", async () => {
+  // `node -i -e 'code'`: -e runs as its own Script against globalThis, so
+  // `var`/`function` declarations are visible from the REPL prompt.
+  test("-e var/function declarations are visible in the REPL", async () => {
     const { stdout, stderr, exitCode } = await runInteractive(
       ["-e", "var fromVar = 1; function f() { return 42 }"],
       "fromVar + f()\n",
@@ -1289,22 +1289,35 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("-e with a syntax error is reported and the REPL still starts", async () => {
-    const { stdout, stderr, exitCode } = await runInteractive(["-e", "console.log(1"], "2+2\n");
+  // `node -i -e '<bad>'`: Node exits 1 with a SyntaxError code frame at
+  // [eval]:1 and never accepts REPL input; not caught by the REPL error handler.
+  test("-e with a syntax error is fatal and never enters the REPL", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", "console.log(1"], "'stdin-ran'\n");
     expect(stdout).toContain("Welcome to Bun");
-    expect(stdout).toContain("4");
+    // stdin was never evaluated:
+    expect(stdout).not.toContain("stdin-ran");
     // The error is reported against the user's [eval] script, not the bootstrap.
     expect(stdout + stderr).toMatch(/SyntaxError/);
+    expect(stdout + stderr).toContain("[eval]");
     expect(stdout + stderr).not.toMatch(/node-repl|createInternalRepl|__BUN_EVAL_SCRIPT__/);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
+  });
+
+  test("-e with a runtime error is fatal and never enters the REPL", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", 'throw new Error("BOOM")'], "'stdin-ran'\n");
+    expect(stdout).not.toContain("stdin-ran");
+    expect(stdout + stderr).toContain("BOOM");
+    expect(stdout + stderr).toContain("[eval]");
+    expect(exitCode).toBe(1);
   });
 
   test.each(["/*", "const x=`foo"])(
     "-e with an unterminated template/comment cannot swallow the bootstrap (%j)",
     async bad => {
-      const { stdout, stderr } = await runInteractive(["-e", bad], "");
+      const { stdout, stderr, exitCode } = await runInteractive(["-e", bad], "");
       expect(stdout).toContain("Welcome to Bun");
       expect(stdout + stderr).toMatch(/SyntaxError/);
+      expect(exitCode).toBe(1);
     },
   );
 

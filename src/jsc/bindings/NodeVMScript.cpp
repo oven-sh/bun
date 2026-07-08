@@ -138,6 +138,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     if (!JSC::checkSyntax(vm, source, parseError)) {
         auto exception = parseError.toErrorObject(globalObject, source, -1);
         RETURN_IF_EXCEPTION(scope, {});
+        // Node always attaches the arrow header to compile-time SyntaxErrors
+        // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, options.filename, parseError, options.lineOffset, options.columnOffset);
         throwException(globalObject, scope, exception);
         return {};
     }

@@ -3154,7 +3154,11 @@ function serverStreamOnFinish(this: ServerHttp2Stream) {
   // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
   if (this[kSendingTrailers]) return;
   if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && this.sentTrailers === undefined) return;
-  if (!this.readableDidRead && this.readableFlowing === null) {
+  // Unlike node, the native layer can dispatch the request's END_STREAM to JS after the
+  // response's 'finish' (node learns endOfStream with the headers), so an untouched
+  // readable alone does not prove the peer is stuck. Requiring buffered unread request
+  // bytes does: a blocked uploader always has them, a request with no body never does.
+  if (!this.readableDidRead && this.readableFlowing === null && this.readableLength > 0) {
     setImmediate(callStreamClose, this);
   }
 }

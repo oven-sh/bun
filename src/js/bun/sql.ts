@@ -778,8 +778,9 @@ const SQL: typeof Bun.SQL = function SQL(
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }
-      } catch (err) {
-        return reject(err);
+      } catch {
+        // Best-effort cleanup; the adapter may have already torn the transaction
+        // down (SQLite SQLITE_FULL/IOERR, Postgres/MySQL on COMMIT failure).
       }
       return reject(err);
     } finally {

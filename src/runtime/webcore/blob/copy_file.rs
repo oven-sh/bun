@@ -569,7 +569,9 @@ impl<'a> CopyFile<'a> {
                                 self.system_error = Some(err.to_system_error());
                                 return Err(bun_core::errno_to_zig_err(err.errno as i32));
                             }
-                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Ok(()) => {
+                                self.read_len = total_written as SizeType;
+                            }
                         }
                     }
                     _ => {
@@ -578,7 +580,13 @@ impl<'a> CopyFile<'a> {
                     }
                 }
             }
-            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Ok(()) => {
+                // fcopyfile() doesn't report a byte count; stat the destination
+                // (opened with O_TRUNC above) to learn how many bytes were written.
+                if let bun_sys::Result::Ok(st) = bun_sys::fstat(self.destination_fd) {
+                    self.read_len = SizeType::try_from(st.st_size).expect("int cast");
+                }
+            }
         }
         Ok(())
     }
@@ -890,6 +898,7 @@ impl<'a> CopyFile<'a> {
                             i64::try_from(self.max_length).expect("int cast"),
                         )
                     };
+                    self.read_len = self.max_length;
                 }
 
                 self.do_close();

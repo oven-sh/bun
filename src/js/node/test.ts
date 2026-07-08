@@ -512,12 +512,19 @@ class TestContext {
   }
 
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-    const { name, fn } = createDescribe(arg0, arg1, arg2);
+    const { name, fn, options } = createDescribe(arg0, arg1, arg2);
 
     this.#checkNotInsideTest("describe");
 
     const { describe } = bunTest();
-    describe(name, fn);
+    if (options.skip) {
+      // Node never calls the suite callback when skip is set.
+      describe.skip(name, kDefaultFunction);
+    } else if (options.todo) {
+      describe.todo(name, fn);
+    } else {
+      describe(name, fn);
+    }
   }
 
   #checkNotInsideTest(fn: string) {
@@ -541,15 +548,25 @@ function bunTest() {
 let ctx: TestContext | undefined = undefined;
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe(name, fn);
+  // Node's {only: true} is intentionally not routed to describe.only() here
+  // for the same reason as test() below.
+  if (options.skip) {
+    // Node never calls the suite callback when skip is set.
+    describe.skip(name, kDefaultFunction);
+  } else if (options.todo) {
+    describe.todo(name, fn);
+  } else {
+    describe(name, fn);
+  }
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe.skip(name, fn);
+  // Node never calls the suite callback when skip is set.
+  describe.skip(name, kDefaultFunction);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {

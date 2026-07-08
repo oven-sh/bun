@@ -52,6 +52,25 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should honor describe(name, { skip }/{ todo }, fn) options", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["06-describe-options.js"]);
+    // A skipped suite's callback must not be evaluated (Node never calls it),
+    // so no LOG: lines and no RAN: lines from any skip variant may reach
+    // stdout. Only the skip:false suite's inner test runs.
+    expect({
+      stdout: stdout.split("\n").filter(l => l.startsWith("LOG:") || l.startsWith("RAN:")),
+      todo: [...stderr.matchAll(/\(todo\) ([^\n]+)/g)].map(m => m[1]),
+      pass: stderr.match(/\b(\d+) pass\b/)?.[1],
+      fail: stderr.match(/\b(\d+) fail\b/)?.[1],
+    }).toEqual({
+      stdout: ["RAN:options-skip-false-inner"],
+      todo: ["via options todo:true > inner"],
+      pass: "1",
+      fail: "0",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 async function runTests(filenames: string[]) {

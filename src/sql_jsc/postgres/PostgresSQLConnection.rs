@@ -2538,8 +2538,11 @@ impl PostgresSQLConnection {
                     if statement.status == StatementStatus::Parsing
                         && statement.signature.fields.is_empty()
                     {
+                        // WAITING_TO_PREPARE stays set until ReadyForQuery: the
+                        // head request has not yet written Bind+Execute, so
+                        // do_run() must not take the can_pipeline() fast path
+                        // and write a later query's Bind ahead of it.
                         statement.status = StatementStatus::Prepared;
-                        self.update_flags(|f| f.remove(ConnectionFlags::WAITING_TO_PREPARE));
                     }
                 }
             }
@@ -2566,8 +2569,10 @@ impl PostgresSQLConnection {
                 }
                 statement.parameters = description.parameters;
                 if statement.status == StatementStatus::Parsing {
+                    // See ParseComplete: keep WAITING_TO_PREPARE until
+                    // ReadyForQuery so do_run() can't pipeline a later query's
+                    // Bind ahead of the still-Pending head request.
                     statement.status = StatementStatus::Prepared;
-                    self.update_flags(|f| f.remove(ConnectionFlags::WAITING_TO_PREPARE));
                 }
             }
             MessageType::RowDescription => {

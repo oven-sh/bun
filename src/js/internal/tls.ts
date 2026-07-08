@@ -1,4 +1,4 @@
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
+const { isArrayBufferView, isArrayBuffer } = require("node:util/types");
 
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
@@ -10,7 +10,7 @@ function isPemArray(obj: unknown): obj is [{ pem: unknown }] {
 }
 
 function isValidTLSItem(obj: unknown) {
-  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj) || isPemArray(obj)) {
+  if (typeof obj === "string" || isArrayBufferView(obj) || isArrayBuffer(obj) || $inheritsBlob(obj) || isPemArray(obj)) {
     return true;
   }
 

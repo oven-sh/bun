@@ -1,12 +1,22 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import { bunEnv, bunExe, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
   test("should not use 100% CPU when websocket is idle", async () => {
-    const { stderr } = bunRun(path.join(import.meta.dir, "bun-websocket-cpu-fixture.js"));
-    expect(stderr).toBe("");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "bun-websocket-cpu-fixture.js")],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: import.meta.dir,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    // The fixture prints its CPU% samples to stdout and exits nonzero when the idle CPU% is too high.
+    expect(exitCode, stdout).toBe(0);
   });
   test("normlizes incoming request URLs", async () => {
     using server = Bun.serve({

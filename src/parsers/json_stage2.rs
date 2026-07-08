@@ -93,16 +93,16 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
     ) -> Self {
+        // `root_ptr` both times: it takes `&mut JsonTape`, so neither arm can
+        // hand `tape` a frozen, shared-reborrow pointer. The parser writes
+        // through `tape` for the rest of the parse.
         let (tape, tape_owned) = match tape_alloc {
-            E::TapeAlloc::Global => (
-                core::ptr::NonNull::from(Box::leak(Box::new(E::JsonTape::empty()))),
-                true,
-            ),
+            E::TapeAlloc::Global => (Box::leak(Box::new(E::JsonTape::empty())).root_ptr(), true),
             E::TapeAlloc::Arena(arena) => {
                 // SAFETY: the caller's arena (lifetime-erased) outlives the parse and the AST.
                 let arena: &Bump = unsafe { arena.as_ref() };
                 (
-                    core::ptr::NonNull::from(&*arena.alloc(E::JsonTape::empty_in(tape_alloc))),
+                    arena.alloc(E::JsonTape::empty_in(tape_alloc)).root_ptr(),
                     false,
                 )
             }
@@ -389,15 +389,20 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
+    /// The tape allocation's own pointer, for the nodes that store it.
+    ///
+    /// Not a `&JsonTape`: parsing keeps appending to the tape after a node is
+    /// built, and every such write invalidates a pointer derived from a shared
+    /// reborrow (see [`E::ObjectJSON::new`]).
     #[inline]
-    fn tape_ref(&self) -> &'a E::JsonTape {
-        // SAFETY: allocated in `Parser::new`; the caller keeps it alive for the AST's lifetime.
-        unsafe { self.tape.expect("the tape was already taken").as_ref() }
+    fn tape_ptr(&self) -> core::ptr::NonNull<E::JsonTape> {
+        self.tape.expect("the tape was already taken")
     }
 
     #[inline]
     fn tape_mut(&mut self) -> &mut E::JsonTape {
-        // SAFETY: see `tape_ref`; exclusively owned until `take_tape`.
+        // SAFETY: allocated in `Parser::new` and exclusively owned until
+        // `take_tape`; a fresh reborrow of the root pointer per call.
         unsafe { self.tape.expect("the tape was already taken").as_mut() }
     }
 
@@ -702,7 +707,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         let (first, count) = self.push_items_block(mark);
         Ok(Expr::init(
-            E::ArrayJSON::new(self.tape_ref(), first, count, is_single_line, close_loc),
+            // SAFETY: `tape_ptr` is the tape allocation's own pointer, and the
+            // tape outlives the AST (`take_tape` hands it to the caller).
+            unsafe { E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
             loc,
         ))
     }
@@ -830,7 +837,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
         let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
-            E::ObjectJSON::new(self.tape_ref(), first, count, is_single_line, close_loc),
+            // SAFETY: see `parse_array`.
+            unsafe { E::ObjectJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
             loc,
         ))
     }

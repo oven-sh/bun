@@ -222,8 +222,9 @@ where
     }
     #[inline]
     fn set_request_weakref(&mut self, req: *mut Request) {
-        // SAFETY: req is a freshly-boxed Request; live for the request duration.
-        self.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(unsafe { &mut *req });
+        // SAFETY: `req` is a freshly-boxed Request (live for the request
+        // duration) still carrying its `heap::into_raw` provenance.
+        self.request_weakref = unsafe { bun_ptr::WeakPtr::<Request>::init_ref(req) };
     }
     #[inline]
     fn clear_req(&mut self) {
@@ -2760,9 +2761,10 @@ where
     ) {
         jsc::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
-            && !resp
-                .get_remote_socket_info()
-                .is_some_and(|address| address.is_loopback())
+            && (!bake::is_allowed_host_header(req, Some(&self.config.address))
+                || !resp
+                    .get_remote_socket_info()
+                    .is_some_and(|address| address.is_loopback()))
         {
             req.set_yield(true);
             return;
@@ -3070,11 +3072,15 @@ where
             Some(signal_for_req),
             body_hive,
         ));
-        let request_object: &mut Request =
-            // SAFETY: leak so the ctx (which outlives this stack frame) can
-            // hold the borrow; Request is freed via ctx.deinit's request_weakref.
-            unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
-        ctx.set_request_weakref(request_object);
+        // Leak so the ctx (which outlives this stack frame) can hold the
+        // pointer; Request is freed via ctx.deinit's request_weakref. The weak
+        // handle takes the raw pointer, not a reborrow of `request_object`:
+        // writes through `request_object` below would otherwise invalidate it.
+        let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
+        ctx.set_request_weakref(request_object_ptr);
+        // SAFETY: freshly leaked; no other borrow of the Request is live, and
+        // the weak handle only reborrows when `get()` is called.
+        let request_object: &mut Request = unsafe { &mut *request_object_ptr };
 
         // The lazy `getRequest()` path that backs Request.url / .headers
         // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
@@ -3316,15 +3322,21 @@ where
             body_hive,
         ));
         ctx.upgrade_context = Some(upgrade_ctx);
-        let request_object: &mut Request =
-            // SAFETY: leaked so the ctx (which outlives this stack frame) can
-            // hold the borrow; freed via ctx.deinit's request_weakref.
-            unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
-        ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
+        // Leaked so the ctx (which outlives this stack frame) can hold the
+        // pointer; freed via ctx.deinit's request_weakref. Everything below
+        // goes through this raw pointer rather than a `&mut Request` reborrow:
+        // the weak handle and the deferred `detach_request` both alias it.
+        let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
+        // SAFETY: freshly leaked, so it carries the allocation's provenance.
+        ctx.request_weakref = unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) };
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        let args = [request_object.to_js(&global), this.js_value_assert_alive()];
+        // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
+        let args = [
+            unsafe { (*request_object_ptr).to_js(&global) },
+            this.js_value_assert_alive(),
+        ];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
@@ -3336,11 +3348,12 @@ where
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
-        let request_object_ptr: *mut Request = request_object;
+        // Its own copy, so the closure's capture does not pin `request_object_ptr`.
+        let detach_ptr = request_object_ptr;
         scopeguard::defer! {
             // uWS request will not live longer than this function
-            // SAFETY: see request_object above.
-            unsafe { (*request_object_ptr).request_context.detach_request() };
+            // SAFETY: see request_object_ptr above.
+            unsafe { (*detach_ptr).request_context.detach_request() };
         }
 
         // SAFETY: self_ptr is live for the request's duration; the &mut held
@@ -3361,7 +3374,9 @@ where
 
         ctx.to_async(
             std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),
-            request_object,
+            // SAFETY: `request_object_ptr` is live (the ctx's weakref owns it)
+            // and no other borrow of the Request is outstanding here.
+            unsafe { &mut *request_object_ptr },
         );
     }
 

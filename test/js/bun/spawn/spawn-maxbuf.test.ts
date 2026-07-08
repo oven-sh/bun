@@ -53,10 +53,10 @@ describe("yes is killed", () => {
 
 describe("maxBuffer caps the buffer while the child is still writing", () => {
   const maxBuffer = 1024;
-  // Nothing that lands after the limit trips is buffered, so the result can
-  // only overshoot by the read that tripped it: one pipe scratch buffer.
-  // (Node bounds spawnSync the same way, at its 64 KB read size.)
-  const bound = maxBuffer + 256 * 1024;
+  // The result can only overshoot by the read that tripped the limit, and reads
+  // are clamped to the remaining budget plus Node's 64 KB stdio read size. That
+  // is the same bound Node gives spawnSync.
+  const bound = maxBuffer + 64 * 1024;
 
   // `killSignal: 0` sends no signal at all, so the child outlives the kill and
   // keeps writing for as long as Bun keeps reading. A child that merely
@@ -77,6 +77,8 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(proc.exitedDueToMaxBuffer).toBe(true);
+    // Above maxBuffer: the read that trips the limit is still buffered.
+    expect(proc.stdout.length).toBeGreaterThan(maxBuffer);
     expect(proc.stdout.length).toBeLessThanOrEqual(bound);
     expect(proc.stderr.length).toBe(0);
   });
@@ -89,6 +91,7 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
     });
     await proc.exited;
     const stdout = await proc.stdout.bytes();
+    expect(stdout.length).toBeGreaterThan(maxBuffer);
     expect(stdout.length).toBeLessThanOrEqual(bound);
   });
 });

@@ -8,7 +8,7 @@ use bun_core::{StringOrTinyString, ZStr};
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as path, PathBuffer};
-use bun_semver::{self as Semver, Version};
+use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};
@@ -35,7 +35,8 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub temp_dir: Fd,
     pub dependency_id: DependencyID,
-    pub skip_verify: bool,    // = false
+    pub skip_verify: bool, // = false
+    pub in_trusted_dependencies: bool,
     pub integrity: Integrity, // = Integrity::default()
     pub url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
@@ -51,7 +52,7 @@ impl ExtractTarball {
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "Integrity check failed<r> for tarball: {}",
+                        "Integrity check failed for tarball: {}",
                         bun_fmt::s(self.name.slice()),
                     ),
                 );
@@ -508,12 +509,26 @@ impl ExtractTarball {
                     )
                     .as_bytes()
                 }
-                ResolutionTag::Github => directories::cached_github_folder_name_print(
-                    &mut bufs.folder_name_buf,
-                    resolved,
-                    None,
-                )
-                .as_bytes(),
+                ResolutionTag::Github => {
+                    if !bun_install::repository::is_safe_resolved_tag(resolved) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
+                                bun_fmt::s(name),
+                                bun_fmt::s(resolved),
+                            ),
+                        );
+                        return Err(bun_core::err!("InstallFailed"));
+                    }
+                    directories::cached_github_folder_name_print(
+                        &mut bufs.folder_name_buf,
+                        resolved,
+                        None,
+                    )
+                    .as_bytes()
+                }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
@@ -750,15 +765,7 @@ impl ExtractTarball {
                 ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => true,
-                _ => {
-                    package_manager.lockfile.trusted_dependencies.is_some()
-                        && package_manager
-                            .lockfile
-                            .trusted_dependencies
-                            .as_ref()
-                            .unwrap()
-                            .contains(&(Semver::semver_string::Builder::string_hash(name) as u32))
-                }
+                _ => self.in_trusted_dependencies,
             };
             if needs_json {
                 let read_result = sys::File::read_file_from(

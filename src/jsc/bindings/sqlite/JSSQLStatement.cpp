@@ -1312,7 +1312,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
     if (status != SQLITE_OK) {
-        auto message = status == SQLITE_ERROR ? "unable to deserialize database"_s : sqliteString(sqlite3_errstr(status));
+        auto message = status == SQLITE_ERROR ? WTF::String("unable to deserialize database"_s) : WTF::String::fromUTF8(sqlite3_errstr(status));
         sqlite3_close(db);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, message));
         return {};
@@ -1530,6 +1530,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, bindings, safeIntegers, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
+
+                if (versionDB->db != db) [[unlikely]] {
+                    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+                    return {};
+                }
 
                 if (!reb.isNumber()) [[unlikely]] {
                     return JSValue::encode(reb); /* this means an error */

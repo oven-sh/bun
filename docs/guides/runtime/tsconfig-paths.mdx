@@ -10,7 +10,7 @@ Bun reads the `paths` field in your `tsconfig.json` to re-write import paths. Th
 {
   "compilerOptions": {
     "paths": {
-      "my-custom-name": ["zod"],
+      "my-custom-name": ["./node_modules/zod"],
       "@components/*": ["./src/components/*"]
     }
   }

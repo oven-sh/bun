@@ -212,7 +212,6 @@ impl Tag {
             | Tag::BunTest // for test timeouts
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
-            | Tag::CronJob // calendar-anchored to real wall clock
             => false,
             _ => true,
         }

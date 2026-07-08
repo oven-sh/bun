@@ -10,7 +10,7 @@ import * as dns from "node:dns";
 
 const addrs = await dns.promises.resolve4("bun.com", { ttl: true });
 console.log(addrs);
-// => [{ address: "172.67.161.226", family: 4, ttl: 0 }, ...]
+// => [{ address: "172.67.161.226", ttl: 0 }, ...]
 ```
 
 ```ts
@@ -25,7 +25,7 @@ dns.prefetch("bun.com", 443);
 
 Bun caches DNS lookups, which makes repeated connections to the same hosts faster.
 
-The cache holds up to 255 entries for a maximum of 30 seconds each. If a connection to a host fails, Bun removes that host's entry from the cache. Simultaneous connections to the same host share one DNS lookup.
+The cache holds up to 256 entries for a maximum of 30 seconds each. If a connection to a host fails, Bun removes that host's entry from the cache. Simultaneous connections to the same host share one DNS lookup.
 
 This cache is automatically used by:
 
@@ -55,7 +55,7 @@ A database driver is a good example: prefetch the database host's DNS entry when
 `dns.prefetch` resolves a hostname before you need it.
 
 ```ts
-dns.prefetch(hostname: string, port: number): void;
+dns.prefetch(hostname: string, port?: number): void;
 ```
 
 Here's an example:

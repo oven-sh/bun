@@ -96,17 +96,20 @@ describe("dns", () => {
         }
       });
     });
-    test.each(invalidHostnames)("%s", hostname => {
+    // These negative lookups are independent (distinct hostname+backend, no shared
+    // state); run them concurrently so the system resolver's ~4s negative-lookup
+    // timeouts overlap instead of stacking.
+    test.concurrent.each(invalidHostnames)("%s", async hostname => {
       // @ts-expect-error
-      expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
+      await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",
         name: "DNSException",
       });
     });
 
-    test.each(malformedHostnames)("'%s'", hostname => {
+    test.concurrent.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
-      expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
+      await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
         name: "DNSException",
       });

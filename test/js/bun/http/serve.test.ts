@@ -2185,7 +2185,7 @@ it("file-response server exits when killed mid-send", async () => {
     cmd: [bunExe(), fixture],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
     stdin: "ignore",
   });
   const { value } = await proc.stdout.getReader().read();

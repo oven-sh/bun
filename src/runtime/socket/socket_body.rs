@@ -515,11 +515,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// rather than taking it by-ref so the single caller in `connect_finish`
     /// doesn't need a disjoint borrow.
     pub fn do_connect(&self) -> Result<(), bun_core::Error> {
-        // Keep `self` alive across the
-        // re-entrant connect path. `ScopedRef` stores a raw `*mut Self` (no
-        // borrow held across the body) and derefs on Drop.
-        // SAFETY: `self` is live until guard drop; all writes go through
-        // interior-mutable cells.
+        // Keep `self` alive across the re-entrant connect path.
         // SAFETY: `self` is live for this call and outlives the sockets below.
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
         let _guard = this.ref_guard();
@@ -1718,7 +1714,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         // Same late-event guard as the other dispatch entry points: the
-        // Handlers may already have been freed by mark_inactive.
+        // socket may already have released its Handlers.
         if !this.has_handlers() {
             return Ok(());
         }
@@ -1765,7 +1761,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         // Same late-event guard as the other dispatch entry points: the
-        // Handlers may already have been freed by mark_inactive.
+        // socket may already have released its Handlers.
         if !this.has_handlers() {
             return Ok(());
         }
@@ -1813,14 +1809,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // A late close on a socket whose Handlers were already torn down
-        // (mark_inactive freed them through a path that did not route back
-        // through this dispatch - e.g. a JS-side destroy on a TLS socket
-        // driven by an upgraded duplex). There is nothing to dispatch to,
-        // but the caller transferred its +1 (the ext-slot/owner pin) -
-        // release it and detach so nothing further dispatches either.
-        // mark_inactive is not needed: handlers being null means the
-        // previous teardown already ran it (it is what nulls the field).
+        // A late close on a socket that already released its Handlers through
+        // a path that did not route back through this dispatch - e.g. a
+        // JS-side destroy on a TLS socket driven by an upgraded duplex. There
+        // is nothing to dispatch to, but the caller transferred its +1 (the
+        // ext-slot/owner pin) - release it and detach so nothing further
+        // dispatches either. mark_inactive is not needed: handlers being
+        // null means the previous teardown already ran it.
         if !this.has_handlers() {
             this.detach_native_callback();
             this.socket.set(SocketHandler::<SSL>::DETACHED);
@@ -3967,10 +3962,10 @@ impl DuplexUpgradeContext {
             if let Some(tls) = self.tls.take() {
                 // Pre-open error (e.g. the duplex emitted non-Buffer data
                 // before the queued `.StartTLS` task ran). `handleConnectError`
-                // → `markInactive` frees `tls.handlers`; null `tls` so the
+                // → `markInactive` releases `tls.handlers`; null `tls` so the
                 // still-queued `.StartTLS` → `onOpen` — and any further
-                // duplex events — skip the TLSSocket instead of calling
-                // `getHandlers()` on the freed allocation.
+                // duplex events — skip the TLSSocket instead of hitting
+                // `has_handlers() == false` in `onOpen`.
                 //
                 // Refcount: `tls.socket` is `InternalSocket::UpgradedDuplex`
                 // here (assigned in `js_upgrade_duplex_to_tls` *before*
@@ -4008,7 +4003,7 @@ impl DuplexUpgradeContext {
             // from `duplex.end()` (called right after this returns via
             // `UpgradedDuplex.onClose` → `callWriteOrEnd`) hits the null-check
             // in `onError` instead of reading the Handlers that `tls.onClose`
-            // → `markInactive` just freed.
+            // → `markInactive` just released.
             let p = tls.into_this_ptr();
             let _ = TLSSocket::on_close(p, socket, 0, None);
         }

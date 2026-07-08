@@ -213,4 +213,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser<NODE_HTTP> {
 #endif
 };
 
+/* Bun.serve's per-socket allocation must not exceed what it was on main before
+ * the node:http compat state landed. Bound is main's measured layout expressed
+ * relative to sizeof(std::string) so it holds across libc++ and libstdc++. */
+static_assert(sizeof(HttpResponseData<false, false>) <= 112 + 2 * sizeof(std::string),
+    "HttpResponseData<SSL, NODE_HTTP=false> grew past its size on main; the Bun.serve per-socket allocation regressed");
+
 }

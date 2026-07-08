@@ -1268,12 +1268,15 @@ describe("Transactions", () => {
 
     test("tx.savepoint after auto-rollback is refused and its body never runs", async () => {
       let bodyRan = false;
+      let conflictErr: any;
       let beginErr: any;
       try {
         await sql.begin(async tx => {
           try {
             await tx`INSERT INTO t VALUES ('dup')`;
-          } catch {}
+          } catch (e) {
+            conflictErr = e;
+          }
           await tx.savepoint(async sp => {
             bodyRan = true;
             await sp`INSERT INTO log VALUES ('from-savepoint')`;
@@ -1284,11 +1287,13 @@ describe("Transactions", () => {
       }
       expect({
         bodyRan,
-        code: beginErr?.code,
+        conflictErrCode: conflictErr?.code,
+        beginErrCode: beginErr?.code,
         durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
       }).toEqual({
         bodyRan: false,
-        code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        conflictErrCode: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        beginErrCode: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
         durable: [],
       });
     });

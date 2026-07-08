@@ -692,10 +692,13 @@ const SQL: typeof Bun.SQL = function SQL(
             for (const query of transactionQueries) {
               (query as Query<any, any>).cancel();
             }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+            if (transaction_still_open()) {
+              if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+                await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+              }
+              await run_internal_transaction_sql(ROLLBACK_COMMAND);
             }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND);
+            needs_rollback = false;
             state.connectionState |= ReservedConnectionState.closed;
             resolve();
           }, timeout * 1000);
@@ -733,15 +736,15 @@ const SQL: typeof Bun.SQL = function SQL(
 
       try {
         let result = await savepoint_callback(transaction_sql);
+        if ($isArray(result)) {
+          result = await Promise.all(result);
+        }
         if (needs_rollback && !transaction_still_open()) {
           throw transaction_aborted_error();
         }
         if (RELEASE_SAVEPOINT_COMMAND) {
           // mssql dont have release savepoint
           await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
-        }
-        if ($isArray(result)) {
-          result = await Promise.all(result);
         }
         return result;
       } catch (err) {

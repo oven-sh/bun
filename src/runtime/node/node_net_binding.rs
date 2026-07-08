@@ -155,8 +155,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
         });
-        // SAFETY: `NewSocket::new` returns a live heap pointer (`heap::alloc`).
-        unsafe { (*socket).get_this_value(global) }
+        socket.get_this_value(global)
     }
 
     Ok(if !is_ssl {

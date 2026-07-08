@@ -531,7 +531,9 @@ impl Listener {
         Ok(this_value)
     }
 
-    pub fn on_name_pipe_created<const SSL: bool>(listener: &Listener) -> *mut NewSocket<SSL> {
+    pub fn on_name_pipe_created<const SSL: bool>(
+        listener: &Listener,
+    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
         debug_assert!(SSL == listener.ssl);
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
@@ -553,15 +555,13 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         });
-        // SAFETY: `NewSocket::new` returns a non-null live heap pointer
-        // (refcount==1); single JS thread, no other borrow exists yet.
-        let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
+        let s = this_socket;
         s.ref_();
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
-        this_socket
+        s
     }
 
     /// Called from `BunListener::on_open` (uws dispatch) for every accepted socket.
@@ -571,7 +571,7 @@ impl Listener {
     pub fn on_create<const SSL: bool>(
         listener: &Listener,
         socket: uws::NewSocketHandler<SSL>,
-    ) -> *mut NewSocket<SSL> {
+    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
         jsc::mark_binding!();
         log!("onCreate");
 
@@ -597,9 +597,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
         });
-        // SAFETY: `NewSocket::new` returns a non-null live heap pointer
-        // (refcount==1); single JS thread, no other borrow exists yet.
-        let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
+        let s = this_socket;
         s.ref_();
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
@@ -608,7 +606,7 @@ impl Listener {
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
-            unsafe { *ctx = this_socket.cast::<c_void>() };
+            unsafe { *ctx = this_socket.as_ptr().cast::<c_void>() };
         }
         if let uws::InternalSocket::Connected(s) = socket.socket {
             // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
@@ -1077,7 +1075,7 @@ impl Listener {
                 handlers.set_promise(global, promise_value);
 
                 if ssl_enabled {
-                    let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
+                    let tls: bun_ptr::ThisPtr<TLSSocket> = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
@@ -1097,7 +1095,7 @@ impl Listener {
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
                             .set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
-                        prev_ptr
+                        prev
                     } else {
                         TLSSocket::new(TLSSocket {
                             ref_count: bun_ptr::RefCount::init(),
@@ -1120,10 +1118,7 @@ impl Listener {
                             twin: JsCell::new(None),
                         })
                     };
-                    // SAFETY: `tls` is either the caller's live JS-owned socket or
-                    // the allocation created just above; both are intrusively
-                    // refcounted and live for this call.
-                    let tls_ref = unsafe { bun_ptr::ThisPtr::new(tls) };
+                    let tls_ref = tls;
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1146,14 +1141,14 @@ impl Listener {
                             &buf[..pipe_name_len.unwrap()],
                             ssl_taken.take(),
                             ctx_for_pipe,
-                            PipeSocketType::Tls(tls),
+                            PipeSocketType::Tls(tls_ref),
                         ),
                         UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
                             global,
                             *fd,
                             ssl_taken.take(),
                             ctx_for_pipe,
-                            PipeSocketType::Tls(tls),
+                            PipeSocketType::Tls(tls_ref),
                         ),
                         _ => unreachable!(),
                     };
@@ -1165,7 +1160,7 @@ impl Listener {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                     });
                 } else {
-                    let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
+                    let tcp: bun_ptr::ThisPtr<TCPSocket> = if let Some(prev_ptr) = prev_maybe_tcp {
                         // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
@@ -1182,7 +1177,7 @@ impl Listener {
                         prev.local_binding.set(local_binding.clone());
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
-                        prev_ptr
+                        prev
                     } else {
                         TCPSocket::new(TCPSocket {
                             ref_count: bun_ptr::RefCount::init(),
@@ -1203,10 +1198,7 @@ impl Listener {
                             twin: JsCell::new(None),
                         })
                     };
-                    // SAFETY: `tcp` is either the caller's live JS-owned socket or
-                    // the allocation created just above; both are intrusively
-                    // refcounted and live for this call.
-                    let tcp_ref = unsafe { bun_ptr::ThisPtr::new(tcp) };
+                    let tcp_ref = tcp;
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(
                         tcp_ref.get_this_value(global),
@@ -1221,14 +1213,14 @@ impl Listener {
                             &buf[..pipe_name_len.unwrap()],
                             None,
                             None,
-                            PipeSocketType::Tcp(tcp),
+                            PipeSocketType::Tcp(tcp_ref),
                         ),
                         UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
                             global,
                             *fd,
                             None,
                             None,
-                            PipeSocketType::Tcp(tcp),
+                            PipeSocketType::Tcp(tcp_ref),
                         ),
                         _ => unreachable!(),
                     };
@@ -1393,7 +1385,7 @@ fn connect_finish<const IS_SSL: bool>(
     port: Option<u16>,
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
-    let socket: *mut NewSocket<IS_SSL> = if let Some(prev_ptr) = maybe_previous {
+    let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>, owned by its JS wrapper.
         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
         debug_assert!(prev.this_value.get().is_not_empty());
@@ -1422,7 +1414,7 @@ fn connect_finish<const IS_SSL: bool>(
             unsafe { boring_sys::SSL_CTX_free(old) };
         }
         prev.owned_ssl_ctx.set(owned_ssl_ctx.map(|p| p.as_ptr()));
-        prev_ptr
+        prev
     } else {
         NewSocket::<IS_SSL>::new(NewSocket::<IS_SSL> {
             ref_count: bun_ptr::RefCount::init(),
@@ -1446,7 +1438,7 @@ fn connect_finish<const IS_SSL: bool>(
     // SAFETY: `socket` is either the caller's live JS-owned socket (the
     // reconnect path) or the allocation created just above; both are
     // intrusively refcounted and live for this call.
-    let socket_ref = unsafe { bun_ptr::ThisPtr::new(socket) };
+    let socket_ref = socket;
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
     // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
@@ -1503,9 +1495,8 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::ECONNREFUSED as c_int
             }
         };
-        // SAFETY: `socket` is the live heap allocation created above.
-        let this = unsafe { bun_ptr::ThisPtr::new(socket) };
         {
+            let this = socket;
             let _ = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
             // Balance the unconditional `socket_ref.ref_()` above.
             NewSocket::deref(&this);

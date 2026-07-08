@@ -331,38 +331,28 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
     const HAS_ON_OPEN: bool = true;
 
     fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
-        // SAFETY: caller upholds the `RawSocketEvents` contract — `this` is the
-        // live unique ext-slot owner under single-threaded dispatch; `handle_*`
-        // has the same precondition on `this`.
-        unsafe { Self::handle_open(this.as_ptr(), s) }
+        Self::handle_open(this, s)
     }
     fn on_data(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, data: &[u8]) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_data(this.as_ptr(), s, data) }
+        Self::handle_data(this, s, data)
     }
     fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_writable(this.as_ptr(), s) }
+        Self::handle_writable(this, s)
     }
     fn on_close(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_close(this.as_ptr(), s, code, reason) }
+        Self::handle_close(this, s, code, reason)
     }
     fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_timeout(this.as_ptr(), s) }
+        Self::handle_timeout(this, s)
     }
     fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_timeout(this.as_ptr(), s) }
+        Self::handle_timeout(this, s)
     }
     fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_end(this.as_ptr(), s) }
+        Self::handle_end(this, s)
     }
     fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_connect_error(this.as_ptr(), s, code) }
+        Self::handle_connect_error(this, s, code)
     }
     fn on_handshake(
         this: ThisPtr<Self>,
@@ -370,8 +360,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) {
-        // SAFETY: see `on_open`.
-        unsafe { Self::handle_handshake(this.as_ptr(), s, ok, err) }
+        Self::handle_handshake(this, s, ok, err)
     }
 }
 
@@ -379,10 +368,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     // No `on_open` override — adoption of an already-connected socket.
 
     fn on_data(this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) {
-        // SAFETY: caller upholds the `RawSocketEvents` contract — `this` points
-        // to the live unique ext-slot owner under single-threaded dispatch, so
-        // it is valid to forward/dereference here.
-        unsafe { Self::handle_data(this.as_ptr(), data) }
+        Self::handle_data(this, data)
     }
     fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) {
         let _guard = this.ref_guard();
@@ -557,8 +543,7 @@ where
         // `Listener::listen`; the listener strictly outlives every accepted
         // socket and is read-only here.
         let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, wrap::<SSL>(s));
-        // SAFETY: `on_create` returns a freshly-boxed, live `NewSocket`.
-        api::NewSocket::on_open(unsafe { ThisPtr::new(ns) }, wrap::<SSL>(s));
+        api::NewSocket::on_open(ns, wrap::<SSL>(s));
     }
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to

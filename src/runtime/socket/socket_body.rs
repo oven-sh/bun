@@ -466,8 +466,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
+    /// Heap-allocates the socket; ownership passes to the intrusive refcount.
+    /// The returned handle is live by construction.
+    pub fn new(init: Self) -> bun_ptr::ThisPtr<Self> {
+        // SAFETY: freshly allocated, non-null.
+        unsafe { bun_ptr::ThisPtr::new(bun_core::heap::into_raw(Box::new(init))) }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -517,11 +520,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // borrow held across the body) and derefs on Drop.
         // SAFETY: `self` is live until guard drop; all writes go through
         // interior-mutable cells.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
-        // Stash the self-pointer for the uSockets ext slot.
         // SAFETY: `self` is live for this call and outlives the sockets below.
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
-        let self_ptr: *mut Self = this.as_ptr();
+        let _guard = this.ref_guard();
 
         let vm = self.get_handlers().vm;
         // SAFETY: per-thread VM singleton; `VirtualMachine::get()` yields the
@@ -625,9 +626,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 let sock = SocketHandler::<SSL>::from(s);
                 self.socket.set(sock);
-                // SAFETY: `self_ptr` is the live allocation root; the
-                // `&self.connection` match borrow has ended (NLL).
-                let this = unsafe { bun_ptr::ThisPtr::new(self_ptr) };
                 Self::on_open(this, sock);
             }
             None => unreachable!("do_connect requires self.connection to be set"),
@@ -1878,9 +1876,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `IntrusiveRc::drop`
             // release it a second time.
-            // SAFETY: the twin held a live +1 ref.
-            let raw = unsafe { bun_ptr::ThisPtr::new(IntrusiveRc::into_raw(raw)) };
-            Self::on_close(raw, socket, err, reason).ok();
+            Self::on_close(raw.into_this_ptr(), socket, err, reason).ok();
         }
         let cleanup = CloseTeardown {
             socket: this,
@@ -3339,7 +3335,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
 
         let cfg = ssl_opts.as_ref();
-        let tls_ptr: *mut TLSSocket = TLSSocket::new(TLSSocket {
+        let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(SocketHandler::<true>::DETACHED),
@@ -3362,8 +3358,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
         // `on_open`/`start_tls_handshake`.
-        // SAFETY: `tls_ptr` was just allocated via `heap::alloc` and is live.
-        let tls = unsafe { bun_ptr::ThisPtr::new(tls_ptr) };
 
         let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
         // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
@@ -3472,11 +3466,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
         });
-        // SAFETY: `raw` was just allocated via `heap::alloc` and is live.
-        let raw_ref = unsafe { bun_ptr::ThisPtr::new(raw) };
+        let raw_ref = raw;
         raw_ref.ref_();
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
-        tls.twin.set(Some(unsafe { IntrusiveRc::from_raw(raw) }));
+        tls.twin
+            .set(Some(unsafe { IntrusiveRc::from_raw(raw.as_ptr()) }));
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
@@ -3942,7 +3936,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            TLSSocket::on_open(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
+            TLSSocket::on_open(tls.this_ptr(), socket);
         }
     }
 
@@ -3951,25 +3945,21 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            TLSSocket::on_data(
-                unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) },
-                socket,
-                decoded_data,
-            );
+            TLSSocket::on_data(tls.this_ptr(), socket, decoded_data);
         }
     }
 
     fn on_session(&mut self, session: &[u8]) {
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            let _ = TLSSocket::on_session(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, session);
+            let _ = TLSSocket::on_session(tls.this_ptr(), session);
         }
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            let _ = TLSSocket::on_keylog(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, line);
+            let _ = TLSSocket::on_keylog(tls.this_ptr(), line);
         }
     }
 
@@ -3978,7 +3968,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            let tls = unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) };
+            let tls = tls.this_ptr();
             let _ = TLSSocket::on_handshake(tls, socket, success as i32, ssl_error);
         }
     }
@@ -3987,7 +3977,7 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            TLSSocket::on_end(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
+            TLSSocket::on_end(tls.this_ptr(), socket);
         }
     }
 
@@ -3996,7 +3986,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            TLSSocket::on_writable(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
+            TLSSocket::on_writable(tls.this_ptr(), socket);
         }
     }
 
@@ -4023,12 +4013,7 @@ impl DuplexUpgradeContext {
                 // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
-                let p = IntrusiveRc::into_raw(tls);
-                // `handle_connect_error`'s `needs_deref` arm releases the +1
-                // transferred via `into_raw` (socket is UpgradedDuplex, not
-                // Detached) — do NOT reconstruct the `IntrusiveRc`.
-                // SAFETY: `p` carries that live +1.
-                let p = unsafe { bun_ptr::ThisPtr::new(p) };
+                let p = tls.into_this_ptr();
                 let _ =
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
             }
@@ -4040,7 +4025,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: the `IntrusiveRc` holds a live +1 for this call.
-            TLSSocket::on_timeout(unsafe { bun_ptr::ThisPtr::new(tls.as_ptr()) }, socket);
+            TLSSocket::on_timeout(tls.this_ptr(), socket);
         }
     }
 
@@ -4057,11 +4042,7 @@ impl DuplexUpgradeContext {
             // `UpgradedDuplex.onClose` → `callWriteOrEnd`) hits the null-check
             // in `onError` instead of reading the Handlers that `tls.onClose`
             // → `markInactive` just freed.
-            let p = IntrusiveRc::into_raw(tls);
-            // `on_close` consumes the +1 we held, so we do NOT reconstruct the
-            // `IntrusiveRc` (that would double-deref).
-            // SAFETY: `p` carries that live +1.
-            let p = unsafe { bun_ptr::ThisPtr::new(p) };
+            let p = tls.into_this_ptr();
             let _ = TLSSocket::on_close(p, socket, 0, None);
         }
 
@@ -4124,11 +4105,7 @@ impl DuplexUpgradeContext {
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
-                        let p = IntrusiveRc::into_raw(tls);
-                        // `handle_connect_error`'s `needs_deref` arm releases
-                        // the +1 transferred via `into_raw`.
-                        // SAFETY: `p` carries that live +1.
-                        let p = unsafe { bun_ptr::ThisPtr::new(p) };
+                        let p = tls.into_this_ptr();
                         let _ = TLSSocket::handle_connect_error(p, errno, 0);
                     }
                     // `startTLS`/`startTLSWithCTX` failed before the
@@ -4337,7 +4314,7 @@ pub fn js_upgrade_duplex_to_tls(
         twin: JsCell::new(None),
     });
     // SAFETY: `tls` was just allocated via `heap::alloc` and is live.
-    let tls_ref = unsafe { bun_ptr::ThisPtr::new(tls) };
+    let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
@@ -4360,7 +4337,7 @@ pub fn js_upgrade_duplex_to_tls(
     // SAFETY: fresh heap allocation; every field is `ptr::write`-initialized
     // below before any read or `&mut DuplexUpgradeContext` is formed.
     unsafe {
-        ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
+        ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls.as_ptr())));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         // `AnyTask::New` can't take the callback as a type parameter (see the
         // notes in AnyTask.rs), so hand-write the `*mut c_void → run_event` shim.

@@ -2950,6 +2950,7 @@ describe("fetch() URL with userinfo", () => {
     ["user:pw@host:port", (p: number) => `http://alice:secret@127.0.0.1:${p}/a`, "/a"],
     [":pw@host:port", (p: number) => `http://:secret@127.0.0.1:${p}/a`, "/a"],
     ["@ in path is not userinfo", (p: number) => `http://127.0.0.1:${p}/@/a`, "/@/a"],
+    ["@ in query is not userinfo", (p: number) => `http://127.0.0.1:${p}?x=a@b`, "/"],
   ] as const)("%s", async (_, makeUrl, expectedPath) => {
     const received: { host: string | null; path: string }[] = [];
     using server = Bun.serve({

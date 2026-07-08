@@ -186,6 +186,43 @@ describe.concurrent("node:test root before() timing", () => {
       exitCode: 0,
     });
   });
+
+  test("a suite-level before() after an await in an async describe() is still deferred", async () => {
+    using dir = tempDir("node-test-async-suite-before", {
+      "asyncsuite.test.mjs": `
+        import assert from 'node:assert';
+        import { test, describe, before } from 'node:test';
+        let g;
+        describe('A', async () => {
+          await 0;
+          before(() => { g = 'A'; });
+          test('a', () => { console.log('LOG:test-a g=' + g); assert.strictEqual(g, 'A'); });
+        });
+        describe('B', async () => {
+          await 0;
+          before(() => { g = 'B'; });
+          test('b', () => { console.log('LOG:test-b g=' + g); assert.strictEqual(g, 'B'); });
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "asyncsuite.test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout
+      .split("\n")
+      .filter(l => l.startsWith("LOG:"))
+      .join("\n");
+    expect({ logs, stderr, exitCode }).toMatchObject({
+      logs: "LOG:test-a g=A\nLOG:test-b g=B",
+      stderr: expect.stringContaining("2 pass"),
+      exitCode: 0,
+    });
+  });
 });
 
 async function runTests(filenames: string[]) {

@@ -728,11 +728,30 @@ function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
       ctx = originalContext;
     };
 
+    let result: unknown;
     try {
-      return fn(context);
-    } finally {
+      result = fn(context);
+    } catch (error) {
       endDescribe();
+      throw error;
     }
+    if (result instanceof Promise) {
+      // bun:test awaits an async describe body before collecting the next
+      // sibling; keep ctx set until it settles so before() inside the
+      // continuation is still recognised as suite-level.
+      return (result as Promise<unknown>).then(
+        value => {
+          endDescribe();
+          return value;
+        },
+        error => {
+          endDescribe();
+          throw error;
+        },
+      );
+    }
+    endDescribe();
+    return result;
   };
 
   return { name, options, fn: runDescribe };

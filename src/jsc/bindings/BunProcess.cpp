@@ -1256,15 +1256,20 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto domainHandler = process->getDomainErrorHandler();
     auto capture = process->getUncaughtExceptionCaptureCallback();
 
-    // Under --abort-on-uncaught-exception with no capture callback and no
-    // node:domain hook installed, V8 aborts inside Isolate::Throw before
-    // process._fatalException runs, so 'uncaughtExceptionMonitor' never
-    // fires either. Handle that decidable-without-JS case up front so the
-    // monitor is not observably invoked. When node:domain is loaded the
-    // decision needs its handler's return value, so this cannot be hoisted.
-    if (origin != OriginRejection && shouldAbortOnUncaughtException()
-        && (domainHandler.isEmpty() || domainHandler.isUndefinedOrNull())
-        && (capture.isEmpty() || capture.isUndefinedOrNull())) {
+    // Under --abort-on-uncaught-exception, node aborts before
+    // process._fatalException runs — 'uncaughtExceptionMonitor' and
+    // 'uncaughtException' listeners never fire. Synchronous throws abort
+    // inside V8 (Isolate::Throw) only when node's
+    // ShouldAbortOnUncaughtException callback reports no capture callback
+    // or domain hook installed; the domain-loaded case needs the handler's
+    // return value below and cannot be fully hoisted. Unhandled promise
+    // rejections routed through the JS-side triggerUncaughtException
+    // binding abort unconditionally regardless of capture/domain
+    // (node_errors.cc TriggerUncaughtException(FunctionCallbackInfo)).
+    if (shouldAbortOnUncaughtException()
+        && (origin == OriginRejection
+            || ((domainHandler.isEmpty() || domainHandler.isUndefinedOrNull())
+                && (capture.isEmpty() || capture.isUndefinedOrNull())))) {
         Bun__logUnhandledException(JSValue::encode(exception));
         abortOnUncaughtException();
     }
@@ -1319,11 +1324,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // 'uncaughtException' listeners are consulted: listeners do not suppress
     // the abort, only a capture callback does. The domain-free case aborted
     // above before the monitor emit; this covers node:domain loaded but no
-    // domain (or none listening) claimed the error. True promise rejections
-    // are excluded: there is no throw-time abort for those — node routes
-    // them through process._fatalException first and aborts only if it
-    // returns unhandled (TriggerUncaughtException in node_errors.cc), so
-    // their abort lives in the no-handler branch at the bottom.
+    // domain (or none listening) claimed the error. Rejections already
+    // aborted unconditionally above.
     if (origin != OriginRejection && shouldAbortOnUncaughtException()
         && (capture.isEmpty() || capture.isUndefinedOrNull())) {
         Bun__logUnhandledException(JSValue::encode(exception));
@@ -1350,15 +1352,6 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
     } else {
-        // Nothing handled the error. For a true promise rejection this is
-        // where node's abort fires — after process._fatalException returned
-        // unhandled — unlike synchronous throws, which aborted before the
-        // listener checks above. (Non-rejection origins with the flag set
-        // already aborted there, so this only triggers for rejections.)
-        if (shouldAbortOnUncaughtException()) {
-            Bun__logUnhandledException(JSValue::encode(exception));
-            abortOnUncaughtException();
-        }
         return false;
     }
 

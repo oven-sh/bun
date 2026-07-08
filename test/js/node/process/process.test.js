@@ -806,53 +806,11 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
-  it("--abort-on-uncaught-exception does not abort a rejection handled by an uncaughtException listener", async () => {
-    // node consults 'uncaughtException' listeners before aborting for the
-    // promise rejection path (unlike synchronous throws, which abort at
-    // throw time regardless of listeners).
-    const proc = Bun.spawn(
-      [
-        bunExe(),
-        "--abort-on-uncaught-exception",
-        "--unhandled-rejections=strict",
-        "-e",
-        `process.on("uncaughtException", () => console.log("listener handled it")); Promise.reject(new Error("x"));`,
-      ],
-      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
-    );
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("listener handled it");
-    // Like node, strict mode still emits the rejection warning when no
-    // 'unhandledRejection' listener claimed it, even though the
-    // 'uncaughtException' listener handled the error itself.
-    expect(stderr).toContain("UnhandledPromiseRejectionWarning");
-    expect(exitCode).toBe(0);
-  });
-
-  it("--abort-on-uncaught-exception aborts an unhandled rejection with no listeners", async () => {
-    const cmd = [
-      bunExe(),
-      "--abort-on-uncaught-exception",
-      "--unhandled-rejections=strict",
-      "-e",
-      `Promise.reject(new Error("x"));`,
-    ];
+  const spawnAbort = async (src, extraFlags = []) => {
     // The abort is intentional: disable core dumps like the upstream node
     // abort tests do, so CI lanes that collect core files at teardown don't
     // flag this child's core as a crash.
-    const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    const exitCode = await proc.exited;
-    // SIGABRT on POSIX; STATUS_BREAKPOINT (0x80000003) or _exit(134) on
-    // Windows — the same set node's common.nodeProcessAborted accepts.
-    expect(proc.signalCode === "SIGABRT" || exitCode === 134 || exitCode >>> 0 === 0x80000003).toBe(true);
-  });
-
-  const spawnAbort = async src => {
-    const cmd = [bunExe(), "--abort-on-uncaught-exception", "-e", src];
+    const cmd = [bunExe(), "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
     const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
       env: bunEnv,
       stdout: "pipe",
@@ -861,7 +819,30 @@ describe.concurrent(() => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   };
-  const aborted = r => r.signalCode === "SIGABRT" || r.exitCode === 134 || r.exitCode >>> 0 === 0x80000003;
+  // The set of terminations node's own common.nodeProcessAborted accepts:
+  // Bun's abort() → SIGABRT on POSIX; STATUS_BREAKPOINT (0x80000003) or
+  // _exit(134) on Windows; SIGILL/SIGTRAP are what node/V8 emit via
+  // __builtin_trap on the sync-throw path and are accepted for parity.
+  const aborted = r =>
+    ["SIGABRT", "SIGILL", "SIGTRAP"].includes(r.signalCode) || r.exitCode === 134 || r.exitCode >>> 0 === 0x80000003;
+
+  it("--abort-on-uncaught-exception aborts an unhandled rejection even with an uncaughtException listener", async () => {
+    // node's JS-facing triggerUncaughtException binding checks the flag and
+    // aborts before process._fatalException runs, so neither the monitor
+    // nor 'uncaughtException' listeners observe the rejection.
+    const r = await spawnAbort(
+      `process.on("uncaughtExceptionMonitor", () => console.log("mon")); process.on("uncaughtException", () => console.log("listener")); Promise.reject(new Error("x"));`,
+      ["--unhandled-rejections=strict"],
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts an unhandled rejection with no listeners", async () => {
+    const r = await spawnAbort(`Promise.reject(new Error("x"));`, ["--unhandled-rejections=strict"]);
+    expect(r.stderr).toContain("x");
+    expect(aborted(r)).toBe(true);
+  });
 
   it("--abort-on-uncaught-exception aborts a synchronous throw with no listeners", async () => {
     // The primary contract of the flag with no domain, capture callback or
@@ -874,8 +855,8 @@ describe.concurrent(() => {
   });
 
   it("--abort-on-uncaught-exception aborts a synchronous throw even with an uncaughtException listener", async () => {
-    // Unlike promise rejections, listeners do not suppress the throw-time
-    // abort. Use setTimeout so the throw comes from a callback (origin=0).
+    // Listeners do not suppress the throw-time abort. Throw from a
+    // setTimeout callback so it surfaces as origin=0 (sync uncaught).
     const r = await spawnAbort(
       `process.on("uncaughtException", () => process.exit(0)); setTimeout(() => { throw new Error("x") }, 0)`,
     );

@@ -230,8 +230,8 @@ private:
 
         if constexpr (NODE_HTTP) {
             if(httpResponseData && (httpResponseData->nodeCompat.isConnectRequest || httpResponseData->nodeCompat.nodeHttpTunnelAfterBody)) {
-                if (httpResponseData->nodeCompat.socketData && httpContextData->onSocketData) {
-                    httpContextData->onSocketData(httpResponseData->nodeCompat.socketData, SSL, s, "", 0, true);
+                if (httpResponseData->nodeCompat.socketData && httpContextData->nodeCompat.onSocketData) {
+                    httpContextData->nodeCompat.onSocketData(httpResponseData->nodeCompat.socketData, SSL, s, "", 0, true);
                 }
                 if(httpResponseData->inStream) {
                     httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL, NODE_HTTP> *>(s), "", 0, true, httpResponseData->userData);
@@ -538,7 +538,9 @@ private:
         });
 
         if constexpr (NODE_HTTP) {
-            httpResponseData->nodeCompat.isConnectRequest = isConnectRequest;
+            if (!us_socket_is_closed(s) && !httpContextData->upgradedWebSocket) {
+                httpResponseData->nodeCompat.isConnectRequest = isConnectRequest;
+            }
         }
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
@@ -553,9 +555,9 @@ private:
                  * decides whether to write an error response and when to tear the
                  * connection down, exactly like Node. The native layer only stops
                  * parsing further requests on this connection. */
-                if (httpContextData->onClientError) {
+                if (httpContextData->nodeCompat.onClientError) {
                     httpResponseData->nodeCompat.nodeHttpParsingStopped = true;
-                    httpContextData->onClientError(SSL, s, result.parserError, data, length);
+                    httpContextData->nodeCompat.onClientError(SSL, s, result.parserError, data, length);
                     if (!us_socket_is_closed(s)) {
                         /* Balance the parsing ref taken at the top of onData (the
                          * success path does this through returnedData). */
@@ -565,10 +567,6 @@ private:
                      * closed socket is a no-op). */
                     ((AsyncSocket<SSL> *) s)->uncork();
                     return s;
-                }
-            } else {
-                if(httpContextData->onClientError) {
-                    httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 }
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
@@ -751,17 +749,17 @@ private:
              * Upgrade whose body never completed (nodeHttpTunnelAfterBody): the
              * EOF ends the upgrade socket, exactly like Node's UpgradeStream. */
             if (httpResponseData->nodeCompat.isConnectRequest || httpResponseData->nodeCompat.nodeHttpTunnelAfterBody) {
-                if (httpResponseData->nodeCompat.socketData && httpContextData->onSocketData) {
-                    httpContextData->onSocketData(httpResponseData->nodeCompat.socketData, SSL, s, "", 0, true);
+                if (httpResponseData->nodeCompat.socketData && httpContextData->nodeCompat.onSocketData) {
+                    httpContextData->nodeCompat.onSocketData(httpResponseData->nodeCompat.socketData, SSL, s, "", 0, true);
                 }
                 return s;
             }
 
-            if (httpContextData->onClientError && !httpResponseData->nodeCompat.nodeHttpParsingStopped
+            if (httpContextData->nodeCompat.onClientError && !httpResponseData->nodeCompat.nodeHttpParsingStopped
                 && (httpResponseData->hasBufferedPartialRequestHeaders()
                     || httpResponseData->hasIncompleteRequestBody())) {
                 httpResponseData->nodeCompat.nodeHttpParsingStopped = true;
-                httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
+                httpContextData->nodeCompat.onClientError(SSL, s, HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
                 if (us_socket_is_closed(s)) {
                     return s;
                 }
@@ -799,7 +797,7 @@ private:
         return asyncSocket->close();
     }
 
-    /* Static .rodata vtable — one per SSL value, shared by every HttpContext. */
+    /* Static .rodata vtable — one per (SSL, NODE_HTTP) pair. */
     static inline const us_socket_vtable_t httpVTable = {
         /* on_open */         &onOpen,
         /* on_data */         &onData,

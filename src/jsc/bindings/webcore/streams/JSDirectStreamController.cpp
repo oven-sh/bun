@@ -687,6 +687,10 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
             // (its registrar drops it).
             if (!headOfLinePromiseIsActiveConsumer(reader)) {
                 m_pendingRead.set(vm, this, pendingRead);
+                // The spec's enqueue → CallPullIfNeeded equivalent: re-arm when this delivery
+                // still leaves a consumer queued behind the in-flight pull.
+                if (m_pullInFlight && readableStreamGetNumReadRequests(stream) > 1)
+                    m_pullAgain = true;
                 RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
             }
             {
@@ -698,6 +702,8 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
                         m_pendingRead.set(vm, this, uncheckedDowncast<JSPromise>(readRequest->m_context.get()));
                 }
             }
+            if (m_pullInFlight && (m_pendingRead || readableStreamGetNumReadRequests(stream) > 0))
+                m_pullAgain = true;
             JSObject* result = createIteratorResultObject(globalObject, flushed, false);
             RETURN_IF_EXCEPTION(scope, );
             RELEASE_AND_RETURN(scope, pendingRead->fulfill(vm, result));
@@ -709,8 +715,11 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
     if (readableStreamGetNumReadRequests(stream) > 0) {
         JSValue flushed = flushDirectSink(vm, globalObject, this);
         RETURN_IF_EXCEPTION(scope, );
-        if (byteLengthOf(flushed))
+        if (byteLengthOf(flushed)) {
+            if (m_pullInFlight && readableStreamGetNumReadRequests(stream) > 1)
+                m_pullAgain = true;
             RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
+        }
         return;
     }
 

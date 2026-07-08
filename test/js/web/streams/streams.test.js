@@ -852,14 +852,14 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect({ pulls, out }).toEqual({ pulls: 4, out: [1, 2, 3] });
     });
 
-    it("a read issued while pull() is suspended is serviced by the next pull", async () => {
+    it("reads issued while pull() is suspended are each serviced by a subsequent pull", async () => {
       let pulls = 0;
       const gates = [];
       const rs = new ReadableStream({
         type: "direct",
         async pull(c) {
           pulls++;
-          if (pulls > 2) return c.end();
+          if (pulls > 3) return c.end();
           const { promise, resolve } = Promise.withResolvers();
           gates.push(resolve);
           await promise;
@@ -869,15 +869,19 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       });
       const reader = rs.getReader();
       const p1 = reader.read();
-      // Arrives while pull #1 is suspended: must NOT re-enter pull() concurrently.
+      // These arrive while pull #1 is suspended: must NOT re-enter pull() concurrently,
+      // and each must be serviced by a subsequent pull once the previous one settles.
       const p2 = reader.read();
+      const p3 = reader.read();
       expect(pulls).toBe(1);
       gates.shift()();
       expect((await p1).value[0]).toBe(1);
-      // pull #1 has settled; the waiting p2 triggers pull #2 from the fulfillment reaction.
       await new Promise(resolve => setImmediate(resolve));
       gates.shift()();
       expect((await p2).value[0]).toBe(2);
+      await new Promise(resolve => setImmediate(resolve));
+      gates.shift()();
+      expect((await p3).value[0]).toBe(3);
       expect((await reader.read()).done).toBe(true);
     });
 

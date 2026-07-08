@@ -21,10 +21,11 @@
 #include "HttpRouter.h"
 
 #include <vector>
+#include <type_traits>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
 namespace uWS {
-template<bool> struct HttpResponse;
+template<bool, bool> struct HttpResponse;
 struct HttpRequest;
 
 struct HttpFlags {
@@ -40,33 +41,31 @@ struct HttpFlags {
      * in field values); TE+CL conflict, chunked-size/CRLF strictness, version
      * and header-token checks are still enforced. */
     bool useInsecureHTTPParser: 1 = false;
-    /* Set for node:http compatibility servers: per-socket request timing
-     * (lastMessageStartMs / headersCompleted on HttpResponseData) is only
-     * maintained when this is set, so plain Bun.serve pays nothing for it. */
-    bool usingNodeHttpCompat: 1 = false;
     /* node:http server.httpAllowHalfOpen: when true, a peer FIN with in-flight
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
     bool httpAllowHalfOpen: 1 = false;
 };
 
-template <bool SSL>
+template <bool SSL, bool NODE_HTTP>
 struct alignas(16) HttpContextData {
-    template <bool> friend struct HttpContext;
-    template <bool> friend struct HttpResponse;
-    template <bool> friend struct TemplatedApp;
-private:
-    std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
+    template <bool, bool> friend struct HttpContext;
+    template <bool, bool> friend struct HttpResponse;
+    template <bool, bool> friend struct TemplatedApp;
+public:
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
     using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
 
+private:
+    std::vector<MoveOnlyFunction<void(HttpResponse<SSL, NODE_HTTP> *, int)>> filterHandlers;
+
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
     struct RouterData {
-        HttpResponse<SSL> *httpResponse;
+        HttpResponse<SSL, NODE_HTTP> *httpResponse;
         HttpRequest *httpRequest;
     };
 
@@ -79,9 +78,16 @@ private:
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;
-    OnSocketDataCallback onSocketData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
-    OnClientErrorCallback onClientError = nullptr;
+
+    /* node:http-only callback slots. Compiled out for the Bun.serve
+     * instantiation so per-context storage stays minimal. */
+    struct NodeHttpContextFields {
+        OnSocketDataCallback onSocketData = nullptr;
+        OnClientErrorCallback onClientError = nullptr;
+    };
+    struct EmptyNodeHttpContext {};
+    [[no_unique_address]] std::conditional_t<NODE_HTTP, NodeHttpContextFields, EmptyNodeHttpContext> nodeCompat;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
 
@@ -93,7 +99,7 @@ private:
     }
 
 public:
-    
+
     HttpFlags flags;
 };
 

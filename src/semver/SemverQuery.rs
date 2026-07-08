@@ -1106,8 +1106,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
                 // npm's hyphen-range grammar only accepts a `[v=\s]*` prefix;
                 // an operator-prefixed left side is not a hyphen range there.
-                if !range.is_match_all()
-                    || !matches!(token.tag, TokenTag::Version | TokenTag::Gte)
+                if !range.is_match_all() || !matches!(token.tag, TokenTag::Version | TokenTag::Gte)
                 {
                     branch_has_non_any = true;
                 }

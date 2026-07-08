@@ -468,6 +468,9 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // Mirror the regular process.env CustomSetters' native side effects (TZ, TLS,
 // verbose-fetch, proxy vars); the shared store only updates strings, so without
 // this a SHARE_ENV worker's writes would silently skip them.
+// These land on the *writing* thread only: the TLS-reject/verbose-fetch caches and
+// the Zig env map are per-VM, so other threads in the tree read the new string but
+// keep the old native effect. Node does not propagate a shared-store TZ either.
 static void applySharedEnvSideEffects(JSGlobalObject* globalObject, const String& rawKey, const String& stringValue)
 {
     VM& vm = JSC::getVM(globalObject);

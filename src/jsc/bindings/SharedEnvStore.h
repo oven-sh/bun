@@ -22,13 +22,24 @@ public:
         auto it = m_map.find(normalizeKey(key));
         if (it == m_map.end())
             return String();
-        return it->value.isolatedCopy();
+        return it->value.value.isolatedCopy();
     }
 
+    // Key on the normalized form, keep the case first written. `add` leaves an
+    // existing entry's name alone (unlike `set`), so overwrites preserve the case.
     void set(const String& key, const String& value)
     {
         Locker locker { m_lock };
-        m_map.set(normalizeKey(key).isolatedCopy(), value.isolatedCopy());
+        String normalized = normalizeKey(key).isolatedCopy();
+        auto result = m_map.add(normalized, Entry {});
+        if (result.isNewEntry) {
+#if OS(WINDOWS)
+            result.iterator->value.name = key.isolatedCopy();
+#else
+            result.iterator->value.name = normalized;
+#endif
+        }
+        result.iterator->value.value = value.isolatedCopy();
     }
 
     void remove(const String& key)
@@ -42,13 +53,14 @@ public:
         Locker locker { m_lock };
         Vector<String> out;
         out.reserveInitialCapacity(m_map.size());
-        for (const auto& key : m_map.keys())
-            out.append(key.isolatedCopy());
+        for (const auto& entry : m_map.values())
+            out.append(entry.name.isolatedCopy());
         return out;
     }
 
-    // Windows env keys are case-insensitive; match the regular env object's
-    // OS(WINDOWS) behavior.
+    // Windows env keys are case-insensitive. This follows bun's own Windows env
+    // object, not node: node only folds case for a main-rooted tree (RealEnvStore),
+    // and is case-sensitive for one rooted at a snapshot worker (MapKVStore).
     static ALWAYS_INLINE String normalizeKey(const String& key)
     {
 #if OS(WINDOWS)
@@ -61,8 +73,14 @@ public:
 private:
     SharedEnvStore() = default;
 
+    // `name` is the key as first written; on POSIX it always equals the map key.
+    struct Entry {
+        String name;
+        String value;
+    };
+
     Lock m_lock;
-    HashMap<String, String> m_map WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<String, Entry> m_map WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace Bun

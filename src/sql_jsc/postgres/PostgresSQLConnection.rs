@@ -1598,6 +1598,25 @@ impl PostgresSQLConnection {
             || self.current().is_some()
     }
 
+    /// True when the request queue holds a query whose Bind bytes have not
+    /// been written yet. `do_run` must not serialize a new query past such an
+    /// entry: the bytes would reach the server ahead of it, and responses are
+    /// matched to `current()` (queue head), so the earlier Pending query would
+    /// be resolved with the later query's row.
+    pub fn has_unsent_requests(&self) -> bool {
+        let q = self.requests.get();
+        let len = q.readable_length();
+        for i in 0..len {
+            // Queue invariant: every stored pointer is non-null and live.
+            let item =
+                ParentRef::from(NonNull::new(q.peek_item(i)).expect("queue item non-null"));
+            if item.status.get() == QueryStatus::Pending {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn can_pipeline(&self) -> bool {
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING
             .get()
@@ -1647,8 +1666,11 @@ impl Writer {
         Ok(())
     }
 
+    // `pwrite()` indexes `byte_list` absolutely, so `offset()` must too. The
+    // head-relative `OffsetByteList::len()` would make `LengthWriter` backpatch
+    // `head` bytes early whenever a partial flush has left `head > 0`.
     pub fn offset(self) -> usize {
-        self.connection.write_buffer.get().len() as usize
+        self.connection.write_buffer.get().byte_list.len()
     }
 }
 

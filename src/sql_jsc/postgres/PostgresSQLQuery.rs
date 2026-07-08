@@ -641,7 +641,14 @@ impl PostgresSQLQuery {
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
-                            if !connection.has_query_running() || connection.can_pipeline() {
+                            // A query that went Pending under backpressure is
+                            // still ahead of us in the queue but not yet in
+                            // `write_buffer`; serializing here would overtake
+                            // it on the wire. Defer to advance() in that case.
+                            if !connection.has_query_running()
+                                || (connection.can_pipeline()
+                                    && !connection.has_unsent_requests())
+                            {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 

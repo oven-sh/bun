@@ -1608,14 +1608,15 @@ impl WriterContext for Writer {
         Ok(())
     }
 
+    // `pwrite()` indexes `byte_list` absolutely, so `offset()` must too. The
+    // head-relative `OffsetByteList::len()` would make `Packet::end` backpatch
+    // `head` bytes early whenever a partial flush has left `head > 0`.
     fn offset(self) -> usize {
-        self.write_buffer().len() as usize
+        self.write_buffer().byte_list.len()
     }
 
     fn truncate(self, offset: usize) {
-        let buffer = self.write_buffer();
-        let head = buffer.head as usize;
-        buffer.byte_list.truncate(head + offset);
+        self.write_buffer().byte_list.truncate(offset);
     }
 }
 

@@ -182,6 +182,24 @@ export function pgCopyDone(): Buffer {
   return pgRaw("c", Buffer.alloc(0));
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
+export function pgParameterDescription(oids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * oids.length);
+  body.writeInt16BE(oids.length, 0);
+  for (let i = 0; i < oids.length; i++) body.writeInt32BE(oids[i], 2 + 4 * i);
+  return pgRaw("t", body);
+}
+
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
 export function pgDataRow(cols: (Buffer | null)[]): Buffer {
   const parts: Buffer[] = [Buffer.alloc(2)];

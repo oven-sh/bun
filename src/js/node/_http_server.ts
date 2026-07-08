@@ -711,7 +711,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         const serverTimeoutMs = server.timeout;
-        if (serverTimeoutMs || socket.timeout) socket.setTimeout(serverTimeoutMs || 0);
+        if (serverTimeoutMs) socket.setTimeout(serverTimeoutMs);
+        else socket._unrefTimer();
         socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
@@ -1183,7 +1184,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const response = handle?.response;
     // If there is a response, and it has pending data,
     // we suppress the timeout because a write is in progress.
-    if (response && response.writableLength > 0) {
+    if (response && response.bufferedAmount > 0) {
       this._unrefTimer();
       return;
     }
@@ -2204,6 +2205,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
   }
 
+  this[fakeSocketSymbol]?._unrefTimer();
+
   if (result < 0) {
     if (callback) {
       // The write was buffered due to backpressure.
@@ -2367,6 +2370,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   } else {
     handle.write(data, encoding, callback, strictContentLength(this));
   }
+  this[fakeSocketSymbol]?._unrefTimer();
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
@@ -2516,6 +2520,7 @@ function callWriteHeadIfObservable(self, headerState) {
 }
 
 function allowWritesToContinue() {
+  this[fakeSocketSymbol]?._unrefTimer();
   this._callPendingCallbacks();
   this.emit("drain");
 }

@@ -1456,10 +1456,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener.is_some() || (Self::HAS_H3 && self.h3_listener.is_some())
     }
 
-    pub fn set_idle_timeout(&mut self, seconds: core::ffi::c_uint) {
-        self.config.idle_timeout = seconds.min(255) as u8;
-    }
-
     pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.

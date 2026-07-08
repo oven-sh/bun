@@ -156,4 +156,44 @@ describe("http.Server.prototype.setTimeout", () => {
       cleanup(srv, client);
     }
   });
+
+  test.concurrent("an actively-writing response is not destroyed by server.setTimeout()", async () => {
+    // Response body writes refresh the socket's inactivity timer, like
+    // Node.js's net.Socket._writeGeneric -> _unrefTimer().
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const srv = await listen((req, res) => {
+      req.resume();
+      res.writeHead(200, { "Transfer-Encoding": "chunked" });
+      let n = 0;
+      const i = setInterval(() => {
+        if (!res.write(".")) res.once("drain", () => {});
+        if (++n === 8) {
+          clearInterval(i);
+          res.end();
+        }
+      }, 100);
+      req.socket.on("close", () => clearInterval(i));
+    });
+    // Shorter than the interval between writes: if writes did not refresh the
+    // timer, the default-destroy would fire between the first two chunks.
+    srv.setTimeout(250);
+    srv.on("timeout", () => resolve("timeout"));
+
+    const client = await connectAndWrite((srv.address() as net.AddressInfo).port, "GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+    let body = "";
+    client.on("data", d => {
+      body += d.toString("latin1");
+      if (body.includes("\r\n0\r\n\r\n")) resolve("finished");
+    });
+    client.on("close", () => resolve("close"));
+
+    try {
+      expect(await promise).toBe("finished");
+      // Eight body bytes, one per chunk (after the header block).
+      const chunks = body.slice(body.indexOf("\r\n\r\n") + 4);
+      expect(chunks.match(/\./g)?.length).toBe(8);
+    } finally {
+      cleanup(srv, client);
+    }
+  });
 });

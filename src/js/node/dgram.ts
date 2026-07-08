@@ -148,6 +148,10 @@ const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 // -4081 on Windows, so it has to come from native.
 const UV_ECANCELED = $newRustFunction("node_util_binding.rs", "ecanceledErrorCode", 0)();
 
+// Node's --test-udp-no-try-send makes udp_wrap skip uv_udp_try_send so every
+// request is counted until its callback runs. Only Node's own tests use it.
+const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
+
 const getFdFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsGetFd", 0);
 // Read-only query of the process-wide DGRAM_FDS registry the native layer
 // already maintains, so bind({ fd }) can synchronously report EEXIST like
@@ -197,12 +201,11 @@ function newHandle(type, lookup) {
 
   const handle = {
     socket: undefined,
-    // Bytes/requests waiting for the kernel to accept them: entries the send
-    // queue is holding until on_drain, plus the send()s of this tick that libuv
-    // would still count as pending.
+    // Bytes/requests the kernel has not yet accepted — the uv_udp_send fallback
+    // queue. A synchronously accepted send (uv_udp_try_send fast path) never
+    // touches these, matching Node.
     queueSize: 0,
     queueCount: 0,
-    tickFlushScheduled: false,
     // Requests the kernel refused (send buffer full): flushed by on_drain.
     sendQueue: undefined,
     send: handleSend,
@@ -269,28 +272,33 @@ function handleSend(req, list, count, port, address, _hasCallback) {
     return handleQueueSend(this, data, port, address, req);
   }
 
-  // libuv keeps a synchronously-written request counted until its callback
-  // runs on the next loop turn, so a same-tick getSendQueueCount() still
-  // sees it. On Windows only the request count grows (WSASend is immediate).
-  this.queueCount += 1;
-  if (process.platform !== "win32") {
-    this.queueSize += data.byteLength;
-  }
-  if (!this.tickFlushScheduled) {
-    this.tickFlushScheduled = true;
-    process.nextTick(tickFlushSendQueueInfo, this);
+  if (kNoTrySend) {
+    // Emulate uv_udp_send: the datagram was written, but the request stays
+    // counted until its callback runs on the next turn. On Windows a
+    // synchronously-completed WSASend contributes 0 queued bytes.
+    this.queueCount += 1;
+    if (process.platform !== "win32") this.queueSize += data.byteLength;
+    process.nextTick(completeNoTrySend, this, req, data.byteLength);
+    return 0;
   }
 
+  // uv_udp_try_send fast path: the kernel accepted the datagram and Node's
+  // wrap returns bytes+1 without ever creating a uv_udp_send_t, so the queue
+  // counters stay untouched.
   return data.byteLength + 1;
+}
+
+function completeNoTrySend(handle, req, sent) {
+  handle.queueCount -= 1;
+  if (process.platform !== "win32") handle.queueSize -= sent;
+  if (req && typeof req.oncomplete === "function") req.oncomplete(undefined, sent);
 }
 
 function handleQueueSend(handle, data, port, address, req) {
   handle.sendQueue ??= [];
   handle.sendQueue.push({ data, port, address, req });
   handle.queueCount += 1;
-  if (process.platform !== "win32") {
-    handle.queueSize += data.byteLength;
-  }
+  handle.queueSize += data.byteLength;
   return 0;
 }
 
@@ -330,9 +338,7 @@ function handleDrain() {
 
 function completeQueuedSend(handle, entry, err) {
   handle.queueCount -= 1;
-  if (process.platform !== "win32") {
-    handle.queueSize -= entry.data.byteLength;
-  }
+  handle.queueSize -= entry.data.byteLength;
   // Next tick, like libuv's uv__udp_run_completed: a throwing or re-entrant
   // callback cannot skip a sibling entry or run inside close()/drain.
   const req = entry.req;
@@ -343,24 +349,6 @@ function completeQueuedSend(handle, entry, err) {
 
 function runQueuedSendComplete(req, err, sent) {
   req.oncomplete(err, sent);
-}
-
-// Decrements the same-tick counters for synchronously-written sends whose
-// callbacks fire on the next tick (queued sends decrement in completeQueuedSend
-// once the kernel accepts them, so those stay counted here).
-function tickFlushSendQueueInfo(handle) {
-  handle.tickFlushScheduled = false;
-  let count = 0;
-  let size = 0;
-  const queue = handle.sendQueue;
-  if (queue !== undefined) {
-    for (let i = 0; i < queue.length; i++) {
-      count += 1;
-      if (process.platform !== "win32") size += queue[i].data.byteLength;
-    }
-  }
-  handle.queueCount = count;
-  handle.queueSize = size;
 }
 
 function handleGetSendQueueSize() {

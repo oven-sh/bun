@@ -439,6 +439,27 @@ test.skipIf(isWindows)("send() reports (null, byteLength) for every callback und
   }
 });
 
+// Node's udp_wrap tries uv_udp_try_send first: a datagram the kernel accepts
+// synchronously never becomes a uv_udp_send_t, so getSendQueueSize/Count stay
+// at 0 through the callback. Only the EAGAIN → uv_udp_send fallback counts.
+test("getSendQueueCount()/Size() stay 0 for a synchronously accepted send", async () => {
+  const socket = createSocket("udp4");
+  await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => socket.connect(socket.address().port, "127.0.0.1", () => resolve()));
+
+  const { promise, resolve } = Promise.withResolvers<{ err: any; sent: number }>();
+  socket.send("hello", (err, sent) => resolve({ err, sent }));
+  // Connected send reaches the kernel synchronously; loopback accepts one 5-byte
+  // datagram without backpressure.
+  expect({ size: socket.getSendQueueSize(), count: socket.getSendQueueCount() }).toEqual({ size: 0, count: 0 });
+
+  const { err, sent } = await promise;
+  expect(err).toBeNull();
+  expect(sent).toBe(5);
+  expect({ size: socket.getSendQueueSize(), count: socket.getSendQueueCount() }).toEqual({ size: 0, count: 0 });
+  socket.close();
+});
+
 // rinfo.family reflects the packet's sockaddr, not the constructor's `type`:
 // a `udp4` socket adopting an IPv6 fd receives IPv6-tagged rinfo.
 test.skipIf(isWindows)("rinfo.family follows the packet's sockaddr, not the socket type", async () => {

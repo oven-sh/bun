@@ -432,11 +432,9 @@ impl Request {
         cloned: &Request,
         js_wrapper: JSValue,
     ) {
-        // `JSBunRequest::create` bypasses `to_js`, so `cloned.js_ref` is still
-        // the `JsRef::empty()` written by `clone_into`; seed it so
-        // `check_body_stream_ref` can migrate the clone's teed branch into its
-        // GC-traced `stream` slot. Guarded so a future caller that already
-        // populated it never has a Strong downgraded.
+        // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
+        // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
+        // Strong is never downgraded.
         if cloned.js_ref.get().is_empty() {
             cloned.js_ref.set(JsRef::init_weak(js_wrapper));
         }

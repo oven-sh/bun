@@ -1745,11 +1745,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared `'brk:` block of `clone_into` / `clone_value`: clone the body
-    /// [`Value`], teeing through the JS-side cached stream if one exists, then
-    /// repoint this owner's `body`/`stream` cache slots at the fresh first
-    /// branch now in `locked.readable` so the locked tee source is no longer
-    /// returned from `.body` / `get_body_readable_stream`.
+    /// Shared body-clone for `clone_into` / `clone_value`: tee through the
+    /// JS-side cached stream when present, then repoint this owner's
+    /// `body`/`stream` cache slots at the fresh branch in `locked.readable`.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         let cloned = 'brk: {
             if let Some(js_ref) = self.js_ref() {

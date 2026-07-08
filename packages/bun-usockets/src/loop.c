@@ -751,8 +751,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
              * until we drain it explicitly. Do that here, surfacing each
              * errno via on_recv_error; the socket stays open. On other
-             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
-             * preserve close-on-error there. */
+             * platforms only a *poll* error (kqueue EV_ERROR, Windows) is
+             * still fatal below; a plain recv failure is reported the same
+             * way it is here, not treated as fatal. */
             int recv_error_surfaced = 0;
             int recv_would_block_only = 0;
             if (error) {
@@ -803,15 +804,32 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {
-#if defined(__linux__)
-                                int recv_err = errno;
-                                recv_error_surfaced = 1;
-                                if (u->on_recv_error) {
-                                    u->on_recv_error(u, recv_err, 0);
-                                }
-#else
-                                /* non-Linux: fall through and close below */
+#if defined(_WIN32)
+                                /* recvfrom's error is in WSAGetLastError(),
+                                 * not errno; keep close-on-error here. */
                                 error = 1;
+#else
+                                /* A failing recvmsg is a socket *condition* to
+                                 * report, not a fatal event. On the BSDs, which
+                                 * have no error queue, this is the ONLY way the
+                                 * kernel delivers a connected socket's ICMP
+                                 * error (so_error): Node reports it as
+                                 * `recvmsg <code>` and keeps the socket open.
+                                 * Only a genuine poll error still closes below. */
+                                int recv_err = errno;
+                                if (u->on_recv_error) {
+#if defined(__linux__)
+                                    recv_error_surfaced = 1;
+#endif
+                                    u->on_recv_error(u, recv_err, 0);
+                                } else {
+                                    /* No error handler (QUIC creates its UDP
+                                     * sockets with recv_error_cb = NULL): the
+                                     * close is the only handling this path has,
+                                     * and a persistent recv error on a still-
+                                     * readable fd must not spin the loop. */
+                                    error = 1;
+                                }
 #endif
                             }
 #if defined(__linux__)

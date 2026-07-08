@@ -92,9 +92,11 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errqueue: c_int) {
-    // Linux-only (loop.c gates it). `is_errqueue` distinguishes an ICMP errno
-    // drained from MSG_ERRQUEUE from a real recvmmsg failure — node:dgram must
-    // drop the former on unconnected sockets, and the errno namespaces overlap.
+    // Reached on every POSIX platform. `is_errqueue` distinguishes an ICMP
+    // errno drained from Linux's MSG_ERRQUEUE from a real recvmmsg failure —
+    // which on the BSDs (no error queue) is also how a connected socket's
+    // ICMP error (so_error) arrives. node:dgram must drop only the former on
+    // unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();

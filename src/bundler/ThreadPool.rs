@@ -17,7 +17,7 @@ use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
 // `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
@@ -354,7 +354,6 @@ impl ThreadPool {
                     }
                 },
                 fd: Fd::INVALID,
-                external_free_function: ExternalFreeFunction::NONE,
             });
         }
 

@@ -22,6 +22,12 @@ describe("If-None-Match Support", () => {
         "ETag": 'W/"weak-etag"',
       },
     }),
+    "/comma-etag": new Response("Comma content", {
+      headers: {
+        "Content-Type": "text/plain",
+        "ETag": '"ab,cd"',
+      },
+    }),
   };
 
   beforeAll(async () => {
@@ -161,6 +167,46 @@ describe("If-None-Match Support", () => {
 
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(testContent);
+    });
+
+    it("should not 304 when a list member merely contains the ETag between commas", async () => {
+      // RFC 9110 §8.8.3: a comma is a legal byte inside a quoted opaque-tag, so
+      // `"a,xx,b"` is ONE tag, not a list whose members include the server tag.
+      const etag = (await fetch(`${server.url}basic`)).headers.get("ETag")!;
+      const inner = etag.slice(1, -1); // strip surrounding quotes
+
+      const res = await fetch(`${server.url}basic`, {
+        headers: {
+          "If-None-Match": `"a,${inner},b"`,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(testContent);
+    });
+
+    it("should 304 when a comma-containing ETag is echoed back exactly", async () => {
+      const res = await fetch(`${server.url}comma-etag`, {
+        headers: {
+          "If-None-Match": '"ab,cd"',
+        },
+      });
+
+      expect(res.status).toBe(304);
+      expect(res.headers.get("ETag")).toBe('"ab,cd"');
+      expect(await res.text()).toBe("");
+    });
+
+    it("should 304 when a comma-containing ETag is a member of a list", async () => {
+      const res = await fetch(`${server.url}comma-etag`, {
+        headers: {
+          "If-None-Match": '"zzz", "ab,cd"',
+        },
+      });
+
+      expect(res.status).toBe(304);
+      expect(res.headers.get("ETag")).toBe('"ab,cd"');
+      expect(await res.text()).toBe("");
     });
 
     it("should handle whitespace in If-None-Match", async () => {

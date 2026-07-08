@@ -999,12 +999,17 @@ impl FetchTasklet {
             return Ok(());
         }
 
+        // WHATWG fetch: once the response head is available the promise
+        // resolves; post-head failures (body decompression etc.) surface on
+        // the body reader regardless of whether head+body arrived in one read.
+        let success = self.result.is_success() || self.metadata.is_some();
+
         // Paired with the microtask drain after
         // startRequestStream above: the request-body sink may have set `abort_reason`
         // via writeEndRequest while the HTTP result is still a success — server HEADERS
         // raced ahead of the scheduled shutdown. Reject with that reason instead of
         // resolving a 200 Response. Makes wpt-h2 number-chunk test deterministic.
-        if self.result.is_success() && self.abort_reason.has() {
+        if success && self.abort_reason.has() {
             let promise = promise_value.as_any_promise().unwrap();
             let tracker = self.tracker;
             // get_abort_error consumes abort_reason and clears the signal handler.
@@ -1027,9 +1032,21 @@ impl FetchTasklet {
             this.promise = jsc::JSPromiseStrong::empty();
         };
 
-        let success = self.result.is_success();
         let result = if success {
-            StrongOptional::create(self.on_resolve(), &global_this)
+            let resolved = self.on_resolve();
+            // Cancel the request-body sink last (as on_body_received does):
+            // `ResumableSink::cancel` runs the user's cancel callback
+            // synchronously, so the body error must already be stored.
+            if self.result.fail.is_some() && self.sink_mut().is_some() {
+                let mut err = self.on_reject();
+                let err_js = err.to_js(&global_this);
+                err_js.ensure_still_alive();
+                if let Some(sink) = self.sink_mut() {
+                    sink.cancel(err_js);
+                }
+                err.reset();
+            }
+            StrongOptional::create(resolved, &global_this)
         } else {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();
@@ -1152,12 +1169,7 @@ impl FetchTasklet {
                             // mark to wait until deinit
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, check_result);
-                            self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(&self.global_this);
-                            // we need to abort the request
-                            if let Some(http_) = self.http.as_mut() {
-                                http::http_thread().schedule_shutdown(http_);
-                            }
+                            self.abort_task();
                             self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                             return false;
                         }
@@ -1177,11 +1189,7 @@ impl FetchTasklet {
                             let hostname_err_result = global_object.try_take_exception().unwrap();
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, hostname_err_result);
-                            self.signal_store.aborted.store(true, Ordering::Relaxed);
-                            self.tracker.did_cancel(&self.global_this);
-                            if let Some(http_) = self.http.as_mut() {
-                                http::http_thread().schedule_shutdown(http_);
-                            }
+                            self.abort_task();
                             self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                             return false;
                         }
@@ -1202,13 +1210,7 @@ impl FetchTasklet {
                         // mark to wait until deinit
                         self.is_waiting_abort = self.result.has_more;
                         self.abort_reason.set(&global_object, check_result);
-                        self.signal_store.aborted.store(true, Ordering::Relaxed);
-                        self.tracker.did_cancel(&self.global_this);
-
-                        // we need to abort the request
-                        if let Some(http_) = self.http.as_mut() {
-                            http::http_thread().schedule_shutdown(http_);
-                        }
+                        self.abort_task();
                         self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
                         return false;
                     }
@@ -1622,6 +1624,9 @@ impl FetchTasklet {
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
+        // reader.cancel() / body.cancel() aborts the fetch so the server sees the
+        // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
+        this.abort_task();
         this.ignore_remaining_response_body(false);
     }
 
@@ -1680,6 +1685,11 @@ impl FetchTasklet {
     fn to_body_value(&mut self) -> BodyValue {
         if let Some(err) = self.get_abort_error() {
             return BodyValue::Error(err);
+        }
+        if self.result.fail.is_some() {
+            // Head received but body failed in the same callback; surface on
+            // the body so this matches the split-read `on_body_received` path.
+            return BodyValue::Error(self.on_reject());
         }
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
@@ -1766,14 +1776,21 @@ impl FetchTasklet {
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
+        // An aborted fetch is already shutting down; don't re-arm receive/resume
+        // draining, which would read the rest of an unbounded body and hold the
+        // socket open (drain_events resumes before shutdowns).
+        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
         if self
             .signal_store
             .set_receive_mode_terminal(BodyReceiveMode::Ignore)
+            && !aborted
         {
             self.schedule_receive_resume();
         }
         if let Some(http_) = self.http.as_mut() {
-            http_.enable_response_body_streaming();
+            if !aborted {
+                http_.enable_response_body_streaming();
+            }
         }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
@@ -2001,6 +2018,7 @@ impl FetchTasklet {
                 signals: Some(fetch_tasklet.signals),
                 unix_socket_path: Some(fetch_options.unix_socket_path),
                 disable_timeout: Some(fetch_options.disable_timeout),
+                idle_timeout_seconds: fetch_options.idle_timeout_seconds,
                 disable_keepalive: Some(fetch_options.disable_keepalive),
                 disable_decompression: Some(fetch_options.disable_decompression),
                 max_redirects: fetch_options.max_redirects,
@@ -2254,7 +2272,12 @@ impl FetchTasklet {
     }
 
     pub(crate) fn abort_task(&mut self) {
-        self.signal_store.aborted.store(true, Ordering::Relaxed);
+        // Idempotent: reader.cancel() and an AbortSignal can both reach here for
+        // the same fetch. Only the first abort enqueues a shutdown; a second
+        // would append a redundant ShutdownMessage for an already-closing socket.
+        if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
+            return;
+        }
         self.tracker.did_cancel(&self.global_this);
 
         if let Some(http_) = self.http.as_mut() {
@@ -2517,6 +2540,8 @@ pub struct FetchOptions {
     pub headers: Headers,
     pub body: HTTPRequestBody,
     pub disable_timeout: bool,
+    /// Per-request idle-timeout override, from `fetch(url, { timeout: <ms> })`.
+    pub idle_timeout_seconds: Option<core::ffi::c_uint>,
     pub disable_keepalive: bool,
     pub disable_decompression: bool,
     pub max_redirects: Option<u8>,
@@ -2553,6 +2578,7 @@ impl Default for FetchOptions {
             headers: Headers::default(),
             body: HTTPRequestBody::default(),
             disable_timeout: false,
+            idle_timeout_seconds: None,
             disable_keepalive: false,
             disable_decompression: false,
             max_redirects: None,

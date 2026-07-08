@@ -73,10 +73,10 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    let contains = strings::contains_case_insensitive_ascii;
+    let starts_with = strings::starts_with_case_insensitive_ascii;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    let contains = strings::contains;
-    if !contains(child, parent) {
+    let starts_with = strings::starts_with;
+    if !starts_with(child, parent) {
         return ParentEqual::Unrelated;
     }
 
@@ -1480,6 +1480,19 @@ pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> 
         spill.resize(needed, 0);
     }
     join_string_buf::<P>(&mut spill[..], parts)
+}
+
+/// [`join_z`] (thread-local buffer) when the result fits, otherwise into
+/// `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a ZStr {
+    let needed = join_needed(parts);
+    if needed <= JOIN_BUF_LEN {
+        return join_z::<P>(parts);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    join_z_buf::<P>(&mut spill[..], parts)
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {

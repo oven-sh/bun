@@ -30,34 +30,14 @@ fn dupe_path_like(path: &[u8]) -> PathLike {
     )
 }
 
-/// Set the store's `mime_type` and point `blob.content_type` at it. The
-/// pointer borrows from `blob.store` (held for the blob's lifetime), so it
-/// stays valid without a separate allocation.
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
+    blob.content_type
+        .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
     if let Some(store) = blob.store.get().as_ref() {
-        let store_ptr = store.as_ptr();
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
-        unsafe {
-            (*store_ptr).mime_type = mime;
-            blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                (*store_ptr).mime_type.value.as_ref(),
-            ));
-        }
-    } else {
-        // No store (empty bytes). Loader-derived `mime.value` is `'static` — point at it
-        // directly; boxing it leaked because `BuildArtifact`'s drop never runs `Blob::deinit`.
-        match mime.value {
-            std::borrow::Cow::Borrowed(s) => {
-                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-            }
-            std::borrow::Cow::Owned(s) => {
-                blob.content_type
-                    .set(bun_core::heap::into_raw(s.into_boxed_slice()));
-                blob.content_type_allocated.set(true);
-            }
-        }
+        unsafe { (*store.as_ptr()).mime_type = mime };
     }
 }
 

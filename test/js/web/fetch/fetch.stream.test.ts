@@ -149,7 +149,7 @@ describe.concurrent("fetch() with streaming", () => {
     await promise;
   });
 
-  it("rejects with ERR_STREAM_CANNOT_PIPE when the request body stream is already locked", async () => {
+  it("throws a TypeError when the request body stream is already locked", async () => {
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -163,15 +163,14 @@ describe.concurrent("fetch() with streaming", () => {
         controller.close();
       },
     });
-    // Lock the stream before fetch consumes it. fetch must reject at the pipe
-    // boundary rather than proceeding as if the stream were usable.
+    // A locked (or disturbed) body init is rejected at Request construction with a
+    // TypeError (fetch spec; Node agrees on the error). Like Bun's other fetch
+    // argument errors, it surfaces synchronously.
     stream.getReader();
 
-    const promise = fetch(server.url, { method: "POST", body: stream });
-    await expect(promise).rejects.toMatchObject({
-      code: "ERR_STREAM_CANNOT_PIPE",
-      message: "Stream already used, please create a new one",
-    });
+    expect(() => fetch(server.url, { method: "POST", body: stream })).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Body object should not be disturbed or locked" }),
+    );
   });
 
   it("can deflate with and without headers #4478", async () => {

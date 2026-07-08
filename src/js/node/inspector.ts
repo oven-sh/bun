@@ -9,6 +9,11 @@ const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
 
+// #handleMethod return marker for inspector-protocol errors: the callback
+// receives the plain `{ code, message }` object (Node delivers protocol
+// errors as plain objects, not Error instances).
+const kProtocolError = Symbol("kProtocolError");
+
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
 const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
@@ -462,6 +467,8 @@ class Session extends EventEmitter {
       queueMicrotask(() => {
         if (result instanceof Error) {
           callback(result, undefined);
+        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
+          callback(result[kProtocolError], undefined);
         } else {
           callback(null, result);
         }
@@ -470,6 +477,12 @@ class Session extends EventEmitter {
       // Sync throw for errors when no callback
       if (result instanceof Error) {
         throw result;
+      }
+      if (result !== null && typeof result === "object" && kProtocolError in result) {
+        const protocolError = result[kProtocolError];
+        const error = new Error(protocolError.message);
+        error.code = protocolError.code;
+        throw error;
       }
       return result;
     }
@@ -606,6 +619,50 @@ class Session extends EventEmitter {
           postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
         }
         postNodeInspectorControl(JSON.stringify({ type: "command", method, params }));
+        return {};
+      }
+
+      case "NodeTracing.start": {
+        if (!Bun.isMainThread) {
+          return {
+            [kProtocolError]: {
+              code: -32000,
+              message: "Tracing properties can only be changed through main thread sessions",
+            },
+          };
+        }
+        const includedCategories = (params as any)?.traceConfig?.includedCategories;
+        const categories = $isArray(includedCategories) ? includedCategories : [];
+        const started = require("internal/trace_events").inspectorStart(categories);
+        if (!started) {
+          return { [kProtocolError]: { code: -32000, message: "Tracing is already started" } };
+        }
+        return {};
+      }
+
+      case "NodeTracing.stop": {
+        if (!Bun.isMainThread) {
+          return {
+            [kProtocolError]: {
+              code: -32000,
+              message: "Tracing properties can only be changed through main thread sessions",
+            },
+          };
+        }
+        const { collected, metadata } = require("internal/trace_events").inspectorStop();
+        // Node streams the collected events back over the session in chunks
+        // (trace events, then metadata) before signalling completion. Emit
+        // synchronously: listeners observe everything before the post()
+        // callback (queued as a microtask above) runs.
+        this.emit("NodeTracing.dataCollected", {
+          method: "NodeTracing.dataCollected",
+          params: { value: collected },
+        });
+        this.emit("NodeTracing.dataCollected", {
+          method: "NodeTracing.dataCollected",
+          params: { value: metadata },
+        });
+        this.emit("NodeTracing.tracingComplete", { method: "NodeTracing.tracingComplete", params: {} });
         return {};
       }
 

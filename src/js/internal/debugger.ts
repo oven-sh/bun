@@ -486,14 +486,17 @@ class Debugger {
       });
     }
 
-    // node:inspector servers gate every request (including the WS upgrade) on
-    // the Host header, matching Node's inspector_socket.cc IsAllowedHost, so a
-    // DNS-rebound page cannot reach a bound-all inspector.
-    if (this.#nodeInspector) {
-      const host = headers.get("Host");
-      if (host !== null && !isAllowedHostHeader(host)) {
-        return new Response(null, { status: 400 });
-      }
+    const isUnix = this.#url!.protocol.includes("unix");
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+      return new Response(null, {
+        status: 400, // Bad Request
+      });
+    }
+
+    if (!isOriginAllowed(headers.get("Origin"))) {
+      return new Response(null, {
+        status: 403, // Forbidden
+      });
     }
 
     switch (pathname) {
@@ -510,15 +513,9 @@ class Debugger {
         break;
     }
 
-    if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
+    if (!isUnix && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
-      });
-    }
-
-    if (!isOriginAllowed(headers.get("Origin"))) {
-      return new Response(null, {
-        status: 403, // Forbidden
       });
     }
 
@@ -830,13 +827,23 @@ function isOriginAllowed(origin: string | null): boolean {
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
 }
 
-// Host header values the node:inspector server accepts (both /json discovery
-// and the WebSocket upgrade): "localhost", an IPv4 literal, or a bracketed
-// IPv6 literal, each with an optional port — Node's inspector_socket.cc
-// IsAllowedHost. The bracketed alternative permits dots so IPv4-mapped IPv6
-// literals like `[::ffff:127.0.0.1]` are accepted.
-function isAllowedHostHeader(host: string): boolean {
-  return /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\])(:\d{1,5})?$/i.test(host);
+function isHostAllowed(host: string | null, expectedHostname: string): boolean {
+  if (!host) {
+    return true;
+  }
+  let hostname: string;
+  try {
+    ({ hostname } = new URL(`ws://${host}`));
+  } catch {
+    return false;
+  }
+  if (hostname === expectedHostname || hostname === "localhost" || hostname === "localhost6") {
+    return true;
+  }
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return true;
+  }
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
 function randomId() {

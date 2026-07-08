@@ -713,23 +713,27 @@ impl ErrorCode {
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
     /// `ERR_INVALID_BUFFER_SIZE` (instanceof RangeError)
     pub const INVALID_BUFFER_SIZE: ErrorCode = ErrorCode(328);
+    /// `ERR_TRACE_EVENTS_CATEGORY_REQUIRED` (instanceof TypeError)
+    pub const TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode = ErrorCode(329);
+    /// `ERR_TRACE_EVENTS_UNAVAILABLE` (instanceof Error)
+    pub const TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode(330);
     /// `ERR_INSPECTOR_ALREADY_ACTIVATED` (instanceof Error)
-    pub const INSPECTOR_ALREADY_ACTIVATED: ErrorCode = ErrorCode(329);
+    pub const INSPECTOR_ALREADY_ACTIVATED: ErrorCode = ErrorCode(331);
     /// `ERR_INSPECTOR_NOT_ACTIVE` (instanceof Error)
-    pub const INSPECTOR_NOT_ACTIVE: ErrorCode = ErrorCode(330);
+    pub const INSPECTOR_NOT_ACTIVE: ErrorCode = ErrorCode(332);
     /// `ERR_INSPECTOR_ALREADY_CONNECTED` (instanceof Error)
-    pub const INSPECTOR_ALREADY_CONNECTED: ErrorCode = ErrorCode(331);
+    pub const INSPECTOR_ALREADY_CONNECTED: ErrorCode = ErrorCode(333);
     /// `ERR_INSPECTOR_NOT_CONNECTED` (instanceof Error)
-    pub const INSPECTOR_NOT_CONNECTED: ErrorCode = ErrorCode(332);
+    pub const INSPECTOR_NOT_CONNECTED: ErrorCode = ErrorCode(334);
     /// `ERR_INSPECTOR_NOT_WORKER` (instanceof Error)
-    pub const INSPECTOR_NOT_WORKER: ErrorCode = ErrorCode(333);
+    pub const INSPECTOR_NOT_WORKER: ErrorCode = ErrorCode(335);
     /// `ERR_INSPECTOR_CLOSED` (instanceof Error)
-    pub const INSPECTOR_CLOSED: ErrorCode = ErrorCode(334);
+    pub const INSPECTOR_CLOSED: ErrorCode = ErrorCode(336);
     /// `ERR_INSPECTOR_COMMAND` (instanceof Error)
-    pub const INSPECTOR_COMMAND: ErrorCode = ErrorCode(335);
+    pub const INSPECTOR_COMMAND: ErrorCode = ErrorCode(337);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 336;
+    pub const COUNT: u16 = 338;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1040,6 +1044,9 @@ impl ErrorCode {
     pub const ERR_TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode =
         ErrorCode::TLS_ALPN_CALLBACK_INVALID_RESULT;
     pub const ERR_SSL_NO_CIPHER_MATCH: ErrorCode = ErrorCode::SSL_NO_CIPHER_MATCH;
+    pub const ERR_TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode =
+        ErrorCode::TRACE_EVENTS_CATEGORY_REQUIRED;
+    pub const ERR_TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode::TRACE_EVENTS_UNAVAILABLE;
     pub const ERR_UNAVAILABLE_DURING_EXIT: ErrorCode = ErrorCode::UNAVAILABLE_DURING_EXIT;
     pub const ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET: ErrorCode =
         ErrorCode::UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET;
@@ -1449,6 +1456,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
     "ERR_INVALID_BUFFER_SIZE",
+    "ERR_TRACE_EVENTS_CATEGORY_REQUIRED",
+    "ERR_TRACE_EVENTS_UNAVAILABLE",
     "ERR_INSPECTOR_ALREADY_ACTIVATED",
     "ERR_INSPECTOR_NOT_ACTIVE",
     "ERR_INSPECTOR_ALREADY_CONNECTED",

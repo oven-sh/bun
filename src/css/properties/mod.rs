@@ -302,6 +302,9 @@ mod generic_registrations {
         transform::Translate,
         // transition
         transition::Transition,
+        // animation
+        animation::Animation,
+        animation::AnimationName,
         // ui
         ui::ColorScheme,
         // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)

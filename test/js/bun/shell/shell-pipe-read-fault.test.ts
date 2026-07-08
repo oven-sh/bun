@@ -27,6 +27,13 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //                            read_all() and into the epoll dispatch.
 //   SHELL_FAIL_EPOLL_FROM=N  the Nth and every later epoll_ctl ADD/MOD on each
 //                            AF_UNIX socket fails with ENOMEM (1-based).
+//   SHELL_RECV_BULK=N        the first N recv()s on each AF_UNIX socket that
+//                            reach the real syscall instead return the caller's
+//                            whole buffer filled with 'A'. The PosixBufferedReader
+//                            read loop's scratch buffer is 256 KB, so one bulk
+//                            recv guarantees the streaming inner loop's mid-read
+//                            flush (`head_start` past the half-buffer cutoff)
+//                            fires in a single poll wake.
 // FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
 // ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
 // syscall(2).
@@ -57,8 +64,10 @@ static int fail_epoll_after = -1;
 static int recv_one_chunk = -1;
 static int recv_eagain_first = -1;
 static int fail_epoll_from = -1; /* 0 = off, N >= 1 = 1-based index of the first failing call */
+static int recv_bulk = -1;       /* 0 = off, N >= 1 = number of fabricated full-buffer recvs */
 static unsigned char recv_count[MAX_FD];
 static unsigned char epoll_count[MAX_FD];
+static unsigned char bulk_count[MAX_FD];
 
 static void init_modes(void) {
   if (fail_recv < 0) fail_recv = getenv("SHELL_FAIL_RECV") != NULL;
@@ -69,6 +78,10 @@ static void init_modes(void) {
   if (fail_epoll_from < 0) {
     const char *s = getenv("SHELL_FAIL_EPOLL_FROM");
     fail_epoll_from = s ? atoi(s) : 0;
+  }
+  if (recv_bulk < 0) {
+    const char *s = getenv("SHELL_RECV_BULK");
+    recv_bulk = s ? atoi(s) : 0;
   }
 }
 
@@ -108,6 +121,11 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
   if (recv_eagain_first && fd >= 0 && fd < MAX_FD && is_unix_sock(fd) && recv_count[fd]++ == 0) {
     errno = EAGAIN;
     return -1;
+  }
+  if (recv_bulk > 0 && fd >= 0 && fd < MAX_FD && is_unix_sock(fd) && bulk_count[fd] < recv_bulk && len > 0) {
+    bulk_count[fd]++;
+    memset(buf, 'A', len);
+    return (ssize_t)len;
   }
   return real_recv(fd, buf, len, flags);
 }
@@ -158,6 +176,7 @@ int close(int fd) {
   if (fd >= 0 && fd < MAX_FD) {
     recv_count[fd] = 0;
     epoll_count[fd] = 0;
+    bulk_count[fd] = 0;
   }
   return real_close(fd);
 }
@@ -249,7 +268,7 @@ const MODES = [
   "SHELL_RECV_EAGAIN_FIRST",
 ] as const;
 // Integer-valued fault knobs; cleared alongside MODES and set through `extraEnv`.
-const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM"] as const;
+const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM", "SHELL_RECV_BULK"] as const;
 
 async function expectShellFault(
   script: string,
@@ -343,5 +362,29 @@ test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
   "shell survives a poll re-registration failure during a poll-driven read",
   async () => {
     await expectShellFault("poll-chunk.js", ["SHELL_RECV_EAGAIN_FIRST"], { SHELL_FAIL_EPOLL_FROM: "3" });
+  },
+);
+
+// Same failing epoll_ctl (#3: ADD at start, MOD after the eager read's forced
+// EAGAIN, then the first poll-driven MOD), but SHELL_RECV_BULK=1 makes the
+// poll-driven recv return the read loop's whole 256 KB scratch buffer at once.
+// That pushes `head_start` past read_with_fn's half-buffer cutoff, so the
+// shell `PipeReader::on_read_chunk` mid-loop flush fires while the inner loop
+// still has iterations left. on_read_chunk then called
+// `self.reader.register_poll()` itself; its failure dispatched
+// `on_reader_error`, which dropped the last `Arc<PipeReader>`, and the still
+// looping read_with_fn kept reading through the freed `PosixBufferedReader`.
+// ASAN: heap-use-after-free in PosixBufferedReader::read_with_fn.
+//
+// With the re-arm removed from on_read_chunk, epoll_ctl #3 is instead the read
+// loop's own EAGAIN re-registration, whose failure path already returns
+// without touching the (freed) reader, so the command just reports ENOMEM.
+test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
+  "shell survives a poll re-registration failure raised from on_read_chunk's mid-read flush",
+  async () => {
+    await expectShellFault("poll-chunk.js", ["SHELL_RECV_EAGAIN_FIRST"], {
+      SHELL_FAIL_EPOLL_FROM: "3",
+      SHELL_RECV_BULK: "1",
+    });
   },
 );

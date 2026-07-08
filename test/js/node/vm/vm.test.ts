@@ -1177,3 +1177,94 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("timeout enforces a wall-clock deadline against Atomics.wait", () => {
+  // Run in a subprocess so an unfixed build, which would sit in the wait for
+  // the full 30 s, fails the test by exceeding the test-file timeout rather
+  // than hanging the runner.
+  const run = async (label: string, source: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { label, stdout: stdout.trim(), stderr, exitCode };
+  };
+
+  test("a single Atomics.wait spanning the deadline is interrupted", async () => {
+    const { stdout, exitCode } = await run(
+      "single",
+      `
+      const vm = require("node:vm");
+      const ia = new Int32Array(new SharedArrayBuffer(8));
+      const t0 = Date.now();
+      let threw = null;
+      try {
+        vm.runInNewContext("Atomics.wait(ia, 0, 0, 30000)", { ia }, { timeout: 100 });
+      } catch (e) { threw = e; }
+      const dt = Date.now() - t0;
+      if (!threw) { console.log("returned after " + dt + "ms"); process.exit(1); }
+      if (threw.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") { console.log("code " + threw.code); process.exit(1); }
+      if (dt >= 30000) { console.log("late " + dt + "ms"); process.exit(1); }
+      console.log("ok " + threw.code);
+      `,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok ERR_SCRIPT_EXECUTION_TIMEOUT", exitCode: 0 });
+  });
+
+  test("chunked short waits are bounded by the wall-clock deadline", async () => {
+    const { stdout, exitCode } = await run(
+      "chunked",
+      `
+      const vm = require("node:vm");
+      const ia = new Int32Array(new SharedArrayBuffer(8));
+      const t0 = Date.now();
+      let threw = null;
+      try {
+        vm.runInNewContext("for (;;) Atomics.wait(ia, 0, 0, 10);", { ia }, { timeout: 100 });
+      } catch (e) { threw = e; }
+      const dt = Date.now() - t0;
+      if (!threw || threw.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") { console.log("bad result " + dt + "ms"); process.exit(1); }
+      // Before the fix this took ~150x the budget (many seconds); anything
+      // under 3 s is a pass for the wall-clock watchdog.
+      if (dt >= 3000) { console.log("late " + dt + "ms"); process.exit(1); }
+      console.log("ok");
+      `,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  });
+
+  test("the next timed evaluation runs cleanly after a blocked deadline", async () => {
+    const { stdout, exitCode } = await run(
+      "next",
+      `
+      const vm = require("node:vm");
+      const ia = new Int32Array(new SharedArrayBuffer(8));
+      try { vm.runInNewContext("Atomics.wait(ia, 0, 0, 600)", { ia }, { timeout: 60 }); } catch {}
+      // On an assert-enabled build this call previously aborted with
+      // ASSERTION FAILED: hasTimeLimit() in JSC::Watchdog::startTimer.
+      const v = vm.runInNewContext("6 * 7", {}, { timeout: 5000 });
+      console.log("ok " + v);
+      `,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok 42", exitCode: 0 });
+  });
+
+  test("runInThisContext enforces the deadline against Atomics.wait", async () => {
+    const { stdout, exitCode } = await run(
+      "thisContext",
+      `
+      const vm = require("node:vm");
+      globalThis.ia = new Int32Array(new SharedArrayBuffer(8));
+      let threw = null;
+      try {
+        vm.runInThisContext("Atomics.wait(ia, 0, 0, 30000)", { timeout: 100 });
+      } catch (e) { threw = e; }
+      console.log(threw && threw.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" ? "ok" : "fail");
+      `,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+  });
+});

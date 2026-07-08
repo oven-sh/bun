@@ -255,7 +255,7 @@ use crate::const_str_eq;
 /// without `'static` and is the same source that `Field::ty` comes from.
 /// `TypeKind::type_id()` returns the same `TypeId` that `Field::ty` provides.
 #[inline(always)]
-const fn type_id_of<F: ?Sized>() -> TypeId {
+fn type_id_of<F: ?Sized>() -> TypeId {
     TypeInfo::of::<F>().kind.type_id()
 }
 
@@ -442,7 +442,7 @@ impl<T> Reflected<T> {
     /// associated type alias (e.g. `EntryPoint::Kind` vs `entry_point::Kind`),
     /// so a size match is accepted when ids differ. Size mismatch is always
     /// rejected.
-    const fn check<const NAME: &'static str, F>() -> usize {
+    fn check<const NAME: &'static str, F>() -> usize {
         let fields = fields_of::<T>();
         let mut i = 0;
         while i < fields.len() {
@@ -638,14 +638,14 @@ impl<T> Slice<T> {
     /// field named `NAME` and that its type is exactly `F`.
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
-        let fi = const { Reflected::<T>::check::<NAME, F>() };
+        let fi = Reflected::<T>::check::<NAME, F>();
         Col::new(self.col_ptr::<F>(fi), self.len).as_slice()
     }
 
     /// Returns the mutable column slice for field `NAME` typed as `&mut [F]`.
     #[inline]
     pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
-        let fi = const { Reflected::<T>::check::<NAME, F>() };
+        let fi = Reflected::<T>::check::<NAME, F>();
         ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
 
@@ -660,7 +660,7 @@ impl<T> Slice<T> {
     /// `&mut` references to the same column when *dereferencing* it.
     #[inline]
     pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
-        let fi = const { Reflected::<T>::check::<NAME, F>() };
+        let fi = Reflected::<T>::check::<NAME, F>();
         self.col_ptr::<F>(fi).as_ptr()
     }
 
@@ -941,14 +941,14 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// `F` is exactly its type.
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
-        let fi = const { Reflected::<T>::check::<NAME, F>() };
+        let fi = Reflected::<T>::check::<NAME, F>();
         Col::new(self.col_ptr::<F>(fi), self.len).as_slice()
     }
 
     /// Get the mutable slice of values for field `NAME`.
     #[inline]
     pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
-        let fi = const { Reflected::<T>::check::<NAME, F>() };
+        let fi = Reflected::<T>::check::<NAME, F>();
         ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
 
@@ -956,7 +956,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// always sound; the read/write contract is on the caller's *dereference*.
     #[inline]
     pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
-        let fi = const { Reflected::<T>::check::<NAME, F>() };
+        let fi = Reflected::<T>::check::<NAME, F>();
         self.col_ptr::<F>(fi).as_ptr()
     }
 

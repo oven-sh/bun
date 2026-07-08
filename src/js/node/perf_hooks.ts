@@ -266,6 +266,7 @@ function processTimerifyComplete(name, start, args, histogram) {
 }
 
 export default {
+  timerify,
   performance: {
     mark(_) {
       return performance.mark(...arguments);

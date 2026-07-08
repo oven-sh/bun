@@ -54,10 +54,9 @@ test("timerify entry shape", async () => {
   });
 });
 
-test("timerify is only exposed on performance, not as a top-level export", () => {
+test("timerify is exposed on both performance and as a top-level export (Node v25.2+)", () => {
   expect(perf.performance.timerify).toBeFunction();
-  // @ts-expect-error — verifying the export is absent, matching Node.
-  expect(perf.timerify).toBeUndefined();
+  expect(perf.timerify).toBeFunction();
 });
 
 test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {

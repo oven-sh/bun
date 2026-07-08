@@ -2728,8 +2728,10 @@ unsafe extern "C" {
     );
     safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
     safe fn Bun__JSValue__getProxyTarget(this: JSValue) -> JSValue;
-    safe fn Bun__JSValue__getArrayBufferViewBuffer(this: JSValue, global: &JSGlobalObject)
-    -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewBuffer(
+        this: JSValue,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(

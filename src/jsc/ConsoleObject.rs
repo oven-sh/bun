@@ -4235,8 +4235,7 @@ pub mod formatter {
 
             // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
-            let promise: &JSPromise =
-                JSPromise::opaque_ref(value.encoded() as *const JSPromise);
+            let promise: &JSPromise = JSPromise::opaque_ref(value.encoded() as *const JSPromise);
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),

@@ -2126,4 +2126,3 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
     unsafe { *node_response_ptr = response };
     js_this
 }
-

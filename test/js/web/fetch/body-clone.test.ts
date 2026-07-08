@@ -894,20 +894,13 @@ describe("clone() after `.body` was observed returns a fresh tee branch for both
         // whole body has been received by then.
         await using server = Bun.serve({
           port: 0,
-          fetch: () =>
-            new Response(payload, { headers: { "content-length": String(N) } }),
+          fetch: () => new Response(payload, { headers: { "content-length": String(N) } }),
         });
         return await fetch(server.url);
       },
     ],
-    [
-      "Response with a string body",
-      async () => new Response(payload.toString("latin1")),
-    ],
-    [
-      "Response with a Uint8Array body",
-      async () => new Response(payload),
-    ],
+    ["Response with a string body", async () => new Response(payload.toString("latin1"))],
+    ["Response with a Uint8Array body", async () => new Response(payload)],
     [
       "Response with a user ReadableStream body",
       async () =>
@@ -961,10 +954,7 @@ describe("clone() after `.body` was observed returns a fresh tee branch for both
       expect(before.locked).toBe(true);
       expect(target.bodyUsed).toBe(false);
 
-      const [origBytes, cloneBytes] = await Promise.all([
-        drain(after),
-        drain(cloned.body!),
-      ]);
+      const [origBytes, cloneBytes] = await Promise.all([drain(after), drain(cloned.body!)]);
       expect({ origBytes, cloneBytes }).toEqual({ origBytes: N, cloneBytes: N });
     });
 
@@ -972,10 +962,7 @@ describe("clone() after `.body` was observed returns a fresh tee branch for both
       const target = await make();
       void target.body; // observe only; no reader, no lock
       const cloned = target.clone();
-      const [origText, cloneText] = await Promise.all([
-        target.text(),
-        cloned.text(),
-      ]);
+      const [origText, cloneText] = await Promise.all([target.text(), cloned.text()]);
       expect(origText.length).toBe(N);
       expect(cloneText.length).toBe(N);
     });
@@ -991,11 +978,7 @@ describe("clone() after `.body` was observed returns a fresh tee branch for both
     const c1 = response.clone();
     void response.body;
     const c2 = response.clone();
-    const [orig, b1, b2] = await Promise.all([
-      drain(response.body!),
-      drain(c1.body!),
-      drain(c2.body!),
-    ]);
+    const [orig, b1, b2] = await Promise.all([drain(response.body!), drain(c1.body!), drain(c2.body!)]);
     expect({ orig, b1, b2 }).toEqual({ orig: N, b1: N, b2: N });
   });
 });

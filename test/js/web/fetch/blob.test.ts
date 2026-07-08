@@ -124,6 +124,7 @@ describe("Blob type", () => {
     expect(new File([], "f", { type: input }).type).toBe(expected);
     expect(new File(["x"], "f", { type: input }).type).toBe(expected);
     expect(new Blob(["x"]).slice(0, 1, input).type).toBe(expected);
+    expect(new Blob([]).slice(0, 0, input).type).toBe(expected);
   });
 
   // https://w3c.github.io/FileAPI/#slice-method-algo

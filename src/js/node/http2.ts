@@ -370,6 +370,8 @@ let priorityDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// node's Http2Stream[kState].didRead: set by the first _read() attempt, not by data arrival.
+const kDidRead = Symbol("didRead");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2466,6 +2468,7 @@ class Http2Stream extends Duplex {
 
   _read(_size) {
     // we always use the internal stream queue now
+    if (!this[kDidRead]) this[kDidRead] = true;
   }
 
   end(chunk, encoding, callback) {
@@ -2708,6 +2711,7 @@ class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
+    this.once("finish", onServerStreamFinishMaybeClose);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.
@@ -3173,6 +3177,25 @@ function settingsCallbackNT(self, callback, start) {
 function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
+}
+function closeUnreadRespondedStreamNT(stream) {
+  if (stream.destroyed || stream.closed) return;
+  stream.close();
+}
+// node's Http2Stream[kMaybeDestroy]: once a server stream's response has finished, if user code
+// never read the request (didRead false, flowing null) and no trailers are pending, node closes
+// the stream gracefully instead of leaving it open until the request side ends.
+function onServerStreamFinishMaybeClose(this: ServerHttp2Stream) {
+  if (
+    this.headersSent &&
+    !this.destroyed &&
+    !this.closed &&
+    (this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0 &&
+    !this[kDidRead] &&
+    this.readableFlowing === null
+  ) {
+    setImmediate(closeUnreadRespondedStreamNT, this);
+  }
 }
 function emitStreamErrorFromCodeNT(stream, rstCode) {
   stream.emit("error", streamErrorFromCode(rstCode));

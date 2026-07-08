@@ -3364,3 +3364,58 @@ describe.concurrent("http2 server: pushed stream error surfacing", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("http2 server: finished response with an unread request", () => {
+  // node (Http2Stream[kMaybeDestroy]): a server stream whose response finished while user code
+  // never read the request closes gracefully (rstCode 0) instead of waiting for the client's
+  // half; a later session.destroy(code) then has nothing to error (grpc-js forceShutdown shape).
+  it("closes the stream and survives a later session.destroy(code)", async () => {
+    const fixture = `
+      const http2 = require("node:http2");
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code);
+        process.exit(42);
+      });
+      const server = http2.createServer();
+      let ssession;
+      server.on("session", s => (ssession = s));
+      server.on("stream", stream => {
+        stream.on("close", () => {
+          console.log("server stream close rstCode=" + stream.rstCode);
+          // The uncaught (if any) is delivered before the session's own 'close' completes.
+          ssession.on("close", () => {
+            setImmediate(() => {
+              console.log("DONE");
+              process.exit(0);
+            });
+          });
+          ssession.destroy(http2.constants.NGHTTP2_CANCEL);
+        });
+        stream.respond({ ":status": 200, "grpc-status": "12" }, { endStream: true });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        // The GOAWAY from the server-session teardown reaches this same process's client session;
+        // it is not what this test observes (the server stream lifecycle is).
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/Sum", ":method": "POST" }); // client half stays open
+        req.on("error", () => {});
+        req.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("server stream close rstCode=0"),
+      stderr: "",
+    });
+    expect(stdout).toContain("DONE");
+    expect(stdout).not.toContain("UNCAUGHT");
+    expect(exitCode).toBe(0);
+  });
+});

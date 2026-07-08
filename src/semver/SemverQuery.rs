@@ -1122,7 +1122,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 list.or_version(version)?;
             } else {
                 let range = token.to_range(&parse_result.version);
-                if !range.is_match_all() {
+                // A bare operator with no operand (`^`, `~`, `>=` at end of
+                // branch) parses len==0 and node-semver loose mode drops it
+                // before the collapse step, so it is not the ANY comparator.
+                if !range.is_match_all() || parse_result.len == 0 {
                     branch_has_non_any = true;
                 }
                 if count == 0 && token.tag == TokenTag::Version {

@@ -88,7 +88,7 @@ describe("node:test root before() timing", () => {
       .filter(l => l.startsWith("LOG:"))
       .join("\n");
     expect({ logs, stderr, exitCode }).toMatchObject({
-      logs: ['LOG:before-ran', 'LOG:module-continues cases=["a","b"]', 'LOG:describe-body cases=["a","b"]'].join("\n"),
+      logs: ["LOG:before-ran", 'LOG:module-continues cases=["a","b"]', 'LOG:describe-body cases=["a","b"]'].join("\n"),
       stderr: expect.stringContaining("3 pass"),
       exitCode: 0,
     });

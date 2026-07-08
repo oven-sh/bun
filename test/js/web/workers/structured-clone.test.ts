@@ -870,6 +870,30 @@ describe("Error serialization semantics", () => {
       Error.prepareStackTrace = original;
     }
   });
+
+  // An own accessor replaces the materialized .stack, so this exercises the
+  // [[Get]] on .stack rather than prepareStackTrace. Node propagates it too.
+  test("a throwing .stack getter propagates, like node", () => {
+    class StackBoom extends Error {}
+    const e = new Error("payload");
+    Object.defineProperty(e, "stack", {
+      get() {
+        throw new StackBoom("boom");
+      },
+      configurable: true,
+    });
+    expect(() => structuredClone(e)).toThrow(StackBoom);
+  });
+
+  test("a custom Error.prepareStackTrace is serialized", () => {
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => "custom";
+    try {
+      expect(structuredClone(new Error("payload")).stack).toBe("custom");
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+  });
 });
 
 describe("options.transfer iterator error propagation", () => {

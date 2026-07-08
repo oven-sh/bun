@@ -52,7 +52,24 @@ function open(port?: number, host?: string, wait?: boolean) {
   const hostPart = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
   const requestedUrl = `ws://${hostPart}:${portNumber}/${globalThis.crypto.randomUUID()}`;
 
-  const resolvedUrl = openNodeInspector(requestedUrl, !!wait);
+  const disposable = {
+    __proto__: null,
+    [Symbol.dispose]() {
+      close();
+    },
+  };
+
+  let resolvedUrl: string | null;
+  try {
+    resolvedUrl = openNodeInspector(requestedUrl, !!wait);
+  } catch (e) {
+    // Node prints one diagnostic line and returns instead of throwing when the
+    // socket cannot be bound, so a caller can retry with a different port.
+    const raw = (e as Error)?.message ?? String(e);
+    const detail = raw.startsWith("Failed to start inspector: ") ? raw.slice(27) : raw;
+    process.stderr.write(`Starting inspector on ${hostname}:${portNumber} failed: ${detail}\n`);
+    return disposable;
+  }
   if (resolvedUrl === null) {
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
@@ -64,12 +81,7 @@ function open(port?: number, host?: string, wait?: boolean) {
     waitForNodeInspectorConnection();
   }
 
-  return {
-    __proto__: null,
-    [Symbol.dispose]() {
-      close();
-    },
-  };
+  return disposable;
 }
 
 function close() {
@@ -523,7 +535,8 @@ class Session extends EventEmitter {
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
         this.#coverageBaseline.clear();
-        return { timestamp: Date.now() / 1000 };
+        // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
+        return { timestamp: performance.now() / 1000 };
       }
 
       case "Profiler.stopPreciseCoverage": {
@@ -556,7 +569,7 @@ class Session extends EventEmitter {
         }
         return {
           result: buildScriptCoverageList(scripts, this.#preciseCoverageCallCount, this.#preciseCoverageDetailed),
-          timestamp: Date.now() / 1000,
+          timestamp: performance.now() / 1000,
         };
       }
 

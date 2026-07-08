@@ -164,7 +164,7 @@ export default function (
             debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
-            reportNodeInspectorServerStarted("", control, `${(error as Error)?.message ?? error}`);
+            reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
           }
           return;
         }
@@ -202,7 +202,7 @@ export default function (
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
       // an "open" control message on this already-running debugger thread.
-      reportNodeInspectorServerStarted("", control, `${(error as Error)?.message ?? error}`);
+      reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
       return;
     }
 
@@ -259,6 +259,15 @@ export default function (
   }
 }
 
+// Node prints the libuv one-liner ("address already in use"), not the full
+// Bun.serve message, in "Starting inspector on ... failed:".
+function nodeInspectorListenErrorDetail(error: unknown): string {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === "EADDRINUSE") return "address already in use";
+  if (code === "EACCES") return "permission denied";
+  return `${(error as Error)?.message ?? error}`;
+}
+
 function unescapeUnixSocketUrl(href: string) {
   if (href.startsWith("unix://%2F")) {
     return decodeURIComponent(href.substring("unix://".length));
@@ -284,53 +293,48 @@ class Debugger {
     isNodeInspector: boolean = false,
   ) {
     this.#nodeInspector = isNodeInspector;
-    try {
-      this.#createBackend = (refEventLoop, receive) => {
-        const backend = createBackend(executionContextId, refEventLoop, receive);
-        return {
-          write: (message: string | string[]) => {
-            send.$call(backend, message);
-            return true;
-          },
-          close: () => close.$call(backend),
-        };
+    this.#createBackend = (refEventLoop, receive) => {
+      const backend = createBackend(executionContextId, refEventLoop, receive);
+      return {
+        write: (message: string | string[]) => {
+          send.$call(backend, message);
+          return true;
+        },
+        close: () => close.$call(backend),
       };
+    };
 
-      if (url.startsWith("unix://")) {
-        this.#connectOverSocket({
-          unix: unescapeUnixSocketUrl(url),
-        });
-        return;
-      } else if (url.startsWith("fd://")) {
-        this.#connectOverSocket({
-          fd: Number(url.substring("fd://".length)),
-        });
-        return;
-      } else if (url.startsWith("fd:")) {
-        this.#connectOverSocket({
-          fd: Number(url.substring("fd:".length)),
-        });
-        return;
-      } else if (url.startsWith("unix:")) {
-        this.#connectOverSocket({
-          unix: url.substring("unix:".length),
-        });
-        return;
-      } else if (url.startsWith("tcp://")) {
-        const { hostname, port } = new URL(url);
-        this.#connectOverSocket({
-          hostname,
-          port: port && port !== "0" ? Number(port) : undefined,
-        });
-        return;
-      }
-
-      this.#url = parseUrl(url);
-      this.#listen();
-    } catch (error) {
-      console.error(error);
-      throw error;
+    if (url.startsWith("unix://")) {
+      this.#connectOverSocket({
+        unix: unescapeUnixSocketUrl(url),
+      });
+      return;
+    } else if (url.startsWith("fd://")) {
+      this.#connectOverSocket({
+        fd: Number(url.substring("fd://".length)),
+      });
+      return;
+    } else if (url.startsWith("fd:")) {
+      this.#connectOverSocket({
+        fd: Number(url.substring("fd:".length)),
+      });
+      return;
+    } else if (url.startsWith("unix:")) {
+      this.#connectOverSocket({
+        unix: url.substring("unix:".length),
+      });
+      return;
+    } else if (url.startsWith("tcp://")) {
+      const { hostname, port } = new URL(url);
+      this.#connectOverSocket({
+        hostname,
+        port: port && port !== "0" ? Number(port) : undefined,
+      });
+      return;
     }
+
+    this.#url = parseUrl(url);
+    this.#listen();
   }
 
   get url(): URL | undefined {

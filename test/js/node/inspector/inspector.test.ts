@@ -273,19 +273,19 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.finalUrl).toBeNull();
 });
 
-// A failed inspector.open() (port already in use) must not leave the process
-// unable to open the inspector: a later open() retries on the same debugger
-// thread.
+// A failed inspector.open() (port already in use) must print Node's diagnostic
+// line and RETURN so a later open() can retry on the same debugger thread.
 const failedOpenRetryFixture = `
 import inspector from "node:inspector";
 
 const blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+const blockedPort = blocker.port;
 
-let firstError = null;
+let threw = false;
 try {
-  inspector.open(blocker.port, "127.0.0.1", false);
-} catch (error) {
-  firstError = error.message;
+  inspector.open(blockedPort, "127.0.0.1", false);
+} catch {
+  threw = true;
 }
 const urlAfterFailure = inspector.url() ?? null;
 
@@ -297,7 +297,8 @@ blocker.stop(true);
 
 console.log(
   JSON.stringify({
-    firstError,
+    threw,
+    blockedPort,
     urlAfterFailure,
     url,
     protocolVersion: version["Protocol-Version"],
@@ -321,7 +322,9 @@ test("inspector.open() can be retried after a failed start", async () => {
   expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
 
   const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
-  expect(summary.firstError).toContain("Failed to start inspector");
+  // Node: prints one stderr line, does not throw, url() stays undefined.
+  expect(summary.threw).toBe(false);
+  expect(stderr).toContain(`Starting inspector on 127.0.0.1:${summary.blockedPort} failed: address already in use`);
   expect(summary.urlAfterFailure).toBeNull();
   expect(summary.url).toStartWith("ws://127.0.0.1:");
   expect(summary.protocolVersion).toBe("1.1");

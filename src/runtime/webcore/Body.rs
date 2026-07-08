@@ -1588,11 +1588,14 @@ impl Value {
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
-        self.to_blob_if_possible();
-
+        // Tee a Locked body before any blob extraction: `to_blob_if_possible()`
+        // would `.done()` an already-materialized `.body` stream, leaving the
+        // user-visible cached stream empty instead of a live tee branch.
         if matches!(self, Value::Locked(_)) {
             return self.tee(global_this, readable);
         }
+
+        self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
             let owned = internal_blob.to_owned_slice();

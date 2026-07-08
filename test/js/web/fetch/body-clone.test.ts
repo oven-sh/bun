@@ -862,6 +862,144 @@ describe("clone() throws when the body is disturbed or locked", () => {
   });
 });
 
+// https://fetch.spec.whatwg.org/#concept-body-clone: clone() tees the body
+// stream and *replaces* this's body stream with one tee branch. If `.body`
+// was observed before the clone, the original's `.body` must become a fresh
+// branch carrying every byte; the pre-clone stream object becomes the (now
+// locked) tee source. The `if (res.body) { cache.put(res.clone()); use
+// res.body }` middleware shape depends on this.
+describe("clone() after `.body` was observed returns a fresh tee branch for both sides", () => {
+  async function drain(stream: ReadableStream<Uint8Array>): Promise<number> {
+    let n = 0;
+    for await (const chunk of stream) n += chunk.byteLength;
+    return n;
+  }
+
+  // Each body type hits a different internal representation at clone() time:
+  //   - fetch() with the full body buffered → InternalBlob, then .body
+  //     materializes a Blob-backed stream (the reported bug)
+  //   - new Response(string) → WTFStringImpl, then .body materializes a
+  //     Blob-backed stream
+  //   - new Response(Uint8Array) → Blob, then .body materializes a
+  //     Blob-backed stream
+  //   - new Response(ReadableStream) → Locked with a user stream already
+  //     rooted in the JS-side stream slot
+  const N = 8192;
+  const payload = Buffer.alloc(N, "a");
+  const cases: Array<[string, () => Promise<Request | Response>]> = [
+    [
+      "fetch() Response with a buffered body",
+      async () => {
+        // `using` on the outer server closes it after fetch() returns; the
+        // whole body has been received by then.
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () =>
+            new Response(payload, { headers: { "content-length": String(N) } }),
+        });
+        return await fetch(server.url);
+      },
+    ],
+    [
+      "Response with a string body",
+      async () => new Response(payload.toString("latin1")),
+    ],
+    [
+      "Response with a Uint8Array body",
+      async () => new Response(payload),
+    ],
+    [
+      "Response with a user ReadableStream body",
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from(payload));
+              controller.close();
+            },
+          }),
+        ),
+    ],
+    [
+      "Request with a string body",
+      async () =>
+        new Request("http://example.com/", {
+          method: "POST",
+          body: payload.toString("latin1"),
+        }),
+    ],
+    [
+      "Request with a user ReadableStream body",
+      async () =>
+        new Request("http://example.com/", {
+          method: "POST",
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from(payload));
+              controller.close();
+            },
+          }),
+          // @ts-expect-error duplex
+          duplex: "half",
+        }),
+    ],
+  ];
+
+  for (const [label, make] of cases) {
+    test(`${label}: reading .body after observe+clone yields the full payload on both sides`, async () => {
+      const target = await make();
+      const before = target.body!;
+      expect(before.locked).toBe(false);
+      expect(target.bodyUsed).toBe(false);
+
+      const cloned = target.clone();
+      const after = target.body!;
+
+      // Spec: .body is a new tee branch; the pre-clone stream is the tee
+      // source and is now locked.
+      expect(after).not.toBe(before);
+      expect(before.locked).toBe(true);
+      expect(target.bodyUsed).toBe(false);
+
+      const [origBytes, cloneBytes] = await Promise.all([
+        drain(after),
+        drain(cloned.body!),
+      ]);
+      expect({ origBytes, cloneBytes }).toEqual({ origBytes: N, cloneBytes: N });
+    });
+
+    test(`${label}: .text() after observe+clone yields the full payload on both sides`, async () => {
+      const target = await make();
+      void target.body; // observe only; no reader, no lock
+      const cloned = target.clone();
+      const [origText, cloneText] = await Promise.all([
+        target.text(),
+        cloned.text(),
+      ]);
+      expect(origText.length).toBe(N);
+      expect(cloneText.length).toBe(N);
+    });
+  }
+
+  test("fetch() Response: second clone after observe still yields full payload", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(payload),
+    });
+    const response = await fetch(server.url);
+    void response.body;
+    const c1 = response.clone();
+    void response.body;
+    const c2 = response.clone();
+    const [orig, b1, b2] = await Promise.all([
+      drain(response.body!),
+      drain(c1.body!),
+      drain(c2.body!),
+    ]);
+    expect({ orig, b1, b2 }).toEqual({ orig: N, b1: N, b2: N });
+  });
+});
+
 test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {
   // The Response and its clones share one underlying body store. Consuming a clone
   // with a different Content-Type must not change (or invalidate) the type of a Blob

@@ -563,6 +563,18 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Failed {
             return;
         }
+        // An in-flight query has already reached the server; tearing the
+        // connection down now would reject a statement that already ran.
+        // Mark the connection and retire it at the next idle point instead.
+        if self
+            .flags
+            .get()
+            .contains(ConnectionFlags::IS_PROCESSING_DATA)
+            || self.has_query_running()
+        {
+            self.update_flags(|f| f.insert(ConnectionFlags::MAX_LIFETIME_EXCEEDED));
+            return;
+        }
         use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
         self.fail_fmt(
             b"ERR_POSTGRES_LIFETIME_TIMEOUT",
@@ -1045,6 +1057,32 @@ impl PostgresSQLConnection {
                     }
                 }
             }
+        }
+
+        // If the max-lifetime timer fired while a query was in flight, retire
+        // now that the in-flight work has completed. Checked before the
+        // microtask drain in `event_loop.exit()` so the user's await
+        // continuation sees a closed connection and the pool routes the next
+        // query to a fresh one.
+        if self
+            .flags
+            .get()
+            .contains(ConnectionFlags::MAX_LIFETIME_EXCEEDED)
+            && self.status.get() == Status::Connected
+            && !self.has_query_running()
+        {
+            use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
+            self.fail_fmt(
+                b"ERR_POSTGRES_LIFETIME_TIMEOUT",
+                format_args!(
+                    "{}",
+                    fmt_conn_timeout(
+                        ConnTimeoutKind::MaxLifetime,
+                        self.max_lifetime_interval_ms,
+                        ""
+                    )
+                ),
+            );
         }
 
         event_loop.exit();

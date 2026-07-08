@@ -311,6 +311,13 @@ impl JSMySQLConnection {
         if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
+        // An in-flight query has already reached the server; tearing the
+        // connection down now would reject a statement that already ran.
+        // Mark the connection and retire it at the next idle point instead.
+        if self.connection.get().is_processing_data() || !self.connection.get().is_idle() {
+            self.connection_mut().set_max_lifetime_exceeded();
+            return;
+        }
         use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
         self.fail_fmt(
             AnyMySQLErrorT::LifetimeTimeout,
@@ -1064,6 +1071,18 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
         if let Err(e) = this.connection_mut().read_and_process_data(data) {
             this.on_error(None, e);
+        }
+
+        // If the max-lifetime timer fired while a query was in flight, retire
+        // now that the in-flight work has completed. Checked before the
+        // microtask drain in `_loop_guard`'s drop so the user's await
+        // continuation sees a closed connection and the pool routes the next
+        // query to a fresh one.
+        if p.connection.get().max_lifetime_exceeded()
+            && p.connection.get().status == my_sql_connection::Status::Connected
+            && p.connection.get().is_idle()
+        {
+            p.on_max_lifetime_timeout();
         }
     }
 

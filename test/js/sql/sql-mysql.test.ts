@@ -295,26 +295,17 @@ if (isDockerEnabled()) {
             onclose,
             max: 1,
           });
-          let error: unknown;
-
-          try {
-            expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
-
-            while (true) {
-              for (let i = 0; i < 100; i++) {
-                await sql`select SLEEP(1)`;
-              }
-            }
-          } catch (e) {
-            error = e;
-          }
-
-          expect(onclose).toHaveBeenCalledTimes(1);
+          // SLEEP(1.5) spans the 1s lifetime boundary. The query must still
+          // complete: max_lifetime retires the connection only once it is
+          // idle, it never tears down an in-flight query.
+          expect(await sql`select SLEEP(1.5) as slept, 1 as x`).toEqual([{ slept: 0, x: 1 }]);
           expect(onconnect).toHaveBeenCalledTimes(1);
 
-          expect(error).toBeInstanceOf(SQL.SQLError);
-          expect(error).toBeInstanceOf(SQL.MySQLError);
-          expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+          const err = await onClosePromise.promise;
+          expect(onclose).toHaveBeenCalledTimes(1);
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
         });
 
         // Last one wins.

@@ -829,30 +829,23 @@ if (isDockerEnabled()) {
         onClosePromise.resolve(err);
       });
       const onconnect = mock();
-      const sql = postgres({
+      await using sql = postgres({
         ...options,
         max_lifetime: 0.5,
         onconnect,
         onclose,
       });
-      let error: any;
-      expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+      // pg_sleep(1) spans the 0.5s lifetime boundary. The query must still
+      // complete: max_lifetime retires the connection only once it is idle,
+      // it never tears down an in-flight query.
+      expect(await sql`select pg_sleep(1)::text as slept, 1 as x`).toEqual([{ slept: "", x: 1 }]);
       expect(onconnect).toHaveBeenCalledTimes(1);
-      try {
-        while (true) {
-          for (let i = 0; i < 100; i++) {
-            await sql`select pg_sleep(1)`;
-          }
-        }
-      } catch (e) {
-        error = e;
-      }
 
+      const err = await onClosePromise.promise;
       expect(onclose).toHaveBeenCalledTimes(1);
-
-      expect(error).toBeInstanceOf(SQL.SQLError);
-      expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+      expect(err).toBeInstanceOf(SQL.SQLError);
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
     });
 
     // Last one wins.

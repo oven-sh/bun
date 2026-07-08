@@ -185,6 +185,14 @@ impl MySQLConnection {
         self.flags.contains(ConnectionFlags::IS_PROCESSING_DATA)
     }
     #[inline]
+    pub fn max_lifetime_exceeded(&self) -> bool {
+        self.flags.contains(ConnectionFlags::MAX_LIFETIME_EXCEEDED)
+    }
+    #[inline]
+    pub fn set_max_lifetime_exceeded(&mut self) {
+        self.flags.insert(ConnectionFlags::MAX_LIFETIME_EXCEEDED);
+    }
+    #[inline]
     pub fn has_backpressure(&self) -> bool {
         self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
     }

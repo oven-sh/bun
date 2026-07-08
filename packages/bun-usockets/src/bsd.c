@@ -1100,10 +1100,17 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     //  Windows SO_REUSEADDR lets any local process rebind an in-use TCP port and
     //  receive its connections. Never set it on TCP listeners (libuv issue #1360).
     //  bsd_create_udp_socket keeps honoring LIBUS_LISTEN_REUSE_ADDR for multicast.
+    //  SO_REUSEPORT does not exist; when the caller tolerates that (no DISALLOW),
+    //  promote to SO_EXCLUSIVEADDRUSE so reusePort is not a downgrade from the
+    //  Bun.serve exclusive default. Callers that set DISALLOW get ENOTSUP instead.
     options &= ~LIBUS_LISTEN_REUSE_ADDR;
+    if ((options & LIBUS_LISTEN_REUSE_PORT) && !(options & LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE)) {
+        options = (options & ~LIBUS_LISTEN_REUSE_PORT) | LIBUS_LISTEN_EXCLUSIVE_PORT;
+    }
 #endif
 
     if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 

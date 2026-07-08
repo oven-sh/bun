@@ -596,10 +596,8 @@ impl ServerConfig {
     }
 
     pub fn get_usockets_options(&self) -> i32 {
-        // Unlike Node.js, we set exclusive port in case reuse port is not set.
-        // Windows has no SO_REUSEPORT and its SO_REUSEADDR allows port hijacking,
-        // so reusePort must not drop the SO_EXCLUSIVEADDRUSE protection there.
-        let mut out: i32 = if self.reuse_port && !cfg!(windows) {
+        // Unlike Node.js, we set exclusive port in case reuse port is not set
+        let mut out: i32 = if self.reuse_port {
             bun_uws_sys::LIBUS_LISTEN_REUSE_PORT | bun_uws_sys::LIBUS_LISTEN_REUSE_ADDR
         } else {
             bun_uws_sys::LIBUS_LISTEN_EXCLUSIVE_PORT

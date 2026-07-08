@@ -1,7 +1,8 @@
 import { file, serve } from "bun";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "harness";
+import { isArm64, isWindows, tmpdirSync } from "harness";
+import net from "node:net";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -197,7 +198,8 @@ describe.skipIf(!isWindows)("reusePort on Windows", () => {
     expect(await res.text()).toBe("first");
   });
 
-  test("Bun.serve({reusePort:true}) sets SO_EXCLUSIVEADDRUSE so a SO_REUSEADDR hijacker cannot bind", () => {
+  // bun:ffi dlopen() is unavailable on Windows arm64 (TinyCC is disabled there).
+  test.skipIf(isArm64)("Bun.serve({reusePort:true}) sets SO_EXCLUSIVEADDRUSE so a SO_REUSEADDR hijacker cannot bind", () => {
     const ws2 = dlopen("ws2_32.dll", {
       socket: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.u64 },
       setsockopt: { args: [FFIType.u64, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
@@ -242,21 +244,12 @@ describe.skipIf(!isWindows)("reusePort on Windows", () => {
     }
   });
 
-  test("Bun.listen({reusePort:true}) does not let a second listener bind the port", () => {
-    using first = Bun.listen({
-      port: 0,
-      hostname: "127.0.0.1",
-      reusePort: true,
-      socket: { data() {}, open() {}, close() {}, error() {} },
-    });
-    const port = first.port;
-    expect(port).toBeInteger();
-
-    let second: ReturnType<typeof Bun.listen> | undefined;
+  test("Bun.listen({reusePort:true}) reports ENOTSUP (matches Node's UV_TCP_REUSEPORT behavior)", () => {
+    let listener: ReturnType<typeof Bun.listen> | undefined;
     let thrown: unknown;
     try {
-      second = Bun.listen({
-        port,
+      listener = Bun.listen({
+        port: 0,
         hostname: "127.0.0.1",
         reusePort: true,
         socket: { data() {}, open() {}, close() {}, error() {} },
@@ -264,9 +257,26 @@ describe.skipIf(!isWindows)("reusePort on Windows", () => {
     } catch (e) {
       thrown = e;
     } finally {
-      second?.stop(true);
+      listener?.stop(true);
     }
     expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as NodeJS.ErrnoException).code).toBe("EADDRINUSE");
+    expect((thrown as NodeJS.ErrnoException).code).toBe("ENOTSUP");
+  });
+
+  test("net.Server.listen({reusePort:true}) emits 'error' so checkSupportReusePort() rejects", async () => {
+    const server = net.createServer();
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    server.on("listening", () => {
+      server.close();
+      reject(new Error("listening fired; expected an error event"));
+    });
+    server.on("error", err => {
+      server.close();
+      resolve(err);
+    });
+    server.listen({ port: 0, reusePort: true });
+    const err = await promise;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).syscall).toBe("listen");
   });
 });

@@ -4650,6 +4650,36 @@ pub fn js_is_named_pipe_socket(
     Ok(JSValue::FALSE)
 }
 
+/// node:net-internal setsockopt(TCP_NODELAY) that bypasses the handle's
+/// prototype `setNoDelay` slot. uSockets enables TCP_NODELAY on every fd, but
+/// Node's default is Nagle on; net.ts clears it here so the user-observable
+/// `_handle.setNoDelay` call count still matches Node (the upstream
+/// `test-net-*-nodelay.js` tests monkey-patch that slot).
+#[bun_jsc::host_fn]
+pub fn js_native_set_no_delay(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let arguments = callframe.arguments_old::<2>();
+    if arguments.len < 1 {
+        return Ok(JSValue::FALSE);
+    }
+    let socket = arguments.ptr[0];
+    let enabled = if arguments.len >= 2 {
+        arguments.ptr[1].to_boolean()
+    } else {
+        true
+    };
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return Ok(JSValue::from(this.socket.get().set_no_delay(enabled)));
+    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return Ok(JSValue::from(this.socket.get().set_no_delay(enabled)));
+    }
+    Ok(JSValue::FALSE)
+}
+
 #[bun_jsc::host_fn]
 pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();

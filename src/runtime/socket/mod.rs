@@ -111,7 +111,8 @@ pub use udp_socket::UDPSocket;
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
+        js_native_set_no_delay, js_set_socket_options, js_upgrade_duplex_to_tls,
+        js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 

@@ -18,8 +18,7 @@ impl CommandComplete {
         &mut self,
         mut reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
-        let length = reader.length()?;
-        debug_assert!(length >= 4);
+        reader.length()?;
 
         let tag = reader.read_z()?;
         *self = Self { command_tag: tag };

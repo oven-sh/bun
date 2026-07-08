@@ -5,6 +5,7 @@ use bun_core::fmt as bun_fmt;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
 use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
+use bun_sql::postgres::Status;
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
 use crate::jsc::js_error_to_postgres;
@@ -437,6 +438,12 @@ pub(crate) fn on_data<Context: ReaderContext>(
 ) -> Result<(), AnyPostgresError> {
     use MessageType as M;
     loop {
+        // `fail()` inside a handler tears the connection down (status = Failed,
+        // socket closed, queue rejected). Stop dispatching: later messages in
+        // the same read must not act on the dead connection.
+        if connection.status.get() == Status::Failed {
+            return Ok(());
+        }
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
@@ -500,10 +507,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
                 let length = reader.length()?;
-                if length < 4 {
-                    return Err(AnyPostgresError::InvalidMessageLength);
-                }
-                let to_skip = length.saturating_sub(4);
+                let to_skip = length - 4;
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip).expect("int cast"))?;
             }

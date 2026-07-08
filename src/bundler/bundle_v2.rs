@@ -737,7 +737,7 @@ pub mod bv2_impl {
                 // The three `safe fn`s below take only Rust references / by-value
                 // scalars: every pointer the C++ side reads is guaranteed valid by
                 // the type system, so there is no caller-side precondition left to
-                // discharge (mirrors the `safe fn` pattern in `lolhtml_sys`).
+                // discharge.
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
@@ -4151,7 +4151,9 @@ pub mod bv2_impl {
                                     .into_boxed_slice();
                             }
                             let mut v = Vec::new();
-                            template.print(&mut v).expect("oom");
+                            template
+                                .print(&mut v, !self.transpiler.options.compile)
+                                .expect("oom");
                             v.into_boxed_slice()
                         };
 

@@ -2388,7 +2388,109 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
+static napi_value
+test_typedarray_info_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value typedarray = info[1];
+
+  napi_typedarray_type type;
+  size_t length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env,
+                napi_get_typedarray_info(env, typedarray, &type, &length, &data,
+                                         &arraybuffer, &byte_offset));
+
+  void *arraybuffer_data = nullptr;
+  size_t arraybuffer_byte_length = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                          &arraybuffer_byte_length));
+
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
+  printf("byte_offset=%zu length=%zu arraybuffer_byte_length=%zu "
+         "data_is_arraybuffer_data_plus_byte_offset=%s\n",
+         byte_offset, length, arraybuffer_byte_length,
+         data_at_offset ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value
+test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value dataview = info[1];
+
+  size_t byte_length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env, napi_get_dataview_info(env, dataview, &byte_length, &data,
+                                            &arraybuffer, &byte_offset));
+
+  void *arraybuffer_data = nullptr;
+  size_t arraybuffer_byte_length = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                          &arraybuffer_byte_length));
+
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
+  printf("byte_offset=%zu byte_length=%zu arraybuffer_byte_length=%zu "
+         "data_is_arraybuffer_data_plus_byte_offset=%s\n",
+         byte_offset, byte_length, arraybuffer_byte_length,
+         data_at_offset ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value
+test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  const size_t size = 1024;
+  const int rounds = 1024;
+  int buffers_with_nonzero_bytes = 0;
+
+  for (int i = 0; i < rounds; i++) {
+    napi_value scratch;
+    void *scratch_data = nullptr;
+    NODE_API_CALL(env,
+                  napi_create_arraybuffer(env, size, &scratch_data, &scratch));
+    memset(scratch_data, 0xEE, size);
+    NODE_API_CALL(env, napi_detach_arraybuffer(env, scratch));
+
+    napi_value probe;
+    void *probe_data = nullptr;
+    NODE_API_CALL(env, napi_create_arraybuffer(env, size, &probe_data, &probe));
+    const uint8_t *bytes = static_cast<const uint8_t *>(probe_data);
+    bool all_zero = true;
+    for (size_t j = 0; j < size; j++) {
+      if (bytes[j] != 0) {
+        all_zero = false;
+        break;
+      }
+    }
+    if (!all_zero) {
+      buffers_with_nonzero_bytes++;
+    }
+    NODE_API_CALL(env, napi_detach_arraybuffer(env, probe));
+  }
+
+  if (buffers_with_nonzero_bytes == 0) {
+    printf("PASS: napi_create_arraybuffer memory is zero-filled\n");
+  } else {
+    printf("FAIL: napi_create_arraybuffer returned memory with nonzero "
+           "bytes\n");
+  }
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);

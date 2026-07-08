@@ -711,17 +711,23 @@ impl ErrorCode {
     pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(326);
     /// `ERR_DIR_CONCURRENT_OPERATION` (instanceof Error)
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
+    /// `ERR_INVALID_BUFFER_SIZE` (instanceof RangeError)
+    pub const INVALID_BUFFER_SIZE: ErrorCode = ErrorCode(328);
+    /// `ERR_TRACE_EVENTS_CATEGORY_REQUIRED` (instanceof TypeError)
+    pub const TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode = ErrorCode(329);
+    /// `ERR_TRACE_EVENTS_UNAVAILABLE` (instanceof Error)
+    pub const TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode(330);
     /// `ERR_CANNOT_WATCH_SIGINT` (instanceof Error)
-    pub const CANNOT_WATCH_SIGINT: ErrorCode = ErrorCode(328);
+    pub const CANNOT_WATCH_SIGINT: ErrorCode = ErrorCode(331);
     /// `ERR_INSPECTOR_NOT_AVAILABLE` (instanceof Error)
-    pub const INSPECTOR_NOT_AVAILABLE: ErrorCode = ErrorCode(329);
+    pub const INSPECTOR_NOT_AVAILABLE: ErrorCode = ErrorCode(332);
     /// `ERR_INVALID_REPL_EVAL_CONFIG` (instanceof TypeError)
-    pub const INVALID_REPL_EVAL_CONFIG: ErrorCode = ErrorCode(330);
+    pub const INVALID_REPL_EVAL_CONFIG: ErrorCode = ErrorCode(333);
     /// `ERR_INVALID_REPL_INPUT` (instanceof TypeError)
-    pub const INVALID_REPL_INPUT: ErrorCode = ErrorCode(331);
+    pub const INVALID_REPL_INPUT: ErrorCode = ErrorCode(334);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 332;
+    pub const COUNT: u16 = 335;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -869,6 +875,7 @@ impl ErrorCode {
     pub const ERR_INVALID_ARG_TYPE: ErrorCode = ErrorCode::INVALID_ARG_TYPE;
     pub const ERR_INVALID_ARG_VALUE: ErrorCode = ErrorCode::INVALID_ARG_VALUE;
     pub const ERR_INVALID_ASYNC_ID: ErrorCode = ErrorCode::INVALID_ASYNC_ID;
+    pub const ERR_INVALID_BUFFER_SIZE: ErrorCode = ErrorCode::INVALID_BUFFER_SIZE;
     pub const ERR_INVALID_CHAR: ErrorCode = ErrorCode::INVALID_CHAR;
     pub const ERR_INVALID_CURSOR_POS: ErrorCode = ErrorCode::INVALID_CURSOR_POS;
     pub const ERR_INVALID_FD_TYPE: ErrorCode = ErrorCode::INVALID_FD_TYPE;
@@ -1031,6 +1038,9 @@ impl ErrorCode {
     pub const ERR_TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode =
         ErrorCode::TLS_ALPN_CALLBACK_INVALID_RESULT;
     pub const ERR_SSL_NO_CIPHER_MATCH: ErrorCode = ErrorCode::SSL_NO_CIPHER_MATCH;
+    pub const ERR_TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode =
+        ErrorCode::TRACE_EVENTS_CATEGORY_REQUIRED;
+    pub const ERR_TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode::TRACE_EVENTS_UNAVAILABLE;
     pub const ERR_UNAVAILABLE_DURING_EXIT: ErrorCode = ErrorCode::UNAVAILABLE_DURING_EXIT;
     pub const ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET: ErrorCode =
         ErrorCode::UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET;
@@ -1441,6 +1451,9 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_EEXIST",
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
+    "ERR_INVALID_BUFFER_SIZE",
+    "ERR_TRACE_EVENTS_CATEGORY_REQUIRED",
+    "ERR_TRACE_EVENTS_UNAVAILABLE",
     "ERR_CANNOT_WATCH_SIGINT",
     "ERR_INSPECTOR_NOT_AVAILABLE",
     "ERR_INVALID_REPL_EVAL_CONFIG",

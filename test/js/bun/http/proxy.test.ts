@@ -1203,6 +1203,29 @@ describe.concurrent("proxy object format with headers", () => {
     expect(response.status).toBe(200);
   });
 
+  // https://github.com/oven-sh/bun/issues/29103
+  test("proxy object with url as a URL object works same as a string url", async () => {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: new URL(httpProxyServer.url),
+      },
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with a non-URL object url throws error", async () => {
+    await expect(
+      fetch(httpServer.url, {
+        method: "GET",
+        proxy: { url: {} },
+        keepalive: false,
+      }),
+    ).rejects.toThrow("fetch() proxy URL is invalid");
+  });
+
   test("proxy object with url and headers sends headers to proxy (HTTP proxy)", async () => {
     // Create a proxy server that captures headers
     const capturedHeaders: string[] = [];
@@ -1390,7 +1413,7 @@ describe.concurrent("proxy object format with headers", () => {
         } as any,
         keepalive: false,
       }),
-    ).rejects.toThrow("fetch() proxy.url must be a non-empty string");
+    ).rejects.toThrow("fetch() proxy URL is invalid");
   });
 
   test("proxy object with empty headers object works", async () => {

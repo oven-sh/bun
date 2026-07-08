@@ -16,8 +16,6 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink, ReadableStream, blob};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-#[cfg(not(unix))]
-use bun_core::Output;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -2054,26 +2052,19 @@ impl PipeReader {
 
         self.captured_writer.do_write(chunk);
 
-        let should_continue = has_more != ReadState::Eof;
-
-        if should_continue {
-            #[cfg(unix)]
-            {
-                self.reader.register_poll();
-            }
-            #[cfg(not(unix))]
-            match self.reader.start_with_current_pipe() {
-                bun_sys::Result::Err(e) => {
-                    Output::panic(format_args!(
-                        "TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{:?}",
-                        e
-                    ));
-                }
-                _ => {}
-            }
-        }
-
-        should_continue
+        // No explicit re-arm here (`register_poll()` on POSIX /
+        // `start_with_current_pipe()` on Windows). This callback runs from
+        // inside the bun_io read loop, which still holds `&mut self.reader`
+        // on its stack and re-registers the poll itself based on the bool we
+        // return (`IOReader::on_read_chunk_cb` and
+        // `WindowsBufferedReader::on_read` document the same contract).
+        //
+        // Re-arming from here also violates `BufferedReaderParent`'s
+        // requirement that `on_read_chunk` never frees the reader:
+        // `register_poll()`'s failure path dispatches `on_reader_error`,
+        // which drops the last `Arc<PipeReader>` and frees the
+        // `PosixBufferedReader` the loop is still reading through.
+        has_more != ReadState::Eof
     }
 
     /// Reconstruct an owning `Arc<Self>` from the raw parent pointer the
@@ -2185,9 +2176,9 @@ impl PipeReader {
             out_kind_str(out_type),
             done
         );
-        if cfg!(debug_assertions) {
-            debug_assert!(process.is_some());
-        }
+        // `process` is `None` once `detach()` (via `close_io`) has run, i.e. this
+        // reader already signalled its Cmd. The reader can still deliver terminal
+        // callbacks after that (see `read_with_fn`'s EAGAIN arm), so no-op here.
         if let Some(proc) = process {
             // SAFETY: `proc` is the heap-allocated `ShellSubprocess` (stable
             // address) freed only by `Cmd::deinit`, which runs strictly after

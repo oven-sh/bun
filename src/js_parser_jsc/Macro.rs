@@ -786,10 +786,12 @@ impl<'a> Run<'a> {
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
+                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
                         G::Property {
-                            key: Some(Expr::init(E::EString::init(key_bytes), self.caller.loc)),
+                            flags: E::own_key_property_flags(&key),
+                            key: Some(key),
                             value: Some(object_value),
                             ..Default::default()
                         },

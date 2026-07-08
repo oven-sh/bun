@@ -1144,6 +1144,99 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  describe("tx.close() inside sql.begin()", () => {
+    test("tx.close() rolls back", async () => {
+      let err: unknown;
+      await sql
+        .begin(async tx => {
+          await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+          await tx.close();
+          return "ok";
+        })
+        .catch(e => (err = e));
+
+      expect(err).toBeInstanceOf(Error);
+      expect(String(err)).toContain("Connection closed");
+      const [{ balance }] = await sql`SELECT balance FROM accounts WHERE id = 1`;
+      expect(balance).toBe(1000);
+    });
+
+    test("tx.close({timeout}) with no pending queries rolls back", async () => {
+      let err: unknown;
+      await sql
+        .begin(async tx => {
+          await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+          await tx.close({ timeout: 5 });
+          return "ok";
+        })
+        .catch(e => (err = e));
+
+      expect(err).toBeInstanceOf(Error);
+      expect(String(err)).toContain("Connection closed");
+      const [{ balance }] = await sql`SELECT balance FROM accounts WHERE id = 1`;
+      expect(balance).toBe(1000);
+    });
+
+    test("tx.close({timeout}) with an in-flight query rolls back", async () => {
+      let err: unknown;
+      let ok: unknown;
+      await sql
+        .begin(async tx => {
+          await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+          const pending = tx`SELECT 1`;
+          await tx.close({ timeout: 30 });
+          await pending.catch(() => {});
+          return "ok";
+        })
+        .then(
+          v => (ok = v),
+          e => (err = e),
+        );
+
+      // The transaction must not commit. Previously this resolved with "ok"
+      // and the UPDATE was committed because close({timeout}) became a no-op
+      // when the in-flight query settled before the timer.
+      expect({ ok, err: String(err) }).toEqual({ ok: undefined, err: expect.stringContaining("Connection closed") });
+      const [{ balance }] = await sql`SELECT balance FROM accounts WHERE id = 1`;
+      expect(balance).toBe(1000);
+    });
+
+    test("tx.end({timeout}) with an in-flight query rolls back", async () => {
+      let err: unknown;
+      await sql
+        .begin(async tx => {
+          await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+          const pending = tx`SELECT 1`;
+          await tx.end({ timeout: 30 });
+          await pending.catch(() => {});
+          return "ok";
+        })
+        .catch(e => (err = e));
+
+      expect(String(err)).toContain("Connection closed");
+      const [{ balance }] = await sql`SELECT balance FROM accounts WHERE id = 1`;
+      expect(balance).toBe(1000);
+    });
+
+    test("second tx.close() after close({timeout}) is a no-op resolve", async () => {
+      let err: unknown;
+      await sql
+        .begin(async tx => {
+          await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+          const pending = tx`SELECT 1`;
+          await tx.close({ timeout: 30 });
+          await pending.catch(() => {});
+          await tx.close();
+          return "ok";
+        })
+        .catch(e => (err = e));
+
+      expect(String(err)).toContain("Connection closed");
+      const [{ balance }] = await sql`SELECT balance FROM accounts WHERE id = 1`;
+      expect(balance).toBe(1000);
+    });
+  });
 });
 
 describe("SQLite-specific features", () => {

@@ -395,25 +395,16 @@ const SQL: typeof Bun.SQL = function SQL(
         }
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
+          // race all queries vs timeout, then fall through to close below
           const pending_queries = Array.from(reserveQueries);
           const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
-
-            resolve();
-          }, timeout * 1000);
+          const timer = setTimeout(resolve, timeout * 1000);
           timer.unref(); // dont block the event loop
           Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
             clearTimeout(timer);
             resolve();
           });
-          return promise;
+          await promise;
         }
       }
       state.connectionState |= ReservedConnectionState.closed;
@@ -662,26 +653,16 @@ const SQL: typeof Bun.SQL = function SQL(
 
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
+          // race all queries vs timeout, then fall through to rollback below
           const pending_queries = Array.from(transactionQueries);
           const pending_savepoints = Array.from(transactionSavepoints);
-          const timer = setTimeout(async () => {
-            for (const query of transactionQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-            }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND);
-            state.connectionState |= ReservedConnectionState.closed;
-            resolve();
-          }, timeout * 1000);
+          const timer = setTimeout(resolve, timeout * 1000);
           timer.unref(); // dont block the event loop
           Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
             clearTimeout(timer);
             resolve();
           });
-          return promise;
+          await promise;
         }
       }
       for (const query of transactionQueries) {

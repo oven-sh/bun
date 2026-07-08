@@ -3268,6 +3268,5 @@ it("request.blob() preserves the request body Content-Type", async () => {
     received.push(await res.text());
   }
 
-  // Before the fix, each body collapsed to the "text/plain;charset=utf-8" fallback.
   expect(received).toEqual(types);
 });

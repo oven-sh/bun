@@ -1133,13 +1133,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncClose, (JSGlobalObject * globalObject, Ca
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
-    if (self->isBusy()) {
-        // A native call on this connection is on the stack (option-getter,
-        // UDF, xFilter, progress, …). Closing now would null/free the
-        // sqlite3* out from under it — see BusyScope users below.
-        return throwNodeState(globalObject, scope,
-            "cannot close database while a statement is executing"_s);
-    }
+    // Node allows re-entrant close(); sqlite3_close_v2 zombifies while any
+    // stmt is outstanding, and option-reading paths REQUIRE_DB_OPEN again
+    // before the sqlite call.
     self->closeInternal();
     return JSValue::encode(jsUndefined());
 }
@@ -1149,7 +1145,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDispose, (JSGlobalObject * globalObject, 
     auto& vm = JSC::getVM(globalObject);
     (void)vm;
     JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());
-    if (self && self->isOpen() && !self->isBusy()) {
+    if (self && self->isOpen()) {
         self->closeInternal();
     }
     return JSValue::encode(jsUndefined());
@@ -1197,13 +1193,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
         throwSqliteError(globalObject, scope, self->connection());
         return {};
     }
-    // sqlite3_prepare_v2 returns SQLITE_OK with *ppStmt == nullptr when the
-    // input contains no SQL (empty / whitespace / comment only). Node.js
-    // surfaces that as ERR_INVALID_STATE at prepare() time.
-    if (stmt == nullptr) {
-        return throwNodeState(globalObject, scope,
-            "The supplied SQL string contains no statements"_s);
-    }
+    // sqlite3_prepare_v2 returns SQLITE_OK with *ppStmt == nullptr for empty /
+    // comment-only input — Node returns a StatementSync whose accessors throw
+    // ERR_INVALID_STATE "statement has been finalized" via REQUIRE_STMT.
+    //
     // Inherit the database-level defaults (set via the constructor options),
     // then let prepare()'s own options override per-statement.
     const auto& cfg = self->config();
@@ -1374,6 +1367,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     if (deterministic) textRep |= SQLITE_DETERMINISTIC;
     if (directOnly) textRep |= SQLITE_DIRECTONLY;
 
+    // An options getter above may have re-entered close(); re-check before
+    // handing SQLite the connection (Node segfaults here — Bun throws).
+    REQUIRE_DB_OPEN(self);
     auto* udf = new NodeSqliteUDF(globalObject, self, fn, useBigIntArgs);
     auto nameUtf8 = name.utf8();
     int r = sqlite3_create_function_v2(self->connection(), nameUtf8.data(), argc, textRep,
@@ -1472,6 +1468,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
     int textRep = SQLITE_UTF8;
     if (directOnly) textRep |= SQLITE_DIRECTONLY;
 
+    // An options getter above may have re-entered close().
+    REQUIRE_DB_OPEN(self);
     auto* agg = new NodeSqliteAggregate(globalObject, self, startV, stepFn, resultFn, inverseFn, useBigIntArgs);
     auto nameUtf8 = name.utf8();
     auto xInverse = inverseFn ? NodeSqliteAggregate::xInverse : nullptr;
@@ -1540,6 +1538,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
         }
     }
 
+    // An options getter above may have re-entered close().
+    REQUIRE_DB_OPEN(self);
     auto dbNameUtf8 = dbName.utf8();
     sqlite3_session* pSession = nullptr;
     int r = sqlite3session_create(self->connection(), dbNameUtf8.data(), &pSession);
@@ -1695,7 +1695,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncApplyChangeset, (JSGlobalObject * globalO
             "Failed to allocate memory for changeset"_s);
     }
     // sqlite3changeset_apply declares pChangeset as `void*` (non-const)
-    // for historical reasons; the buffer is not written to.
+    // for historical reasons; the buffer is not written to. An options
+    // getter above may have re-entered close(); re-check first.
+    REQUIRE_DB_OPEN(self);
     int r = sqlite3changeset_apply(self->connection(),
         static_cast<int>(owned.size()), owned.mutableSpan().data(),
         applyChangesetXFilter, applyChangesetXConflict, &ctx);
@@ -1890,16 +1892,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     REQUIRE_DB_OPEN(self);
     // deserialize() tears down every prepared statement on the connection
     // (they all refer to schema that's about to be replaced), so refuse
-    // while anything is mid-execution for the same reason close() does.
+    // while anything is mid-execution.
     if (self->isBusy()) {
         return throwNodeState(globalObject, scope, "cannot deserialize database while a statement is executing"_s);
     }
-    // …and establish our own busy scope before reading options. The
-    // opts.dbName [[Get]] below can re-enter JS; without this guard
-    // a hostile getter could db.close() and sqlite3_deserialize would
-    // see a null connection (no SQLITE_ENABLE_API_ARMOR → segfault on
-    // db->mutex). Matches the sweep in 78f8f229e7 for the other
-    // option-reading methods.
     JSDatabaseSync::BusyScope busy { self };
 
     auto* buf = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(0));
@@ -1929,6 +1925,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
         }
     }
     auto dbNameUtf8 = dbName.utf8();
+
+    // The opts.dbName [[Get]] above may have re-entered close(); re-check
+    // before handing SQLite the connection (Node segfaults here).
+    REQUIRE_DB_OPEN(self);
 
     // SQLITE_DESERIALIZE_FREEONCLOSE hands ownership of the buffer to
     // SQLite (freed on close) — it must therefore come from
@@ -2288,7 +2288,7 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     m_stmt = stmt;
     m_originGeneration = db->openGeneration();
     m_database.set(vm, this, db);
-    m_extraMemorySize = static_cast<size_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0));
+    m_extraMemorySize = stmt ? static_cast<size_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0)) : 0;
     if (m_extraMemorySize)
         vm.heap.reportExtraMemoryAllocated(this, m_extraMemorySize);
 }
@@ -2552,6 +2552,13 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
                 }
                 JSValue v = named->get(globalObject, key);
                 RETURN_IF_EXCEPTION(scope, false);
+                // The getter may have re-entered close(); Node finalizes stmts
+                // there and throws ERR_SQLITE_ERROR (errcode 7 via
+                // sqlite3_errmsg(NULL)) — match that path.
+                if (isFinalized()) [[unlikely]] {
+                    throwSqliteError(globalObject, scope, connection());
+                    return false;
+                }
                 if (!bindValue(globalObject, scope, index, v)) return false;
             }
             anonStart = 1;
@@ -3179,7 +3186,6 @@ void JSNodeSqliteSessionPrototype::finishCreation(VM& vm, JSGlobalObject* global
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSNodeSqliteSession::info(), JSNodeSqliteSessionPrototypeTableValues, *this);
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsSessionDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
 const ClassInfo JSNodeSqliteSessionConstructor::s_info = { "Session"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteSessionConstructor) };

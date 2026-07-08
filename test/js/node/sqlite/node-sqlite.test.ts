@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, statSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import path from "node:path";
-import { DatabaseSync, SQLTagStore, Session, StatementSync, backup, constants } from "node:sqlite";
+import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 // On macOS bun dlopens the system libsqlite3.dylib, which Apple builds
@@ -189,15 +189,19 @@ describe("DatabaseSync", () => {
     expect(() => new StatementSync()).toThrow(/Illegal constructor/);
   });
 
-  test("prepare() rejects empty / comment-only SQL", () => {
+  test("prepare() with empty / comment-only SQL returns a finalized StatementSync", () => {
     const db = new DatabaseSync(":memory:");
-    for (const sql of ["", "   ", "-- a comment"]) {
-      expect(() => db.prepare(sql)).toThrow(
-        expect.objectContaining({
-          code: "ERR_INVALID_STATE",
-          message: expect.stringMatching(/contains no statements/),
-        }),
-      );
+    for (const sql of ["", "   ", "-- a comment", "/* block */"]) {
+      const stmt = db.prepare(sql);
+      expect(stmt).toBeInstanceOf(StatementSync);
+      for (const fn of [() => stmt.run(), () => stmt.get(), () => stmt.all(), () => stmt.iterate()]) {
+        expect(fn).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_STATE",
+            message: "statement has been finalized",
+          }),
+        );
+      }
     }
     db.close();
   });
@@ -262,31 +266,41 @@ describe("DatabaseSync", () => {
     Bun.gc(true);
   });
 
-  test("close() is rejected while a native call is in flight (re-entrant close)", () => {
-    // bindParams/UDFs/xFilter/progress can re-enter JS mid-operation.
-    // If that JS calls db.close(), the in-flight sqlite call would see a
-    // freed/null sqlite3* on return. A BusyScope around each operation
-    // makes close() throw ERR_INVALID_STATE instead of pulling the rug.
+  test("close() re-entered from a bind-parameter getter succeeds; the outer run() fails", () => {
+    // Node lets close() succeed even when re-entered mid-operation (bind
+    // getters, option getters, UDFs). sqlite3_close_v2 zombifies the
+    // connection while any stmt is outstanding, so the in-flight bind sees
+    // a valid handle; the subsequent step() fails on the zombie and Node
+    // reports errcode 7 (sqlite3_errmsg(NULL) → "out of memory").
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a)");
     const stmt = db.prepare("INSERT INTO t VALUES (:a)");
     let closeErr: unknown;
-    const r = stmt.run({
-      get a() {
-        try {
-          db.close();
-        } catch (e) {
-          closeErr = e;
-        }
-        return 1;
-      },
-    });
-    expect(closeErr).toMatchObject({ code: "ERR_INVALID_STATE" });
-    expect(db.isOpen).toBe(true);
-    expect(r).toEqual({ changes: 1, lastInsertRowid: 1 });
+    let runErr: unknown;
+    try {
+      stmt.run({
+        get a() {
+          try {
+            db.close();
+          } catch (e) {
+            closeErr = e;
+          }
+          return 1;
+        },
+      });
+    } catch (e) {
+      runErr = e;
+    }
+    expect(closeErr).toBeUndefined();
+    expect(db.isOpen).toBe(false);
+    expect(runErr).toMatchObject({ code: "ERR_SQLITE_ERROR" });
+  });
 
-    // Same guard applies to option getters on function()/aggregate()/
-    // createSession()/applyChangeset().
+  test("close() re-entered from an options getter closes; the outer call throws 'not open'", () => {
+    // Node segfaults on this pattern (function()/aggregate()/createSession()/
+    // deserialize() all pass connection() straight to sqlite after option
+    // reading with no re-check). Bun re-checks and throws instead.
+    const db = new DatabaseSync(":memory:");
     expect(() =>
       db.function(
         "f",
@@ -298,42 +312,15 @@ describe("DatabaseSync", () => {
         },
         () => 0,
       ),
-    ).toThrow(/cannot close database/);
-    expect(db.isOpen).toBe(true);
-
-    // And to xFilter inside applyChangeset (where sqlite would otherwise
-    // continue using a freed — not zombied — connection).
-    if (sqliteHasSession) {
-      const dst = new DatabaseSync(":memory:");
-      dst.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)");
-      db.exec("CREATE TABLE s (a INTEGER PRIMARY KEY)");
-      const session = db.createSession();
-      db.exec("INSERT INTO s VALUES (1)");
-      const cs = session.changeset();
-      let filterCloseErr: unknown;
-      dst.applyChangeset(cs, {
-        filter: () => {
-          try {
-            dst.close();
-          } catch (e) {
-            filterCloseErr = e;
-          }
-          return false;
-        },
-      });
-      expect(filterCloseErr).toMatchObject({ code: "ERR_INVALID_STATE" });
-      expect(dst.isOpen).toBe(true);
-      dst.close();
-    }
-    db.close();
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE", message: "database is not open" }));
+    expect(db.isOpen).toBe(false);
   });
 
-  test("deserialize() is guarded against re-entrant close via options getter", () => {
-    // deserialize() checks isBusy() (refuses while something ELSE is
-    // in flight) but must also ESTABLISH a BusyScope before reading
-    // options — a hostile opts.dbName getter could otherwise close()
-    // the db and sqlite3_deserialize would segfault on the null
-    // connection (the bundled amalgamation lacks SQLITE_ENABLE_API_ARMOR).
+  test("deserialize() re-checks the connection after a hostile opts.dbName getter closes it", () => {
+    // A hostile opts.dbName getter can db.close() before
+    // sqlite3_deserialize is called. Without a re-check the null
+    // connection would segfault (the bundled amalgamation lacks
+    // SQLITE_ENABLE_API_ARMOR); Node segfaults on this pattern.
     const src = new DatabaseSync(":memory:");
     src.exec("CREATE TABLE t(x INTEGER)");
     const buf = src.serialize();
@@ -341,20 +328,20 @@ describe("DatabaseSync", () => {
 
     const db = new DatabaseSync(":memory:");
     let closeErr: unknown;
-    db.deserialize(buf, {
-      get dbName() {
-        try {
-          db.close();
-        } catch (e) {
-          closeErr = e;
-        }
-        return "main";
-      },
-    });
-    expect(closeErr).toMatchObject({ code: "ERR_INVALID_STATE" });
-    expect(db.isOpen).toBe(true);
-    expect(db.prepare("SELECT name FROM sqlite_master").get().name).toBe("t");
-    db.close();
+    expect(() =>
+      db.deserialize(buf, {
+        get dbName() {
+          try {
+            db.close();
+          } catch (e) {
+            closeErr = e;
+          }
+          return "main";
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE", message: "database is not open" }));
+    expect(closeErr).toBeUndefined();
+    expect(db.isOpen).toBe(false);
   });
 
   test("deserialize() rejects a buffer detached by the options getter", () => {
@@ -661,7 +648,9 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     const src = new DatabaseSync(":memory:");
     src.exec("CREATE TABLE s (id INTEGER PRIMARY KEY, v TEXT)");
     const session = src.createSession();
-    expect(Object.prototype.toString.call(session)).toBe("[object Session]");
+    expect(Object.prototype.toString.call(session)).toBe("[object Object]");
+    expect(session[Symbol.toStringTag]).toBeUndefined();
+    expect(session.constructor.name).toBe("Session");
     src.exec("INSERT INTO s VALUES (1, 'hello'), (2, 'world')");
 
     const changeset = session.changeset();
@@ -1483,15 +1472,21 @@ describe("GC lifetime", () => {
 });
 
 describe("module exports", () => {
-  test("Session and SQLTagStore are exported and instanceof works", () => {
+  test("Session is exported and instanceof works; SQLTagStore is not exported", () => {
     expect(typeof Session).toBe("function");
-    expect(typeof SQLTagStore).toBe("function");
     expect(() => new Session()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
-    expect(() => new SQLTagStore()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+    // SQLTagStore is Bun-internal (createTagStore()) — not a Node export.
+    expect(Object.keys(require("node:sqlite")).sort()).toEqual([
+      "DatabaseSync",
+      "Session",
+      "StatementSync",
+      "backup",
+      "constants",
+    ]);
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
     if (sqliteHasSession) expect(db.createSession()).toBeInstanceOf(Session);
-    expect(db.createTagStore()).toBeInstanceOf(SQLTagStore);
+    expect(db.createTagStore().constructor.name).toBe("SQLTagStore");
     db.close();
   });
 

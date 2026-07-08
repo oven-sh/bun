@@ -186,11 +186,9 @@ public:
     void releaseSupersededRegistration(const WTF::String& name, int argc);
     void rememberRegistration(const WTF::String& name, int argc, const std::array<size_t, 4>& slots);
 
-    // Incremented for the duration of any native call that hands this
-    // connection into SQLite and may re-enter JS (option-getter, xFunc,
-    // xFilter, progress, …). close() rejects with ERR_INVALID_STATE while
-    // non-zero so a re-entrant close() can't free the sqlite3* out from
-    // under the in-flight C call. [Symbol.dispose] becomes a no-op.
+    // Incremented for the duration of any native call that may re-enter JS.
+    // deserialize()/process-exit close consult it; close() itself does not
+    // (Node compat — sqlite3_close_v2 zombifies while stmts are outstanding).
     bool isBusy() const { return m_busyDepth > 0; }
     struct BusyScope {
         JSDatabaseSync* db;

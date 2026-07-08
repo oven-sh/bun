@@ -2689,10 +2689,12 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSNodeSqliteLimitsClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            // Null prototype: Node's DatabaseSyncLimits is an ObjectTemplate
-            // with only the named-property handler, so Object.prototype is
-            // NOT on its chain and can't shadow a limit name.
-            auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, JSC::jsNull());
+            // Node's DatabaseSyncLimits is a V8 ObjectTemplate: instances get a
+            // per-template prototype whose own [[Prototype]] is Object.prototype.
+            // Match the observable chain (limits → {} → Object.prototype).
+            auto* prototype = JSC::constructEmptyObject(init.global, init.global->objectPrototype());
+            auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, prototype);
+            init.setPrototype(prototype);
             init.setStructure(structure);
         });
 

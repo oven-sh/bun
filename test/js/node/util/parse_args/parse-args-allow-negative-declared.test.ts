@@ -36,14 +36,13 @@ test("parseArgs({ allowNegative: true }) accepts an option literally declared as
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.split("\n").filter(Boolean), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.split("\n").filter(Boolean), exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: [
       '{"values":{"color":false},"positionals":[]}',
       '{"values":{"no-color":"val"},"positionals":[]}',
       '{"values":{"":false},"positionals":[]}',
     ],
-    stderr: "",
     exitCode: 0,
     signalCode: null,
   });

@@ -9,7 +9,6 @@ import {
   isIntelMacOS,
   isIPv4,
   isIPv6,
-  isMacOS,
   isPosix,
   tempDir,
   tls,
@@ -21,7 +20,7 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
-import { networkInterfaces, totalmem } from "node:os";
+import { networkInterfaces } from "node:os";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
@@ -2140,12 +2139,8 @@ it.concurrent("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
-// On 8 GB macOS boxes 5000 concurrent localhost connections exhaust the kernel
-// mbuf pool; the server used to wedge in sendfile(2) and become unkillable.
-// sendfile is no longer used on macOS, but the exhaustion itself still makes
-// this test unreliable there, so skip it on low-memory macOS runners.
 // prettier-ignore
-it.skipIf(isMacOS && totalmem() < 12 * 1024 * 1024 * 1024)("should be able to stop in the middle of a file response", async () => {
+it("should be able to stop in the middle of a file response", async () => {
   async function doRequest(url: string) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(10) });
@@ -2167,16 +2162,53 @@ it.skipIf(isMacOS && totalmem() < 12 * 1024 * 1024 * 1024)("should be able to st
     });
     const { value } = await process.stdout.getReader().read();
     const url = new TextDecoder().decode(value).trim();
+    // Kept well below the point where macOS's mbuf pool exhausts on CI runners.
     const requests = [];
-    for (let j = 0; j < 5_000; j++) {
+    for (let j = 0; j < 512; j++) {
       requests.push(doRequest(url));
     }
-    // only await for 1k requests (and kill the process)
-    await Promise.all(requests.slice(0, 1_000));
+    // only await a subset of requests (and kill the process)
+    await Promise.all(requests.slice(0, 128));
     expect(process.exitCode || 0).toBe(0);
     process.kill();
   }
 }, 60_000);
+
+it("file-response server exits when killed mid-send", async () => {
+  // The fixture serves a >1 MB file, which is the threshold at which the
+  // sendfile backend is selected on platforms that use it. On macOS 26.3 the
+  // sendfile syscall could park uninterruptibly on a kernel turnstile when the
+  // peer stopped reading, leaving the server process unkillable. This test
+  // asserts the process actually exits after SIGTERM.
+  const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const { value } = await proc.stdout.getReader().read();
+  const url = new TextDecoder().decode(value).trim();
+
+  // Start a handful of streaming reads so the server has in-flight file
+  // responses with data queued in the socket send buffer, then stop reading.
+  const readers: ReadableStreamDefaultReader[] = [];
+  for (let i = 0; i < 8; i++) {
+    const res = await fetch(url);
+    expect(res.status).toBe(200);
+    const reader = (res.body as ReadableStream).getReader();
+    await reader.read();
+    readers.push(reader);
+  }
+
+  proc.kill();
+  await proc.exited;
+  for (const r of readers) await r.cancel().catch(() => {});
+
+  expect(proc.signalCode).toBe("SIGTERM");
+  expect(proc.killed).toBe(true);
+});
 
 it("should be able to abrupt stop the server", async () => {
   for (let i = 0; i < 10; i++) {

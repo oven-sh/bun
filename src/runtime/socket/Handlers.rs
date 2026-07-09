@@ -489,7 +489,7 @@ impl SocketConfig {
     }
 
     pub fn from_generated(
-        _vm: &'static VirtualMachine,
+        vm: &'static VirtualMachine,
         global: &JSGlobalObject,
         generated: &GeneratedSocketConfig,
         mode: SocketMode,
@@ -499,7 +499,11 @@ impl SocketConfig {
                 GeneratedTls::None => None,
                 GeneratedTls::Boolean(b) => {
                     if *b {
-                        Some(SSLConfig::zero())
+                        let mut cfg = SSLConfig::zero();
+                        if !mode.is_server() {
+                            cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+                        }
+                        Some(cfg)
                     } else {
                         None
                     }

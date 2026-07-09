@@ -1116,6 +1116,16 @@ impl Listener {
                         })
                     };
                     let tls_ref = tls;
+                    {
+                        let mut f = tls_ref.flags.get();
+                        f.set(
+                            SocketFlags::REJECT_UNAUTHORIZED,
+                            ssl_taken
+                                .as_ref()
+                                .is_some_and(|s| s.reject_unauthorized != 0),
+                        );
+                        tls_ref.flags.set(f);
+                    }
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1454,6 +1464,10 @@ fn connect_finish<const IS_SSL: bool>(
     {
         let mut f = socket_ref.flags.get();
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+        f.set(
+            SocketFlags::REJECT_UNAUTHORIZED,
+            IS_SSL && ssl.as_deref().is_some_and(|s| s.reject_unauthorized != 0),
+        );
         socket_ref.flags.set(f);
     }
     // Note: `do_connect` reads `self.connection` directly so no second

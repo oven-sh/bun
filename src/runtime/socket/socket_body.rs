@@ -1653,10 +1653,27 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
 
+        // `socket.authorized` must reflect peer-certificate verification, not
+        // just handshake completion. The callback's second argument stays raw:
+        // callers learn the verify verdict from its error argument and the
+        // `authorized` getter.
+        let authorized_flag = authorized && (!SSL || ssl_error.error_no == 0);
+
         this.update_flags(|f| {
-            f.set(Flags::AUTHORIZED, authorized);
+            f.set(Flags::AUTHORIZED, authorized_flag);
             f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
         });
+
+        // A client must not keep a connection whose peer certificate failed
+        // chain verification when the resolved `rejectUnauthorized` is true
+        // (the documented default). The callback observes the handshake
+        // first; node:tls destroys the socket there itself, making the
+        // close below a no-op. Server-side mTLS enforcement is separate.
+        let reject_unauthorized = SSL
+            && success == 1
+            && ssl_error.error_no != 0
+            && !handlers.mode.is_server()
+            && this.flags.get().contains(Flags::REJECT_UNAUTHORIZED);
 
         let mut callback = handlers.on_handshake();
         let mut is_open = false;
@@ -1669,6 +1686,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             callback = handlers.on_open();
             if callback.is_empty() {
+                if reject_unauthorized {
+                    this.reject_unauthorized_connection();
+                }
                 return Ok(());
             }
             is_open = true;
@@ -1708,6 +1728,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // `Scope` has no Drop — balance event_loop().enter() and
                         // active_connections before propagating.
                         this.exit_scope(scope);
+                        // Fail closed: this exit is also past a failed verify.
+                        if reject_unauthorized {
+                            this.reject_unauthorized_connection();
+                        }
                         return Err(e);
                     }
                 }
@@ -1727,7 +1751,28 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
         this.exit_scope(scope);
+        if reject_unauthorized {
+            this.reject_unauthorized_connection();
+        }
         Ok(())
+    }
+
+    /// Closes a TLS connection whose peer certificate failed verification
+    /// while the resolved `rejectUnauthorized` is true. Runs after the
+    /// handshake callback so JS observes the handshake first; the close
+    /// dispatches `on_close` synchronously, so no `data` event can follow.
+    fn reject_unauthorized_connection(&self) {
+        let socket = self.socket.get();
+        if socket.is_detached() || socket.is_closed() {
+            // The handshake callback already tore the connection down.
+            return;
+        }
+        // Hold a ref across the synchronous `on_close` dispatch; the matching
+        // deref below may be the one that frees `self`, so nothing touches
+        // `self` after it.
+        self.ref_();
+        self.close_and_detach(uws::CloseCode::FastShutdown);
+        self.deref();
     }
 
     /// A new resumable TLS session arrived (the peer's NewSessionTicket was
@@ -3263,7 +3308,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(SSLConfig::default());
+                let mut default_cfg = SSLConfig::default();
+                if !is_server {
+                    default_cfg.reject_unauthorized =
+                        handlers.vm.get_tls_reject_unauthorized() as i32;
+                }
+                ssl_opts = Some(default_cfg);
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3330,7 +3380,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(
+                if !is_server && cfg.is_some_and(|c| c.reject_unauthorized != 0) {
+                    Flags::default() | Flags::REJECT_UNAUTHORIZED
+                } else {
+                    Flags::default()
+                },
+            ),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3832,6 +3888,10 @@ bitflags::bitflags! {
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
         const HOSTNAME_MISMATCH    = 1 << 11;
+        /// Resolved `rejectUnauthorized` for a client TLS socket: a peer
+        /// certificate that fails chain verification closes the connection
+        /// after the handshake callback runs (see `on_handshake`).
+        const REJECT_UNAUTHORIZED  = 1 << 12;
     }
 }
 
@@ -4239,7 +4299,11 @@ pub fn js_upgrade_duplex_to_tls(
         if !tls.is_boolean() {
             ssl_opts = SSLConfig::from_js(VirtualMachine::get().as_mut(), global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(SSLConfig::default());
+            let mut default_cfg = SSLConfig::default();
+            if !is_server {
+                default_cfg.reject_unauthorized = handlers.vm.get_tls_reject_unauthorized() as i32;
+            }
+            ssl_opts = Some(default_cfg);
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
@@ -4266,7 +4330,13 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(Flags::default()),
+        flags: Cell::new(
+            if !is_server && socket_config.is_some_and(|cfg| cfg.reject_unauthorized != 0) {
+                Flags::default() | Flags::REJECT_UNAUTHORIZED
+            } else {
+                Flags::default()
+            },
+        ),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

@@ -717,7 +717,7 @@ describe.concurrent("socket", () => {
         });
         const result = socket.upgradeTLS({
           data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
-          tls,
+          tls: { ...tls, ca: tls.cert },
           socket: {
             data(socket, data) {
               body += data.toString("utf8");
@@ -1903,4 +1903,275 @@ it("socket handler validation errors don't steal GC protection from live sockets
   expect(stdout).toBe("errors=8\nreceived=hello\ndone\n");
   expect(exitCode).toBe(0);
   void stderr;
+});
+
+// https://github.com/oven-sh/bun/issues/33846
+// Bun.connect with rejectUnauthorized at its documented default (true) must
+// not exchange application data with a server whose certificate fails chain
+// verification, and socket.authorized must reflect the verification result.
+// Certs generated once with openssl: a trusted CA, a "localhost" server cert
+// signed by it, and another "localhost" server cert (same SANs) signed by a
+// different CA, so chain verification is the only difference between them.
+describe("Bun.connect TLS server-certificate authorization", () => {
+  const CA_CRT = `-----BEGIN CERTIFICATE-----
+MIIDHTCCAgWgAwIBAgIUdYbBJxXcjPYUU84754Rvyby/Wl8wDQYJKoZIhvcNAQEL
+BQAwHjEcMBoGA1UEAwwTQnVuLVRlc3QtVHJ1c3RlZC1DQTAeFw0yNjA3MDkxMzA5
+NTFaFw0zNjA3MDYxMzA5NTFaMB4xHDAaBgNVBAMME0J1bi1UZXN0LVRydXN0ZWQt
+Q0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCTEqxdtRmWWEJejm0F
+ZpClpYe2/xnRA1YV/aH/mEeDF47MjYHYwN3htbjd6B0JFk9UhWKoiKuHyLlr6Pu9
+H1f2H4gAaqdkjbRJApXTk1AkDrJE2jZ+0CkMeycplpyjiQRqn0iUrUlbfNm97Wj/
+rx98s0VIS62YYx7z5svBkrxdCmTo8eVZHBgGRcMy9npqJC2t9DdYBWbqjeZCyQsb
+DRrJ46EF5anE1VkNtF6lX13rkjHY7syB+fVKfLFWcGgQCDyd14Ltb3myrfYdKsnZ
+z1wtUDgw1AE80MmatcH3N6ev7bOu68OAsZb3D9i5Ngfs0hUdqhTtUQztkfK3J63m
+5fVZAgMBAAGjUzBRMB0GA1UdDgQWBBQ+Ub20vshUFo+vQrymr9MLIh2NQDAfBgNV
+HSMEGDAWgBQ+Ub20vshUFo+vQrymr9MLIh2NQDAPBgNVHRMBAf8EBTADAQH/MA0G
+CSqGSIb3DQEBCwUAA4IBAQBzuL3k1AeP6WIsZp1ZsYWeC0VItwJXDKWItV5QlsX+
+JysjqMmEmJk55f54gpDdwdovgtqHNSZ6tXMBCLEqm7EQAT17IeUP5jhMy2vhePbp
+WU6KmAGYdack4r9oBk0bEUty/MfeH+poXDCBbZ6i010SEczDZt3X4NnmHHc50dMu
+wNApO7EeiZVjHOzVLpUqM7YMtRiz4QdI5dydNZeB7R6oIM2o0Hx43tE9mZzFOuKb
+KsbVnnD+mVj0e399Y+XxJ58eEvj/QVpYciLKBEvS9fREGbJ9EV7Pf3hy32WY26An
+X9IuLMOkTY4boCoNf5Azw3IPnOCAt1tavdI2ChtYc4fF
+-----END CERTIFICATE-----`;
+
+  const SERVER_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCf80SxHGevvLZP
+ft7aHBHugflXvvX8ieCaVUtn/f8vhDuhs5UyZDrI64xW4ij5eBSteK7JbPY3BGgU
+tzjzsZVR8v0W7Fsqbkd0NL08HKp7jaHcVhgMjNKWHIqzgr/f9lRnLdXfzrr2JG//
+WApHevnNF1TpJJJ604uKkk5HmZcpqdwXgdJeBG1ZEc1pEe6EDUmQQXh4f4J8rmsu
+8CvTVQXeKunZnawhVsY7dKkvH27wBKfOwuafM3q2SnrVqVJfaWN0sdRi7H75PrMl
+Y358AGuxs/AeZ1IUV2XxpYjNI7gEtlK7Dv0kOxSTpJuVLd1J4Z9Sn6pr3MAUEHUz
+nMCtYNP1AgMBAAECggEABNH49PltKn+eYuDo6FvGMpDaKcnIcfbZvOzrG9Qst4rd
+nS7jRSR+HQX0Mb4ZDAORY/TqF4ngFaJdXJp07eshG9odxG4VBT9Tie348fHPNW/8
+O76gdOhdhEaR63z6OU6cFovsERWSzs4kTeaiUKslEggs9+WxQGBVqTRlhYTcaFX4
+39ad0B0MF1bWDFyHhhzzDRMlIEAiIDNs00sTPEPcCFlWBSsuF2MdzO+bWtS76mhI
+JXJJlZe5SeteiudJXjDkpGzpDF32MHRj1Io591o7eYM97NuibxubKngnVArrOb2U
+pBbrFptvhZOdpQ+4vUVnzM3EBjOND05h0wmP9b8xdQKBgQDaOHESKhT9CssLMCEp
+kOehOLS8ZhsJdTH4GK8iQYAbshZ7T1d0AP+rkN2vs9f0eHqWngFCvDtatixfYFJj
+DVW9EgHUVGhvg09PtUJPa3e8lgnx8kr5+4/Pgh3Rs3qBQZFFJf7Z4RKyDjUz9j8O
+mL5YihOP5xVp4goCMYH/U5LrjwKBgQC7pEipjejuYE2UDVAvSOT0r2gn3VgcLYXo
+jzPgkMhNkFus0nJi09Zd7reZ5Qmur4J6N9RNL6ob5hu21nKCP4HZSPN4kU0orsNp
+BVCwWb5ehG8WqFgPrCcVEJtQamHjVLvAgEBVW3Vc0PxnJOml/fvc20TVsc/bl9l0
+QANLWzXWOwKBgQCJ96Ntg5OvhJJpKW3eFNKNuQd0Ee5IJYOJQzn/I4B2gjr6jWhS
+XItJEpdGjiMcWsvOzGkpo063hHQ7fO+51mV925OyhgddcZzEXWpmQiD657Wz9ad3
+s5fx72cg/SOX8zeAi4w8frPORXNXvfmSJfo6ilnh4o1EW3hOeLSjFFjQewKBgQCM
+qFbLuxQb9NbSn7Q27darUP2rvHG7Fajmrso9kWqFMix2fX6/dHqiCTtaQmWiq/AL
+++PKRGuo5DJsOY628jI9FkFkZM9JKtBS3mgg+fUJVw8LFgCFJxBY6wzyF/zu82qW
+n80Z7ygn/oTmMLZw9tYhNcEAy3y76LVaPk355BKUVwKBgAdhDA9DIFzpvIygaZId
+5vbz7dRYQ5MnLT48DxUko33q7+qPQagZltFl+ICBPhVQ10FP1wpNJwPs0ap/XVlB
++wDT5l7WNe2r/XqkI9cwQtZHy+TLwFRygb9ko44wLoNKdYgPEHordKeyGXQQlt3Y
+q7gf9VyYyWX6rkRsx/MV6hLf
+-----END PRIVATE KEY-----`;
+
+  const SERVER_CRT = `-----BEGIN CERTIFICATE-----
+MIIDMDCCAhigAwIBAgIULV6Pt6CN+GC7Hhr9gkO1wFmEeIAwDQYJKoZIhvcNAQEL
+BQAwHjEcMBoGA1UEAwwTQnVuLVRlc3QtVHJ1c3RlZC1DQTAeFw0yNjA3MDkxMzA5
+NTFaFw0zNjA3MDYxMzA5NTFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAJ/zRLEcZ6+8tk9+3tocEe6B+Ve+9fyJ
+4JpVS2f9/y+EO6GzlTJkOsjrjFbiKPl4FK14rsls9jcEaBS3OPOxlVHy/RbsWypu
+R3Q0vTwcqnuNodxWGAyM0pYcirOCv9/2VGct1d/OuvYkb/9YCkd6+c0XVOkkknrT
+i4qSTkeZlymp3BeB0l4EbVkRzWkR7oQNSZBBeHh/gnyuay7wK9NVBd4q6dmdrCFW
+xjt0qS8fbvAEp87C5p8zerZKetWpUl9pY3Sx1GLsfvk+syVjfnwAa7Gz8B5nUhRX
+ZfGliM0juAS2UrsO/SQ7FJOkm5Ut3Unhn1KfqmvcwBQQdTOcwK1g0/UCAwEAAaNw
+MG4wLAYDVR0RBCUwI4IJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAAAAAAAAAB
+MB0GA1UdDgQWBBTfIEZmI/+0PcpH+jHkfBQc9jNOVzAfBgNVHSMEGDAWgBQ+Ub20
+vshUFo+vQrymr9MLIh2NQDANBgkqhkiG9w0BAQsFAAOCAQEADLkbKVP3W+RYFYIg
+A0bfgJrQ1MhebrYk4W95BktNKRHuYE+22Nao8ZJcWXASNAoj++8Z03Be3fY0jHVn
+rY7Fd4p0u0J/IpNfOBbzeT17HvrXQ9cUi7CtaStBKmDpkl1NVmoJNBzwpUISDH/T
+mlWKKg3D5qG0H+RTOAgxDKmc6+fZWt5v/TgQq5hc1NB2WoZAk52uhRD0V7hhfmPy
+ZMdsndROjusArt/+ACRYcGN8g+aoON1RUq1lYeefb2uGtWk3AKd9+nsqTUQsPB/V
+aJSYfdU6MExCjVaib8zV8hjA0hCU0kQ0PlVvPrQkMn3RPhPwRzixLWrIuI4hz9sB
+sm8N1g==
+-----END CERTIFICATE-----`;
+
+  const ROGUE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEugIBADANBgkqhkiG9w0BAQEFAASCBKQwggSgAgEAAoIBAQCN6OeCnDUVF9dC
+ouDNaM8hhpuK4NBm51XN+nm79zEAKTYjoW1j8zFZYfb03dCuYqVQ0rxlvHUFrEm1
+/oOmcDbKHm0VjGN9xkhvfcTRvMcoKW52r3WwRCSLFkYFw+SvFFrtvC9zxpojtFLx
+YY1rfBrnOeCsC34B9Jjb50ioyQcP+aMAy8AUFbBd2+gpslkDuMzFigLkWxXV/6dP
+ta1ZjUOsAjbebGlZ78tSfhVEWpXudnH73y1Wj6hCIg9gdggfDwLqOu0mZa8/+3M7
+TvR5hDstzUOx7I+Q48I7g/du/BIn8CNDRWqWbtz1jPNIJc8g7OnuMsvvZqWgQG7a
+5bxBWUHtAgMBAAECggEAEo+wGElOOCASK8kaFkPrM7tjhNq653rColpsqcU/R4Ic
+brSiljws7EAACS8qKGUGsned5MCtnbxXN9K+bXqn7+/i3LqsGLtiphKRN821Tu98
+X1G71v5SuU6EgiSJOM00x3uhyUbkyl6/qorT8IcfDbdoR5iJNsBDbh/mRQ1mOxR9
+9hoIv5UGsKTYqzm2v4y/W0MITpfp9NyrmExrvg52q20fAQJsGzLhY6mv/HpAbiWx
+dhXuKKDK2kYiv4/5CRgZxDsVbBODTDlwlRTQibZuzFGUxbOjdXJiFS/CxuiggL5L
+x6OgQxLCmlx3gJSWyd1y2YQUfqwio2IvROkMJgYngQKBgQDFE6af59JwfKAZfQjj
+1/CWmg/nvbJId+kCBeRReDPEG4PZVn/iMYQ9U8HMtIGJmR1qPkS479zIhmt3loM8
+LEqLmAB+MUhLBr9w0Ww6E1NOvZYl188DKCHlkyWIgZxLulqcOgpaetZZ1LJGADDJ
+MOtHMih0f14M2lcIPcvvDClPCQKBgQC4Vr8kbNY8PwXF1RZYV/8x/Q4/avuwrJ0k
+e6Gxk9/eHolIcU276QSQTut66KiFVUjLqNXwFX+FsHRh3L3bzfCzKP1XNdVgaKMy
+mYIJpPAK0XF/1F5/1WjhFyvnQws3Ro6VUDT5Nefm9lrM6AdwTUvq6yObU9KP8pCQ
+VPAyxn/wxQKBgG3K39ZQEWYHmC37AZvlrqxIUjoZ7Zv/6bjtzWAx5i0H4zGOxhoe
+2fxMkDhaC5y7x65r2F9rigXRFUf/e0dnqXQRj5y+GfdqX/cbRP8pywygBGk6zKKG
+ljPPAWcGRivOOzK0BxaXPpm3LEZhTsyXS0xTvkQAvUXN0hTOULHxhYX5An8qe9OR
+kYPOXrf14CZGNgGag7fE5eMb1KxivBuH0YzGpEL/bx17MTjcCVQ7/2LXV9BvH3ou
+2sWJCiHIbBdVkSDoKYo5jy6eCX+TKc3OazTnSV3fGBKvY3/IYI69vbXYB2rU/qc2
+yDWqBRzoHJGaUDYu7gJGygq9IiovGWRCT30tAoGAZQsZvzJnXtHwuSOqvAdKbddX
+2skPfTcFExiX1IB5mGO3hflMWIOSN3hHyR59QxKWKbDqecfa3MJBkUGhrmNZD2Sj
+/5X6E7YRbJWdP9yYSc39/2KOQMM1vKYuS6ggQcgdKWcLlrRP1VXI7xX/BEZ/K2hw
+TEdUSMbWShRVjPciMwU=
+-----END PRIVATE KEY-----`;
+
+  const ROGUE_CRT = `-----BEGIN CERTIFICATE-----
+MIIDLjCCAhagAwIBAgIUCD6d9Di7zLh2+19ZFKkuuU/oxMgwDQYJKoZIhvcNAQEL
+BQAwHDEaMBgGA1UEAwwRQnVuLVRlc3QtUm9ndWUtQ0EwHhcNMjYwNzA5MTMwOTUx
+WhcNMzYwNzA2MTMwOTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqG
+SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCN6OeCnDUVF9dCouDNaM8hhpuK4NBm51XN
++nm79zEAKTYjoW1j8zFZYfb03dCuYqVQ0rxlvHUFrEm1/oOmcDbKHm0VjGN9xkhv
+fcTRvMcoKW52r3WwRCSLFkYFw+SvFFrtvC9zxpojtFLxYY1rfBrnOeCsC34B9Jjb
+50ioyQcP+aMAy8AUFbBd2+gpslkDuMzFigLkWxXV/6dPta1ZjUOsAjbebGlZ78tS
+fhVEWpXudnH73y1Wj6hCIg9gdggfDwLqOu0mZa8/+3M7TvR5hDstzUOx7I+Q48I7
+g/du/BIn8CNDRWqWbtz1jPNIJc8g7OnuMsvvZqWgQG7a5bxBWUHtAgMBAAGjcDBu
+MCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAd
+BgNVHQ4EFgQUl5rCgVO/Wjb8QhyZnBLOwGvPZwYwHwYDVR0jBBgwFoAUimhDnL/h
+FghNe5jeHKjRB6WbMF0wDQYJKoZIhvcNAQELBQADggEBAAVb8clHFZpkZF72j2u0
+ulIQksCH4gSa5zamjsisnSlEh8j6jG4h8C5hGmGEh/zzHYKirR+Hqs8aiLA4BHlJ
+mq2rP5gsSMPO1wkeu6ZOFIXsPKA7Tb2ZhNzL0W+xz4e9bbAXE9vSZQggQ2KstokV
+uNg9oyZD5BBxvUGt3ZHSUu2k14HDhSyMnAEADTOAk4u28QxLaPcI7tyZ56Qy1Byf
+UqDL36Xlwc8WG6xdgc3sU3oxGpqNx5Gb/nK2Oql+P8QDXBj2Ak2r5FtyuvzD0JZ4
+ijlBfSKvj17k9aaZj8NI7cU/f1DhdxDutQgxZyikanCO3hOzoaNc6CiSQacYgEOm
+Reo=
+-----END CERTIFICATE-----`;
+
+  const UNTRUSTED_MESSAGE = "unable to verify the first certificate";
+
+  async function connectTo(
+    serverTls: { key: string; cert: string },
+    clientTls: Record<string, unknown> | boolean,
+  ) {
+    const received: string[] = [];
+    const handshake = Promise.withResolvers<{
+      authorizedArg: boolean;
+      authorizedGetter: boolean;
+      callbackError: string | null;
+      getterError: string | null;
+    }>();
+    const closed = Promise.withResolvers<void>();
+    const echoed = Promise.withResolvers<void>();
+
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: serverTls,
+      socket: {
+        open() {},
+        handshake(socket) {
+          socket.write("hello-from-server\n");
+        },
+        data(socket, data) {
+          socket.write(data);
+        },
+        close() {},
+        error() {},
+      },
+    });
+
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: clientTls as Bun.TLSOptions,
+      socket: {
+        open() {},
+        handshake(socket, authorized, authorizationError) {
+          handshake.resolve({
+            authorizedArg: authorized,
+            authorizedGetter: socket.authorized,
+            callbackError: authorizationError?.message ?? null,
+            getterError: socket.getAuthorizationError()?.message ?? null,
+          });
+        },
+        data(_socket, data) {
+          received.push(data.toString());
+          echoed.resolve();
+        },
+        close() {
+          closed.resolve();
+        },
+        error(_socket, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        connectError(_socket, err) {
+          handshake.reject(err);
+          closed.reject(err);
+          echoed.reject(err);
+        },
+      },
+    });
+
+    return {
+      server,
+      client,
+      received,
+      handshake,
+      closed,
+      echoed,
+      [Symbol.dispose]() {
+        client.end();
+        server.stop(true);
+      },
+    };
+  }
+
+  it("closes a connection whose server certificate is not trusted", async () => {
+    using t = await connectTo(
+      { key: ROGUE_KEY, cert: ROGUE_CRT },
+      { ca: CA_CRT }, // rejectUnauthorized left at its documented default (true)
+    );
+    // The callback's second argument stays the raw handshake result; the
+    // verification verdict is the authorized getter / error argument.
+    expect(await t.handshake.promise).toEqual({
+      authorizedArg: true,
+      authorizedGetter: false,
+      callbackError: UNTRUSTED_MESSAGE,
+      getterError: UNTRUSTED_MESSAGE,
+    });
+    await t.closed.promise;
+    expect(t.received).toEqual([]);
+  });
+
+  it("closes an untrusted connection with tls: true", async () => {
+    using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
+    // The callback's second argument stays the raw handshake result; the
+    // verification verdict is the authorized getter / error argument.
+    expect(await t.handshake.promise).toEqual({
+      authorizedArg: true,
+      authorizedGetter: false,
+      callbackError: UNTRUSTED_MESSAGE,
+      getterError: UNTRUSTED_MESSAGE,
+    });
+    await t.closed.promise;
+    expect(t.received).toEqual([]);
+  });
+
+  it("reports authorized=false but keeps the connection with rejectUnauthorized: false", async () => {
+    using t = await connectTo(
+      { key: ROGUE_KEY, cert: ROGUE_CRT },
+      { ca: CA_CRT, rejectUnauthorized: false },
+    );
+    // The callback's second argument stays the raw handshake result; the
+    // verification verdict is the authorized getter / error argument.
+    expect(await t.handshake.promise).toEqual({
+      authorizedArg: true,
+      authorizedGetter: false,
+      callbackError: UNTRUSTED_MESSAGE,
+      getterError: UNTRUSTED_MESSAGE,
+    });
+    t.client.write("ping");
+    await t.echoed.promise;
+    expect(t.received.join("")).toContain("hello-from-server\n");
+  });
+
+  it("keeps a connection whose server certificate is trusted", async () => {
+    using t = await connectTo({ key: SERVER_KEY, cert: SERVER_CRT }, { ca: CA_CRT });
+    expect(await t.handshake.promise).toEqual({
+      authorizedArg: true,
+      authorizedGetter: true,
+      callbackError: null,
+      getterError: null,
+    });
+    t.client.write("ping");
+    await t.echoed.promise;
+    expect(t.received.join("")).toContain("hello-from-server\n");
+  });
 });

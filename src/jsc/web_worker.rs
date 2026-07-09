@@ -181,6 +181,10 @@ pub struct WebWorker {
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
     /// producing `&mut WebWorker` while another thread holds `&WebWorker` is UB).
     exit_called: AtomicBool,
+    /// Exit code `shutdown()` posts when the VM never came up. Set to 1 by
+    /// `thread_main` on `start_vm()` failure so the parent's close/exit event
+    /// reflects abnormal exit (Node's ERR_WORKER_INIT_FAILED gives code 1).
+    init_fail_exit_code: Cell<i32>,
 }
 
 #[repr(u8)]
@@ -567,6 +571,7 @@ impl WebWorker {
             worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
+            init_fail_exit_code: Cell::new(0),
         }));
         // `worker` is non-null (just heap-allocated). Wrap once for the safe
         // shared reborrows below; the raw `worker` is still used for
@@ -790,6 +795,7 @@ impl WebWorker {
                     format!("Worker initialization failed: {}", err.name()).as_bytes(),
                 );
                 WebWorker__dispatchErrorMessage(self.cpp_worker, &mut msg);
+                self.init_fail_exit_code.set(1);
                 self.shutdown();
                 return;
             }
@@ -1247,7 +1253,7 @@ impl WebWorker {
         }
 
         // ---- 2. User exit handlers -----------------------------------------
-        let mut exit_code: i32 = 0;
+        let mut exit_code: i32 = self.init_fail_exit_code.get();
         let mut global_object: Option<*const JSGlobalObject> = None;
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no

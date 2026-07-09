@@ -6,7 +6,7 @@ setDefaultTimeout(30_000);
 
 // Test for GitHub issue #26225
 // Multipart uploads using form-data + node-fetch@2 + fs.createReadStream() are truncated
-test.concurrent("node-fetch with form-data and fs.createReadStream works correctly", async () => {
+test("node-fetch with form-data and fs.createReadStream works correctly", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -104,7 +104,7 @@ fetch('http://localhost:${server.port}', {
 });
 
 // Test that regular async iterables still work
-test.concurrent("node-fetch with async iterable body still works", async () => {
+test("node-fetch with async iterable body still works", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -183,7 +183,7 @@ fetch('http://localhost:${server.port}', {
 });
 
 // Test with larger file to ensure streaming works
-test.concurrent("node-fetch with form-data and large file stream", async () => {
+test("node-fetch with form-data and large file stream", async () => {
   const fileSize = 1024 * 100; // 100KB
 
   using server = Bun.serve({

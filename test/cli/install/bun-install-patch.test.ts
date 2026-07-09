@@ -13,8 +13,7 @@ const normalizeBunSnapshot = (str: string) => {
 
 setDefaultTimeout(1000 * 60 * 5);
 
-// Each test uses its own tempDirWithFiles and spawns its own subprocesses; safe to run concurrently.
-describe.concurrent("patch", async () => {
+describe("patch", async () => {
   const is_even_patch = /* patch */ `diff --git a/index.js b/index.js
 index 832d92223a9ec491364ee10dcbe3ad495446ab80..bc652e496c165a7415880ef4520c0ab302bf0765 100644
 --- a/index.js
@@ -944,7 +943,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   });
 });
 
-describe.concurrent("removing a patched dependency", () => {
+describe("removing a patched dependency", () => {
   // A patch that only adds a new file applies cleanly to any package contents.
   const isOddNewFilePatch = `diff --git a/bun-patch-test.txt b/bun-patch-test.txt
 new file mode 100644

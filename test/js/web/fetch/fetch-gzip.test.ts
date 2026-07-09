@@ -434,7 +434,7 @@ it.concurrent(
   60_000,
 );
 
-describe.concurrent("corrupt compressed responses", () => {
+describe("corrupt compressed responses", () => {
   // A body decompression failure is a body error: fetch() must resolve (status
   // and headers are available) and the body reader rejects. Previously, when
   // head+body arrived in a single read, the decompress error failed the HTTP

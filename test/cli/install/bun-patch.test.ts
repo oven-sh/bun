@@ -9,8 +9,7 @@ const platformPath = (path: string) => path;
 
 setDefaultTimeout(1000 * 60 * 5);
 
-// Each test uses its own tempDirWithFiles + cwd, so they can run concurrently.
-describe.concurrent("error messages", () => {
+describe("error messages", () => {
   test("'bun patch' with no package name shows a usage example", async () => {
     const dir = tempDirWithFiles("bun-patch-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
@@ -67,7 +66,7 @@ describe.concurrent("error messages", () => {
 });
 
 describe("bun patch <pkg>", async () => {
-  describe.concurrent("workspace interactions", async () => {
+  describe("workspace interactions", async () => {
     /**
      * @repo/eslint-config and @repo/typescript-config both depend on @types/ws@8.5.4
      * so it should be hoisted to the root node_modules
@@ -386,7 +385,7 @@ describe("bun patch <pkg>", async () => {
   });
 
   // Tests to make sure that patching
-  describe.concurrent("popular pkg", async () => {
+  describe("popular pkg", async () => {
     const dummyCode = /* ts */ `
     module.exports = function lmao() {
       return 420;

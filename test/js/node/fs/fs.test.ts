@@ -1487,8 +1487,6 @@ describe("mkdtemp encoding option", () => {
   });
 });
 
-
-
 it("readdirSync on import.meta.dir with trailing slash", () => {
   const dirs = readdirSync(import.meta.dir + "/");
   expect(dirs.length > 0).toBe(true);

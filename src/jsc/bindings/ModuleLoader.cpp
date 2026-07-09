@@ -266,10 +266,16 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeTSX;
                 } else if (loaderString == "json"_s) {
                     loader = BunLoaderTypeJSON;
+                } else if (loaderString == "jsonc"_s) {
+                    loader = BunLoaderTypeJSONC;
+                } else if (loaderString == "json5"_s) {
+                    loader = BunLoaderTypeJSON5;
                 } else if (loaderString == "toml"_s) {
                     loader = BunLoaderTypeTOML;
                 } else if (loaderString == "yaml"_s) {
                     loader = BunLoaderTypeYAML;
+                } else if (loaderString == "text"_s) {
+                    loader = BunLoaderTypeTEXT;
                 } else if (loaderString == "md"_s) {
                     loader = BunLoaderTypeMD;
                 }
@@ -278,7 +284,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", \"json\", or \"md\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", \"json\", \"jsonc\", \"json5\", \"text\", or \"md\""_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;

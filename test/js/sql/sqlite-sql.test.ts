@@ -1228,8 +1228,7 @@ describe("Transactions", () => {
     // A helper closing over the outer handle, called from inside begin(), runs
     // on the single connection inside the open transaction instead of
     // deadlocking.
-    const getBalance = async (id: number) =>
-      (await sql`SELECT balance FROM accounts WHERE id = ${id}`)[0].balance;
+    const getBalance = async (id: number) => (await sql`SELECT balance FROM accounts WHERE id = ${id}`)[0].balance;
 
     let seenInside: number | undefined;
     await sql.begin(async tx => {

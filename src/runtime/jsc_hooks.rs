@@ -4109,7 +4109,10 @@ unsafe fn transpile_file(
     if has_plugin_runner && lr.virtual_source.is_none() && !bun_paths::is_absolute(lr.path.text) {
         let ns = bun_bundler::transpiler::PluginRunner::extract_namespace(lr.path.text);
         let is_builtin_scheme = matches!(ns, b"" | b"file" | b"bun" | b"node" | b"data" | b"macro");
-        if !is_builtin_scheme {
+        // `isValidNamespaceString` rejects '.' and '\\', so a prefix containing
+        // either is a path fragment (./x, ..\x), never a registered namespace.
+        let is_path_fragment = ns.iter().any(|&b| b == b'.' || b == b'\\');
+        if !is_builtin_scheme && !is_path_fragment {
             let after_ns = &lr.path.text[(ns.len() + 1).min(lr.path.text.len())..];
             let js = global_ref
                 .err(

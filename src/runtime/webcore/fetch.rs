@@ -1015,8 +1015,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
+                    // A URL instance has no `.url` own property, so the `{url, headers}`
+                    // branch below would silently ignore it. Treat it as its href here.
+                    let is_url_instance =
+                        bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
                     // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0 {
+                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
+                    {
                         // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
                         // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit
                         // deref (mirrors `defer href.deref()` in fetch.zig).
@@ -1052,7 +1057,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                     // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
                     // If the proxy object doesn't have a 'url' property, ignore it.
-                    // This handles cases like passing a URL object directly as proxy (which has 'href' not 'url').
                     if proxy_arg.is_object() {
                         // Get the URL from the proxy object
                         if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {

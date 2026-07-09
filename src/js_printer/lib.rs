@@ -7911,7 +7911,12 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn print_ast<'a, W: WriterTrait, const IS_BUN_PLATFORM: bool, const GENERATE_SOURCE_MAP: bool>(
+pub fn print_ast<
+    'a,
+    W: WriterTrait,
+    const IS_BUN_PLATFORM: bool,
+    const GENERATE_SOURCE_MAP: bool,
+>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
@@ -8098,8 +8103,9 @@ pub fn print_ast<'a, W: WriterTrait, const IS_BUN_PLATFORM: bool, const GENERATE
     }
     printer.check_stack_overflow()?;
 
-    let have_module_info = PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
-        && printer.module_info.is_some();
+    let have_module_info =
+        PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
+            && printer.module_info.is_some();
     if have_module_info {
         printer
             .module_info

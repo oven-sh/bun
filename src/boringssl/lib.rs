@@ -353,46 +353,37 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                     None
                 };
 
-                let names_ = boring::X509V3_EXT_d2i(ext);
-                if !names_.is_null() {
-                    let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
-                    let _guard = scopeguard::guard(names, |n| {
-                        boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free)
-                    });
-                    for i in 0..boring::sk_GENERAL_NAME_num(names) {
-                        let r#gen = boring::sk_GENERAL_NAME_value(names, i);
-                        if let Some(name) = r#gen.as_ref() {
-                            match name.name_type {
-                                boring::GEN_URI => {
-                                    has_identifier_san = true;
+                if let Some(names) = boring::GeneralNames::from_raw(boring::X509V3_EXT_d2i(ext)) {
+                    for name in names.iter() {
+                        match name.name_type {
+                            boring::GEN_URI => {
+                                has_identifier_san = true;
+                            }
+                            boring::GEN_DNS => {
+                                has_identifier_san = true;
+                                if !host_is_ip {
+                                    let dns_name = &*name.d.dNSName;
+                                    let dns_name_slice = core::slice::from_raw_parts(
+                                        dns_name.data,
+                                        usize::try_from(dns_name.length).expect("int cast"),
+                                    );
+                                    if match_dns_name(dns_name_slice, hostname) {
+                                        return true;
+                                    }
                                 }
-                                boring::GEN_DNS => {
-                                    has_identifier_san = true;
-                                    if !host_is_ip {
-                                        let dns_name = &*name.d.dNSName;
-                                        let dns_name_slice = core::slice::from_raw_parts(
-                                            dns_name.data,
-                                            usize::try_from(dns_name.length).expect("int cast"),
-                                        );
-                                        if match_dns_name(dns_name_slice, hostname) {
+                            }
+                            boring::GEN_IPADD => {
+                                has_identifier_san = true;
+                                if let Some(hip) = host_ip {
+                                    if let Some(cert_ip) = ip2_string(&*name.d.ip, &mut cert_ip_buf)
+                                    {
+                                        if hip == cert_ip {
                                             return true;
                                         }
                                     }
                                 }
-                                boring::GEN_IPADD => {
-                                    has_identifier_san = true;
-                                    if let Some(hip) = host_ip {
-                                        if let Some(cert_ip) =
-                                            ip2_string(&*name.d.ip, &mut cert_ip_buf)
-                                        {
-                                            if hip == cert_ip {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
+                            _ => {}
                         }
                     }
                 }

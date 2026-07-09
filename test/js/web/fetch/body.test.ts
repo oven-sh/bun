@@ -1,4 +1,4 @@
-import { file, readableStreamToBlob, spawn, version } from "bun";
+import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import { join } from "node:path";

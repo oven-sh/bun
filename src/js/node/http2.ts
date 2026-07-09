@@ -3147,20 +3147,31 @@ function afterOpen(options, headers, err, fd) {
 // stalls once the receive window fills (nothing reads, so backpressure never reopens it)
 // and the stream never reaches the fully-closed state, so the peer is never released.
 // setImmediate matches node (it lets push streams reach the peer before the close).
-function serverStreamOnFinish(this: ServerHttp2Stream) {
-  if (this.destroyed || this.closed) return;
-  if (!this.headersSent) return;
+//
+// Unlike node, the native layer can dispatch the request's END_STREAM and body to JS
+// after the response's 'finish' (node learns endOfStream with the headers), so at
+// 'finish' an untouched readable does not prove the peer is stuck and an empty one does
+// not prove it is not. Two timing-independent triggers cover both orderings:
+//  - 'finish' with unread request bytes already buffered (the peer was mid-upload), and
+//  - unread request bytes reaching JS after the response already finished
+//    (ServerHttp2Session's streamData). A request with no body can produce neither.
+function maybeCloseUnreadServerStream(stream: ServerHttp2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  if (!stream.writableFinished || !stream.headersSent) return;
+  // A file response (respondWithFile/FD) ends the user-facing writable while the file is
+  // still being written natively, so writableFinished does not mean the response is done;
+  // node never installs its auto-close hook for that path (it nulls _final), match it.
+  if (stream[kFileResponseFinal] !== undefined) return;
   // Node holds the auto-close while trailers are pending: its HAS_TRAILERS flag is set by
   // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
-  if (this[kSendingTrailers]) return;
-  if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && this.sentTrailers === undefined) return;
-  // Unlike node, the native layer can dispatch the request's END_STREAM to JS after the
-  // response's 'finish' (node learns endOfStream with the headers), so an untouched
-  // readable alone does not prove the peer is stuck. Requiring buffered unread request
-  // bytes does: a blocked uploader always has them, a request with no body never does.
-  if (!this.readableDidRead && this.readableFlowing === null && this.readableLength > 0) {
-    setImmediate(callStreamClose, this);
+  if (stream[kSendingTrailers]) return;
+  if ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && stream.sentTrailers === undefined) return;
+  if (!stream.readableDidRead && stream.readableFlowing === null) {
+    setImmediate(callStreamClose, stream);
   }
+}
+function serverStreamOnFinish(this: ServerHttp2Stream) {
+  if (this.readableLength > 0) maybeCloseUnreadServerStream(this);
 }
 function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
@@ -4055,6 +4066,9 @@ class ServerHttp2Session extends Http2Session {
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
+      // Request data arriving unread after the response finished: the peer is uploading
+      // into a receive window nothing will reopen (see maybeCloseUnreadServerStream).
+      maybeCloseUnreadServerStream(stream);
     },
     streamHeaders(
       self: ServerHttp2Session,

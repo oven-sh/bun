@@ -1140,6 +1140,24 @@ it("should support reloading", async () => {
   );
 });
 
+// Reloading a server that was CREATED as a node:http one re-applies node-compat mode to
+// the live, already-listening native context (reload -> set_routes); it must be an
+// idempotent no-op. On assert-enabled builds a real re-switch aborts the process, so the
+// repro runs in a subprocess. `bun --hot` takes this exact path on every reload.
+it("reload() of a node:http-backed server is not treated as a mode switch", async () => {
+  const code = `
+    const noop = function () {};
+    const server = Bun.serve({ port: 0, fetch: () => new Response("x"), onNodeHTTPRequest: noop });
+    server.reload({ fetch: () => new Response("y"), onNodeHTTPRequest: noop });
+    server.stop(true);
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OK\n");
+  expect(exitCode).toBe(0);
+});
+
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
   // The server's kind is fixed when listen() sizes its connections' native
   // per-socket block; a reload that smuggles in the node:http handler used by

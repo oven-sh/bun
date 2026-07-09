@@ -257,9 +257,13 @@ StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, J
     JSValue snapshot = stream->m_asyncContext.get();
     if (!snapshot || snapshot.isUndefinedOrNull())
         return;
-    m_asyncContextData = globalObject->m_asyncContextData.get();
-    m_previous = m_asyncContextData->getInternalField(0);
-    m_asyncContextData->putInternalField(m_vm, 0, snapshot);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue current = asyncContextData->getInternalField(0);
+    m_asyncContextData = asyncContextData;
+    m_previous = current;
+    if (snapshot == current)
+        return;
+    asyncContextData->putInternalField(m_vm, 0, snapshot);
 }
 
 StreamAsyncContextScope::~StreamAsyncContextScope()
@@ -448,7 +452,7 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
 // record" sites only. Empty return = a VM termination the caller must propagate.
 JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
 {
-    JSC::Exception* exception = catchScope.exception();
+    const JSC::Exception* exception = catchScope.exception();
     ASSERT(exception);
     JSValue thrown = exception->value();
     if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]

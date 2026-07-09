@@ -100,6 +100,15 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
+    // A callback earlier in the same poll dispatch may have left a
+    // TerminationException pending: loop.c's Linux errqueue drain calls this
+    // once per queued ICMP in a `while (!u->closed)` loop, and its recv
+    // do-while can reach this right after an `on_data` iteration's callback.
+    // `to_js` below and the error handler both enter JS, which trips
+    // executeCallImpl's assertNoException(). Mirrors on_data / on_drain.
+    if global_this.has_exception() {
+        return;
+    }
     let err_value = sys_err.to_js(global_this);
     if is_errqueue != 0 {
         err_value.put(global_this, b"errqueue", JSValue::TRUE);
@@ -782,6 +791,16 @@ impl UDPSocket {
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 
+        // The `err` check below tests the *argument* (usually a freshly built
+        // SystemError, never a termination); it says nothing about the VM's
+        // own pending-exception state. If an earlier callback in the same
+        // poll dispatch left a TerminationException pending, both
+        // `uncaught_exception` and `callback.call` below would enter JS with
+        // it set and trip assertNoException(). Guard here so every caller
+        // (on_recv_error, on_data's and on_drain's error branches) inherits it.
+        if global_this.has_exception() {
+            return;
+        }
         if err.is_termination_exception() {
             return;
         }

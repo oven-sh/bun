@@ -208,6 +208,8 @@ function newHandle(type, lookup) {
     queueCount: 0,
     // Requests the kernel refused (send buffer full): flushed by on_drain.
     sendQueue: undefined,
+    // Index of the first not-yet-drained sendQueue entry (see handleDrain).
+    sendQueueHead: 0,
     send: handleSend,
     getSendQueueSize: handleGetSendQueueSize,
     getSendQueueCount: handleGetSendQueueCount,
@@ -295,10 +297,15 @@ function completeNoTrySend(handle, req, sent) {
 }
 
 function handleQueueSend(handle, data, port, address, req) {
+  // Capture the length once: `data` is a view over the caller's ArrayBuffer,
+  // and a detach between enqueue and completion would report byteLength 0,
+  // stranding bytes in getSendQueueSize(). libuv captures uv_buf_t.len the
+  // same way.
+  const length = data.byteLength;
   handle.sendQueue ??= [];
-  handle.sendQueue.push({ data, port, address, req });
+  handle.sendQueue.push({ data, length, port, address, req });
   handle.queueCount += 1;
-  handle.queueSize += data.byteLength;
+  handle.queueSize += length;
   return 0;
 }
 
@@ -306,44 +313,53 @@ function handleQueueSend(handle, data, port, address, req) {
 // live queue front so a send() from a completion callback lands behind the
 // remaining entries (libuv's FIFO order); stops on renewed backpressure.
 function handleDrain() {
-  let queue = this.sendQueue;
+  const queue = this.sendQueue;
   if (queue === undefined) return;
-  let head = 0;
+  // A non-empty queue implies the native socket: entries are only enqueued
+  // after handleSend's `!this.socket` guard, and close() flushes the queue in
+  // the same breath as it closes the socket.
+  const socket = this.socket;
+  let head = this.sendQueueHead;
   while (head < queue.length) {
     const entry = queue[head];
-    const socket = this.socket;
     let err;
     let accepted = false;
-    if (!socket) {
-      err = UV_EBADF;
-    } else {
-      try {
-        accepted = entry.port ? socket.send(entry.data, entry.port, entry.address) : socket.send(entry.data);
-      } catch (e) {
-        err = e;
-      }
+    try {
+      accepted = entry.port ? socket.send(entry.data, entry.port, entry.address) : socket.send(entry.data);
+    } catch (e) {
+      err = e;
     }
     if (err === undefined && !accepted) {
       // Still full: leave this and everything behind it queued for the next
       // drain (native send has re-armed writable again).
       break;
     }
-    head++;
+    queue[head++] = undefined;
     completeQueuedSend(this, entry, err);
   }
-  // Drop the consumed prefix in place; the queue is empty when nothing remains.
-  if (head > 0) queue.splice(0, head);
-  if (queue.length === 0) this.sendQueue = undefined;
+  if (head === queue.length) {
+    this.sendQueue = undefined;
+    this.sendQueueHead = 0;
+  } else if (head > 256) {
+    // Compact the consumed prefix only once it is worth an O(remaining)
+    // splice; doing it on every partial drain is quadratic under sustained
+    // backpressure. Same running-index shape (and threshold) as writable's
+    // buffered list.
+    queue.splice(0, head);
+    this.sendQueueHead = 0;
+  } else {
+    this.sendQueueHead = head;
+  }
 }
 
 function completeQueuedSend(handle, entry, err) {
   handle.queueCount -= 1;
-  handle.queueSize -= entry.data.byteLength;
+  handle.queueSize -= entry.length;
   // Next tick, like libuv's uv__udp_run_completed: a throwing or re-entrant
   // callback cannot skip a sibling entry or run inside close()/drain.
   const req = entry.req;
   if (req && typeof req.oncomplete === "function") {
-    process.nextTick(runQueuedSendComplete, req, err, err === undefined ? entry.data.byteLength : 0);
+    process.nextTick(runQueuedSendComplete, req, err, err === undefined ? entry.length : 0);
   }
 }
 
@@ -1108,8 +1124,10 @@ Socket.prototype.close = function (callback) {
   // (uv__udp_finish_close); callbacks fire on the next tick, after close.
   if (handle.sendQueue !== undefined) {
     const queue = handle.sendQueue;
+    const head = handle.sendQueueHead;
     handle.sendQueue = undefined;
-    for (let i = 0; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_ECANCELED);
+    handle.sendQueueHead = 0;
+    for (let i = head; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_ECANCELED);
   }
   if (state.sharedHandle) {
     // Tells the cluster primary this worker no longer uses the shared

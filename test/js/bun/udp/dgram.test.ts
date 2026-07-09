@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { Worker } from "node:worker_threads";
 
 import { disableAggressiveGCScope, isWindows } from "harness";
 import path from "path";
@@ -705,3 +706,45 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
     socket.close();
   });
 }
+
+// A worker that calls process.exit() from the FIRST 'message' of a batch
+// leaves a TerminationException pending for the rest of that poll dispatch:
+// the remaining on_data iterations, the drain, and any recv error must all
+// bail instead of re-entering JS. On a debug build, removing any of those
+// native has_exception guards turns this into a JSC assertNoException abort.
+test("a worker exiting from its first 'message' of a batch does not crash", async () => {
+  const worker = new Worker(path.join(import.meta.dir, "dgram-worker-exit-in-message-fixture.ts"));
+  const port = await new Promise<number>(resolve => worker.once("message", resolve));
+
+  // The worker's exit closes its port mid-burst; ignore the resulting ICMP
+  // errors on the sender (macOS raises them synchronously from send, Linux
+  // queues them for a later poll) instead of letting one fail the test as an
+  // uncaught socket error.
+  const sender = await Bun.udpSocket({ connect: { port, hostname: "127.0.0.1" }, socket: { error() {} } });
+  const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+  const burst = new Array(16).fill("x");
+  // Keep bursting until the worker exits: one 16-packet sendMany arrives as a
+  // single recvmmsg batch, so 'message' #1 exits with 15 siblings pending.
+  // Bounded so a worker that never exits cannot leave an orphaned flood
+  // running into the rest of the file after the test times out.
+  let stop = false;
+  const pump = (async () => {
+    for (let i = 0; i < 1000 && !stop; i++) {
+      try {
+        sender.sendMany(burst);
+      } catch {}
+      await Bun.sleep(10);
+    }
+  })();
+
+  try {
+    expect(await exited).toBe(0);
+  } finally {
+    stop = true;
+    await pump;
+    sender.close();
+    // Reaps the worker if it never exited (the normal path already saw its
+    // 'exit'). Not awaited: terminate() after an exit never settles.
+    worker.terminate();
+  }
+});

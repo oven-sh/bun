@@ -35,27 +35,28 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    // stderr only appears in the assertion diff when stdout is empty (crash/parse error).
+    const out = stdout.trim()
+      ? stdout
+          .trim()
+          .split("\n")
+          .map(l => JSON.parse(l))
+      : [{ crashed: stderr }];
+    return { out, exitCode };
   }
+
+  const esmGuard = { m: "undefined", e: "undefined", sep: "string" };
+  const esmBare = { m: "undefined", e: "undefined", thisIsCjs: false };
+  const cjsBare = { m: "object", e: "object", thisIsCjs: true };
 
   test(".mjs with import + typeof module runs as ESM", async () => {
     using dir = tempDir("mjs-guard", { "guard.mjs": guardBody });
-    const { stdout, stderr, exitCode } = await run(String(dir), "guard.mjs");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "undefined", e: "undefined", sep: "string" },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "guard.mjs")).toEqual({ out: [esmGuard], exitCode: 0 });
   });
 
   test(".mts with import + typeof module runs as ESM", async () => {
     using dir = tempDir("mts-guard", { "guard.mts": guardBody });
-    const { stdout, stderr, exitCode } = await run(String(dir), "guard.mts");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "undefined", e: "undefined", sep: "string" },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "guard.mts")).toEqual({ out: [esmGuard], exitCode: 0 });
   });
 
   test('"type":"module" .js with import + typeof module runs as ESM', async () => {
@@ -63,22 +64,12 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "package.json": `{"type":"module"}`,
       "guard.js": guardBody,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "guard.js");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "undefined", e: "undefined", sep: "string" },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "guard.js")).toEqual({ out: [esmGuard], exitCode: 0 });
   });
 
   test(".mjs with no import/export + typeof exports runs as ESM", async () => {
     using dir = tempDir("mjs-bare", { "bare.mjs": bareBody });
-    const { stdout, stderr, exitCode } = await run(String(dir), "bare.mjs");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "undefined", e: "undefined", thisIsCjs: false },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "bare.mjs")).toEqual({ out: [esmBare], exitCode: 0 });
   });
 
   test('"type":"module" .js with no import/export + typeof module runs as ESM', async () => {
@@ -86,12 +77,7 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "package.json": `{"type":"module"}`,
       "bare.js": bareBody,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "bare.js");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "undefined", e: "undefined", thisIsCjs: false },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "bare.js")).toEqual({ out: [esmBare], exitCode: 0 });
   });
 
   test(".mjs loaded via dynamic import() runs as ESM", async () => {
@@ -100,21 +86,7 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "bare.mjs": bareBody,
       "entry.mjs": `await import("./guard.mjs");\nawait import("./bare.mjs");\n`,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
-    const lines = stdout.trim()
-      ? stdout
-          .trim()
-          .split("\n")
-          .map(l => JSON.parse(l))
-      : [];
-    expect({ lines, stderr, exitCode }).toEqual({
-      lines: [
-        { m: "undefined", e: "undefined", sep: "string" },
-        { m: "undefined", e: "undefined", thisIsCjs: false },
-      ],
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "entry.mjs")).toEqual({ out: [esmGuard, esmBare], exitCode: 0 });
   });
 
   test('.mjs inside "type":"commonjs" package still runs as ESM (extension wins)', async () => {
@@ -123,12 +95,17 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "guard.mjs": guardBody,
       "entry.js": `import("./guard.mjs");\n`,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "entry.js");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "undefined", e: "undefined", sep: "string" },
-      stderr: "",
-      exitCode: 0,
+    expect(await run(String(dir), "entry.js")).toEqual({ out: [esmGuard], exitCode: 0 });
+  });
+
+  test('nameless nested {"type":"commonjs"} overrides an outer {"type":"module"}', async () => {
+    using dir = tempDir("nested-cjs", {
+      "package.json": `{"name":"outer","type":"module"}`,
+      "dist/cjs/package.json": `{"type":"commonjs"}`,
+      "dist/cjs/inner/index.js": `Object.defineProperty(exports, "ok", { value: true });\n` + bareBody,
+      "entry.mjs": `await import("./dist/cjs/inner/index.js");\n`,
     });
+    expect(await run(String(dir), "entry.mjs")).toEqual({ out: [cjsBare], exitCode: 0 });
   });
 
   test('.cjs inside "type":"module" package still runs as CJS (extension wins)', async () => {
@@ -137,31 +114,16 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "mod.cjs": bareBody,
       "entry.mjs": `await import("./mod.cjs");\n`,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "object", e: "object", thisIsCjs: true },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "entry.mjs")).toEqual({ out: [cjsBare], exitCode: 0 });
   });
 
   test("ambiguous .js with typeof module still runs as CJS", async () => {
     using dir = tempDir("js-sniff", { "sniff.js": bareBody });
-    const { stdout, stderr, exitCode } = await run(String(dir), "sniff.js");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "object", e: "object", thisIsCjs: true },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "sniff.js")).toEqual({ out: [cjsBare], exitCode: 0 });
   });
 
   test(".cjs with typeof module still runs as CJS", async () => {
     using dir = tempDir("cjs-sniff", { "sniff.cjs": bareBody });
-    const { stdout, stderr, exitCode } = await run(String(dir), "sniff.cjs");
-    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      out: { m: "object", e: "object", thisIsCjs: true },
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await run(String(dir), "sniff.cjs")).toEqual({ out: [cjsBare], exitCode: 0 });
   });
 });

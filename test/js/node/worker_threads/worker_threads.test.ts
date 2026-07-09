@@ -686,9 +686,11 @@ describe("a Worker cannot mutate process-global state", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!isPosix)("process.setuid/setgid/seteuid/setegid/setgroups throw ERR_WORKER_UNSUPPORTED_OPERATION", async () => {
-    using dir = tempDir("worker-process-setid", {
-      "index.js": `
+  test.skipIf(!isPosix)(
+    "process.setuid/setgid/seteuid/setegid/setgroups throw ERR_WORKER_UNSUPPORTED_OPERATION",
+    async () => {
+      using dir = tempDir("worker-process-setid", {
+        "index.js": `
         const { Worker, isMainThread, parentPort } = require("node:worker_threads");
         if (isMainThread) {
           const w = new Worker(__filename);
@@ -705,24 +707,25 @@ describe("a Worker cannot mutate process-global state", () => {
           parentPort.postMessage(r);
         }
       `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("WORKER_ERROR");
-    expect(JSON.parse(stdout.trim())).toEqual({
-      setuid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
-      setgid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
-      seteuid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
-      setegid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
-      setgroups: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
-    });
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("WORKER_ERROR");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        setuid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
+        setgid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
+        seteuid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
+        setegid: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
+        setgroups: { code: "ERR_WORKER_UNSUPPORTED_OPERATION", name: "TypeError" },
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

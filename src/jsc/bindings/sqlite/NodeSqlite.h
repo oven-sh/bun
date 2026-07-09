@@ -59,7 +59,6 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //   wrapperGone — the JS wrapper was swept without close(); the database
 //                 deletes the orphaned handle on its next entry point
 struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord> {
-    JSDatabaseSync* db { nullptr };
     sqlite3_session* handle { nullptr };
     bool dbGone { false };
     bool wrapperGone { false };
@@ -152,11 +151,10 @@ public:
     // through the shared record, never by touching this cell.
     void deleteTrackedSessions();
     // ~JSNodeSqliteSession() cannot call into SQLite (the sweep can run
-    // mid-sqlite3_step) — it just flags the record and this bit. The next
-    // BusyScope taken on this connection (every DatabaseSync, StatementSync,
-    // iterator, and tag-store entry point) frees the orphaned handles;
-    // close() and teardown sweep unconditionally via deleteTrackedSessions().
-    void noteOrphanedSession() { m_hasOrphanedSessions = true; }
+    // mid-sqlite3_step) — it just flags the record. The next BusyScope taken
+    // on this connection (every DatabaseSync, StatementSync, iterator, and
+    // tag-store entry point) frees any orphaned handles; close() and
+    // teardown sweep unconditionally via deleteTrackedSessions().
     void sweepOrphanedSessions();
 
     // setAuthorizer(cb) callback and the lazily-created limits wrapper.
@@ -202,8 +200,8 @@ public:
             if (db) {
                 // Every connection entry point takes a BusyScope, so this is
                 // where orphaned sessions get their deferred sweep — before
-                // the depth bump so the no-op fast path (flag check) still
-                // skips re-entrant calls from UDF/authorizer callbacks.
+                // the depth bump so re-entrant calls from UDF/authorizer
+                // callbacks are skipped by the m_busyDepth guard.
                 db->sweepOrphanedSessions();
                 ++db->m_busyDepth;
             }
@@ -242,7 +240,6 @@ private:
     // records (not JS objects) so close() can sweep regardless of GC
     // ordering.
     WTF::Vector<Ref<NodeSqliteSessionRecord>> m_sessions;
-    bool m_hasOrphanedSessions = false;
     // GC-traced roots for function()/aggregate() callbacks; mutated and
     // visited under cellLock() because visitChildren runs concurrently.
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_registeredCallbacks;

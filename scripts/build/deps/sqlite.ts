@@ -7,9 +7,10 @@
  * Built when staticSqlite is true (the Linux/Windows default). On macOS
  * both bun:sqlite and node:sqlite dlopen the system libsqlite3.dylib at
  * runtime (LAZY_LOAD_SQLITE=1) so exactly one library is loaded per
- * process — see the corruption caveat in config.ts. Apple's build lacks
- * the session extension and percentile(); node:sqlite runtime-gates the
- * affected APIs and points at Database.setCustomSQLite() for a full build.
+ * process — see the corruption caveat in config.ts. Apple's build omits
+ * load_extension/percentile()/geopoly/rbu (and, on older macOS releases,
+ * the session extension); node:sqlite runtime-gates the affected APIs and
+ * points at Database.setCustomSQLite() for a full build.
  */
 
 import type { Dependency } from "../source.ts";

@@ -277,9 +277,12 @@ describe("DatabaseSync", () => {
   });
 
   test("constructor rejects non-UTF-8 Uint8Array paths instead of opening a temp db", () => {
-    // 0xff 0xfe is not valid UTF-8. Previously this would fall through to
-    // sqlite3_open_v2("") which opens an anonymous temporary database —
-    // silently swallowing the user's path.
+    // 0xff 0xfe is not valid UTF-8. Intentional divergence from Node (which
+    // hands the raw bytes to sqlite3_open_v2 with no UTF-8 check); Bun
+    // stores the path as WTF::String, so accepting arbitrary bytes would
+    // fall through to sqlite3_open_v2("") — an anonymous temporary
+    // database, silently swallowing the user's path. Documented in
+    // docs/runtime/nodejs-compat.mdx.
     expect(() => new DatabaseSync(Buffer.from([0x3a, 0xff, 0xfe]))).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );
@@ -451,6 +454,21 @@ describe("DatabaseSync", () => {
     expect(stmt.get()).toEqual({ __proto__: null, v: 42 });
     db.close();
   });
+
+  test("prepare() reads options before compiling the SQL (Node error precedence)", () => {
+    // Node's DatabaseSync::Prepare validates the options object first, so a
+    // bad option beats a syntax error and the authorizer never fires. Also
+    // means no compensating sqlite3_finalize() on the option-error path.
+    const db = new DatabaseSync(":memory:");
+    let authorized = false;
+    db.setAuthorizer(() => ((authorized = true), 0));
+    expect(() => db.prepare("NOT SQL", { readBigInts: "x" as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(authorized).toBe(false);
+    db.setAuthorizer(null);
+    db.close();
+  });
 });
 
 describe("DatabaseSync.prototype.function()", () => {
@@ -577,6 +595,31 @@ describe("DatabaseSync.prototype.function()", () => {
     const it2 = db.prepare("SELECT reenter4() AS r FROM t").iterate();
     expect(it2.next()).toEqual({ done: false, value: { r: "r" } });
     expect(it2.next()).toEqual({ done: true, value: null });
+    db.close();
+  });
+
+  test("re-entering a statement from a bind-parameter getter is not guarded (Node parity)", () => {
+    // The isStepping() guard only covers the mid-VDBE case above. bindParams
+    // runs BEFORE SteppingScope, so a getter that re-enters the same
+    // statement passes the guard: it clears the outer's bindings, binds and
+    // steps its own, then the outer resumes binding. Node has no guard at
+    // all here; assert Bun matches Node's observable behavior (the inner
+    // call's bindings win for keys it binds; the outer's later keys
+    // overwrite).
+    const db = new DatabaseSync(":memory:");
+    const stmt = db.prepare("SELECT :a AS a, :b AS b");
+    let inner;
+    const params = {
+      a: 1,
+      get b() {
+        inner = stmt.get({ a: 10, b: 20 });
+        return 2;
+      },
+    };
+    // Inner call clears+rebinds+steps+resets while :a=1 was already bound;
+    // outer resumes binding only :b, so :a keeps the inner's value.
+    expect(stmt.get(params)).toEqual({ __proto__: null, a: 10, b: 2 });
+    expect(inner).toEqual({ __proto__: null, a: 10, b: 20 });
     db.close();
   });
 
@@ -1128,6 +1171,68 @@ describe("backup()", () => {
     ).rejects.toThrow("nope");
     src.close();
   });
+
+  test("progress fires on SQLITE_BUSY so a throw can abort a locked backup", async () => {
+    // Bun runs the whole backup on the JS thread, so a permanently-locked
+    // destination would otherwise be an unrecoverable hang. Run the whole
+    // scenario in a subprocess so a regression (progress never fires →
+    // sync loop) is a bounded timeout kill, not a wedged test process.
+    using dir = tempDir("node-sqlite-backup-busy", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync, backup } = require("node:sqlite");
+         const path = require("node:path");
+         const dst = path.join(process.argv[1], "dst.db");
+         // Child holds a RESERVED lock on the destination so
+         // sqlite3_backup_step returns SQLITE_BUSY. It self-exits so a
+         // regression that never fires progress still terminates.
+         const locker = Bun.spawn({
+           cmd: [process.execPath, "-e",
+             "const {DatabaseSync}=require('node:sqlite');" +
+             "const db=new DatabaseSync(process.argv[1]);" +
+             "db.exec('PRAGMA locking_mode=EXCLUSIVE');" +
+             "db.exec('BEGIN IMMEDIATE');" +
+             "db.exec('CREATE TABLE lock_t(x)');" +
+             "console.log('locked');" +
+             "setTimeout(()=>{},1<<30);",
+             dst],
+           stdout: "pipe", stderr: "inherit",
+         });
+         let ready = "";
+         for await (const c of locker.stdout) {
+           ready += Buffer.from(c).toString();
+           if (ready.includes("locked")) break;
+         }
+         if (!ready.includes("locked")) throw new Error("locker never ready");
+         const src = new DatabaseSync(":memory:");
+         src.exec("CREATE TABLE t (x)");
+         let calls = 0;
+         const p = backup(src, dst, {
+           progress: () => { if (++calls >= 2) throw new Error("busy-abort"); },
+         });
+         p.then(
+           () => { console.log("resolved"); process.exit(1); },
+           e => { console.log("rejected:" + e.message + ":" + calls); locker.kill(); process.exit(0); },
+         );`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      Promise.race([proc.exited, Bun.sleep(15_000).then(() => (proc.kill(), "timeout"))]),
+    ]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "rejected:busy-abort:2",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
 });
 
 describe("DatabaseSync.prototype.setAuthorizer()", () => {
@@ -1271,6 +1376,47 @@ describe("createTagStore()", () => {
       }),
     );
     db.setAuthorizer(null);
+    db.close();
+  });
+
+  test("re-entering a cached tag from its own UDF throws instead of segfaulting", () => {
+    // TagStore::prepare's isStepping() guard — sibling of the StatementSync
+    // guard covered above; without it a UDF re-entering the same cached
+    // statement is a mid-VDBE reset segfault.
+    const db = new DatabaseSync(":memory:");
+    const sql = db.createTagStore();
+    db.function("reenterTag", () => {
+      try {
+        sql.get`SELECT reenterTag() AS r`;
+        return "ran";
+      } catch (e: any) {
+        return e.code;
+      }
+    });
+    expect(sql.get`SELECT reenterTag() AS r`).toEqual({ __proto__: null, r: "ERR_INVALID_STATE" });
+    db.close();
+  });
+
+  test("cached tags survive close()/open() and deserialize() via the isFinalized() eviction", () => {
+    // TagStore caches JSStatementSync wrappers keyed by template shape.
+    // close()/open() and deserialize() bump the connection's open-generation,
+    // which flips isFinalized() on every cached wrapper; TagStore::prepare
+    // must evict the stale entry and re-prepare on the new connection.
+    const db = new DatabaseSync(":memory:");
+    const sql = db.createTagStore();
+    expect(sql.get`SELECT 1 AS v`.v).toBe(1);
+    expect(sql.size).toBe(1);
+    db.close();
+    db.open();
+    expect(sql.get`SELECT 1 AS v`.v).toBe(1);
+    expect(sql.size).toBe(1);
+    // deserialize() bumps the generation without a close()/open() cycle.
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.exec("INSERT INTO t VALUES (7)");
+    expect(sql.get`SELECT x FROM t`.x).toBe(7);
+    const buf = db.serialize();
+    db.deserialize(buf);
+    expect(sql.get`SELECT x FROM t`.x).toBe(7);
     db.close();
   });
 });
@@ -1987,6 +2133,35 @@ describe("GC stress", () => {
     },
     30_000,
   );
+});
+
+// bun:sqlite's setCustomSQLite() and node:sqlite share a single process-global
+// dlopen handle (lazy_sqlite3.h uses `inline` state, not `static`). Assert the
+// sharing via the "already loaded" guard in reverse: opening a node:sqlite
+// database populates the handle, so a subsequent setCustomSQLite() must
+// refuse. If `inline` regresses to `static` the two TUs get separate handles,
+// setCustomSQLite() succeeds, and this test fails.
+test.skipIf(process.platform !== "darwin")("setCustomSQLite() sees a library node:sqlite already loaded", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `new (require("node:sqlite").DatabaseSync)(":memory:").close();
+         let threw;
+         try {
+           require("bun:sqlite").Database.setCustomSQLite("/usr/lib/libsqlite3.dylib");
+         } catch (e) { threw = e.message; }
+         if (!/already loaded/.test(String(threw))) throw new Error("expected already-loaded, got: " + threw);
+         // Reverse ordering — the doc'd remedy: setCustomSQLite BEFORE the
+         // first open governs node:sqlite too.
+         console.log("shared");`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "shared", exitCode: 0 });
+  void stderr;
 });
 
 // process.versions.sqlite must not force-dlopen the system SQLite: that

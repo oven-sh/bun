@@ -12,6 +12,15 @@
 #define LAZY_LOAD_SQLITE 0
 #endif
 
+// The bundled amalgamation's version, for process.versions.sqlite before any
+// library is loaded. On the LAZY_LOAD_SQLITE (macOS) branch SQLITE_VERSION
+// comes from the SDK's <sqlite3.h> — the CI build machine's, not what runs
+// — so use this deterministic constant instead. The static_assert on the
+// !LAZY branch below fails the Linux/Windows build if it drifts from
+// sqlite3_local.h.
+#define BUN_SQLITE_BUNDLED_VERSION "3.53.2"
+#define BUN_SQLITE_BUNDLED_VERSION_NUMBER 3053002
+
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() (lazy_sqlite3_load_extension != nullptr)
@@ -26,6 +35,8 @@
 #define SQLITE_ENABLE_COLUMN_METADATA 1
 #endif
 #include "sqlite3_local.h"
+static_assert(BUN_SQLITE_BUNDLED_VERSION_NUMBER == SQLITE_VERSION_NUMBER,
+    "update BUN_SQLITE_BUNDLED_VERSION to match sqlite3_local.h");
 static inline int lazyLoadSQLite() { return 0; }
 static constexpr bool lazy_sqlite3_has_session = true;
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() true
@@ -85,21 +96,23 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #define SQLITE_CHANGESET_FOREIGN_KEY 5
 #endif
 
-// One-time process-global sqlite3_config() (defined in JSSQLStatement.cpp).
-// Forward-declared here rather than in lazy_sqlite3.h because that header is
-// only included on the dlopen path, and this must be visible on every build.
+// One-time process-global sqlite3_config() and the exit-time WAL checkpoint
+// helper are defined in JSSQLStatement.cpp so bun:sqlite (which does not
+// depend on this file) owns them. Forward-declared here rather than in
+// lazy_sqlite3.h because that header is only included on the dlopen path.
 extern "C" void Bun__initializeSQLite();
+extern "C" void Bun__sqliteCheckpointForTermination(sqlite3*);
 
 // process.versions.sqlite — the loaded library's version if a library has
-// been loaded, else the header constant. Never triggers a dlopen: reading
-// process.versions must not defeat Database.setCustomSQLite().
+// been loaded, else the bundled amalgamation's constant. Never triggers a
+// dlopen: reading process.versions must not defeat Database.setCustomSQLite().
 extern "C" const char* Bun__sqlite3_version()
 {
 #if LAZY_LOAD_SQLITE
     if (sqlite3_handle && lazy_sqlite3_libversion)
         return lazy_sqlite3_libversion();
 #endif
-    return SQLITE_VERSION;
+    return BUN_SQLITE_BUNDLED_VERSION;
 }
 
 namespace Bun {
@@ -405,21 +418,20 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
 // GC-traced field on the cell, see addRegisteredCallback) — NOT by a C-side
 // Strong<>, so a callback closure that captures the database does not pin the
 // cell forever; the db → closure → db cycle stays collectable, exactly like
-// m_authorizer. The raw fn_/db_ pointers are safe because the context is
-// only invoked while a query runs on this connection (the cell is on the
-// stack). xDestroy itself MUST NOT touch db_ or fn_ — with unfinalized
-// statements the connection is zombified and xDestroy may run after the
-// cell has been swept (see the comment on xDestroy below); superseded roots
-// are released by releaseSupersededRegistration() at the registration site.
+// m_authorizer. The raw fn_ pointer is safe because the context is only
+// invoked while a query runs on this connection (the cell is on the stack).
+// xDestroy itself MUST NOT touch fn_ — with unfinalized statements the
+// connection is zombified and xDestroy may run after the cell has been swept
+// (see the comment on xDestroy below); superseded roots are released by
+// releaseSupersededRegistration() at the registration site.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct NodeSqliteUDF {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(NodeSqliteUDF);
 
 public:
-    NodeSqliteUDF(JSGlobalObject* globalObject, JSDatabaseSync* db, JSObject* fn, bool useBigIntArgs)
+    NodeSqliteUDF(JSGlobalObject* globalObject, JSObject* fn, bool useBigIntArgs)
         : globalObject_(globalObject)
-        , db_(db)
         , fn_(fn)
         , useBigIntArgs_(useBigIntArgs)
     {
@@ -467,14 +479,14 @@ public:
 
     // MUST stay a plain delete: with unfinalized statements the connection is
     // zombified and this runs from the last sqlite3_finalize() — possibly
-    // long after the JSDatabaseSync cell was swept — so it can't touch db_
-    // or any GC state. Superseded roots are released at the registration
-    // site instead (releaseSupersededRegistration).
+    // long after the JSDatabaseSync cell was swept — so it can't touch any
+    // GC state. Superseded roots are released at the registration site
+    // instead (releaseSupersededRegistration).
     static void xDestroy(void* p) { delete static_cast<NodeSqliteUDF*>(p); }
 
     JSGlobalObject* globalObject_;
-    JSDatabaseSync* db_;
-    // Rooted by db_->m_registeredCallbacks; see the comment above the struct.
+    // Rooted by the owning JSDatabaseSync's m_registeredCallbacks; see the
+    // comment above the struct.
     JSObject* fn_;
     bool useBigIntArgs_;
 };
@@ -502,10 +514,9 @@ public:
         bool isWindow;
     };
 
-    NodeSqliteAggregate(JSGlobalObject* globalObject, JSDatabaseSync* db,
+    NodeSqliteAggregate(JSGlobalObject* globalObject,
         JSValue start, JSObject* step, JSObject* result, JSObject* inverse, bool useBigIntArgs)
         : globalObject_(globalObject)
-        , db_(db)
         , start_(start)
         , step_(step)
         , result_(result)
@@ -652,12 +663,12 @@ public:
         self->valueBase(ctx, false);
     }
     // Same constraint as NodeSqliteUDF::xDestroy — may run after the cell is
-    // gone (zombified connection), so it must not touch db_ or GC state.
+    // gone (zombified connection), so it must not touch GC state.
     static void xDestroy(void* p) { delete static_cast<NodeSqliteAggregate*>(p); }
 
     JSGlobalObject* globalObject_;
-    JSDatabaseSync* db_;
-    // Rooted by db_->m_registeredCallbacks; see the comment above the struct.
+    // Rooted by the owning JSDatabaseSync's m_registeredCallbacks; see the
+    // comment above the struct.
     JSValue start_;
     JSObject* step_;
     JSObject* result_;
@@ -852,9 +863,10 @@ JSDatabaseSync::~JSDatabaseSync()
         closeInternal();
         return;
     }
-    // ~JSNodeSqliteSession follows record->db only while !dbGone, so it must
-    // be set before this cell is freelisted, and the registry must not keep a
-    // dangling pointer. Pure bookkeeping: neither write calls into SQLite.
+    // Pure bookkeeping: neither write calls into SQLite. dbGone stops
+    // deleteSession() double-freeing the handle sqlite3_close_v2 will free
+    // when the process actually exits, and the registry must not keep a
+    // dangling pointer.
     for (auto& record : m_sessions)
         record->dbGone = true;
     unregisterOpenDatabase(this);
@@ -934,17 +946,8 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
         // the same use-after-free a busy close() refuses. Leave it alone.
         if (db->isBusy())
             continue;
-        // With un-finalized statements close_v2 only zombifies the connection
-        // and defers the WAL checkpoint to a finalize that never comes, so
-        // flush the WAL into the main database file explicitly. Zero
-        // busy_timeout first: TRUNCATE waits on readers via the connection's
-        // busy-handler, so a large user-set {timeout: N} plus a cross-process
-        // reader would otherwise stall process.exit() for up to N ms; with a
-        // zero handler TRUNCATE degrades to a passive checkpoint immediately.
-        if (sqlite3* handle = db->connection()) {
-            sqlite3_busy_timeout(handle, 0);
-            sqlite3_wal_checkpoint_v2(handle, nullptr, SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr);
-        }
+        if (sqlite3* handle = db->connection())
+            Bun__sqliteCheckpointForTermination(handle);
         // closeInternal() re-takes openDatabasesLock to unregister, so the
         // snapshot lock above must already be dropped; it also nulls m_db,
         // making a later GC destructor a no-op rather than a double close.
@@ -962,7 +965,6 @@ void JSDatabaseSync::deleteTrackedSessions()
         record->dbGone = true;
     }
     m_sessions.clear();
-    m_hasOrphanedSessions = false;
 }
 
 void JSDatabaseSync::sweepOrphanedSessions()
@@ -972,9 +974,8 @@ void JSDatabaseSync::sweepOrphanedSessions()
     // mid-sqlite3_step), so it only flags the record. Skip while busy — a
     // UDF callback can re-enter exec()/prepare() while the connection is
     // inside sqlite3_step and the preupdate hook may be iterating sessions.
-    if (!m_hasOrphanedSessions || m_busyDepth > 0)
+    if (m_sessions.isEmpty() || m_busyDepth > 0)
         return;
-    m_hasOrphanedSessions = false;
     m_sessions.removeAllMatching([](auto& record) {
         if (!record->wrapperGone)
             return false;
@@ -1039,7 +1040,9 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 #if LAZY_LOAD_SQLITE
     // Apple's system libsqlite3 defaults SQLITE_FCNTL_PERSIST_WAL on;
     // clear it so the last close() unlinks the -wal/-shm sidecars like
-    // Node.js's bundled build does.
+    // Node.js's bundled build does. Only covers the "main" schema — a later
+    // ATTACH picks up Apple's default per-unixFile in unixOpen and its
+    // sidecars persist; addressing that needs sqlite3_db_name at close time.
     int off = 0;
     sqlite3_file_control(m_db, nullptr, SQLITE_FCNTL_PERSIST_WAL, &off);
 #endif
@@ -1257,6 +1260,32 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
     }
     auto sql = sqlVal.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Read options BEFORE prepare so error precedence matches Node
+    // (bad option → ERR_INVALID_ARG_TYPE, never a SQLite error) and no
+    // option-read failure needs a compensating sqlite3_finalize.
+    const auto& cfg = self->config();
+    bool readBigInts = cfg.readBigInts;
+    bool returnArrays = cfg.returnArrays;
+    bool allowBare = cfg.allowBareNamedParameters;
+    bool allowUnknown = cfg.allowUnknownNamedParameters;
+
+    JSValue optsVal = callFrame->argument(1);
+    if (!optsVal.isUndefined()) {
+        if (!optsVal.isObject()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "The \"options\" argument must be an object."_s);
+        }
+        JSObject* opts = optsVal.getObject();
+        if (!readBoolOption(globalObject, scope, opts, "readBigInts"_s, readBigInts)) return {};
+        if (!readBoolOption(globalObject, scope, opts, "returnArrays"_s, returnArrays)) return {};
+        if (!readBoolOption(globalObject, scope, opts, "allowBareNamedParameters"_s, allowBare)) return {};
+        if (!readBoolOption(globalObject, scope, opts, "allowUnknownNamedParameters"_s, allowUnknown)) return {};
+        // An options getter above may have re-entered close(); re-check
+        // before handing SQLite the connection.
+        REQUIRE_DB_OPEN(self);
+    }
+
     auto utf8 = sql.utf8();
     sqlite3_stmt* stmt = nullptr;
     // utf8.data() is NUL-terminated (CString); -1 lets SQLite compute the
@@ -1274,29 +1303,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
     // sqlite3_prepare_v2 returns SQLITE_OK with *ppStmt == nullptr for empty /
     // comment-only input — Node returns a StatementSync whose accessors throw
     // ERR_INVALID_STATE "statement has been finalized" via REQUIRE_STMT.
-    //
-    // Inherit the database-level defaults (set via the constructor options),
-    // then let prepare()'s own options override per-statement.
-    const auto& cfg = self->config();
-    bool readBigInts = cfg.readBigInts;
-    bool returnArrays = cfg.returnArrays;
-    bool allowBare = cfg.allowBareNamedParameters;
-    bool allowUnknown = cfg.allowUnknownNamedParameters;
-
-    JSValue optsVal = callFrame->argument(1);
-    if (!optsVal.isUndefined()) {
-        if (!optsVal.isObject()) {
-            sqlite3_finalize(stmt);
-            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-                "The \"options\" argument must be an object."_s);
-        }
-        JSObject* opts = optsVal.getObject();
-        auto fail = [&]() { sqlite3_finalize(stmt); return EncodedJSValue {}; };
-        if (!readBoolOption(globalObject, scope, opts, "readBigInts"_s, readBigInts)) return fail();
-        if (!readBoolOption(globalObject, scope, opts, "returnArrays"_s, returnArrays)) return fail();
-        if (!readBoolOption(globalObject, scope, opts, "allowBareNamedParameters"_s, allowBare)) return fail();
-        if (!readBoolOption(globalObject, scope, opts, "allowUnknownNamedParameters"_s, allowUnknown)) return fail();
-    }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSStatementSyncClassStructure.get(zigGlobal);
@@ -1448,7 +1454,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     // An options getter above may have re-entered close(); re-check before
     // handing SQLite the connection (Node segfaults here — Bun throws).
     REQUIRE_DB_OPEN(self);
-    auto* udf = new NodeSqliteUDF(globalObject, self, fn, useBigIntArgs);
+    auto* udf = new NodeSqliteUDF(globalObject, fn, useBigIntArgs);
     auto nameUtf8 = name.utf8();
     int r = sqlite3_create_function_v2(self->connection(), nameUtf8.data(), argc, textRep,
         udf, NodeSqliteUDF::xFunc, nullptr, nullptr, NodeSqliteUDF::xDestroy);
@@ -1548,7 +1554,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
 
     // An options getter above may have re-entered close().
     REQUIRE_DB_OPEN(self);
-    auto* agg = new NodeSqliteAggregate(globalObject, self, startV, stepFn, resultFn, inverseFn, useBigIntArgs);
+    auto* agg = new NodeSqliteAggregate(globalObject, startV, stepFn, resultFn, inverseFn, useBigIntArgs);
     auto nameUtf8 = name.utf8();
     auto xInverse = inverseFn ? NodeSqliteAggregate::xInverse : nullptr;
     auto xValue = inverseFn ? NodeSqliteAggregate::xValue : nullptr;
@@ -1634,7 +1640,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
     }
 
     auto record = adoptRef(*new NodeSqliteSessionRecord);
-    record->db = self;
     record->handle = pSession;
     self->trackSession(record.copyRef());
     auto* zigGlobal = defaultGlobalObject(globalObject);
@@ -2162,10 +2167,16 @@ void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObjec
 static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope, JSValue pathVal, WTF::String& out)
 {
     auto& vm = getVM(globalObject);
+    auto rejectNul = [&](const WTF::String& s) -> bool {
+        if (s.find('\0') == WTF::notFound) return true;
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+            "The \"path\" argument must be a string, Uint8Array, or URL without null bytes."_s);
+        return false;
+    };
     if (pathVal.isString()) {
         out = pathVal.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        return true;
+        return rejectNul(out);
     }
     // Node.js only accepts Uint8Array (and Buffer, which subclasses it).
     // Reject other TypedArrays / DataView so the error message below is
@@ -2182,7 +2193,7 @@ static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope
                 "The \"path\" argument must be a Uint8Array containing a valid UTF-8 byte sequence."_s);
             return false;
         }
-        return true;
+        return rejectNul(out);
     }
     // URL-like object: must have href+protocol and protocol "file:"
     if (pathVal.isObject()) {
@@ -2213,7 +2224,7 @@ static bool validateDatabasePath(JSGlobalObject* globalObject, ThrowScope& scope
                 return false;
             }
             out = hrefStr;
-            return true;
+            return rejectNul(out);
         }
     }
     Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
@@ -2236,11 +2247,6 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
 
     WTF::String location;
     if (!validateDatabasePath(globalObject, scope, callFrame->argument(0), location)) {
-        return {};
-    }
-    if (location.find('\0') != WTF::notFound) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-            "The \"path\" argument must be a string, Uint8Array, or URL without null bytes."_s);
         return {};
     }
 
@@ -3171,18 +3177,11 @@ JSNodeSqliteSession::~JSNodeSqliteSession()
     // GC sweep. Never call into SQLite from here — the sweep can run inside
     // an allocation made by a UDF callback while sqlite3_step() is executing
     // on this very connection — and never follow m_database, because the
-    // sweep order between the two cells is undefined. If the database is
-    // already gone it freed the handle itself (record->dbGone). Otherwise
-    // flag the record so the database deletes the orphaned handle on its
-    // next entry point; record->db is safe to touch because dbGone is set
-    // before ~JSDatabaseSync() finishes, so !dbGone implies the cell has not
-    // been swept.
-    if (auto record = std::exchange(m_record, nullptr)) {
-        if (!record->dbGone && record->handle) {
-            record->wrapperGone = true;
-            record->db->noteOrphanedSession();
-        }
-    }
+    // sweep order between the two cells is undefined. Only write to the
+    // refcounted record; sweepOrphanedSessions() picks up the flag on the
+    // database's next entry point (or close()/teardown does).
+    if (auto record = std::exchange(m_record, nullptr))
+        record->wrapperGone = true;
 }
 
 template<typename Visitor>
@@ -3808,10 +3807,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
 
     WTF::String destPath;
     if (!validateDatabasePath(globalObject, scope, callFrame->argument(1), destPath)) return {};
-    if (destPath.find('\0') != WTF::notFound) {
-        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-            "The \"path\" argument must be a string, Uint8Array, or URL without null bytes."_s);
-    }
 
     int rate = 100;
     WTF::String sourceName = "main"_s;
@@ -3914,7 +3909,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     // Node retries SQLITE_BUSY/LOCKED indefinitely (BackupJob just calls
     // ScheduleWork() again with no timeout), so match that: no invented
     // busy budget. Back off between retries so a contended destination
-    // doesn't busy-spin at 100% CPU.
+    // doesn't busy-spin at 100% CPU. Unlike Node this loop runs on the JS
+    // thread, so a permanently-locked destination would be an unrecoverable
+    // hang; the progress callback fires on BUSY/LOCKED too so a caller can
+    // throw from it to abort. (Node fires progress between retries too, but
+    // gated on remaining_pages != 0 — Bun fires unconditionally so the
+    // escape hatch works even before the first successful step.)
     constexpr int kBusyRetrySleepMs = 25;
 
     int totalPages = 0;
@@ -3923,7 +3923,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         totalPages = sqlite3_backup_pagecount(backup);
         int remaining = sqlite3_backup_remaining(backup);
 
-        if (r == SQLITE_OK && progressFn) {
+        if (progressFn && (r == SQLITE_OK || r == SQLITE_BUSY || r == SQLITE_LOCKED)) {
             JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
             payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
             payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);

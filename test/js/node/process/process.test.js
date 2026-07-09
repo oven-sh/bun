@@ -1107,6 +1107,38 @@ describe.concurrent(() => {
     );
   });
 
+  it.skipIf(isWindows)("process.getActiveResourcesInfo reports Unix-domain handles as PipeWrap", async () => {
+    // Unix-domain listeners and sockets are PipeWrap in Node (SET_MEMORY_INFO_NAME(PipeWrap)),
+    // not TCPServerWrap/TCPSocketWrap.
+    await runInlineFixture(
+      `const net = require("node:net");
+       const path = require("node:path");
+       const os = require("node:os");
+       const fs = require("node:fs");
+       const info = () => process.getActiveResourcesInfo();
+       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bun-pipe-"));
+       const sock = path.join(dir, "s.sock");
+       const server = net.createServer(c => c.end());
+       server.listen(sock, () => {
+         const before = info();
+         const c = net.connect(sock, () => {
+           const during = info();
+           console.log(JSON.stringify({
+             beforePipe: before.filter(x => x === "PipeWrap").length,
+             beforeTCP: before.filter(x => x === "TCPServerWrap").length,
+             duringPipe: during.filter(x => x === "PipeWrap").length,
+             duringTCPSock: during.filter(x => x === "TCPSocketWrap").length,
+           }));
+           c.end();
+           server.close(() => fs.rmSync(dir, { recursive: true, force: true }));
+         });
+       });`,
+      // 1 pipe listener, 0 TCP listeners; then listener + client + accepted = 3 pipes, 0 TCP sockets.
+      '{"beforePipe":1,"beforeTCP":0,"duringPipe":3,"duringTCPSock":0}\n',
+      0,
+    );
+  });
+
   const emptyObjectStubs = [];
   const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 
@@ -1761,7 +1793,7 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
 // Windows uses a different TZ format and the upstream Node test-process-env-tz.js
 // skips Windows entirely; the JSEnvironmentVariableMap deleteProperty override that
 // resets the timezone is POSIX-only.
-it.skipIf(isWindows)("delete process.env.TZ invalidates existing Date instances", async () => {
+it("delete process.env.TZ invalidates existing Date instances", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1770,7 +1802,14 @@ it.skipIf(isWindows)("delete process.env.TZ invalidates existing Date instances"
        process.env.TZ = "America/New_York";
        const ny = d.getHours();
        delete process.env.TZ;
-       console.log(JSON.stringify({ ny, afterDelete: d.getHours(), has: "TZ" in process.env }));`,
+       const afterDelete = d.getHours();
+       const has = "TZ" in process.env;
+       // set-after-delete must still fire the timezone side effect: Node's
+       // RealEnvStore::Set name-matches TZ on every write, not via a
+       // once-installed accessor.
+       process.env.TZ = "America/New_York";
+       const afterReSet = d.getHours();
+       console.log(JSON.stringify({ ny, afterDelete, has, afterReSet }));`,
     ],
     env: { ...bunEnv, TZ: "UTC" },
     stdout: "pipe",
@@ -1779,7 +1818,13 @@ it.skipIf(isWindows)("delete process.env.TZ invalidates existing Date instances"
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // NY is UTC-5 in January; after delete the override is cleared so getHours
   // reverts to the UTC start value (12) and the property is gone.
-  expect({ ...JSON.parse(stdout), exitCode }).toEqual({ ny: 7, afterDelete: 12, has: false, exitCode: 0 });
+  expect({ ...JSON.parse(stdout), exitCode }).toEqual({
+    ny: 7,
+    afterDelete: 12,
+    has: false,
+    afterReSet: 7,
+    exitCode: 0,
+  });
 });
 
 it("process.traceDeprecation set at runtime prints a stack", async () => {
@@ -1885,6 +1930,20 @@ it.skipIf(isWindows || process.getuid?.() === 0)(
   },
 );
 
+it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
+  // Numeric users go through getpwuid_r first, so an unknown uid surfaces
+  // ERR_UNKNOWN_CREDENTIAL before the privileged initgroups(3) call — runs
+  // fine as non-root.
+  let err;
+  try {
+    process.initgroups(0x7ffffffe, 0);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("ERR_UNKNOWN_CREDENTIAL");
+  expect(err?.message).toContain("User identifier does not exist: 2147483646");
+});
+
 it("process.finalization.register does not validate that fn is a function", async () => {
   // Node only validates the ref (obj); a non-callable fn is stored and only
   // fails at exit time. Run in a subprocess so registration doesn't leak into
@@ -1905,4 +1964,83 @@ it("process.finalization.register does not validate that fn is a function", asyn
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: stdout.trim(), exitCode }).toEqual({ out: '{"threw":false}', exitCode: 0 });
+});
+
+it("process.finalization exit listener is appended, not prepended", async () => {
+  // Node's install() uses process.on: a user exit listener added before the
+  // first register() fires before the finalization callback.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const order = [];
+       process.on("exit", () => order.push("user"));
+       process.finalization.register({}, () => order.push("finalization"));
+       process.on("exit", () => console.log(JSON.stringify(order)));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: '["user","finalization"]',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.each([false, true])("emitWarning does not read .stack unless tracing (--trace-warnings=%p)", async trace => {
+  // Reading .stack materializes the lazy trace and can run user
+  // Error.prepareStackTrace; Node's onWarning short-circuits
+  // `if (trace && warning.stack)`.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      ...(trace ? ["--trace-warnings"] : []),
+      "-e",
+      `let hits = 0;
+       const err = new Error("hello");
+       err.name = "Warning";
+       Object.defineProperty(err, "stack", { get() { hits++; return "Warning: hello\\n    at fake"; } });
+       process.on("warning", () => process.nextTick(() => console.log("hits:" + hits)));
+       process.emitWarning(err);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(trace ? "hits:2" : "hits:0");
+  if (trace) expect(stderr).toContain("at fake");
+  expect(exitCode).toBe(0);
+});
+
+it("process.throwDeprecation is per-Worker, not process-global", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("node:worker_threads");
+       const w = new Worker(
+         'process.throwDeprecation = true; require("node:worker_threads").parentPort.postMessage("set");',
+         { eval: true },
+       );
+       await new Promise((res, rej) => { w.on("message", res); w.on("error", rej); });
+       await w.terminate();
+       // Main-thread emit should still print, not throw.
+       let uncaught = false;
+       process.on("uncaughtException", () => { uncaught = true; });
+       process.emitWarning("hi", "DeprecationWarning");
+       await new Promise(r => setImmediate(() => setImmediate(r)));
+       console.log(JSON.stringify({ uncaught, throwDep: process.throwDeprecation }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"uncaught":false}');
+  expect(stderr).toContain("DeprecationWarning: hi");
+  expect(exitCode).toBe(0);
 });

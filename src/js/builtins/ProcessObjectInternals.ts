@@ -436,6 +436,8 @@ export function windowsEnv(
   internalEnv: InternalEnvMap,
   envMapList: Array<string>,
   editWindowsEnvVar: EditWindowsEnvVarCb,
+  coerceForWrite,
+  resetTZ,
 ) {
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
@@ -458,17 +460,22 @@ export function windowsEnv(
 
   // Shared write path for the `set` and `defineProperty` traps. Plain
   // assignment (never Object.defineProperty on the target) keeps the
-  // TZ/proxy CustomAccessors on `internalEnv` and their side effects intact.
-  function writeEnvVar(p: string, k: string, value: string) {
+  // proxy CustomAccessors on `internalEnv` and their side effects intact.
+  function writeEnvVar(p: string, k: string, value: unknown) {
+    // coerceForWrite runs Node's EnvSetter semantics (DEP0104 for
+    // non-string values under --pending-deprecation, then ToString) and
+    // fires the TZ timezone side effect on every write, so it survives a
+    // prior `delete process.env.TZ` dropping the CustomAccessor.
+    const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
     // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
     // as DontEnum CustomAccessors even when the variable was never set.
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
     }
-    if (internalEnv[k] !== value) {
-      editWindowsEnvVar(k, value);
-      internalEnv[k] = value;
+    if (internalEnv[k] !== coerced) {
+      editWindowsEnvVar(k, coerced);
+      internalEnv[k] = coerced;
     }
   }
 
@@ -502,7 +509,7 @@ export function windowsEnv(
         return true;
       }
       // If toString() throws, we want to avoid the key existing in envMapList.
-      writeEnvVar(p, k, String(value));
+      writeEnvVar(p, k, value);
       return true;
     },
     has(_, p) {
@@ -525,6 +532,10 @@ export function windowsEnv(
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
+      // Node's RealEnvStore::Delete resets Date caches for TZ; internalEnv
+      // is a plain object here so `delete internalEnv[k]` never reaches the
+      // TZ setter — fire the reset explicitly.
+      if (k === "TZ") resetTZ();
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
@@ -562,7 +573,7 @@ export function windowsEnv(
       }
       // Node's EnvDefiner delegates the validated value to EnvSetter, i.e.
       // plain assignment — never a real defineProperty on the target.
-      writeEnvVar(p, k, String(attributes.value));
+      writeEnvVar(p, k, attributes.value);
       return true;
     },
     getOwnPropertyDescriptor(target, p) {
@@ -612,25 +623,32 @@ export function rawDebug() {
   } catch {}
 }
 
-export function installOnWarningListener(process, redirectPath, isDisabled) {
+export function installOnWarningListener(process, redirectPath, disabledArr) {
   // Port of Node's lib/internal/process/warning.js onWarning, registered as a
   // real 'warning' listener so removeAllListeners('warning') silences it and
   // a throwing user listener does not skip the print.
-  const { appendFileSync } = require("node:fs");
+  //
+  // node:fs is only loaded when --redirect-warnings/NODE_REDIRECT_WARNINGS is
+  // set; the common case (no redirect) never needs it.
+  const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // Capture at install time so later tampering with globalThis.console
   // cannot silence warnings.
   const consoleError = console.error;
-  let redirectFailed = false;
+  // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
+  // and avoids an FFI + utf8() encode per emit.
+  const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
-    if (redirectPath && !redirectFailed) {
+    if (redirectPath) {
       try {
         appendFileSync(redirectPath, message + "\n");
         return;
       } catch {
-        // Node falls back to stderr on redirect failure and stops retrying.
-        redirectFailed = true;
+        // Intentional simplification: appendFileSync opens per-write and
+        // falls back to stderr per-warning on failure, whereas Node holds a
+        // single fd and writes async. Open failures retry on the next
+        // warning like Node's writeToFile.
       }
     }
     // console.error goes through process.stderr, so hijackStderr in tests
@@ -646,17 +664,21 @@ export function installOnWarningListener(process, redirectPath, isDisabled) {
     const code = warning.code;
     // --disable-warning filters the *print*, not the emit — user listeners
     // still receive the event (Node keeps this check inside onWarning).
-    if (isDisabled(name) || (code && isDisabled(code))) return;
+    if (disabled && (disabled.has(name) || (code && disabled.has(code)))) return;
     const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
     let msg = `(node:${process.pid}) `;
     if (code) msg += `[${code}] `;
-    const { stack, detail } = warning;
-    if (trace && stack) {
-      msg += stack;
+    // Only touch `.stack` when tracing: reading it materializes the lazy
+    // stack trace and can run a user Error.prepareStackTrace, like Node's
+    // `if (trace && warning.stack)` short-circuit.
+    // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
+    if (trace && warning.stack) {
+      msg += warning.stack;
     } else {
       const s = typeof warning.toString === "function" ? warning.toString() : `${name}: ${warning.message}`;
       msg += s;
     }
+    const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
@@ -728,8 +750,11 @@ export function createProcessFinalization(process) {
   function ensureInstalled() {
     if (installed) return;
     installed = true;
-    process.prependListener("exit", () => runFinalization("exit"));
-    process.prependListener("beforeExit", () => runFinalization("beforeExit"));
+    // process.on (append), not prependListener: Node's install() uses
+    // process.on so a user exit listener added before the first
+    // finalization.register() fires before the finalization callback.
+    process.on("exit", () => runFinalization("exit"));
+    process.on("beforeExit", () => runFinalization("beforeExit"));
   }
 
   function registerWithEvent(ref, fn, evt) {

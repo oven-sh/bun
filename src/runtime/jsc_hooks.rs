@@ -105,81 +105,63 @@ pub struct RuntimeState {
 /// own active/inactive transition (no stored pointers, no query-time deref).
 #[derive(Default)]
 pub struct ActiveResources {
-    /// Open `NewSocket<_>` count: incremented in `mark_active`, decremented
-    /// wherever `Flags::IS_ACTIVE` is cleared.
-    pub sockets: Cell<usize>,
-    /// Listening `Listener` count: incremented on successful `listen()`,
-    /// decremented in `do_stop`.
-    pub listeners: Cell<usize>,
+    /// Open TCP `NewSocket<_>` count (`Flags::IS_ACTIVE` set, `IS_PIPE` clear).
+    pub tcp_sockets: Cell<usize>,
+    /// Listening TCP `Listener` count.
+    pub tcp_listeners: Cell<usize>,
+    /// Unix-domain / named-pipe sockets and listeners combined — Node's
+    /// PipeWrap uses one MemoryInfoName for SOCKET / SERVER / IPC modes.
+    pub pipes: Cell<usize>,
     /// In-flight `AsyncFSTask` / `UVFSRequest` count.
     pub fs_requests: Cell<usize>,
 }
 
-impl ActiveResources {
-    #[inline]
-    pub fn add_socket(&self) {
-        self.sockets.set(self.sockets.get() + 1);
-    }
-    #[inline]
-    pub fn remove_socket(&self) {
-        self.sockets.set(self.sockets.get().saturating_sub(1));
-    }
-    #[inline]
-    pub fn add_listener(&self) {
-        self.listeners.set(self.listeners.get() + 1);
-    }
-    #[inline]
-    pub fn remove_listener(&self) {
-        self.listeners.set(self.listeners.get().saturating_sub(1));
-    }
-    #[inline]
-    pub fn add_fs_request(&self) {
-        self.fs_requests.set(self.fs_requests.get() + 1);
-    }
-    #[inline]
-    pub fn remove_fs_request(&self) {
-        self.fs_requests
-            .set(self.fs_requests.get().saturating_sub(1));
-    }
-}
-
 // One-line registration helpers so resource create/destroy sites don't each
 // repeat the `if let Some(ar) = active_resources()` block. No-ops before
-// `init_runtime_state` installs the per-thread registry.
+// `init_runtime_state` installs the per-thread registry. `remove_*` asserts
+// the pairing invariant in debug (a wrap to usize::MAX would OOM the
+// diagnostic array in `Process_functionGetActiveResourcesInfo`) and saturates
+// in release so a mispair never panics user code.
 macro_rules! active_resource_fns {
-    ($(($add:ident, $remove:ident, $add_m:ident, $remove_m:ident)),+ $(,)?) => {$(
+    ($(($add:ident, $remove:ident, $field:ident)),+ $(,)?) => {$(
         #[inline]
         pub(crate) fn $add() {
             if let Some(ar) = active_resources() {
-                ar.$add_m();
+                ar.$field.set(ar.$field.get() + 1);
             }
         }
         #[inline]
         pub(crate) fn $remove() {
             if let Some(ar) = active_resources() {
-                ar.$remove_m();
+                debug_assert!(
+                    ar.$field.get() > 0,
+                    concat!("ActiveResources::", stringify!($remove), " without matching add"),
+                );
+                ar.$field.set(ar.$field.get().saturating_sub(1));
             }
         }
     )+};
 }
 active_resource_fns!(
     (
-        active_resources_add_socket,
-        active_resources_remove_socket,
-        add_socket,
-        remove_socket
+        active_resources_add_tcp_socket,
+        active_resources_remove_tcp_socket,
+        tcp_sockets
     ),
     (
-        active_resources_add_listener,
-        active_resources_remove_listener,
-        add_listener,
-        remove_listener
+        active_resources_add_tcp_listener,
+        active_resources_remove_tcp_listener,
+        tcp_listeners
+    ),
+    (
+        active_resources_add_pipe,
+        active_resources_remove_pipe,
+        pipes
     ),
     (
         active_resources_add_fs_request,
         active_resources_remove_fs_request,
-        add_fs_request,
-        remove_fs_request
+        fs_requests
     ),
 );
 

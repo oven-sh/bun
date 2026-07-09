@@ -94,6 +94,18 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
     return string;
 }
 
+// Shared TZ side effect for put() and the CustomAccessor setter, so
+// delete-then-set (which drops the accessor) still updates the process
+// timezone like Node's RealEnvStore::Set does on every write.
+static void applyTimeZoneEnvValue(VM& vm, JSGlobalObject* globalObject, JSC::JSString* string)
+{
+    auto view = string->view(globalObject);
+    if (!view->isNull() && view->length() < 32) {
+        WTF::setTimeZoneOverride(view->toString());
+    }
+    resetDateCachesAfterTimeZoneChange(vm);
+}
+
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -112,6 +124,17 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
 
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
+
+    // Node's RealEnvStore::Set name-matches TZ on every write; do the same
+    // here so `delete process.env.TZ; process.env.TZ = ...` still updates
+    // Date caches (delete drops the CustomAccessor). putDirect bypasses the
+    // accessor so the side effect fires exactly once.
+    if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
+        applyTimeZoneEnvValue(vm, globalObject, string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
 }
 
@@ -286,34 +309,19 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     return JSValue::encode(out);
 }
 
-// In Node.js, the "TZ" environment variable is special.
-// Setting it automatically updates the timezone.
-// We also expose an explicit setTimeZone function in bun:jsc
+// TZ's actual timezone side effect fires from JSEnvironmentVariableMap::put()
+// (POSIX) and jsProcessEnvCoerceForWrite (Windows Proxy) name-matching every
+// write, so this accessor setter is store-only. Keeping the side effect out
+// of here avoids a double-fire on Windows where writeEnvVar has already
+// applied it before assigning through this accessor.
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
-
-    JSValue decodedValue = JSValue::decode(value);
-    if (decodedValue.isString()) {
-        auto timeZoneName = decodedValue.toWTFString(globalObject);
-        if (timeZoneName.length() < 32) {
-            if (WTF::setTimeZoneOverride(timeZoneName)) {
-                resetDateCachesAfterTimeZoneChange(vm);
-            }
-        }
-    }
-
     auto* clientData = WebCore::clientData(vm);
-    auto* builtinNames = &clientData->builtinNames();
-    auto privateName = builtinNames->dataPrivateName();
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
-
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    object->putDirect(vm, clientData->builtinNames().dataPrivateName(), JSValue::decode(value), 0);
     return true;
 }
 
@@ -325,10 +333,8 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     // Node's RealEnvStore::Delete calls DateTimeConfigurationChangeNotification
     // for TZ; without this override, delete drops the CustomAccessor without
     // reaching the TZ setter and existing Date instances keep the old offset.
-    // The accessor is NOT reinstalled: `'TZ' in process.env` must go false and
-    // a reinstalled getter would fall through to the never-unset native env
-    // map. A subsequent `process.env.TZ = ...` therefore stores a plain string
-    // without the timezone side effect (matches pre-PR delete behavior).
+    // put() name-matches TZ so a subsequent `process.env.TZ = ...` still fires
+    // the side effect after the accessor is gone.
     auto* uid = propertyName.publicName();
     if (uid && WTF::equal(uid, "TZ"_s)) {
         WTF::setTimeZoneOverride(String());
@@ -475,6 +481,41 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 
 #if OS(WINDOWS)
 extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
+
+// Shared write-path helper for the Windows Proxy set/defineProperty traps:
+// DEP0104 + ToString via coerceEnvValue (single-sourced with POSIX put()),
+// plus the TZ timezone side effect so it survives `delete process.env.TZ`
+// dropping the CustomAccessor. Returns the coerced string.
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    JSValue value = callFrame->argument(1);
+    JSC::JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (key.isString()) {
+        auto keyView = asString(key)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (WTF::equal(keyView, "TZ"_s)) {
+            applyTimeZoneEnvValue(vm, globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return JSValue::encode(string);
+}
+
+// `delete process.env.TZ` on Windows: reset the JSC timezone override so
+// existing Date instances re-read the system zone (POSIX handles this in
+// JSEnvironmentVariableMap::deleteProperty; the Windows internalEnv is a
+// plain object so it needs its own hook).
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetTZ, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    WTF::setTimeZoneOverride(String());
+    resetDateCachesAfterTimeZoneChange(vm);
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
@@ -670,6 +711,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(object);
     args.append(keyArray);
     args.append(editWindowsEnvVar);
+    args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 0, "resetTZ"_s, jsProcessEnvResetTZ, ImplementationVisibility::Private));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

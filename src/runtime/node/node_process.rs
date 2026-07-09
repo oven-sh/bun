@@ -107,15 +107,24 @@ pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
 pub(crate) extern "C" fn Bun__getActiveResourceCounts(
     tcp_sockets: *mut usize,
     tcp_servers: *mut usize,
+    pipes: *mut usize,
     fs_requests: *mut usize,
 ) {
-    let (s, l, f) = crate::jsc_hooks::active_resources()
-        .map(|ar| (ar.sockets.get(), ar.listeners.get(), ar.fs_requests.get()))
-        .unwrap_or((0, 0, 0));
+    let (s, l, p, f) = crate::jsc_hooks::active_resources()
+        .map(|ar| {
+            (
+                ar.tcp_sockets.get(),
+                ar.tcp_listeners.get(),
+                ar.pipes.get(),
+                ar.fs_requests.get(),
+            )
+        })
+        .unwrap_or((0, 0, 0, 0));
     // SAFETY: out-params are valid pointers from the C++ caller.
     unsafe {
         *tcp_sockets = s;
         *tcp_servers = l;
+        *pipes = p;
         *fs_requests = f;
     }
 }
@@ -132,20 +141,27 @@ pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::Stri
     true
 }
 
-/// Whether `--disable-warning=<entry>` suppresses a warning with the given
-/// name or code (utf8 bytes).
+/// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided
+/// buffers. Returns the number of entries. `bufs`/`lens` may be null when
+/// `cap == 0` to query the count. Entries borrow the CLI-owned Vec (never
+/// mutated after argument parsing).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Node__isWarningDisabled(ptr: *const u8, len: usize) -> bool {
-    if ptr.is_null() || len == 0 {
-        return false;
-    }
+pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
+    bufs: *mut *const u8,
+    lens: *mut usize,
+    cap: usize,
+) -> usize {
     let guard = crate::cli::Bun__Node__DisabledWarnings.lock();
-    if guard.is_empty() {
-        return false;
+    let n = guard.len().min(cap);
+    for (i, entry) in guard.iter().take(n).enumerate() {
+        // SAFETY: caller provides `cap`-sized arrays; entries live for the
+        // process (write-once at CLI parse, never freed).
+        unsafe {
+            *bufs.add(i) = entry.as_ptr();
+            *lens.add(i) = entry.len();
+        }
     }
-    // SAFETY: caller passes a live utf8 buffer of `len` bytes.
-    let needle = unsafe { core::slice::from_raw_parts(ptr, len) };
-    guard.iter().any(|entry| &**entry == needle)
+    guard.len()
 }
 
 #[unsafe(no_mangle)]

@@ -1226,14 +1226,18 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// through here so the per-thread `getActiveResourcesInfo()` socket count
     /// can never drift from the flag. Idempotent (counts only transitions).
     fn set_active_flag(&self, active: bool) {
-        if self.flags.get().contains(Flags::IS_ACTIVE) == active {
+        let flags = self.flags.get();
+        if flags.contains(Flags::IS_ACTIVE) == active {
             return;
         }
         self.update_flags(|f| f.set(Flags::IS_ACTIVE, active));
-        if active {
-            crate::jsc_hooks::active_resources_add_socket();
-        } else {
-            crate::jsc_hooks::active_resources_remove_socket();
+        // IS_PIPE is stamped at construction (client Unix connect / accepted
+        // pipe listener) and never toggles, so add/remove always pair.
+        match (active, flags.contains(Flags::IS_PIPE)) {
+            (true, false) => crate::jsc_hooks::active_resources_add_tcp_socket(),
+            (false, false) => crate::jsc_hooks::active_resources_remove_tcp_socket(),
+            (true, true) => crate::jsc_hooks::active_resources_add_pipe(),
+            (false, true) => crate::jsc_hooks::active_resources_remove_pipe(),
         }
     }
 
@@ -3345,7 +3349,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(this.flags.get() & Flags::IS_PIPE),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3449,7 +3453,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::OWNED_PROTOS),
+            flags: Cell::new(
+                Flags::BYPASS_TLS | Flags::OWNED_PROTOS | (this.flags.get() & Flags::IS_PIPE),
+            ),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3849,6 +3855,10 @@ bitflags::bitflags! {
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
+        /// AF_UNIX / Windows named-pipe socket. `set_active_flag` routes these
+        /// to the `pipes` counter so `getActiveResourcesInfo()` reports
+        /// "PipeWrap" like Node instead of lumping them under TCPSocketWrap.
+        const IS_PIPE              = 1 << 10;
         const HOSTNAME_MISMATCH    = 1 << 11;
     }
 }

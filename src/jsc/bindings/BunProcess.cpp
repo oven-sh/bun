@@ -135,9 +135,9 @@ extern "C" bool Bun__Node__ProcessTraceWarnings;
 extern "C" bool Bun__Node__ProcessTraceDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" bool Bun__Node__getRedirectWarnings(BunString* out);
-extern "C" bool Bun__Node__isWarningDisabled(const uint8_t* ptr, size_t len);
+extern "C" size_t Bun__Node__getDisabledWarnings(const uint8_t** bufs, size_t* lens, size_t cap);
 extern "C" void Bun__Timer__getActiveTimerCounts(size_t* timeouts, size_t* immediates);
-extern "C" void Bun__getActiveResourceCounts(size_t* tcpSockets, size_t* tcpServers, size_t* fsRequests);
+extern "C" void Bun__getActiveResourceCounts(size_t* tcpSockets, size_t* tcpServers, size_t* pipes, size_t* fsRequests);
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" int32_t bun_stdio_tty[3];
@@ -1627,19 +1627,6 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_isWarningDisabled, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue arg = callFrame->argument(0);
-    if (!arg.isString())
-        return JSValue::encode(jsBoolean(false));
-    auto str = arg.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto utf8 = str.utf8();
-    return JSValue::encode(jsBoolean(Bun__Node__isWarningDisabled(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length())));
-}
-
 // Install the JS onWarning listener (once per Process). Gated by
 // --no-warnings / NODE_NO_WARNINGS to match Node's pre_execution.js.
 static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* process)
@@ -1650,6 +1637,7 @@ static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* p
     if (Bun__NODE_NO_WARNINGS() || Bun__Node__ProcessNoWarnings)
         return;
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* installer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInstallOnWarningListenerCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(process);
@@ -1665,9 +1653,28 @@ static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* p
             redirectPath = jsString(vm, Zig::toStringCopy(value));
     }
     args.append(redirectPath);
-    args.append(JSFunction::create(vm, globalObject, 1, "isWarningDisabled"_s, jsFunction_isWarningDisabled, ImplementationVisibility::Private));
+    // --disable-warning entries as a JS array (write-once at CLI parse), so
+    // onWarning builds a Set once instead of an FFI + utf8() + mutex per emit.
+    JSValue disabled = jsUndefined();
+    size_t nDisabled = Bun__Node__getDisabledWarnings(nullptr, nullptr, 0);
+    if (nDisabled > 0) {
+        Vector<const uint8_t*, 8> bufs;
+        Vector<size_t, 8> lens;
+        bufs.grow(nDisabled);
+        lens.grow(nDisabled);
+        Bun__Node__getDisabledWarnings(bufs.begin(), lens.begin(), nDisabled);
+        auto* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(nDisabled));
+        RETURN_IF_EXCEPTION(scope, );
+        for (size_t i = 0; i < nDisabled; i++) {
+            array->putDirectIndex(globalObject, static_cast<unsigned>(i),
+                jsString(vm, WTF::String::fromUTF8(std::span { bufs[i], lens[i] })));
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        disabled = array;
+    }
+    args.append(disabled);
     // The caller has a ThrowScope and RETURN_IF_EXCEPTION immediately after.
-    JSC::profiledCall(globalObject, ProfilingReason::API, installer, JSC::getCallData(installer), globalObject->globalThis(), args);
+    RELEASE_AND_RETURN(scope, void(JSC::profiledCall(globalObject, ProfilingReason::API, installer, JSC::getCallData(installer), globalObject->globalThis(), args)));
 }
 
 // Node's doEmitWarning: process.emit('warning', warning). The default print
@@ -2056,10 +2063,15 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     auto warningName = errorInstance.get(lexicalGlobalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
     if (isJSValueEqualToASCIILiteral(globalObject, warningName, "DeprecationWarning"_s)) {
-        if (Bun__Node__ProcessNoDeprecation) {
+        // Read the per-Process data properties (per-Worker), not the CLI seed:
+        // a Worker's `process.throwDeprecation = true` must not affect other VMs.
+        JSValue noDep = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (noDep && noDep.toBoolean(globalObject))
             return jsUndefined();
-        }
-        if (Bun__Node__ProcessThrowDeprecation) {
+        JSValue throwDep = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "throwDeprecation"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (throwDep && throwDep.toBoolean(globalObject)) {
             // // Delay throwing the error to guarantee that all former warnings were properly logged.
             // return process.nextTick(() => {
             //    throw warning;
@@ -2084,8 +2096,11 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue detail = jsUndefined();
 
-    if (Bun__Node__ProcessNoDeprecation && isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
-        return jsUndefined();
+    if (isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
+        JSValue noDep = globalObject->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (noDep && noDep.toBoolean(globalObject))
+            return jsUndefined();
     }
 
     if (!type.isNull() && type.isObject() && !isJSArray(type)) {
@@ -2890,17 +2905,6 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
         return jsUndefined();
     }
     return result;
-}
-
-JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
-{
-    return JSValue::encode(jsBoolean(Bun__Node__ProcessThrowDeprecation));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setProcessThrowDeprecation, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
-{
-    Bun__Node__ProcessThrowDeprecation = JSC::JSValue::decode(encodedValue).toBoolean(globalObject);
-    return true;
 }
 
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)
@@ -4168,10 +4172,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetActiveResourcesInfo, (JSGlobalObject
     Bun__Timer__getActiveTimerCounts(&timeouts, &immediates);
     size_t tcpSockets = 0;
     size_t tcpServers = 0;
+    size_t pipes = 0;
     size_t fsRequests = 0;
-    Bun__getActiveResourceCounts(&tcpSockets, &tcpServers, &fsRequests);
+    Bun__getActiveResourceCounts(&tcpSockets, &tcpServers, &pipes, &fsRequests);
     auto* array = JSC::constructEmptyArray(globalObject, nullptr,
-        static_cast<unsigned>(timeouts + immediates + tcpSockets + tcpServers + fsRequests));
+        static_cast<unsigned>(timeouts + immediates + tcpSockets + tcpServers + pipes + fsRequests));
     RETURN_IF_EXCEPTION(scope, {});
     unsigned index = 0;
     auto append = [&](size_t count, ASCIILiteral name) -> bool {
@@ -4193,6 +4198,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetActiveResourcesInfo, (JSGlobalObject
     if (!append(tcpSockets, "TCPSocketWrap"_s))
         return {};
     if (!append(tcpServers, "TCPServerWrap"_s))
+        return {};
+    if (!append(pipes, "PipeWrap"_s))
         return {};
     if (!append(fsRequests, "FSReqCallback"_s))
         return {};
@@ -4400,17 +4407,6 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
     JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     return uncheckedDowncast<Process>(processObject)->constructNextTickFn(JSC::getVM(globalObject), globalObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(processNoDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
-{
-    return JSValue::encode(jsBoolean(Bun__Node__ProcessNoDeprecation));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setProcessNoDeprecation, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
-{
-    Bun__Node__ProcessNoDeprecation = JSC::JSValue::decode(encodedValue).toBoolean(globalObject);
-    return true;
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -4804,7 +4800,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
-  noDeprecation                    processNoDeprecation                                CustomAccessor
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
@@ -4821,7 +4816,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
-  throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
   unref                            Process_unref                                       Function 1
@@ -4888,6 +4882,15 @@ void Process::finishCreation(JSC::VM& vm)
         putDirect(vm, Identifier::fromString(vm, "traceProcessWarnings"_s), jsBoolean(true), 0);
     if (Bun__Node__ProcessTraceDeprecation)
         putDirect(vm, Identifier::fromString(vm, "traceDeprecation"_s), jsBoolean(true), 0);
+    // Per-Process (per-Worker) data properties, not accessors on a
+    // process-wide static: a Worker setting `process.throwDeprecation = true`
+    // must not flip the main thread. Like Node's addReadOnlyProcessAlias, only
+    // define when the CLI flag was passed; otherwise it's an ordinary
+    // undefined slot user code can set.
+    if (Bun__Node__ProcessThrowDeprecation)
+        putDirect(vm, Identifier::fromString(vm, "throwDeprecation"_s), jsBoolean(true), 0);
+    if (Bun__Node__ProcessNoDeprecation)
+        putDirect(vm, Identifier::fromString(vm, "noDeprecation"_s), jsBoolean(true), 0);
 }
 
 } // namespace Bun

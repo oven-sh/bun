@@ -133,6 +133,41 @@ pub enum UnixOrHost {
 
 impl UnixOrHost {
     // Note: deinit() deleted — Box<[u8]> fields auto-drop.
+
+    /// AF_UNIX (or, on Windows, a `\\.\pipe\` path routed to a named pipe)
+    /// vs. an inet socket. Used to route `getActiveResourcesInfo()` counts to
+    /// PipeWrap vs TCP{Socket,Server}Wrap.
+    #[inline]
+    pub(super) fn is_pipe(&self) -> bool {
+        matches!(self, UnixOrHost::Unix(_))
+    }
+}
+
+impl Listener {
+    /// AF_UNIX / Windows named-pipe listener vs. inet listener, for the
+    /// PipeWrap / TCPServerWrap split in `getActiveResourcesInfo()`.
+    #[inline]
+    fn is_pipe(&self) -> bool {
+        self.connection.is_pipe() || matches!(self.listener.get(), ListenerType::NamedPipe(_))
+    }
+
+    #[inline]
+    fn active_resources_add(&self) {
+        if self.is_pipe() {
+            crate::jsc_hooks::active_resources_add_pipe();
+        } else {
+            crate::jsc_hooks::active_resources_add_tcp_listener();
+        }
+    }
+
+    #[inline]
+    fn active_resources_remove(&self) {
+        if self.is_pipe() {
+            crate::jsc_hooks::active_resources_remove_pipe();
+        } else {
+            crate::jsc_hooks::active_resources_remove_tcp_listener();
+        }
+    }
 }
 
 impl Listener {
@@ -279,7 +314,7 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-                crate::jsc_hooks::active_resources_add_listener();
+                this_ref.active_resources_add();
                 return Ok(this_value);
             }
         }
@@ -525,7 +560,7 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        crate::jsc_hooks::active_resources_add_listener();
+        this_ref.active_resources_add();
 
         Ok(this_value)
     }
@@ -541,7 +576,7 @@ impl Listener {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
-            flags: Cell::new(SocketFlags::empty()),
+            flags: Cell::new(SocketFlags::IS_PIPE),
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -583,7 +618,11 @@ impl Listener {
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
             // the listener's slice; one small allocation per accept.
-            flags: Cell::new(SocketFlags::empty()), // owned_protos = false (cloned above)
+            flags: Cell::new(if listener.connection.is_pipe() {
+                SocketFlags::IS_PIPE
+            } else {
+                SocketFlags::empty()
+            }), // owned_protos = false (cloned above)
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -742,7 +781,7 @@ impl Listener {
         }
         // Only counted while ref'd: an unref()'d server already decremented.
         if this.poll_ref.get().is_active() {
-            crate::jsc_hooks::active_resources_remove_listener();
+            this.active_resources_remove();
         }
         let listener = this.listener.replace(ListenerType::None);
 
@@ -778,10 +817,10 @@ impl Listener {
 
     pub fn finalize(self: Box<Self>) {
         log!("finalize");
-        let listener = self.listener.replace(ListenerType::None);
-        if !matches!(listener, ListenerType::None) && self.poll_ref.get().is_active() {
-            crate::jsc_hooks::active_resources_remove_listener();
+        if !matches!(self.listener.get(), ListenerType::None) && self.poll_ref.get().is_active() {
+            self.active_resources_remove();
         }
+        let listener = self.listener.replace(ListenerType::None);
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
@@ -905,7 +944,7 @@ impl Listener {
         }
         // getActiveResourcesInfo() lists only ref'd servers, like Node.
         if !this.poll_ref.get().is_active() {
-            crate::jsc_hooks::active_resources_add_listener();
+            this.active_resources_add();
         }
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         this.this_value
@@ -925,7 +964,7 @@ impl Listener {
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         // getActiveResourcesInfo() lists only ref'd servers, like Node.
         if !matches!(this.listener.get(), ListenerType::None) && this.poll_ref.get().is_active() {
-            crate::jsc_hooks::active_resources_remove_listener();
+            this.active_resources_remove();
         }
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
@@ -1102,9 +1141,12 @@ impl Listener {
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
-                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
+                        let mut pf = prev.flags.get();
+                        if pf.contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
+                        pf.insert(SocketFlags::IS_PIPE);
+                        prev.flags.set(pf);
                         prev.protos
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
@@ -1122,7 +1164,7 @@ impl Listener {
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::IS_PIPE),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1189,6 +1231,7 @@ impl Listener {
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
+                        prev.flags.set(prev.flags.get() | SocketFlags::IS_PIPE);
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
                         prev
@@ -1202,7 +1245,7 @@ impl Listener {
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::IS_PIPE),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1471,6 +1514,16 @@ fn connect_finish<const IS_SSL: bool>(
     {
         let mut f = socket_ref.flags.get();
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+        // IS_PIPE is stamped once at connect time so `set_active_flag`'s
+        // add/remove routing pairs even if `connection` is later cleared.
+        f.set(
+            SocketFlags::IS_PIPE,
+            socket_ref
+                .connection
+                .get()
+                .as_ref()
+                .is_some_and(|c| c.is_pipe()),
+        );
         socket_ref.flags.set(f);
     }
     // Note: `do_connect` reads `self.connection` directly so no second

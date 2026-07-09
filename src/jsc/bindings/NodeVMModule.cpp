@@ -121,7 +121,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 return {};
             }
         }
-        return m_evaluationResult.get();
+        JSValue cached = m_evaluationResult.get();
+        return cached ? cached : jsUndefined();
     }
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);

@@ -245,7 +245,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
         JSString* specifierValue = JSC::jsString(vm, request.m_specifier.string());
 
-        JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
         WTF::String attributesTypeString = "unknown"_str;

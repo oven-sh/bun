@@ -54,7 +54,7 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 // bytes [a, b) of the file. That requires positioned reads (pread), not
 // cursor-relative read(), so the caller's fd cursor is neither observed nor
 // mutated.
-describe("Bun.file(fd) with a non-zero file cursor", () => {
+describe.concurrent("Bun.file(fd) with a non-zero file cursor", () => {
   const bytes = Buffer.from(Array.from({ length: 100 }, (_, i) => 33 + (i % 93)));
   const setup = () => {
     const dir = tempDir("bun-file-fd-cursor", { "f.bin": bytes });
@@ -130,15 +130,14 @@ describe("Bun.file(fd) with a non-zero file cursor", () => {
   });
 
   test("Bun.serve returning new Response(Bun.file(fd)) sends the whole file", async () => {
+    const { dir, path } = setup();
+    using _ = dir;
     // Run in a subprocess so any mid-stream connection abort surfaces as a
     // visible failure rather than hanging the test harness.
     const script = /* js */ `
-      import { openSync, readSync, writeFileSync, closeSync } from "node:fs";
-      import { tmpdir } from "node:os";
-      import { join } from "node:path";
-      const P = join(tmpdir(), "bun-file-fd-serve-" + Date.now() + ".bin");
-      const bytes = Buffer.from(Array.from({ length: 100 }, (_, i) => 33 + (i % 93)));
-      writeFileSync(P, bytes);
+      import { openSync, readSync, readFileSync, closeSync } from "node:fs";
+      const P = process.env.FIXTURE_PATH;
+      const bytes = readFileSync(P);
       const openAt = off => {
         const fd = openSync(P, "r");
         if (off) readSync(fd, Buffer.alloc(off), 0, off, null);
@@ -179,7 +178,7 @@ describe("Bun.file(fd) with a non-zero file cursor", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: bunEnv,
+      env: { ...bunEnv, FIXTURE_PATH: path },
       stdout: "pipe",
       stderr: "pipe",
     });

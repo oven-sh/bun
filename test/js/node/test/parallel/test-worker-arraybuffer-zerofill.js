@@ -3,10 +3,7 @@ const common = require('../common');
 const Countdown = require('../common/countdown');
 const assert = require('assert');
 const { Worker } = require('worker_threads');
-const { describe, it } = require('node:test');
-// BUN: node:test's mock.fn is not implemented; hand-roll the minimal call
-// counter this test reads (fn.mock.calls.length).
-const mock = { fn(impl) { const f = (...args) => { f.mock.calls.push(args); return impl(...args); }; f.mock = { calls: [] }; return f; } };
+const { describe, it, mock } = require('node:test');
 
 describe('Allocating uninitialized ArrayBuffers ...', () => {
   it('...should not affect zero-fill in other threads', () => {

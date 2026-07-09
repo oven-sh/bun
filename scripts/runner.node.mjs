@@ -1367,7 +1367,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     // common/tmpdir.js reads NODE_TEST_DIR — point it at the per-test tmpdir
     // so its `.tmp.<id>` subdir is swept by the finally-rmSync below even
     // when the test aborts (ASAN abort_on_error skips its exit handler).
-    NODE_TEST_DIR: tmpdirPath,
+    // POSIX-only: there is no Windows ASAN lane, and relocating testRoot to
+    // realpath(%TEMP%) breaks path-shape assumptions in a few Windows tests.
+    NODE_TEST_DIR: isWindows ? undefined : tmpdirPath,
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }

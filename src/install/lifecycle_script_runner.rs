@@ -545,15 +545,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .expect("script present");
             let cwd = (*this).scripts.cwd.as_bytes();
             // OHOS hmdfs may not support getcwd(), which causes the shell to
-            // abort when running lifecycle scripts. Fall back to HOME which
-            // is always on a readable filesystem.
+            // abort when running lifecycle scripts. Use a known-accessible
+            // directory as the shell startup CWD and prepend a cd to the
+            // target directory so the script runs in the correct location.
+            // Fallback to /data/storage/el2/base (always accessible on OHOS)
+            // if HOME is unset or also inaccessible.
             #[cfg(target_env = "ohos")]
-            let cwd = {
-                if cwd.is_empty() || cwd == b"/" {
-                    bun_core::env_var::HOME::get().unwrap_or(cwd)
-                } else {
-                    cwd
-                }
+            let (cwd, cd_prefix) = {
+                // hmdfs getcwd() fails when parent directories lack +x; chdir
+                // to root so the shell startup can resolve its CWD, then cd
+                // into the real project directory inline.
+                const SAFE_CWD: &[u8] = b"/";
+                let mut prefix: Vec<u8> = Vec::with_capacity(cwd.len() + 10);
+                prefix.extend_from_slice(b"cd \"");
+                prefix.extend_from_slice(cwd);
+                prefix.extend_from_slice(b"\" 2>/dev/null; ");
+                (SAFE_CWD, prefix)
             };
             (*this).stdout.set_parent(this.cast::<c_void>());
             (*this).stderr.set_parent(this.cast::<c_void>());
@@ -566,6 +573,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*this).has_called_process_exit = false;
 
             let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
+            #[cfg(target_env = "ohos")]
+            copy_script.extend_from_slice(&cd_prefix);
             replace_package_manager_run(&mut copy_script, original_script)?;
             copy_script.push(0);
 
@@ -1061,7 +1070,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             _ => {
                 Output::panic(format_args!(
-                    "error: Failed to run {} script from \"{}\" due to unexpected status\n{}",
+                    "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to unexpected status\n{}",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     status,

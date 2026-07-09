@@ -1088,7 +1088,7 @@ impl TarballStream {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "Integrity check failed for tarball: {}",
+                            "Integrity check failed<r> for tarball: {}",
                             bstr::BStr::new(tarball.name.slice()),
                         ),
                     );

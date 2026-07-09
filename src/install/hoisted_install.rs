@@ -608,25 +608,24 @@ pub(crate) fn install_hoisted_packages(
             this.sleep();
         }
 
+        // ── OHOS: sign native binaries after all packages are installed ──
+        // In workspace mode the per-package signing path is not reached
+        // (packages are deferred via runTasks). Walk the workspace root's
+        // node_modules to sign any .so/.node files.
+        #[cfg(target_env = "ohos")]
+        {
+            let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+            let mut nm = top.to_vec();
+            nm.extend_from_slice(b"/node_modules");
+            crate::package_installer::ohos_sign_native_binaries(&nm);
+        }
+
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s
             // provenance instead of re-borrowing the stack local.
             if let Some(n) = this.scripts_node_mut() {
                 n.end();
             }
-        }
-    }
-
-    Ok(summary)?;
-
-    // OHOS: sign native binaries across the entire node_modules tree.
-    // Per-package signing in PackageInstaller doesn't fire for workspace
-    // installs, so do a full recursive pass here.
-    #[cfg(target_env = "ohos")]
-    {
-        let nm = installer.node_modules.path.as_slice();
-        if !nm.is_empty() {
-            crate::package_installer::ohos_sign_native_binaries(nm);
         }
     }
 

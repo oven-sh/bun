@@ -1868,43 +1868,12 @@ impl<'a> PackageInstall<'a> {
                             if let Err(err) =
                                 sys::symlinkat(target, destination_dir.fd(), entry.path)
                             {
-                                match err.get_errno() {
-                                    sys::E::EEXIST => {
-                                        let _ = sys::unlinkat(destination_dir, entry.path);
-                                        match sys::symlinkat(entry.basename, destination_dir.fd(), entry.path) {
-                                            Ok(()) => {}
-                                            Err(retry_err)
-                                                if matches!(
-                                                    retry_err.get_errno(),
-                                                    sys::E::EPERM | sys::E::EACCES
-                                                ) =>
-                                            {
-                                                // OHOS: retry also blocked; copy instead
-                                                crate::copy_file_fallback(
-                                                    destination_dir.fd(),
-                                                    entry.path,
-                                                    destination_dir.fd(),
-                                                    entry.path,
-                                                )?;
-                                            }
-                                            Err(retry_err) => return Err(retry_err.into()),
-                                        }
-                                    }
-                                    sys::E::EPERM | sys::E::EACCES => {
-                                        // OHOS SELinux blocks symlinkat; fall back to copy
-                                        let Some(dir) = bun_paths::dirname(entry.path.as_bytes()) else {
-                                            return Err(err.into());
-                                        };
-                                        let _ = destination_dir.make_path(dir);
-                                        crate::copy_file_fallback(
-                                            destination_dir.fd(),
-                                            entry.path,
-                                            destination_dir.fd(),
-                                            entry.path,
-                                        )?;
-                                    }
-                                    _ => return Err(err.into()),
+                                if err.get_errno() != sys::E::EEXIST {
+                                    return Err(err.into());
                                 }
+
+                                let _ = sys::unlinkat(destination_dir, entry.path);
+                                sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
                             }
 
                             real_file_count += 1;

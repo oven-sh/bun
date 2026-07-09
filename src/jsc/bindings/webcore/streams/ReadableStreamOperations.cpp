@@ -1034,14 +1034,18 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());
-        if (auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get())) {
+        // Error the output first so any second pending TextDecode read request's
+        // closeSteps (fired by cancelling the source) no-ops on canCloseOrEnqueue.
+        // Grab the reader before erroring: ClearAlgorithms nulls algorithmContext.
+        auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+        readableStreamDefaultControllerError(globalObject, controller, error);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (reader) {
             auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
             RETURN_IF_EXCEPTION(scope, void());
             if (cancelResult)
                 markPromiseAsHandled(vm, cancelResult);
         }
-        readableStreamDefaultControllerError(globalObject, controller, error);
-        RETURN_IF_EXCEPTION(scope, void());
         return;
     }
     auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);

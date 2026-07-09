@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite } from "harness";
+import net from "net";
 
 const exampleServer = exampleSite("http");
 
@@ -518,6 +519,35 @@ for (const { body, fn } of bodyTypes) {
         expect(result.chunks.join("")).toBe("hello world 🫠");
         expect(result.bodyUsedAfter).toBe(true);
         expect(result.secondCallThrew).toBe(true);
+      });
+      test("rejects when the client aborts mid-upload server-side", async () => {
+        const firstChunk = Promise.withResolvers<void>();
+        const done = Promise.withResolvers<{ name: string; received: string }>();
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const received: string[] = [];
+            try {
+              for await (const c of req.textStream()) {
+                received.push(c);
+                firstChunk.resolve();
+              }
+              done.resolve({ name: "<no error>", received: received.join("") });
+            } catch (e: any) {
+              done.resolve({ name: e?.name, received: received.join("") });
+            }
+            return new Response("ok");
+          },
+        });
+        const connected = Promise.withResolvers<void>();
+        const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+        sock.on("error", () => {});
+        await connected.promise;
+        sock.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\nhello");
+        await firstChunk.promise;
+        sock.destroy();
+        const result = await done.promise;
+        expect(result).toEqual({ name: "AbortError", received: "hello" });
       });
     });
     describe("json()", () => {

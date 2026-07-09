@@ -1,22 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
-// O_NONBLOCK is a property of the open file *description*, which fd inheritance
-// shares with the parent shell and every sibling in a pipeline. Bun sets it on
-// stdout/stderr when they're pipes (to drive its event loop); if it's not
-// cleared at exit, later blocking writers in the same pipeline hit EAGAIN and
-// truncate at the pipe buffer. Node restores the original flags in ResetStdio().
-//
-// Uses /proc/self/fdinfo to read the kernel's view of the flags (Linux-only);
-// the fix itself is POSIX-generic.
+// O_NONBLOCK is per open file *description* (shared with the parent shell and
+// pipeline siblings); leaving it set after exit makes later blocking writers
+// in the pipeline hit EAGAIN. Uses /proc/self/fdinfo (Linux-only ground truth).
 describe.concurrent.skipIf(!isLinux)("stdio does not leak O_NONBLOCK onto the inherited pipe after exit", () => {
   const O_NONBLOCK = 0o4000; // Linux value
+
+  function parseProbe(probe: string, raw: { stdout: string; stderr: string; exitCode: number }) {
+    const before = probe.match(/^before flags:\s*(\S+)$/m)?.[1];
+    const bunExit = probe.match(/^bunexit (\S+)$/m)?.[1];
+    const after = probe.match(/^after flags:\s*(\S+)$/m)?.[1];
+    if (before === undefined || bunExit === undefined || after === undefined) {
+      expect(raw).toEqual("probe output did not match expected shape");
+    }
+    return { before: parseInt(before!, 8), after: parseInt(after!, 8), bunExit: Number(bunExit) };
+  }
 
   async function flagsAround(targetFd: 1 | 2, trigger: string) {
     // The shell's fd {targetFd} is a pipe (Bun.spawn "pipe"). Dup it to fd 5 so
     // we can read the shared open file description's flags from /proc before
-    // and after bun runs. Probe lines go to the *other* stdio stream so they
-    // don't interleave with anything bun writes to the target.
+    // and after bun runs. Probe lines go to the *other* stdio stream.
     const probeFd = targetFd === 1 ? 2 : 1;
     const script = `
       exec 5>&${targetFd}
@@ -33,19 +37,8 @@ describe.concurrent.skipIf(!isLinux)("stdio does not leak O_NONBLOCK onto the in
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const probe = targetFd === 1 ? stderr : stdout;
-    const m = probe.match(/^before flags:\s*(\S+)\nbunexit (\d+)\nafter flags:\s*(\S+)\n$/);
-    if (!m) {
-      // Surface the raw output so failures are debuggable.
-      expect({ stdout, stderr, exitCode }).toEqual("probe output did not match expected shape");
-    }
-    const [, before, bunExit, after] = m!;
-    return {
-      before: parseInt(before, 8),
-      after: parseInt(after, 8),
-      bunExit: Number(bunExit),
-      shellExit: exitCode,
-    };
+    const raw = { stdout, stderr, exitCode };
+    return { ...parseProbe(targetFd === 1 ? stderr : stdout, raw), shellExit: exitCode };
   }
 
   const cases: Array<[string, 1 | 2, string]> = [
@@ -73,11 +66,50 @@ describe.concurrent.skipIf(!isLinux)("stdio does not leak O_NONBLOCK onto the in
     });
   });
 
+  test("SIGTERM death with all stdio non-TTY", async () => {
+    // Fully headless: stdin=file, stdout=pipe, stderr=/dev/null (no TTY on any
+    // fd). bun touches stdout, writes a ready marker, then blocks; the shell
+    // waits for the marker (so O_NONBLOCK is definitely set) then sends SIGTERM.
+    const script = `
+      exec 5>&1
+      printf 'before %s\\n' "$(grep '^flags:' /proc/self/fdinfo/5)" >&2
+      READY=$(mktemp -u); export READY
+      mkfifo "$READY"
+      "$1" --no-install -e 'void process.stdout.isTTY; require("fs").writeFileSync(process.env.READY, "1"); setInterval(() => {}, 1e9)' \
+        </dev/null 2>/dev/null &
+      pid=$!
+      cat "$READY" >/dev/null
+      rm -f "$READY"
+      kill -TERM $pid
+      wait $pid
+      printf 'bunexit %s\\n' "$?" >&2
+      printf 'after %s\\n' "$(grep '^flags:' /proc/self/fdinfo/5)" >&2
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", script, "sh", bunExe()],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { before, after, bunExit } = parseProbe(stderr, { stdout, stderr, exitCode });
+    expect({
+      after: after.toString(8),
+      afterHasNonblock: (after & O_NONBLOCK) !== 0,
+      bunExit,
+    }).toEqual({
+      after: before.toString(8),
+      afterHasNonblock: false,
+      bunExit: 143, // 128 + SIGTERM
+    });
+  });
+
   test.skipIf(!Bun.which("python3"))(
     "preserves O_NONBLOCK on the pipe if it was already set when bun started",
     async () => {
-      // Set O_NONBLOCK on the pipe *before* bun runs; bun must not clear a flag
-      // it didn't set. python3 flips the bit (sh has no fcntl).
+      // python3 flips the bit before bun runs (sh has no fcntl); bun must not
+      // clear a flag it didn't set.
       const script = `
       exec 5>&1
       python3 -c 'import fcntl,os; fcntl.fcntl(5, fcntl.F_SETFL, fcntl.fcntl(5, fcntl.F_GETFL) | os.O_NONBLOCK)'
@@ -94,14 +126,11 @@ describe.concurrent.skipIf(!isLinux)("stdio does not leak O_NONBLOCK onto the in
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const m = stderr.match(/^before flags:\s*(\S+)\nbunexit (\d+)\nafter flags:\s*(\S+)\n$/);
-      if (!m) expect({ stdout, stderr, exitCode }).toEqual("probe output did not match expected shape");
-      const before = parseInt(m![1], 8);
-      const after = parseInt(m![3], 8);
+      const { before, after, bunExit } = parseProbe(stderr, { stdout, stderr, exitCode });
       expect({
         beforeHasNonblock: (before & O_NONBLOCK) !== 0,
         after: after.toString(8),
-        bunExit: Number(m![2]),
+        bunExit,
       }).toEqual({
         beforeHasNonblock: true,
         after: before.toString(8),

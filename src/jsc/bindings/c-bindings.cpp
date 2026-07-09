@@ -707,8 +707,12 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
+    const bool anyFlagsSnapshotted = stdio_flags_to_restore[0].valid || stdio_flags_to_restore[1].valid || stdio_flags_to_restore[2].valid;
+
+    // Restore stdio state on signal death. The O_NONBLOCK restore matters even
+    // with no TTY (fully-piped / headless), so install whenever either kind of
+    // snapshot exists. Node.js registers its ResetStdio handlers unconditionally.
+    if (anyTTYs || anyFlagsSnapshotted) {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sigemptyset(&sa.sa_mask);

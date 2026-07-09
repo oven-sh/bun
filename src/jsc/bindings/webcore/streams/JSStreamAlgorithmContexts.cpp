@@ -1,6 +1,7 @@
 #include "config.h"
 #include "JSStreamAlgorithmContexts.h"
 
+#include "WebStreamsHeapAnalyzer.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
@@ -13,6 +14,7 @@
 namespace WebCore {
 
 using namespace JSC;
+using Bun::WebStreams::analyzeBarrierEdge;
 
 const ClassInfo JSStreamFromIterableContext::s_info = { "StreamFromIterableContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStreamFromIterableContext) };
 
@@ -57,8 +59,17 @@ void JSStreamFromIterableContext::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_iterator);
-    visitor.append(thisObject->m_nextMethod);
+    visitor.appendHidden(thisObject->m_iterator);
+    visitor.appendHidden(thisObject->m_nextMethod);
+}
+
+void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nextMethod, "nextMethod"_s);
 }
 
 } // namespace WebCore

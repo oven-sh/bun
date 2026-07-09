@@ -1181,7 +1181,7 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
 // ES2024 Evaluate() steps 2/4: for evaluating-async or evaluated, return
 // module.[[TopLevelCapability]].[[Promise]] (same object every call). Bun used
 // to reject the in-flight TLA case and mint a fresh promise per settled call.
-describe("node:vm SourceTextModule evaluate() is idempotent", () => {
+describe.concurrent("node:vm SourceTextModule evaluate() is idempotent", () => {
   test("TLA in a dependency: second evaluate() returns the same pending promise", async () => {
     await using proc = Bun.spawn({
       cmd: [

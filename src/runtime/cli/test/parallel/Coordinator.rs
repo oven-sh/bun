@@ -98,6 +98,18 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `v = base.add(i)` with `i < len` is in-bounds for
             // `self.workers`; field read through *mut so no `&mut Worker` is
             // formed that could alias the caller's live `w`.
+            //
+            // Skip workers that are spawned but have not yet sent their Ready
+            // frame (alive=true, inflight=None). On OHOS, fork is slow (~200ms),
+            // so a fast worker can finish its first file and call this function
+            // before a just-spawned sibling initialises. Stealing its range
+            // would cause it to re-steal when it finally does send Ready, running
+            // files under the thief's worker-ID instead of its own (BUG-03).
+            // Not-yet-spawned workers (alive=false) are fine to steal from —
+            // their range is an unclaimed reservation with no process attached.
+            if unsafe { (*v).alive && (*v).inflight.is_none() } {
+                continue;
+            }
             let n = unsafe { (*v).range.len() };
             if n > most {
                 most = n;

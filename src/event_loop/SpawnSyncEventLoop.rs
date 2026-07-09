@@ -398,8 +398,16 @@ impl SpawnSyncEventLoop {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
-                duration_storage =
-                    Some(ts.duration(&Timespec::now(TimespecMockMode::AllowMockedTime)));
+                let mut dur = ts.duration(&Timespec::now(TimespecMockMode::AllowMockedTime));
+                // Guard against wrapped-underflow: when the target time has already
+                // passed (even by 1 ns), wrapping_sub produces sec = i64::MAX /
+                // nsec = 999_999_999, which turns into an effectively-infinite
+                // epoll_wait timeout. Clamp to zero for an immediate poll instead.
+                // Symptom: spawnSync signal timeout ≤ ~15 ms hangs on slow platforms.
+                if dur.sec < 0 || dur.sec > 86_400 {
+                    dur = bun_core::Timespec::EPOCH;
+                }
+                duration_storage = Some(dur);
                 duration_storage.as_ref()
             }
             None => None,

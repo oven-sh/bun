@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -2425,8 +2425,11 @@ it("readlink", () => {
 describe("readlink encoding option", () => {
   const base = tmpdirSync();
   const link = join(base, "lnk");
-  symlinkSync(join(base, "tgt-dé"), link);
-  const targetBytes = readlinkSync(link, { encoding: "buffer" }) as Buffer;
+  let targetBytes: Buffer;
+  beforeAll(() => {
+    symlinkSync(join(base, "tgt-dé"), link);
+    targetBytes = readlinkSync(link, { encoding: "buffer" }) as Buffer;
+  });
 
   it("'buffer' returns a Buffer", () => {
     expect(Buffer.isBuffer(targetBytes)).toBe(true);

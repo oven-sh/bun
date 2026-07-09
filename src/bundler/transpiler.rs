@@ -1,7 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep so
-// the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
@@ -71,7 +69,7 @@ impl PluginRunner {
     /// Returns the `namespace:` prefix of `specifier`, or `b""` if it has none
     /// (Windows drive-letter prefixes are not namespaces).
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
-        let Some(colon) = bun_core::index_of_char(specifier, b':') else {
+        let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
             return b"";
         };
         let colon = colon as usize;
@@ -90,7 +88,7 @@ impl PluginRunner {
     /// Cheap pre-filter that rules
     /// out `./` / `../` / absolute paths before hitting the resolve hook.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = bun_core::last_index_of_char(specifier, b'.') {
+        if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?
@@ -101,7 +99,8 @@ impl PluginRunner {
                 return true;
             }
         }
-        !bun_paths::is_absolute(specifier) && bun_core::index_of_char(specifier, b':').is_some()
+        !bun_paths::is_absolute(specifier)
+            && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
     }
 }
 
@@ -156,8 +155,8 @@ impl<'a> Transpiler<'a> {
     pub const IS_CACHE_ENABLED: bool = false;
 
     /// Takes `*mut Log` (not `&'a mut`) because the same
-    /// `*Log` is aliased into `linker.log` / `resolver.log`; the un-gated struct field is
-    /// already a raw pointer for that reason.
+    /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
+    /// field is a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
@@ -404,9 +403,12 @@ impl<'a> Transpiler<'a> {
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
-    /// Returns the resolver's auto-install package-manager handle.
+    /// Returns the resolver's auto-install package-manager handle. Errs when
+    /// the one-time init fails (e.g. unreadable top-level directory).
     #[inline]
-    pub fn get_package_manager(&mut self) -> *mut dyn bun_resolver::install_types::AutoInstaller {
+    pub fn get_package_manager(
+        &mut self,
+    ) -> Result<*mut dyn bun_resolver::install_types::AutoInstaller, bun_core::Error> {
         self.resolver.get_package_manager()
     }
 
@@ -675,9 +677,8 @@ impl<'a> Transpiler<'a> {
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
         // `Linker::init` dropped its `arena` arg (linker.rs:172
-        // — global mimalloc). The
-        // un-gated `crate::linker::Linker` stores raw pointers so
-        // `&mut self.options` etc. coerce directly. Self-reference is
+        // — global mimalloc). `crate::linker::Linker` stores raw pointers
+        // so `&mut self.options` etc. coerce directly. Self-reference is
         // load-bearing — `linker.link()` reads back through these into the
         // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
         // `&mut self` on every call).
@@ -833,13 +834,6 @@ pub enum AlreadyBundled {
 }
 
 impl AlreadyBundled {
-    pub fn bytecode_slice(&self) -> &[u8] {
-        match self {
-            AlreadyBundled::Bytecode(slice) | AlreadyBundled::BytecodeCjs(slice) => slice,
-            _ => &[],
-        }
-    }
-
     pub fn is_bytecode(&self) -> bool {
         matches!(
             self,
@@ -1165,8 +1159,8 @@ impl<'a> Transpiler<'a> {
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
-    /// match the un-gated struct field types — the same `*Log` is aliased
-    /// into `linker.log` / `resolver.log` (see `set_log`).
+    /// match the struct field types — the same `*Log` is aliased into
+    /// `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -1762,21 +1756,23 @@ impl<'a> Transpiler<'a> {
                                     const BYTECODE_EXT: &[u8] = b".jsc";
                                     let mut path_buf2 = bun_paths::PathBuffer::uninit();
                                     let n = path.text.len();
+                                    let total = n + BYTECODE_EXT.len();
+                                    // `ZStr::from_buf` needs `buf[total] == 0`
+                                    // in-bounds; fall back to re-parsing the
+                                    // source instead of panicking on an
+                                    // over-long path.
+                                    if total >= path_buf2.len() {
+                                        break 'brk default_value;
+                                    }
                                     path_buf2[..n].copy_from_slice(path.text);
                                     path_buf2[n..][..BYTECODE_EXT.len()]
                                         .copy_from_slice(BYTECODE_EXT);
-                                    let total = n + BYTECODE_EXT.len();
-                                    // PathBuffer is zero-initialized so
-                                    // `path_buf2[total] == 0` already; safe to
-                                    // borrow as a NUL-terminated ZStr.
+                                    path_buf2[total] = 0;
                                     let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
-                                    // spec calls
-                                    // `bun.sys.File.toSourceAt(...)` which is
+                                    // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
-                                    // `read_from` directly (the `to_source_at`
-                                    // wrapper is gated as a T1→T2 move-in,
-                                    // sys/File.rs:446).
+                                    // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
                                         Ok(contents) if !contents.is_empty() => {
@@ -1881,15 +1877,17 @@ fn parse_data_loader<'a>(
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            match bun_parsers::json::parse_ts_config::<false>(source, log, arena) {
+            match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
-        options::Loader::Json => match bun_parsers::json::parse::<false>(source, log, arena) {
-            Ok(e) => e,
-            Err(_) => return None,
-        },
+        options::Loader::Json => {
+            match bun_parsers::json::parse_json_into_arena(source, log, arena) {
+                Ok(e) => e,
+                Err(_) => return None,
+            }
+        }
         options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
             Ok(e) => e,
             Err(_) => return None,
@@ -1908,6 +1906,18 @@ fn parse_data_loader<'a>(
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
     let mut expr = value_expr;
+
+    if !keep_json_and_toml_as_one_statement
+        && matches!(
+            expr.data,
+            bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
+        )
+    {
+        expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+    }
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 
@@ -2014,10 +2024,7 @@ fn parse_data_loader<'a>(
                         value: Some(prop.value.expect("infallible: prop has value")),
                     };
                     export_clauses[count] = bun_ast::ClauseItem {
-                        name: bun_ast::LocRef {
-                            ref_: Some(ref_),
-                            loc: key_loc,
-                        },
+                        name: bun_ast::LocRef { ref_, loc: key_loc },
                         alias: bun_ast::StoreStr::new(name),
                         alias_loc: key_loc,
                         ..Default::default()
@@ -2048,7 +2055,7 @@ fn parse_data_loader<'a>(
                         value: bun_ast::StmtOrExpr::Expr(expr),
                         default_name: bun_ast::LocRef {
                             loc: bun_ast::Loc::default(),
-                            ref_: Some(bun_ast::Ref::NONE),
+                            ref_: bun_ast::Ref::NONE,
                         },
                     },
                     bun_ast::Loc { start: 0 },
@@ -2069,7 +2076,7 @@ fn parse_data_loader<'a>(
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
                         loc: bun_ast::Loc::default(),
-                        ref_: Some(bun_ast::Ref::NONE),
+                        ref_: bun_ast::Ref::NONE,
                     },
                 },
                 bun_ast::Loc { start: 0 },
@@ -2116,7 +2123,7 @@ fn parse_text_loader<'a>(
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
                 loc: bun_ast::Loc::default(),
-                ref_: Some(bun_ast::Ref::NONE),
+                ref_: bun_ast::Ref::NONE,
             },
         },
         bun_ast::Loc { start: 0 },
@@ -2174,7 +2181,7 @@ fn parse_md_loader<'a>(
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
                 loc: bun_ast::Loc::default(),
-                ref_: Some(bun_ast::Ref::NONE),
+                ref_: bun_ast::Ref::NONE,
             },
         },
         bun_ast::Loc { start: 0 },
@@ -2283,7 +2290,7 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
         crate::options_impl::Target::Bun => T::Bun,
         crate::options_impl::Target::BunMacro => T::BunMacro,
         crate::options_impl::Target::Node => T::Node,
-        crate::options_impl::Target::BakeServerComponentsSsr => T::BakeServerComponentsSsr,
+        crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
     }
 }
 
@@ -3058,7 +3065,7 @@ impl<'a> Transpiler<'a> {
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::BakeServerComponentsSsr => self.print(
+                    | options::Target::ServerComponentsSsr => self.print(
                         print_arena,
                         result,
                         &mut writer,

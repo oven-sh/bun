@@ -7,13 +7,20 @@ pub mod shared {
     pub mod connection_flags;
     #[path = "Data.rs"]
     pub mod data;
+    #[path = "QueryStatus.rs"]
+    pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
     pub mod sql_query_result_mode;
+    #[path = "StackReader.rs"]
+    pub mod stack_reader;
+    #[path = "StatementStatus.rs"]
+    pub mod statement_status;
 
     pub use column_identifier::ColumnIdentifier;
     pub use connection_flags::ConnectionFlags;
     pub use data::Data;
     pub use sql_query_result_mode::SQLQueryResultMode;
+    pub use stack_reader::StackReader;
 }
 
 pub mod mysql {
@@ -31,8 +38,6 @@ pub mod mysql {
     pub mod mysql_request;
     #[path = "MySQLTypes.rs"]
     pub mod mysql_types;
-    #[path = "QueryStatus.rs"]
-    pub mod query_status;
     #[path = "SSLMode.rs"]
     pub mod ssl_mode;
     #[path = "StatusFlags.rs"]
@@ -105,7 +110,7 @@ pub mod mysql {
         pub use handshake_response41::HandshakeResponse41;
         pub use handshake_v10::HandshakeV10;
         pub use local_infile_request::LocalInfileRequest;
-        pub use new_reader::{Decode, NewReader, NewReaderOf, ReadableInt, ReaderContext};
+        pub use new_reader::{Decode, NewReader, ReadableInt, ReaderContext};
         pub use new_writer::{NewWriter, NewWriterWrap, Packet, WriterContext, write_wrap};
         pub use ok_packet::OKPacket;
         pub use packet_header::PacketHeader;
@@ -118,11 +123,12 @@ pub mod mysql {
         pub use crate::mysql::mysql_types::FieldType;
     }
 
+    pub use crate::shared::query_status;
+    pub use crate::shared::query_status::Status as QueryStatus;
     pub use auth_method::AuthMethod;
     pub use capabilities::Capabilities;
     pub use connection_state::ConnectionState;
     pub use mysql_query_result::MySQLQueryResult;
-    pub use query_status::Status as QueryStatus;
     pub use ssl_mode::SSLMode;
     pub use status_flags::{StatusFlag, StatusFlags};
     pub use tls_status::TLSStatus;
@@ -183,8 +189,6 @@ pub mod postgres {
         pub mod copy_out_response;
         #[path = "DataRow.rs"]
         pub mod data_row;
-        #[path = "DecoderWrap.rs"]
-        pub mod decoder_wrap;
         #[path = "Describe.rs"]
         pub mod describe;
         #[path = "ErrorResponse.rs"]
@@ -225,14 +229,10 @@ pub mod postgres {
         pub mod stack_reader;
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
-        #[path = "WriteWrap.rs"]
-        pub mod write_wrap;
 
         // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
-        pub use decoder_wrap::DecoderWrap;
         pub use new_reader::{NewReader, NewReaderWrap, ProtocolInt, ReaderContext};
         pub use new_writer::{LengthWriter, NewWriter, WriterContext, new_writer};
-        pub use write_wrap::WriteWrap;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};

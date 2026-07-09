@@ -18,6 +18,7 @@ async function runFixture(url: string, caPath = "") {
     env: { ...bunEnv, MYSQL_URL: url, CA_PATH: caPath },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 60_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };

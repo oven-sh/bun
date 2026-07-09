@@ -565,7 +565,6 @@ impl BackgroundProperty {
             | Self::CLIP.bits(),
     );
 
-    // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
     pub(crate) fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
         match property_id {
             PropertyId::BackgroundColor => Some(Self::BACKGROUND_COLOR),

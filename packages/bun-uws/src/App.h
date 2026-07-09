@@ -74,6 +74,8 @@ namespace uWS {
         const char **ca = nullptr;
         unsigned int ca_count = 0;
         unsigned int secure_options = 0;
+        int ssl_min_version = 0;
+        int ssl_max_version = 0;
         int reject_unauthorized = 0;
         int request_cert = 0;
         unsigned int client_renegotiation_limit = 3;
@@ -105,7 +107,7 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
-    /* No raw us_listen_socket_t* cache here. server.zig's non-abrupt stop calls
+    /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
      * App::close() task runs. The group's intrusive head_listen_sockets list is
@@ -205,27 +207,46 @@ public:
         return std::move(*this);
     }
 
+    using PublishStatus = typename WebSocket<SSL, true, int>::SendStatus;
+
     /* Publishes a message to all websocket contexts - conceptually as if publishing to the one single
      * TopicTree of this app (technically there are many TopicTrees, however the concept is that one
      * app has one conceptual Topic tree) */
-    bool publish(std::string_view topic, std::string_view message, unsigned char opCode, bool compress = false) {
+    PublishStatus publish(std::string_view topic, std::string_view message, unsigned char opCode, bool compress = false) {
         return this->publish(topic, message, (OpCode)opCode, compress);
     }
 
-    /* Publishes a message to all websocket contexts - conceptually as if publishing to the one single
-     * TopicTree of this app (technically there are many TopicTrees, however the concept is that one
-     * app has one conceptual Topic tree) */
-    bool publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
+    /* Publishes a message to the app's one conceptual websocket Topic tree.
+     * Returns the worst subscriber SendStatus; no subscribers is DROPPED,
+     * then BACKPRESSURE beats SUCCESS. */
+    PublishStatus publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
         /* Anything big bypasses corking efforts */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
-            return topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [](Subscriber *s, TopicTreeBigMessage &message) {
+            PublishStatus worst = PublishStatus::SUCCESS;
+            bool hasReceivers = false;
+            topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
+                hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
                 /* Send will drain if needed */
-                ws->send(message.message, (OpCode)message.opCode, message.compress);
+                worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
             });
+            return hasReceivers ? worst : PublishStatus::DROPPED;
         } else {
-            return topicTree->publish(nullptr, topic, {std::string(message), opCode, compress});
+            Topic *t = topicTree->lookupTopic(topic);
+            if (!t) {
+                return PublishStatus::DROPPED;
+            }
+            topicTree->publish(nullptr, topic, {std::string(message), opCode, compress});
+            /* publish() may have synchronously drained a subscriber; check backpressure after. */
+            PublishStatus worst = PublishStatus::SUCCESS;
+            bool hasReceivers = false;
+            for (Subscriber *s : *t) {
+                hasReceivers = true;
+                auto *ws = (WebSocket<SSL, true, int> *) s->user;
+                worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->sendStatus());
+            }
+            return hasReceivers ? worst : PublishStatus::DROPPED;
         }
     }
 
@@ -287,9 +308,19 @@ public:
     TemplatedApp(TemplatedApp &&other) = delete;
 
 private:
-    static void onMissingServerName(struct us_listen_socket_t *ls, const char *hostname) {
+    static struct ssl_ctx_st *onMissingServerName(struct us_listen_socket_t *ls, const char *hostname, int *abort_handshake, struct us_socket_t *socket) {
+        /* Bun.serve's missingServerName handler registers a context or lets the
+         * default serve the request - it never aborts or suspends the handshake. */
+        (void) abort_handshake;
+        (void) socket;
         auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
         httpContext->getSocketContextData()->missingServerNameHandler(hostname);
+        /* The handler is expected to have registered the name via
+         * addServerName(); hand the newly-registered context back so the
+         * in-flight handshake uses it (the resolver no longer re-checks the
+         * SNI tree after this callback returns). The handler may also have
+         * closed the listener, freeing the tree. */
+        return us_listen_socket_find_server_name_ctx(ls, hostname);
     }
 
     TemplatedApp(SocketContextOptions options) {

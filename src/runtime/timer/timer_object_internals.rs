@@ -68,7 +68,7 @@ impl Default for TimerObjectInternals {
 pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `runImmediateTask` path — un-gated for `__bun_run_immediate_task` (dispatch.rs).
+// `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
@@ -871,7 +871,7 @@ impl TimerObjectInternals {
 
 // ──────────────────────────────────────────────────────────────────────────
 // JS-host-method facade — `do_ref`/`do_unref`/`do_refresh`/`has_ref`/
-// `to_primitive`/`get_destroyed`/`finalize`/`cancel`. Un-gated for
+// `to_primitive`/`get_destroyed`/`finalize`/`cancel`, called from
 // `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {

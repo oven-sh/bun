@@ -51,6 +51,51 @@ describe("yes is killed", () => {
   });
 });
 
+describe("maxBuffer caps the buffer while the child is still writing", () => {
+  const maxBuffer = 1024;
+  // The result can only overshoot by the read that tripped the limit, and reads
+  // are clamped to the remaining budget plus Node's 64 KB stdio read size. That
+  // is the same bound Node gives spawnSync.
+  const bound = maxBuffer + 64 * 1024;
+
+  // `killSignal: 0` sends no signal at all, so the child outlives the kill and
+  // keeps writing for as long as Bun keeps reading. A child that merely
+  // installs a SIGTERM handler, or is slow to die, behaves the same way.
+  const firehose = `
+    const { writeSync } = require("fs");
+    const chunk = Buffer.alloc(1024 * 1024, 97);
+    for (let i = 0; i < 8; i++) {
+      // Throws EPIPE once Bun has stopped reading.
+      try { writeSync(1, chunk); } catch { break; }
+    }
+  `;
+
+  test.concurrent("Bun.spawnSync", () => {
+    const proc = Bun.spawnSync([bunExe(), "-e", firehose], {
+      maxBuffer,
+      killSignal: 0,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(proc.exitedDueToMaxBuffer).toBe(true);
+    // Above maxBuffer: the read that trips the limit is still buffered.
+    expect(proc.stdout.length).toBeGreaterThan(maxBuffer);
+    expect(proc.stdout.length).toBeLessThanOrEqual(bound);
+    expect(proc.stderr.length).toBe(0);
+  });
+
+  test.concurrent("Bun.spawn", async () => {
+    await using proc = Bun.spawn([bunExe(), "-e", firehose], {
+      maxBuffer,
+      killSignal: 0,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await proc.exited;
+    const stdout = await proc.stdout.bytes();
+    expect(stdout.length).toBeGreaterThan(maxBuffer);
+    expect(stdout.length).toBeLessThanOrEqual(bound);
+  });
+});
+
 describe("maxBuffer infinity does not limit the number of bytes", () => {
   const sample = "this is a long example string\n";
   const sample_repeat_count = 10000;

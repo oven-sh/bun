@@ -175,11 +175,16 @@ impl Method {
 pub struct Failure {
     pub err: bun_core::Error,
     pub step: Step,
-    #[cfg(debug_assertions)]
+    #[cfg(bun_debug)]
     pub debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
+    // `Failure` is `Copy` and tiny without the `#[cfg(bun_debug)]` trace
+    // field; clippy's trivially_copy_pass_by_ref fires in that config but
+    // `&self` is correct when the trace field is present. Allow it rather
+    // than vary the signature per-config.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == bun_core::err!("FileNotFound") || self.err == bun_core::err!("ENOENT"))
@@ -203,7 +208,7 @@ impl InstallResult {
         InstallResult::Failure(Box::new(Failure {
             err,
             step,
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             debug_trace: match _trace {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
                 None => bun_core::StoredTrace::capture(None /* @returnAddress() */),
@@ -974,25 +979,11 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        // `Arena::new()` here was creating + destroying a fresh
-        // `mi_heap` per package — measurable on no-op installs (~390× heap churn
-        // on create-next/elysia). `borrowing_default()` wraps `mi_heap_main()`
-        // with a no-op Drop. The lexer
-        // scratch frees its own buffers on `Lexer::deinit()` via the checker's
-        // Drop, so nothing leaks.
-        let bump = bun_alloc::Arena::borrowing_default();
-        let Ok(mut package_json_checker) =
-            bun_json::PackageJSONVersionChecker::init(&bump, source, &mut log)
-        else {
-            return false;
-        };
-        if package_json_checker.parse_expr().is_err() {
+        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
+        if package_json_checker.parse().is_err() {
             return false;
         }
-        // Reshaped for borrowck — `log` is exclusively borrowed by the
-        // checker's lexer; route the read through `lexer.log_mut()` (single
-        // provenance chain, see PackageJSONVersionChecker doc).
-        if package_json_checker.lexer.log_mut().errors > 0 || !package_json_checker.has_found_name {
+        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
             return false;
         }
         // workspaces aren't required to have a version

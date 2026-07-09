@@ -39,6 +39,44 @@ fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
     Some(u16::try_from(filepath.len()).expect("int cast"))
 }
 
+/// `which()` for spawn-style executable resolution. Windows resolves bare
+/// names against the working directory before `$PATH` (CreateProcessW search
+/// order; libuv and Node.js spawn behave the same), unlike `which()` which is
+/// `$PATH`-only for bare names on every platform.
+pub fn which_for_spawn<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
+    #[cfg(windows)]
+    {
+        let has_sep = bin.iter().any(|&b| b == b'/' || b == b'\\');
+        // The NoDefaultCurrentDirectoryInExePath env var is Windows' standard
+        // binary-planting opt-out; libuv gates its cwd search on it via
+        // NeedCurrentDirectoryForExePathW (libuv/libuv#3895), so spawn must too.
+        if !bin.is_empty()
+            && !has_sep
+            && !is_absolute(bin)
+            && !cwd.is_empty()
+            && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
+        {
+            let mut rel: Vec<u8> = Vec::with_capacity(bin.len() + 2);
+            rel.extend_from_slice(b"./");
+            rel.extend_from_slice(bin);
+            // PORT NOTE: NLL Polonius limitation — raw-ptr reborrow so the None
+            // branch can fall through without `buf` appearing borrowed.
+            // SAFETY: the borrow does not escape this block on the None path.
+            let buf_reborrow: &'a mut PathBuffer =
+                unsafe { &mut *std::ptr::from_mut::<PathBuffer>(buf) };
+            if let Some(found) = which(buf_reborrow, b"", cwd, &rel) {
+                return Some(found);
+            }
+        }
+    }
+    which(buf, path, cwd, bin)
+}
+
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {

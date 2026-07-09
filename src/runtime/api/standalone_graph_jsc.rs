@@ -66,11 +66,10 @@ impl FileJsc for File {
                 // SAFETY: `store_ptr` is the sole live mutable view; held ref
                 // guarantees liveness for the process lifetime.
                 let store = unsafe { &mut *store_ptr };
-                store.mime_type = mime;
                 b.content_type
-                    .set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
+                    .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
                 b.content_type_was_set.set(true);
-                b.content_type_allocated.set(false);
+                store.mime_type = mime;
             }
 
             // The real name goes here:

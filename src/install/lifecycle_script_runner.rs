@@ -35,7 +35,7 @@ bun_output::declare_scope!(Script, visible);
 // `RunCommand::replace_package_manager_run` is a thin re-export.
 // ──────────────────────────────────────────────────────────────────────────
 
-const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
+const BUN_BIN_NAME: &[u8] = if bun_core::env::IS_DEBUG {
     b"bun-debug"
 } else {
     b"bun"
@@ -1050,7 +1050,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             _ => {
                 Output::panic(format_args!(
-                    "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to unexpected status\n{}",
+                    "error: Failed to run {} script from \"{}\" due to unexpected status\n{}",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     status,

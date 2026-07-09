@@ -31,9 +31,9 @@ export default function compose(...streams) {
     streams[0] = Duplex.from(streams[0]);
   }
 
-  if (typeof streams[streams.length - 1] === "function") {
-    const idx = streams.length - 1;
-    streams[idx] = Duplex.from(streams[idx]);
+  const lastIdx = streams.length - 1;
+  if (typeof streams[lastIdx] === "function") {
+    streams[lastIdx] = Duplex.from(streams[lastIdx]);
   }
 
   for (let n = 0; n < streams.length; ++n) {

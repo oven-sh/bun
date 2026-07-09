@@ -4,6 +4,8 @@
 #[derive(strum::IntoStaticStr, strum::EnumString, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     ConnectionClosed,
+    ConnectionFailed,
+    ConnectionRefused,
     ConnectionTimedOut,
     LifetimeTimeout,
     IdleTimeout,

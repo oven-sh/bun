@@ -494,7 +494,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                         clause_items.push(bun_ast::ClauseItem {
                             name: bun_ast::LocRef {
-                                ref_: Some(ref_),
+                                ref_,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             alias,
@@ -579,7 +579,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         for item in cross_chunk_import.sorted_import_items.slice() {
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
-                                    ref_: Some(item.r#ref),
+                                    ref_: item.r#ref,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
                                 alias: bun_ast::StoreStr::new(item.export_alias.as_ref()),

@@ -212,9 +212,22 @@ impl File {
     /// `size+16`.
     pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
-            SizeHint::ProbablySmall => list.reserve(64),
+            SizeHint::ProbablySmall => {
+                if list.try_reserve(64).is_err() {
+                    return Err(Error::oom());
+                }
+            }
             SizeHint::UnknownSize => {
-                list.reserve_exact((self.get_end_pos()? + 16).saturating_sub(list.len()));
+                // `st_size` is only a hint (sparse files, racing writers, /proc):
+                // reserve fallibly so an absurd size surfaces as ENOMEM to the
+                // caller instead of aborting the process in `handle_alloc_error`.
+                let want = self
+                    .get_end_pos()?
+                    .saturating_add(16)
+                    .saturating_sub(list.len());
+                if list.try_reserve_exact(want).is_err() {
+                    return Err(Error::oom());
+                }
             }
         }
         read_fill_vec(list, 16, |dst, off| {

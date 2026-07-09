@@ -189,8 +189,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    let bump = bun_alloc::Arena::new();
-    let json = match JSON::parse_utf8(&source, &mut log, &bump) {
+    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
         Err(e) if e == err!("OutOfMemory") => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
@@ -202,8 +201,13 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
             Global::crash();
         }
     };
+    let json = parsed.root;
 
-    let Some(username) = json.get(b"username").and_then(|e| e.as_string(&bump)) else {
+    let username_expr = json.get(b"username");
+    let Some(username) = username_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+    else {
         // no username, invalid auth probably
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
@@ -220,14 +224,14 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, &mut log, &bump) {
+        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
             Err(e) if e == err!("OutOfMemory") => return Err(AllocError),
             Err(_) => break 'message None,
         };
 
-        let Some(error) = json.get(b"error").and_then(|e| e.as_string(&bump)) else {
+        let error_expr = parsed.root.get(b"error");
+        let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
             break 'message None;
         };
         Some(error.to_vec())
@@ -641,6 +645,23 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     }
 
     Ok(this.combine())
+}
+
+pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonValue) -> T {
+    let mut this = T::NONE.negatable();
+    match value {
+        JSON::E::JsonValue::Array(arr) => {
+            for item in arr.get().items() {
+                if let Some(value) = item.as_str() {
+                    this.apply(value);
+                }
+            }
+        }
+        JSON::E::JsonValue::String(str) => this.apply(str.slice()),
+        _ => {}
+    }
+
+    this.combine()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1963,20 +1984,19 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        let bump = bun_alloc::Arena::new();
-        let json = match JSON::parse_utf8(&source, log, &bump) {
+        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                // don't use the arena memory!
                 let mut cloned_log = bun_ast::Log::init();
                 log.clone_to_with_recycled(&mut cloned_log, true);
                 *log = cloned_log;
                 return Ok(None);
             }
         };
+        let json = parsed.root;
 
         if let Some(error_q) = json.as_property(b"error") {
-            if let Some(err) = error_q.expr.as_string(&bump) {
+            if let Some(err) = error_q.expr.as_utf8_string_literal() {
                 log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
@@ -2007,7 +2027,7 @@ impl PackageManifest {
 
         if PackageManager::verbose_install() {
             if let Some(name_q) = json.as_property(b"name") {
-                let Some(received_name) = name_q.expr.as_string(&bump) else {
+                let Some(received_name) = name_q.expr.as_utf8_string_literal() else {
                     return Ok(None);
                 };
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
@@ -2028,7 +2048,7 @@ impl PackageManifest {
         string_builder.count(expected_name);
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string(&bump) else {
+            let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
             string_builder.count(field);
@@ -2041,23 +2061,16 @@ impl PackageManifest {
         let mut extern_string_count_bin: usize = 0;
         let mut tarball_urls_count: usize = 0;
         'get_versions: {
-            let Some(versions_q) = json.as_property(b"versions") else {
+            let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions;
             };
-            let JSON::ExprData::EObject(versions_obj) = &versions_q.expr.data else {
+            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions;
             };
 
-            let versions = versions_obj.properties.slice();
+            let versions = versions_obj.get().properties();
             for prop in versions {
-                let Some(version_name) = prop
-                    .key
-                    .as_ref()
-                    .expect("infallible: prop has key")
-                    .as_string(&bump)
-                else {
-                    continue;
-                };
+                let version_name = prop.key.slice();
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
@@ -2067,7 +2080,7 @@ impl PackageManifest {
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
-                        prop.value.as_ref().expect("infallible: prop has value").loc,
+                        prop.key_loc,
                         format_args!(
                             "Failed to parse dependency {}",
                             bstr::BStr::new(version_name)
@@ -2087,105 +2100,71 @@ impl PackageManifest {
 
                 string_builder.count(version_name);
 
-                if let Some(dist_q) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"dist")
+                let version_obj = prop.value.as_object();
+
+                if let Some(tarball) = version_obj
+                    .and_then(|o| o.get(b"dist"))
+                    .and_then(|dist| dist.as_object())
+                    .and_then(|dist| dist.get(b"tarball"))
+                    .and_then(|tarball| tarball.as_str())
                 {
-                    if let Some(tarball_prop) = dist_q.expr.get(b"tarball") {
-                        if let JSON::ExprData::EString(s) = &tarball_prop.data {
-                            let tarball = s.data.slice();
-                            string_builder.count(tarball);
-                            tarball_urls_count += (!tarball.is_empty()) as usize;
-                        }
-                    }
+                    string_builder.count(tarball);
+                    tarball_urls_count += (!tarball.is_empty()) as usize;
                 }
 
                 'bin: {
-                    if let Some(bin) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"bin")
-                    {
-                        match &bin.expr.data {
-                            JSON::ExprData::EObject(obj) => {
-                                match obj.properties.slice().len() {
+                    if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
+                        match bin {
+                            JSON::E::JsonValue::Object(obj) => {
+                                let bin_props = obj.get().properties();
+                                match bin_props.len() {
                                     0 => break 'bin,
                                     1 => {}
                                     _ => {
-                                        extern_string_count_bin += obj.properties.slice().len() * 2;
+                                        extern_string_count_bin += bin_props.len() * 2;
                                     }
                                 }
 
-                                for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop
-                                        .key
-                                        .as_ref()
-                                        .expect("infallible: prop has key")
-                                        .as_string(&bump)
-                                    else {
-                                        break 'bin;
-                                    };
-                                    string_builder.count(k);
-                                    let Some(v) = bin_prop
-                                        .value
-                                        .as_ref()
-                                        .expect("infallible: prop has value")
-                                        .as_string(&bump)
-                                    else {
+                                for bin_prop in bin_props {
+                                    string_builder.count(bin_prop.key.slice());
+                                    let Some(v) = bin_prop.value.as_str() else {
                                         break 'bin;
                                     };
                                     string_builder.count(v);
                                 }
                             }
-                            JSON::ExprData::EString(_) => {
-                                if let Some(str_) = bin.expr.as_string(&bump) {
-                                    string_builder.count(str_);
-                                    break 'bin;
-                                }
+                            JSON::E::JsonValue::String(str_) => {
+                                string_builder.count(str_.slice());
+                                break 'bin;
                             }
                             _ => {}
                         }
                     }
 
-                    if let Some(dirs) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"directories")
+                    if let Some(str_) = version_obj
+                        .and_then(|o| o.get(b"directories"))
+                        .and_then(|dirs| dirs.as_object())
+                        .and_then(|dirs| dirs.get(b"bin"))
+                        .and_then(|bin| bin.as_str())
                     {
-                        if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                            if let Some(str_) = bin_prop.expr.as_string(&bump) {
-                                string_builder.count(str_);
-                                break 'bin;
-                            }
-                        }
+                        string_builder.count(str_);
+                        break 'bin;
                     }
                 }
 
                 bundled_deps_set.map.clear_retaining_capacity();
                 bundle_all_deps = false;
-                if let Some(bundled_deps_expr) = prop
-                    .value
-                    .as_ref()
-                    .unwrap()
-                    .get(b"bundleDependencies")
-                    .or_else(|| {
-                        prop.value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .get(b"bundledDependencies")
-                    })
+                if let Some(bundled_deps_value) = version_obj
+                    .and_then(|o| o.get(b"bundleDependencies"))
+                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
                 {
-                    match &bundled_deps_expr.data {
-                        JSON::ExprData::EBoolean(boolean) => {
-                            bundle_all_deps = boolean.value;
+                    match bundled_deps_value {
+                        JSON::E::JsonValue::Boolean(boolean) => {
+                            bundle_all_deps = *boolean;
                         }
-                        JSON::ExprData::EArray(arr) => {
-                            for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else {
+                        JSON::E::JsonValue::Array(arr) => {
+                            for bundled_dep in arr.get().items() {
+                                let Some(s) = bundled_dep.as_str() else {
                                     continue;
                                 };
                                 bundled_deps_set.insert(s)?;
@@ -2196,38 +2175,21 @@ impl PackageManifest {
                 }
 
                 for pair in &DEPENDENCY_GROUPS {
-                    if let Some(versioned_deps) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(pair.prop)
+                    if let Some(obj) = version_obj
+                        .and_then(|o| o.get(pair.prop))
+                        .and_then(|deps| deps.as_object())
                     {
-                        if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
-                            dependency_sum += obj.properties.slice().len();
-                            let properties = obj.properties.slice();
-                            for property in properties {
-                                if let Some(key) = property
-                                    .key
-                                    .as_ref()
-                                    .expect("infallible: prop has key")
-                                    .as_string(&bump)
-                                {
-                                    if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
-                                        // swap remove the dependency name because it could exist in
-                                        // multiple behavior groups.
-                                        bundled_deps_count += 1;
-                                    }
-                                    string_builder.count(key);
-                                    string_builder.count(
-                                        property
-                                            .value
-                                            .as_ref()
-                                            .expect("infallible: prop has value")
-                                            .as_string(&bump)
-                                            .unwrap_or(b""),
-                                    );
-                                }
+                        let properties = obj.properties();
+                        dependency_sum += properties.len();
+                        for property in properties {
+                            let key = property.key.slice();
+                            if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
+                                // swap remove the dependency name because it could exist in
+                                // multiple behavior groups.
+                                bundled_deps_count += 1;
                             }
+                            string_builder.count(key);
+                            string_builder.count(property.value.as_str().unwrap_or(b""));
                         }
                     }
                 }
@@ -2236,40 +2198,24 @@ impl PackageManifest {
                 // entries that appear in `peerDependenciesMeta` but not in
                 // `peerDependencies`. Reserve space for them; the build
                 // pass below appends them after the declared peer deps.
-                if let Some(meta) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"peerDependenciesMeta")
+                if let Some(obj) = version_obj
+                    .and_then(|o| o.get(b"peerDependenciesMeta"))
+                    .and_then(|meta| meta.as_object())
                 {
-                    if let JSON::ExprData::EObject(obj) = &meta.expr.data {
-                        for meta_prop in obj.properties.slice() {
-                            let Some(optional) = meta_prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"optional")
-                            else {
-                                continue;
-                            };
-                            let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
-                                continue;
-                            };
-                            if !b.value {
-                                continue;
-                            }
-                            let Some(key) = meta_prop
-                                .key
-                                .as_ref()
-                                .expect("infallible: prop has key")
-                                .as_string(&bump)
-                            else {
-                                continue;
-                            };
-                            dependency_sum += 1;
-                            string_builder.count(key);
-                            string_builder.count(b"*");
-                        }
+                    for meta_prop in obj.properties() {
+                        let Some(optional) = meta_prop
+                            .value
+                            .as_object()
+                            .and_then(|meta| meta.get(b"optional"))
+                        else {
+                            continue;
+                        };
+                        let JSON::E::JsonValue::Boolean(true) = optional else {
+                            continue;
+                        };
+                        dependency_sum += 1;
+                        string_builder.count(meta_prop.key.slice());
+                        string_builder.count(b"*");
                     }
                 }
             }
@@ -2278,28 +2224,14 @@ impl PackageManifest {
         extern_string_count += dependency_sum;
 
         let mut dist_tags_count: usize = 0;
-        if let Some(dist) = json.as_property(b"dist-tags") {
-            if let JSON::ExprData::EObject(obj) = &dist.expr.data {
-                let tags = obj.properties.slice();
-                for tag in tags {
-                    if let Some(key) = tag
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_string(&bump)
-                    {
-                        string_builder.count(key);
-                        extern_string_count += 2;
+        if let Some(dist) = json.get(b"dist-tags") {
+            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
+                for tag in obj.get().properties() {
+                    string_builder.count(tag.key.slice());
+                    extern_string_count += 2;
 
-                        string_builder.count(
-                            tag.value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_string(&bump)
-                                .unwrap_or(b""),
-                        );
-                        dist_tags_count += 1;
-                    }
+                    string_builder.count(tag.value.as_str().unwrap_or(b""));
+                    dist_tags_count += 1;
                 }
             }
         }
@@ -2381,14 +2313,14 @@ impl PackageManifest {
         let all_dependency_names_and_values_len = dependency_sum;
 
         'get_versions2: {
-            let Some(versions_q) = json.as_property(b"versions") else {
+            let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions2;
             };
-            let JSON::ExprData::EObject(versions_obj) = &versions_q.expr.data else {
+            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
                 break 'get_versions2;
             };
 
-            let versions = versions_obj.properties.slice();
+            let versions = versions_obj.get().properties();
 
             // versions change more often than names
             // so names go last because we are better able to dedupe at the end
@@ -2401,14 +2333,7 @@ impl PackageManifest {
             // `Default`, so no separate padding scrub is needed.
 
             for prop in versions {
-                let Some(version_name) = prop
-                    .key
-                    .as_ref()
-                    .expect("infallible: prop has key")
-                    .as_string(&bump)
-                else {
-                    continue;
-                };
+                let version_name = prop.key.slice();
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
@@ -2432,27 +2357,21 @@ impl PackageManifest {
                     continue;
                 }
 
+                let version_obj = prop.value.as_object();
+
                 bundled_deps_set.map.clear_retaining_capacity();
                 bundle_all_deps = false;
-                if let Some(bundled_deps_expr) = prop
-                    .value
-                    .as_ref()
-                    .unwrap()
-                    .get(b"bundleDependencies")
-                    .or_else(|| {
-                        prop.value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .get(b"bundledDependencies")
-                    })
+                if let Some(bundled_deps_value) = version_obj
+                    .and_then(|o| o.get(b"bundleDependencies"))
+                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
                 {
-                    match &bundled_deps_expr.data {
-                        JSON::ExprData::EBoolean(boolean) => {
-                            bundle_all_deps = boolean.value;
+                    match bundled_deps_value {
+                        JSON::E::JsonValue::Boolean(boolean) => {
+                            bundle_all_deps = *boolean;
                         }
-                        JSON::ExprData::EArray(arr) => {
-                            for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else {
+                        JSON::E::JsonValue::Array(arr) => {
+                            for bundled_dep in arr.get().items() {
+                                let Some(s) = bundled_dep.as_str() else {
                                     continue;
                                 };
                                 bundled_deps_set.insert(s)?;
@@ -2464,72 +2383,36 @@ impl PackageManifest {
 
                 let mut package_version: PackageVersion = empty_version;
 
-                if let Some(cpu_q) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"cpu")
-                {
-                    package_version.cpu = negatable_from_json::<Architecture>(&cpu_q.expr)?;
+                if let Some(cpu) = version_obj.and_then(|o| o.get(b"cpu")) {
+                    package_version.cpu = negatable_from_json_value::<Architecture>(cpu);
                 }
 
-                if let Some(os_q) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"os")
-                {
-                    package_version.os = negatable_from_json::<OperatingSystem>(&os_q.expr)?;
+                if let Some(os) = version_obj.and_then(|o| o.get(b"os")) {
+                    package_version.os = negatable_from_json_value::<OperatingSystem>(os);
                 }
 
-                if let Some(libc) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"libc")
-                {
-                    package_version.libc = negatable_from_json::<Libc>(&libc.expr)?;
+                if let Some(libc) = version_obj.and_then(|o| o.get(b"libc")) {
+                    package_version.libc = negatable_from_json_value::<Libc>(libc);
                 }
 
-                if let Some(has_install_script) = prop
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_property(b"hasInstallScript")
+                if let Some(JSON::E::JsonValue::Boolean(val)) =
+                    version_obj.and_then(|o| o.get(b"hasInstallScript"))
                 {
-                    if let JSON::ExprData::EBoolean(val) = &has_install_script.expr.data {
-                        package_version.has_install_script = val.value;
-                    }
+                    package_version.has_install_script = *val;
                 }
 
                 'bin: {
                     // bins are extremely repetitive
                     // We try to avoid storing copies the string
-                    if let Some(bin) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"bin")
-                    {
-                        match &bin.expr.data {
-                            JSON::ExprData::EObject(obj) => {
-                                match obj.properties.slice().len() {
+                    if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
+                        match bin {
+                            JSON::E::JsonValue::Object(obj) => {
+                                let bin_props = obj.get().properties();
+                                match bin_props.len() {
                                     0 => {}
                                     1 => {
-                                        let Some(bin_name) = obj.properties.slice()[0]
-                                            .key
-                                            .as_ref()
-                                            .unwrap()
-                                            .as_string(&bump)
-                                        else {
-                                            break 'bin;
-                                        };
-                                        let Some(value) = obj.properties.slice()[0]
-                                            .value
-                                            .as_ref()
-                                            .unwrap()
-                                            .as_string(&bump)
-                                        else {
+                                        let bin_name = bin_props[0].key.slice();
+                                        let Some(value) = bin_props[0].value.as_str() else {
                                             break 'bin;
                                         };
 
@@ -2544,7 +2427,7 @@ impl PackageManifest {
                                     }
                                     _ => {
                                         let group_start = extern_strings_bin_entries_cursor;
-                                        let group_len = obj.properties.slice().len() * 2;
+                                        let group_len = bin_props.len() * 2;
 
                                         let mut is_identical = match &prev_extern_bin_group {
                                             Some(r) => r.len() == group_len,
@@ -2558,15 +2441,8 @@ impl PackageManifest {
                                         // indexing at `group_start + group_i` works — no
                                         // `from_raw_parts`/`.add()` needed, and the `prev` read
                                         // at a disjoint index needs no split.
-                                        for bin_prop in obj.properties.slice() {
-                                            let Some(k) = bin_prop
-                                                .key
-                                                .as_ref()
-                                                .expect("infallible: prop has key")
-                                                .as_string(&bump)
-                                            else {
-                                                break 'bin;
-                                            };
+                                        for bin_prop in bin_props {
+                                            let k = bin_prop.key.slice();
                                             let cur = string_builder.append::<ExternalString>(k);
                                             all_extern_strings_bin_entries
                                                 [group_start + group_i as usize] = cur;
@@ -2591,12 +2467,7 @@ impl PackageManifest {
                                             }
                                             group_i += 1;
 
-                                            let Some(v) = bin_prop
-                                                .value
-                                                .as_ref()
-                                                .expect("infallible: prop has value")
-                                                .as_string(&bump)
-                                            else {
+                                            let Some(v) = bin_prop.value.as_str() else {
                                                 break 'bin;
                                             };
                                             let cur = string_builder.append::<ExternalString>(v);
@@ -2646,13 +2517,14 @@ impl PackageManifest {
 
                                 break 'bin;
                             }
-                            JSON::ExprData::EString(stri) => {
-                                if !stri.data.is_empty() {
+                            JSON::E::JsonValue::String(stri) => {
+                                let stri = stri.slice();
+                                if !stri.is_empty() {
                                     package_version.bin = Bin {
                                         tag: bin::Tag::File,
                                         _padding_tag: [0; 3],
                                         value: bin::Value::init_file(
-                                            string_builder.append::<SemverString>(&stri.data),
+                                            string_builder.append::<SemverString>(stri),
                                         ),
                                     };
                                     break 'bin;
@@ -2662,83 +2534,65 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"directories")
+                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
+                    // Because of the way the bin directive works,
+                    // specifying both a bin path and setting
+                    // directories.bin is an error. If you want to
+                    // specify individual files, use bin, and for all
+                    // the files in an existing bin directory, use
+                    // directories.bin.
+                    if let Some(str_) = version_obj
+                        .and_then(|o| o.get(b"directories"))
+                        .and_then(|dirs| dirs.as_object())
+                        .and_then(|dirs| dirs.get(b"bin"))
+                        .and_then(|bin| bin.as_str())
                     {
-                        // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
-                        // Because of the way the bin directive works,
-                        // specifying both a bin path and setting
-                        // directories.bin is an error. If you want to
-                        // specify individual files, use bin, and for all
-                        // the files in an existing bin directory, use
-                        // directories.bin.
-                        if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                            if let Some(str_) = bin_prop.expr.as_string(&bump) {
-                                if !str_.is_empty() {
-                                    package_version.bin = Bin {
-                                        tag: bin::Tag::Dir,
-                                        _padding_tag: [0; 3],
-                                        value: bin::Value::init_dir(
-                                            string_builder.append::<SemverString>(str_),
-                                        ),
-                                    };
-                                    break 'bin;
-                                }
-                            }
+                        if !str_.is_empty() {
+                            package_version.bin = Bin {
+                                tag: bin::Tag::Dir,
+                                _padding_tag: [0; 3],
+                                value: bin::Value::init_dir(
+                                    string_builder.append::<SemverString>(str_),
+                                ),
+                            };
+                            break 'bin;
                         }
                     }
                 }
 
                 'integrity: {
-                    if let Some(dist) = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(b"dist")
+                    if let Some(dist) = version_obj
+                        .and_then(|o| o.get(b"dist"))
+                        .and_then(|dist| dist.as_object())
                     {
-                        if let JSON::ExprData::EObject(_) = &dist.expr.data {
-                            if let Some(tarball_q) = dist.expr.as_property(b"tarball") {
-                                if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
-                                    if s.len() > 0 {
-                                        package_version.tarball_url =
-                                            string_builder.append::<ExternalString>(&s.data);
-                                        all_tarball_url_strings[tarball_url_strings_cursor] =
-                                            package_version.tarball_url;
-                                        tarball_url_strings_cursor += 1;
-                                    }
-                                }
+                        if let Some(tarball) = dist.get(b"tarball").and_then(|t| t.as_str()) {
+                            if !tarball.is_empty() {
+                                package_version.tarball_url =
+                                    string_builder.append::<ExternalString>(tarball);
+                                all_tarball_url_strings[tarball_url_strings_cursor] =
+                                    package_version.tarball_url;
+                                tarball_url_strings_cursor += 1;
                             }
+                        }
 
-                            if let Some(file_count_) = dist.expr.as_property(b"fileCount") {
-                                if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.file_count = n.value as u32;
-                                }
-                            }
+                        if let Some(JSON::E::JsonValue::Number(n)) = dist.get(b"fileCount") {
+                            package_version.file_count = n.value() as u32;
+                        }
 
-                            if let Some(file_count_) = dist.expr.as_property(b"unpackedSize") {
-                                if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.unpacked_size = n.value as u32;
-                                }
-                            }
+                        if let Some(JSON::E::JsonValue::Number(n)) = dist.get(b"unpackedSize") {
+                            package_version.unpacked_size = n.value() as u32;
+                        }
 
-                            if let Some(shasum) = dist.expr.as_property(b"integrity") {
-                                if let Some(shasum_str) = shasum.expr.as_string(&bump) {
-                                    package_version.integrity = Integrity::parse(shasum_str);
-                                    if package_version.integrity.tag.is_supported() {
-                                        break 'integrity;
-                                    }
-                                }
+                        if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
+                            package_version.integrity = Integrity::parse(shasum_str);
+                            if package_version.integrity.tag.is_supported() {
+                                break 'integrity;
                             }
+                        }
 
-                            if let Some(shasum) = dist.expr.as_property(b"shasum") {
-                                if let Some(shasum_str) = shasum.expr.as_string(&bump) {
-                                    package_version.integrity =
-                                        Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
-                                }
-                            }
+                        if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
+                            package_version.integrity =
+                                Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
                         }
                     }
                 }
@@ -2757,36 +2611,20 @@ impl PackageManifest {
                     // iteration's slice of `bundled_deps_buf`, so an
                     // unconditional empty pass would clobber the value the
                     // `dependencies` iteration just produced.
-                    // hoist `versioned_deps` so the borrowed
-                    // `obj.properties.slice()` outlives the labelled block.
-                    let versioned_deps = prop
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_property(pair.prop);
-                    let items: &[JSON::Property] = 'items: {
-                        if let Some(versioned_deps) = &versioned_deps {
-                            if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
-                                break 'items obj.properties.slice();
-                            }
-                        }
-                        &[]
+                    let items: &[JSON::E::PropertyJSON] = version_obj
+                        .and_then(|o| o.get(pair.prop))
+                        .and_then(|deps| deps.as_object())
+                        .map(JSON::E::ObjectJSON::properties)
+                        .unwrap_or(&[]);
+                    let peer_deps_meta: Option<&JSON::E::ObjectJSON> = if is_peer {
+                        version_obj
+                            .and_then(|o| o.get(b"peerDependenciesMeta"))
+                            .and_then(|meta| meta.as_object())
+                    } else {
+                        None
                     };
-                    let has_meta_only_peers = is_peer
-                        && 'blk: {
-                            let Some(meta) = prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"peerDependenciesMeta")
-                            else {
-                                break 'blk false;
-                            };
-                            match &meta.expr.data {
-                                JSON::ExprData::EObject(obj) => obj.properties.slice().len() > 0,
-                                _ => false,
-                            }
-                        };
+                    let has_meta_only_peers =
+                        peer_deps_meta.is_some_and(|meta| !meta.properties().is_empty());
                     if items.len() > 0 || has_meta_only_peers {
                         // reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
@@ -2798,42 +2636,24 @@ impl PackageManifest {
                         if is_peer {
                             optional_peer_dep_names.clear();
 
-                            if let Some(meta) = prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"peerDependenciesMeta")
-                            {
-                                if let JSON::ExprData::EObject(obj) = &meta.expr.data {
-                                    let meta_props = obj.properties.slice();
-                                    optional_peer_dep_names.reserve(meta_props.len());
-                                    for meta_prop in meta_props {
-                                        if let Some(optional) = meta_prop
-                                            .value
-                                            .as_ref()
-                                            .expect("infallible: prop has value")
-                                            .as_property(b"optional")
-                                        {
-                                            let JSON::ExprData::EBoolean(b) = &optional.expr.data
-                                            else {
-                                                continue;
-                                            };
-                                            if !b.value {
-                                                continue;
-                                            }
+                            if let Some(meta) = peer_deps_meta {
+                                let meta_props = meta.properties();
+                                optional_peer_dep_names.reserve(meta_props.len());
+                                for meta_prop in meta_props {
+                                    if let Some(optional) = meta_prop
+                                        .value
+                                        .as_object()
+                                        .and_then(|meta| meta.get(b"optional"))
+                                    {
+                                        let JSON::E::JsonValue::Boolean(true) = optional else {
+                                            continue;
+                                        };
 
-                                            let meta_key = meta_prop
-                                                .key
-                                                .as_ref()
-                                                .unwrap()
-                                                .as_string(&bump)
-                                                .expect("unreachable");
-                                            optional_peer_dep_names.push(
-                                                Semver::semver_string::Builder::string_hash(
-                                                    meta_key,
-                                                ),
-                                            );
-                                        }
+                                        optional_peer_dep_names.push(
+                                            Semver::semver_string::Builder::string_hash(
+                                                meta_prop.key.slice(),
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -2844,27 +2664,8 @@ impl PackageManifest {
                         let mut i: usize = 0;
 
                         for item in items {
-                            let name_str = match item
-                                .key
-                                .as_ref()
-                                .expect("infallible: prop has key")
-                                .as_string(&bump)
-                            {
-                                Some(s) => s,
-                                None => {
-                                    if cfg!(debug_assertions) {
-                                        unreachable!("non-value Expr from JSON parser")
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                            };
-                            let version_str = match item
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_string(&bump)
-                            {
+                            let name_str = item.key.slice();
+                            let version_str = match item.value.as_str() {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2937,66 +2738,43 @@ impl PackageManifest {
                             // `peerDependencies`) as `"*"` versions.
                             // pnpm/yarn do this; webpack relies on it
                             // to make `webpack-cli` reachable.
-                            if let Some(meta) = prop
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .as_property(b"peerDependenciesMeta")
-                            {
-                                if let JSON::ExprData::EObject(obj) = &meta.expr.data {
-                                    'outer: for meta_prop in obj.properties.slice() {
-                                        let Some(optional) = meta_prop
-                                            .value
-                                            .as_ref()
-                                            .expect("infallible: prop has value")
-                                            .as_property(b"optional")
-                                        else {
-                                            continue;
-                                        };
-                                        let JSON::ExprData::EBoolean(b) = &optional.expr.data
-                                        else {
-                                            continue;
-                                        };
-                                        if !b.value {
-                                            continue;
+                            if let Some(meta) = peer_deps_meta {
+                                'outer: for meta_prop in meta.properties() {
+                                    let Some(optional) = meta_prop
+                                        .value
+                                        .as_object()
+                                        .and_then(|meta| meta.get(b"optional"))
+                                    else {
+                                        continue;
+                                    };
+                                    let JSON::E::JsonValue::Boolean(true) = optional else {
+                                        continue;
+                                    };
+                                    let meta_key = meta_prop.key.slice();
+                                    let meta_hash =
+                                        Semver::semver_string::Builder::string_hash(meta_key);
+                                    for existing in &all_extern_strings[names_base..names_base + i]
+                                    {
+                                        if existing.hash == meta_hash {
+                                            continue 'outer;
                                         }
-                                        let Some(meta_key) = meta_prop
-                                            .key
-                                            .as_ref()
-                                            .expect("infallible: prop has key")
-                                            .as_string(&bump)
-                                        else {
-                                            continue;
-                                        };
-                                        let meta_hash =
-                                            Semver::semver_string::Builder::string_hash(meta_key);
-                                        for existing in
-                                            &all_extern_strings[names_base..names_base + i]
-                                        {
-                                            if existing.hash == meta_hash {
-                                                continue 'outer;
-                                            }
-                                        }
-                                        all_extern_strings[names_base + i] =
-                                            string_builder.append::<ExternalString>(meta_key);
-                                        version_extern_strings[values_base + i] =
-                                            string_builder.append::<ExternalString>(b"*");
-                                        // Swap to the optional-peer
-                                        // prefix the rest of the loop
-                                        // body would have produced.
-                                        if non_optional_peer_dependency_offset != i {
-                                            all_extern_strings.swap(
-                                                names_base + i,
-                                                names_base + non_optional_peer_dependency_offset,
-                                            );
-                                            version_extern_strings.swap(
-                                                values_base + i,
-                                                values_base + non_optional_peer_dependency_offset,
-                                            );
-                                        }
-                                        non_optional_peer_dependency_offset += 1;
-                                        i += 1;
                                     }
+                                    all_extern_strings[names_base + i] =
+                                        string_builder.append::<ExternalString>(meta_key);
+                                    version_extern_strings[values_base + i] =
+                                        string_builder.append::<ExternalString>(b"*");
+                                    if non_optional_peer_dependency_offset != i {
+                                        all_extern_strings.swap(
+                                            names_base + i,
+                                            names_base + non_optional_peer_dependency_offset,
+                                        );
+                                        version_extern_strings.swap(
+                                            values_base + i,
+                                            values_base + non_optional_peer_dependency_offset,
+                                        );
+                                    }
+                                    non_optional_peer_dependency_offset += 1;
+                                    i += 1;
                                 }
                             }
                         }
@@ -3133,13 +2911,7 @@ impl PackageManifest {
                                             == this_names[j].value.slice(string_buf)
                                     );
                                     debug_assert!(
-                                        dep_name.value.slice(string_buf)
-                                            == items[j]
-                                                .key
-                                                .as_ref()
-                                                .expect("infallible: prop has key")
-                                                .as_string(&bump)
-                                                .expect("dependency key must be a string")
+                                        dep_name.value.slice(string_buf) == items[j].key.slice()
                                     );
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
@@ -3151,9 +2923,7 @@ impl PackageManifest {
                                         dep_version.value.slice(string_buf)
                                             == items[j]
                                                 .value
-                                                .as_ref()
-                                                .expect("infallible: prop has value")
-                                                .as_string(&bump)
+                                                .as_str()
                                                 .expect("dependency value must be a string")
                                     );
                                 }
@@ -3162,9 +2932,11 @@ impl PackageManifest {
                     }
                 }
 
-                if let Some(time_obj) = json.as_property(b"time") {
-                    if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
-                        if let Some(publish_time_str) = publish_time_expr.as_string(&bump) {
+                if let Some(time_expr) = json.get(b"time") {
+                    if let JSON::ExprData::EObjectJSON(time_obj) = &time_expr.data {
+                        if let Some(publish_time_str) =
+                            time_obj.get().get(version_name).and_then(|v| v.as_str())
+                        {
                             if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
                                 package_version.publish_timestamp_ms = ms;
                             }
@@ -3194,42 +2966,30 @@ impl PackageManifest {
         let mut extern_strings_cursor = extern_strings_consumed;
         let _ = all_dependency_names_and_values_len;
 
-        if let Some(dist) = json.as_property(b"dist-tags") {
-            if let JSON::ExprData::EObject(obj) = &dist.expr.data {
-                let tags = obj.properties.slice();
+        if let Some(dist) = json.get(b"dist-tags") {
+            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
+                let tags = obj.get().properties();
                 let extern_strings_slice_start = extern_strings_cursor;
                 let mut dist_tag_i: usize = 0;
 
                 for tag in tags {
-                    if let Some(key) = tag
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_string(&bump)
-                    {
-                        all_extern_strings[extern_strings_slice_start + dist_tag_i] =
-                            string_builder.append::<ExternalString>(key);
+                    all_extern_strings[extern_strings_slice_start + dist_tag_i] =
+                        string_builder.append::<ExternalString>(tag.key.slice());
 
-                        let Some(version_name) = tag
-                            .value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .as_string(&bump)
-                        else {
-                            continue;
-                        };
+                    let Some(version_name) = tag.value.as_str() else {
+                        continue;
+                    };
 
-                        let dist_tag_value_literal =
-                            string_builder.append::<ExternalString>(version_name);
+                    let dist_tag_value_literal =
+                        string_builder.append::<ExternalString>(version_name);
 
-                        let sliced_string = dist_tag_value_literal
-                            .value
-                            .sliced(string_builder.allocated_slice());
+                    let sliced_string = dist_tag_value_literal
+                        .value
+                        .sliced(string_builder.allocated_slice());
 
-                        all_semver_versions[dist_tag_versions_start + dist_tag_i] =
-                            Semver::Version::parse(sliced_string).version.min();
-                        dist_tag_i += 1;
-                    }
+                    all_semver_versions[dist_tag_versions_start + dist_tag_i] =
+                        Semver::Version::parse(sliced_string).version.min();
+                    dist_tag_i += 1;
                 }
 
                 result.pkg.dist_tags = DistTagMap {
@@ -3277,7 +3037,7 @@ impl PackageManifest {
         }
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string(&bump) else {
+            let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
             result.pkg.modified = string_builder.append::<SemverString>(field);

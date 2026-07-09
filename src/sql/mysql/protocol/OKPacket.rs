@@ -48,5 +48,3 @@ impl OKPacket {
         Ok(())
     }
 }
-
-pub use self::OKPacket as _DecoderWrapTarget;

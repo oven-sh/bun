@@ -83,15 +83,12 @@ for (const arg of [filename, { filename }]) {
     const lines = err.stack.split('\n');
 
     assert.strictEqual(lines[0].trim(), `${filename}:1`);
-    if (typeof Bun === 'undefined') {
-      assert.strictEqual(lines[1].trim(), code);
-      // Skip lines[2] and lines[3]. They're just a ^ and blank line.
-      assert.strictEqual(lines[4].trim(), 'Error: foo');
-      assert.strictEqual(lines[5].trim(), `at ${filename}:1:7`);
-    } else {
-      assert.strictEqual(lines[1].trim(), 'Error: foo');
-      assert.strictEqual(lines[2].trim(), `at ${filename}:1:16`);
-    }
+    assert.strictEqual(lines[1].trim(), code);
+    // Skip lines[2] and lines[3]. They're just a ^ and blank line.
+    assert.strictEqual(lines[4].trim(), 'Error: foo');
+    // JSC attributes the throw to a different column than V8.
+    assert.strictEqual(lines[5].trim(),
+                       typeof Bun === 'undefined' ? `at ${filename}:1:7` : `at ${filename}:1:16`);
     // The rest of the stack is uninteresting.
     return true;
   });

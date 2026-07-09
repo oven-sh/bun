@@ -123,6 +123,11 @@ public:
     const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
+    // Read-only emptiness probe for GC marker threads (JSAbortSignalOwner::isReachableFromOpaqueRoots).
+    // WeakListHashSet::isEmptyIgnoringNullReferences() prunes dead entries, destroying WeakPtrs whose
+    // single-threaded impls (and the nodes holding them) may only be released on the owning thread.
+    bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
+
     // https://github.com/oven-sh/bun/issues/4517
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }
@@ -199,6 +204,7 @@ private:
     JSValueInWrappedObject m_reason;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
+    Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };

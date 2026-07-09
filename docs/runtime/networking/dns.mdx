@@ -3,14 +3,14 @@ title: DNS
 description: Use Bun's DNS module to resolve DNS records
 ---
 
-Bun implements it's own `dns` module, and the `node:dns` module.
+Bun implements its own `dns` module and the `node:dns` module.
 
 ```ts
 import * as dns from "node:dns";
 
 const addrs = await dns.promises.resolve4("bun.com", { ttl: true });
 console.log(addrs);
-// => [{ address: "172.67.161.226", family: 4, ttl: 0 }, ...]
+// => [{ address: "172.67.161.226", ttl: 0 }, ...]
 ```
 
 ```ts
@@ -23,9 +23,9 @@ dns.prefetch("bun.com", 443);
 
 ## DNS caching in Bun
 
-Bun supports DNS caching. This cache makes repeated connections to the same hosts faster.
+Bun caches DNS lookups, which makes repeated connections to the same hosts faster.
 
-At the time of writing, we cache up to 255 entries for a maximum of 30 seconds (each). If any connections to a host fail, we remove the entry from the cache. When multiple connections are made to the same host simultaneously, DNS lookups are deduplicated to avoid making multiple requests for the same host.
+The cache holds up to 256 entries for a maximum of 30 seconds each. If a connection to a host fails, Bun removes that host's entry from the cache. Simultaneous connections to the same host share one DNS lookup.
 
 This cache is automatically used by:
 
@@ -38,9 +38,7 @@ This cache is automatically used by:
 
 ### When should I prefetch a DNS entry?
 
-Web browsers expose [`<link rel="dns-prefetch">`](https://developer.mozilla.org/en-US/docs/Web/Performance/dns-prefetch) to allow developers to prefetch DNS entries. This is useful when you know you'll need to connect to a host in the near future and want to avoid the initial DNS lookup.
-
-In Bun, you can use the `dns.prefetch` API to achieve the same effect.
+Web browsers expose [`<link rel="dns-prefetch">`](https://developer.mozilla.org/en-US/docs/Web/Performance/dns-prefetch) to resolve a hostname before it's needed. In Bun, `dns.prefetch` does the same thing: use it when you know you'll connect to a host soon and want to avoid the initial DNS lookup.
 
 ```ts
 import { dns } from "bun";
@@ -48,16 +46,16 @@ import { dns } from "bun";
 dns.prefetch("my.database-host.com", 5432);
 ```
 
-An example where you might want to use this is a database driver. When your application first starts up, you can prefetch the DNS entry for the database host so that by the time it finishes loading everything, the DNS query to resolve the database host may already be completed.
+A database driver is a good example: prefetch the database host's DNS entry when your application starts, and by the time the rest of the application has loaded, the lookup may already be complete.
 
 ### `dns.prefetch`
 
 <Warning>This API is experimental and may change in the future.</Warning>
 
-To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful when you know you'll need to connect to a host soon and want to avoid the initial DNS lookup.
+`dns.prefetch` resolves a hostname before you need it.
 
 ```ts
-dns.prefetch(hostname: string, port: number): void;
+dns.prefetch(hostname: string, port?: number): void;
 ```
 
 Here's an example:
@@ -75,7 +73,7 @@ await fetch("https://bun.com");
 
 <Warning>This API is experimental and may change in the future.</Warning>
 
-To get the current cache stats, you can use the `dns.getCacheStats` API. This API returns an object with the following properties:
+`dns.getCacheStats()` returns the current cache stats as an object with the following properties:
 
 ```ts
 {
@@ -100,7 +98,7 @@ console.log(stats);
 
 ### Configuring DNS cache TTL
 
-Bun defaults to 30 seconds for the TTL of DNS cache entries. To change this, you can set the environment variable `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS`. For example, to set the TTL to 5 seconds:
+Bun caches DNS entries for 30 seconds by default. To change the TTL, set the `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS` environment variable. For example, to set it to 5 seconds:
 
 ```sh
 BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts
@@ -108,4 +106,4 @@ BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts
 
 #### Why is 30 seconds the default?
 
-Unfortunately, the system API underneath (`getaddrinfo`) does not provide a way to get the TTL of a DNS entry. This means we have to pick a number arbitrarily. We chose 30 seconds because it's long enough to see the benefits of caching, and short enough to be unlikely to cause issues if a DNS entry changes. [Amazon Web Services recommends 5 seconds](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html) for the Java Virtual Machine, however the JVM defaults to cache indefinitely.
+The system API underneath (`getaddrinfo`) does not expose the TTL of a DNS entry, so Bun has to pick a number. We chose 30 seconds because it's long enough to see the benefits of caching and short enough to be unlikely to cause issues if a DNS entry changes. [Amazon Web Services recommends 5 seconds](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html) for the Java Virtual Machine, though the JVM's default is to cache indefinitely.

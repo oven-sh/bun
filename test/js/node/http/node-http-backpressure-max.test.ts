@@ -45,6 +45,9 @@ describe("backpressure", () => {
 
       expect(totalBytes).toBe(payloadSize);
     },
-    60_000,
+    // Moving 4 GiB through the server and the fetch reader takes ~60s on the
+    // slowest CI runners (darwin x64), which sat exactly at the old 60s
+    // limit and made the test flaky there.
+    120_000,
   );
 });

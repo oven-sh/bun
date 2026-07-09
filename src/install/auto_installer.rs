@@ -456,7 +456,7 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
-) -> core::ptr::NonNull<dyn hooks::AutoInstaller> {
+) -> Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_core::Error> {
     // Idempotent.
     bun_http::http_thread::init(&Default::default());
 
@@ -474,9 +474,9 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
         bun_install,
         crate::package_manager::CommandLineArguments::default(),
         env_ref,
-    );
-    // `init_with_runtime` returns the non-null `holder::RAW_PTR` singleton;
-    // upcast to the trait object the resolver stores.
-    core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)
-        .expect("init_with_runtime returns the holder::RAW_PTR singleton")
+    )?;
+    // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`
+    // singleton; upcast to the trait object the resolver stores.
+    Ok(core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)
+        .expect("init_with_runtime returns the holder::RAW_PTR singleton"))
 }

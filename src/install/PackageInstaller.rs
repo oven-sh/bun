@@ -346,7 +346,7 @@ impl<'a> LazyPackageDestinationDir<'a> {
 /// anything that could escape `node_modules`: empty names, `.`/`..`
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
-fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.is_empty()
         || alias.len() >= MAX_PATH_BYTES
         || alias.contains(&b'\\')
@@ -645,13 +645,13 @@ impl<'a> PackageInstaller<'a> {
 
                 if let Some(err) = bin_linker.err {
                     if log_level != Options::LogLevel::Silent {
-                        manager.log_mut().add_error_fmt_opts(
-                            format_args!(
-                                "Failed to link <b>{}<r>: {}",
-                                bstr::BStr::new(alias),
-                                err.name(),
-                            ),
-                            Default::default(),
+                        bun_ast::add_error_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "Failed to link <b>{}<r>: {}",
+                            bstr::BStr::new(alias),
+                            err.name(),
                         );
                     }
 
@@ -1376,9 +1376,21 @@ impl<'a> PackageInstaller<'a> {
                     }
                     installer.cache_dir = Fd::cwd();
                 } else {
-                    // transitive folder dependencies are relative to their parent. they are not hoisted
+                    // transitive folder dependencies are not hoisted
                     if folder.len() >= self.folder_path_buf.len()
-                        || bin::bin_target_escapes_package_dir(folder)
+                        || (bin::bin_target_escapes_package_dir(folder) && {
+                            // overrides/resolutions are only ever parsed from the root
+                            // package.json, so a folder path that reached here via an
+                            // override was written by the user and is trusted the same
+                            // as a direct dependency of the root.
+                            let dep = &self.lockfile().buffers.dependencies.as_slice()
+                                [dependency_id as usize];
+                            !self.lockfile().overrides.contains_name(
+                                dep.name_hash,
+                                dep.name.slice(string_buf!()),
+                                string_buf!(),
+                            )
+                        })
                     {
                         if log_level != Options::LogLevel::Silent {
                             bun_core::pretty_errorln!(
@@ -1705,6 +1717,24 @@ impl<'a> PackageInstaller<'a> {
                     {
                         // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
                         // and is not hoisted.
+                        //
+                        // A transitive `Resolution::Folder` declared by a local `file:` package
+                        // is relative to the top-level dir (`Package::parse` normalized it), so
+                        // install it from `installer.cache_dir` (the cwd, set in the switch above).
+                        if resolution.tag == resolution::Tag::Folder
+                            && self.lockfile().is_folder_tree_id(self.current_tree_id)
+                        {
+                            break 'result installer.install(
+                                self.skip_delete,
+                                &destination_dir,
+                                installer.get_install_method(),
+                                resolution.tag,
+                            );
+                        }
+
+                        // One declared by an npm manifest (`Package::from_npm`) is verbatim,
+                        // i.e. relative to the declaring package, which installs at
+                        // `dirname(node_modules.path)` because transitive folders never hoist.
                         let dir_name = {
                             let d = dirname::<platform::Auto>(self.node_modules.path.as_slice());
                             if d.is_empty() {
@@ -1743,6 +1773,8 @@ impl<'a> PackageInstaller<'a> {
                             )
                         };
 
+                        // npm packages can declare `file:` paths missing from the published
+                        // tarball (e.g. excluded by `files`); nothing to link is not a failure.
                         if let package_install::InstallResult::Failure(f) = &result {
                             if f.err == bun_core::err!("ENOENT")
                                 || f.err == bun_core::err!("FileNotFound")
@@ -1951,6 +1983,15 @@ impl<'a> PackageInstaller<'a> {
                             bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
                         );
                         self.summary.fail += 1;
+                    } else if resolution.tag == resolution::Tag::Folder
+                        && cause.is_package_missing_from_cache()
+                    {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: Could not find folder \"file:{}\" for dependency \"{}\"",
+                            bstr::BStr::new(resolution.folder().slice(string_buf!())),
+                            bstr::BStr::new(alias.slice(string_buf!())),
+                        );
+                        self.summary.fail += 1;
                     } else if cause.err == bun_core::err!("AccessDenied") {
                         // there are two states this can happen
                         // - Access Denied because node_modules/ is unwritable
@@ -1966,19 +2007,14 @@ impl<'a> PackageInstaller<'a> {
                                 let dir = match lazy_package_dir.get_dir() {
                                     Ok(d) => d,
                                     Err(err) => {
-                                        Output::err_tag(
+                                        Output::err(
                                             "EACCES",
-                                            format_args!(
-                                                "Permission denied while installing <b>{}<r>",
-                                                bstr::BStr::new(
-                                                    self.names[package_id as usize].slice(
-                                                        self.lockfile()
-                                                            .buffers
-                                                            .string_bytes
-                                                            .as_slice()
-                                                    )
+                                            "Permission denied while installing <b>{}<r>",
+                                            (bstr::BStr::new(
+                                                self.names[package_id as usize].slice(
+                                                    self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
-                                            ),
+                                            ),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -1989,19 +2025,14 @@ impl<'a> PackageInstaller<'a> {
                                 let stat = match bun_sys::fstat(dir) {
                                     Ok(s) => s,
                                     Err(err) => {
-                                        Output::err_tag(
+                                        Output::err(
                                             "EACCES",
-                                            format_args!(
-                                                "Permission denied while installing <b>{}<r>",
-                                                bstr::BStr::new(
-                                                    self.names[package_id as usize].slice(
-                                                        self.lockfile()
-                                                            .buffers
-                                                            .string_bytes
-                                                            .as_slice()
-                                                    )
+                                            "Permission denied while installing <b>{}<r>",
+                                            (bstr::BStr::new(
+                                                self.names[package_id as usize].slice(
+                                                    self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
-                                            ),
+                                            ),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2036,14 +2067,12 @@ impl<'a> PackageInstaller<'a> {
                             NODE_MODULES_IS_OK.store(true, Ordering::Relaxed);
                         }
 
-                        Output::err_tag(
+                        Output::err(
                             "EACCES",
-                            format_args!(
-                                "Permission denied while installing <b>{}<r>",
-                                bstr::BStr::new(
-                                    self.names[package_id as usize].slice(string_buf!())
-                                ),
-                            ),
+                            "Permission denied while installing <b>{}<r>",
+                            (bstr::BStr::new(
+                                self.names[package_id as usize].slice(string_buf!()),
+                            ),),
                         );
 
                         self.summary.fail += 1;
@@ -2058,7 +2087,7 @@ impl<'a> PackageInstaller<'a> {
                                 ),
                             ),
                         );
-                        #[cfg(debug_assertions)]
+                        #[cfg(bun_debug)]
                         {
                             let t = cause.debug_trace;
                             bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());

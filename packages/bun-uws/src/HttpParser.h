@@ -541,7 +541,12 @@ struct HttpResponseData;
          * field line (clientError HPE_INVALID_HEADER_TOKEN) instead of completing it
          * with req.trailers silently dropped; a CTL byte in a value is only accepted
          * under insecureHTTPParser, exactly like a header value. An empty section
-         * (bare CRLF, no trailers) is valid. */
+         * (bare CRLF, no trailers) is valid.
+         *
+         * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
+         * more valid fields than that followed by a malformed line is accepted where node
+         * still errors; reaching it requires a deliberately padded (but size-capped)
+         * section, and rejecting it would need a second scanning mode. */
         static bool validNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser) {
             if (!section || section->size() <= 2) {
                 return true;

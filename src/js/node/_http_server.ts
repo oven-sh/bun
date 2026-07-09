@@ -2302,7 +2302,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   let written = 0;
   if (chunk) {
     written = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
-    if (written > 0 && this.getHeader("content-length") === undefined) {
+    if (written > 0 && (this._contentLength ?? this.getHeader("content-length")) === undefined) {
       // Chunked framing overhead: <hex length>\r\n<chunk>\r\n
       written += written.toString(16).length + 4;
     }

@@ -940,8 +940,10 @@ function TLSSocket(socket?, options?) {
   // Honor the constructor's own `rejectUnauthorized`. tls.connect() also
   // routes it through Socket.prototype.connect's options, but the bare
   // `new TLSSocket(socket, options)` + `_start()` path never gets there.
+  // Only an explicit `false` disables verification (Node's CVE-2021-22939
+  // fix): every other value, including `null`, keeps it on.
   const rejectUnauthorized = options.rejectUnauthorized;
-  if (rejectUnauthorized !== undefined) this._rejectUnauthorized = rejectUnauthorized;
+  if (rejectUnauthorized !== undefined) this._rejectUnauthorized = rejectUnauthorized !== false;
 
   // `new tls.TLSSocket(socket, { isServer: true })`: drive the server-side TLS
   // handshake over the provided socket via net.ts's native upgrade path (reaches
@@ -1402,7 +1404,7 @@ function Server(options, secureConnectionListener): void {
       const rejectUnauthorized = options.rejectUnauthorized;
 
       if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
+        this._rejectUnauthorized = rejectUnauthorized !== false;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;

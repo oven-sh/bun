@@ -1666,8 +1666,9 @@ Socket.prototype.connect = function connect(...args) {
       this._requestCert = true;
       if (tls) {
         if (typeof rejectUnauthorized !== "undefined") {
-          this._rejectUnauthorized = rejectUnauthorized;
-          tls.rejectUnauthorized = rejectUnauthorized;
+          // Only an explicit `false` disables verification (CVE-2021-22939).
+          this._rejectUnauthorized = rejectUnauthorized !== false;
+          tls.rejectUnauthorized = this._rejectUnauthorized;
         } else {
           this._rejectUnauthorized = tls.rejectUnauthorized;
         }
@@ -2718,8 +2719,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = options;
       if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+        self._rejectUnauthorized = rejectUnauthorized !== false;
+        tls.rejectUnauthorized = self._rejectUnauthorized;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }
@@ -2871,8 +2872,8 @@ function internalConnectMultiple(context, canceled?) {
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = context.options;
       if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+        self._rejectUnauthorized = rejectUnauthorized !== false;
+        tls.rejectUnauthorized = self._rejectUnauthorized;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }

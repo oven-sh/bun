@@ -878,12 +878,13 @@ it("getEphemeralKeyInfo() reports no key on a resumed TLS 1.2 session, matching 
     return client;
   }
 
+  let session: Buffer | undefined;
   try {
     const full = await connect({});
     try {
       expect(full.isSessionReused()).toBe(false);
       expect(full.getEphemeralKeyInfo()).toStrictEqual({ type: "ECDH", name: "X25519", size: 253 });
-      var session = full.getSession();
+      session = full.getSession();
     } finally {
       full.destroy();
     }
@@ -962,6 +963,55 @@ it("new tls.TLSSocket(socket, { isServer: false, rejectUnauthorized: false }) co
     expect(secure.authorizationError).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
   } finally {
     secure.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("rejectUnauthorized: null keeps certificate verification on, matching Node (CVE-2021-22939)", async () => {
+  // Node only disables verification on an explicit `false`. Every other value
+  // (including `null`, which used to reach the handshake's truthiness check
+  // as-is and silently skip rejection) keeps it on.
+  const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+    socket.on("error", () => {});
+    socket.end();
+  });
+  server.on("tlsClientError", () => {});
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  function outcome(client: TLSSocket) {
+    return new Promise<string>(resolve => {
+      client.once("secureConnect", () => resolve("connected"));
+      client.once("error", e => resolve((e as NodeJS.ErrnoException).code ?? String(e)));
+    }).finally(() => client.destroy());
+  }
+
+  try {
+    // tls.connect path.
+    {
+      const client = tlsConnect({ port, host: "127.0.0.1", servername: "localhost", rejectUnauthorized: null as any });
+      expect(await outcome(client)).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    }
+    // new tls.TLSSocket(socket, { isServer: false }) + _start() path.
+    {
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      const secure: any = new TLSSocket(raw, {
+        isServer: false,
+        servername: "localhost",
+        rejectUnauthorized: null as any,
+      } as tls.TLSSocketOptions);
+      secure._start();
+      expect(await outcome(secure)).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    }
+    // An explicit `false` still disables it.
+    {
+      const client = tlsConnect({ port, host: "127.0.0.1", servername: "localhost", rejectUnauthorized: false });
+      expect(await outcome(client)).toBe("connected");
+    }
+  } finally {
     server.close();
     await once(server, "close");
   }

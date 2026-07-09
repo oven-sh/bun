@@ -162,24 +162,32 @@ pub fn copy_env_for_define(
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
-                        env_string_store_put(to_string, bump, &key_buf, value)?;
+                        // Explicit user `define` beats the env-derived
+                        // shorthand; `to_json` holds only explicit defines here.
+                        if !to_json.contains_key(&key_buf) {
+                            env_string_store_put(to_string, bump, &key_buf, value)?;
+                        }
                     } else {
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
                         if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
-                            env_string_store_put(
-                                to_string,
-                                bump,
-                                framework_defaults_keys[key_i],
-                                value,
-                            )?;
+                            if !to_json.contains_key(framework_defaults_keys[key_i]) {
+                                env_string_store_put(
+                                    to_string,
+                                    bump,
+                                    framework_defaults_keys[key_i],
+                                    value,
+                                )?;
+                            }
                         }
                     }
                 } else {
                     key_buf.clear();
                     key_buf.extend_from_slice(PROCESS_ENV);
                     key_buf.extend_from_slice(k);
-                    env_string_store_put(to_string, bump, &key_buf, value)?;
+                    if !to_json.contains_key(&key_buf) {
+                        env_string_store_put(to_string, bump, &key_buf, value)?;
+                    }
                 }
             }
         }
@@ -295,18 +303,12 @@ impl DefineExt for Define {
 
         // Step 4. Load environment data into hash tables.
         // These are only strings. We do not parse them as JSON.
-        // Skip keys the user already provided via `define` so the explicit
-        // option wins over the env-derived shorthand.
         if let Some(string_defines_) = &string_defines {
             define.insert_from_iterator(
                 string_defines_
                     .keys()
                     .iter()
                     .zip(string_defines_.values().iter())
-                    .filter(|(k, _)| match &_user_defines {
-                        Some(ud) => !ud.contains_key(k.as_ref()),
-                        None => true,
-                    })
                     .map(|(k, v)| (k.as_ref(), v)),
             )?;
         }

@@ -305,6 +305,8 @@ void JSWritableStreamDefaultController::analyzeHeap(JSCell* cell, HeapAnalyzer& 
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "closeAlgorithm"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method3, "abortAlgorithm"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_queue.analyzeHeap(locker, cell, analyzer);
 }
 
 // [[AbortSteps]](reason)

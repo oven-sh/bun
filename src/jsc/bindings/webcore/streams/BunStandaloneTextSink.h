@@ -11,6 +11,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 
+#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/WriteBarrier.h>
@@ -59,6 +60,17 @@ struct BunTextAccumulator {
     {
         for (auto& piece : pieces)
             visitor.append(piece);
+    }
+
+    // Reports every barrier in `pieces` as an index edge for heap-snapshot retainers.
+    // Called from the OWNING cell's analyzeHeap, inside that cell's single cellLock() scope.
+    void analyzeHeap(const WTF::AbstractLocker&, JSC::JSCell* from, JSC::HeapAnalyzer& analyzer)
+    {
+        for (uint32_t i = 0; i < pieces.size(); ++i) {
+            JSC::JSValue v = pieces[i].get();
+            if (v && v.isCell())
+                analyzer.analyzeIndexEdge(from, v.asCell(), i);
+        }
     }
 };
 

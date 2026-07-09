@@ -126,6 +126,8 @@ void JSDirectStreamController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_array, "array"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closingPromise, "closingPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_finalChunk, "finalChunk"_s);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_textAccumulator.analyzeHeap(locker, cell, analyzer);
 }
 
 static size_t byteLengthOf(JSValue value)

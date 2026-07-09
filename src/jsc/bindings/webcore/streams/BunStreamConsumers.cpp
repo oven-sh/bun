@@ -107,12 +107,7 @@ void JSBunStandaloneTextSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<JSBunStandaloneTextSink>(cell);
     Base::analyzeHeap(cell, analyzer);
     WTF::Locker locker { thisObject->cellLock() };
-    auto& pieces = thisObject->m_accumulator.pieces;
-    for (uint32_t i = 0; i < pieces.size(); ++i) {
-        JSValue v = pieces[i].get();
-        if (v && v.isCell())
-            analyzer.analyzeIndexEdge(cell, v.asCell(), i);
-    }
+    thisObject->m_accumulator.analyzeHeap(locker, cell, analyzer);
 }
 
 // JSOneShotDirectSink — consumeDirectStreamToArrayBuffer's throwaway controller cell.

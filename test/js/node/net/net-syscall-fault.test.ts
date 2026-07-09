@@ -139,6 +139,35 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(p.serverSock.writableFinished).toBe(false);
   });
 
+  // One write parks and the rest queue in the Writable; failing the parked one
+  // is what cascades through that queue. Without it every queued callback is
+  // left pending forever.
+  test("a peer reset settles every queued write callback, not just the parked one", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const serverFd = (p.serverSock as any)._handle.fd;
+    p.client.on("error", () => {});
+
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: serverFd });
+    const N = 32;
+    const settled: string[] = new Array(N).fill("PENDING");
+    const closed = Promise.withResolvers<void>();
+    p.serverSock.on("close", () => closed.resolve());
+    for (let i = 0; i < N; i++) {
+      p.serverSock.write(
+        Buffer.alloc(256, "x"),
+        err => (settled[i] = err ? (err as NodeJS.ErrnoException).code! : "OK"),
+      );
+    }
+    p.client.resetAndDestroy();
+    await closed.promise;
+
+    // Node: the in-flight write gets ECANCELED; the queued ones get the
+    // stream's stored error (ECONNRESET) via errorBuffer.
+    expect(settled.filter(x => x === "PENDING")).toEqual([]);
+    expect(settled[0]).toBe("ECANCELED");
+    expect(new Set(settled.slice(1))).toEqual(new Set(["ECONNRESET"]));
+  });
+
   test("send → short writes still deliver complete payload to peer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {

@@ -889,6 +889,40 @@ test("markAsUncloneable blocks cloning a port but not transferring it", async ()
   b.close();
 });
 
+// postMessageToThread routes through a Map of thread -> port. A user-replaced
+// Map.prototype must not be able to break cross-thread delivery.
+test("postMessageToThread survives a tampered Map prototype", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const wt = require("worker_threads");
+       const boom = n => function () { throw new Error("tampered " + n); };
+       for (const n of ["get", "set", "delete", "has", "values", "keys", "forEach"]) {
+         Map.prototype[n] = boom("Map." + n);
+       }
+       Object.defineProperty(Map.prototype, "size", { get: boom("Map.size"), configurable: true });
+       Map.prototype[Symbol.iterator] = boom("Map[Symbol.iterator]");
+
+       const w = new wt.Worker(
+         \`const wt = require("worker_threads");
+           wt.parentPort.on("message", async () => { await wt.postMessageToThread(0, "pong"); });\`,
+         { eval: true },
+       );
+       process.on("workerMessage", v => {
+         console.log(v);
+         w.terminate();
+       });
+       w.postMessage("ping");`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("pong");
+  expect(exitCode).toBe(0);
+});
+
 // The listener registry must not route through user-overridable Map/Set/WeakMap:
 // not their methods, not the `size` getter, not their iterators. Spawned, because
 // it clobbers prototypes and would poison the whole runner.

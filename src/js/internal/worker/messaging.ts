@@ -10,6 +10,7 @@
 // report no-listeners or a throwing listener (see receiveMessageFromWorker).
 
 const { validateNumber } = require("internal/validators");
+const { SafeMap } = require("internal/primordials");
 
 const messageTypes = {
   REGISTER_MAIN_THREAD_PORT: "registerMainThreadPort",
@@ -23,7 +24,9 @@ let currentThreadId = 0;
 let isMainThread = true;
 
 // Only populated on the main thread (the hub); always empty elsewhere.
-const threadsPorts = new Map<number, any>();
+// SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
+// cross-thread routing table can't be broken by user code replacing Map.prototype.
+const threadsPorts = new SafeMap<number, any>();
 
 // Only populated on child threads; always undefined on the main thread.
 let mainThreadPort: any;
@@ -219,7 +222,8 @@ function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void
     entryEvaluated = true;
     const pending = pendingMainPortMessages;
     pendingMainPortMessages = null;
-    if (pending) for (const message of pending) handleMessageFromMainThread(message);
+    // Indexed, not for-of: Array.prototype[Symbol.iterator] is user-overridable.
+    if (pending) for (let i = 0; i < pending.length; i++) handleMessageFromMainThread(pending[i]);
   });
 
   // Never block the process on this port.

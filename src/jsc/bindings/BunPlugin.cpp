@@ -783,8 +783,8 @@ static WTF::ASCIILiteral loaderLabel(BunLoaderType loader)
     }
 }
 
-// Must be kept in sync with ImportKind::label() in src/ast/lib.rs (same
-// strings as $ImportKindIdToLabel in the bundler plugin builtins).
+// Must be kept in sync with ImportKind::label() in src/ast/lib.rs.
+// AtConditional (7) has an empty label in Rust and is never dispatched here.
 static WTF::ASCIILiteral importKindLabel(uint8_t kind)
 {
     switch (kind) {
@@ -806,6 +806,8 @@ static WTF::ASCIILiteral importKindLabel(uint8_t kind)
         return "url-token"_s;
     case 9:
         return "composes"_s;
+    case 10:
+        return "html_manifest"_s;
     case 11:
         return "internal"_s;
     default:

@@ -238,11 +238,12 @@ class DockerComposeHelper {
     }
 
     // Start the service and wait for it to be healthy.
-    // --wait-timeout: without it `--wait` blocks until the engine reports
-    // healthy, which with `interval: 1h` and an engine that doesn't honor the
-    // 5s start_interval default means "hang until the test's beforeAll times
-    // out with no error message". 60 covers cold mysql init on tmpfs.
-    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]);
+    // --wait-timeout bounds how long `--wait` blocks for a health transition;
+    // 180 covers the slowest observed cold start (mysql 8.4 first-boot init on
+    // a loaded CI host, with three mysqld containers contending for the same
+    // tmpfs, has been seen at ~65s) with headroom, and matches the longest
+    // start_period in docker-compose.yml.
+    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "180", service]);
 
     if (exitCode !== 0) {
       const ps = await this.exec(["ps", "-a", service]);

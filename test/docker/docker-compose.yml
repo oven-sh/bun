@@ -16,7 +16,7 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s
@@ -43,7 +43,7 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s
@@ -70,7 +70,7 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s
@@ -94,10 +94,16 @@ services:
       # passes the check before the real TCP listener exists. Auth + SELECT 1
       # so we don't go healthy until the real server is accepting connections.
       test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
-      interval: 1h # Effectively disable after startup
+      # Once start_period elapses the engine probes at `interval`, not
+      # `start_interval`, so a long interval wedges health at "starting" if
+      # init overshoots the window. MySQL 8.4 first-boot init (timezone load +
+      # temp server) has been observed at ~65s on loaded CI hosts, hence 180s
+      # here; interval stays short so overshooting any service's start_period
+      # recovers within one probe instead of freezing `compose up --wait`.
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 180s
       start_interval: 1s
 
   mysql_native_password:
@@ -115,10 +121,10 @@ services:
       - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 180s
       start_interval: 1s
 
   mysql_tls:
@@ -139,10 +145,10 @@ services:
       - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 180s
       start_interval: 1s
 
   # Redis/Valkey Services
@@ -195,7 +201,7 @@ services:
       - /data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 1h # Effectively disable after startup
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s
@@ -220,7 +226,7 @@ services:
       # healthcheck `up --wait` returns at "running" and the test's
       # /getCaseCount fetch can hit before the listener exists.
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9002), 1).close()"]
-      interval: 1h
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s
@@ -241,7 +247,7 @@ services:
       - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "pgrep squid > /dev/null"]
-      interval: 1h
+      interval: 5s
       timeout: 5s
       retries: 30
       start_period: 60s

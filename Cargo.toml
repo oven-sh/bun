@@ -51,7 +51,6 @@ members = [
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/ohos_sign",
   "src/picohttp",
   "src/s3_signing",
   "src/sql_jsc",
@@ -102,6 +101,7 @@ members = [
   "src/spawn_sys",
   "src/bunfig",
   "src/bun_bin",
+  "src/ohos_sign",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.

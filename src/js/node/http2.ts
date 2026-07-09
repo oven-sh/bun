@@ -3424,10 +3424,13 @@ function initOriginSet(session: Http2Session) {
 }
 function removeOriginFromSet(session: Http2Session, stream: ClientHttp2Stream) {
   const originSet = session[bunHTTP2OriginSet];
-  const origin = `https://${stream.authority}`;
-  if (originSet && origin) {
-    originSet.delete(origin);
-  }
+  if (!originSet) return;
+  let origin = `https://${stream.authority}`;
+  // The set is keyed on serialized origins (see initOriginSet); normalize the delete key too.
+  try {
+    origin = new URL(origin).origin;
+  } catch {}
+  originSet.delete(origin);
 }
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;

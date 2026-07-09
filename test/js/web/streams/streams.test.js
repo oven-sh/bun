@@ -2386,3 +2386,63 @@ test("streams constructors survive a foreign-realm (node:vm) newTarget", async (
     signalCode: null,
   });
 });
+
+// https://github.com/oven-sh/bun/pull/33193 — TransferArrayBuffer must produce a
+// fixed-length buffer, or user resize() invalidates the byte controller's recorded sizes.
+test("byte streams transfer resizable ArrayBuffers to fixed-length", async () => {
+  const script = `
+    // BYOB read: the pull-into descriptor's transferred buffer must be fixed-length.
+    {
+      let resizeError = null;
+      const rs = new ReadableStream({
+        type: "bytes",
+        pull(c) {
+          const view = c.byobRequest.view;
+          if (view.buffer.resizable) throw new Error("byobRequest view buffer is resizable");
+          try { view.buffer.resize(0); } catch (e) { resizeError = e; }
+          c.byobRequest.respond(view.byteLength);
+        },
+      });
+      const rab = new ArrayBuffer(8, { maxByteLength: 64 });
+      const { value } = await rs.getReader({ mode: "byob" }).read(new Uint8Array(rab));
+      if (!(resizeError instanceof TypeError)) throw new Error("resize() unexpectedly succeeded");
+      if (value.byteLength !== 8) throw new Error("wrong read length: " + value.byteLength);
+      if (rab.byteLength !== 0) throw new Error("source buffer not detached");
+    }
+    // enqueue: a resizable-backed chunk is delivered over a fixed-length buffer.
+    {
+      const rab = new ArrayBuffer(8, { maxByteLength: 64 });
+      new Uint8Array(rab).set([1, 2, 3, 4, 5, 6, 7, 8]);
+      const rs = new ReadableStream({ type: "bytes", start(c) { c.enqueue(new Uint8Array(rab)); } });
+      const { value } = await rs.getReader().read();
+      if (value.buffer.resizable) throw new Error("delivered chunk buffer is resizable");
+      if (String(new Uint8Array(value.buffer)) !== "1,2,3,4,5,6,7,8") throw new Error("wrong bytes");
+      if (rab.byteLength !== 0) throw new Error("chunk buffer not detached");
+    }
+    // resize-then-enqueue inside pull must reject the read, not abort the process.
+    {
+      const rs = new ReadableStream({
+        type: "bytes",
+        pull(c) {
+          c.byobRequest.view.buffer.resize(0);
+          c.enqueue(new Uint8Array(10));
+        },
+      });
+      let rejection = null;
+      try {
+        await rs.getReader({ mode: "byob" }).read(new Uint8Array(new ArrayBuffer(64, { maxByteLength: 1024 })));
+      } catch (e) {
+        rejection = e;
+      }
+      if (!(rejection instanceof TypeError)) throw new Error("expected read() to reject with TypeError");
+    }
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "OK",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

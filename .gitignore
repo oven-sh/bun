@@ -200,3 +200,4 @@ src/jsc/bindings/GeneratedJS2Native.zig
 src/jsc/bindings/GeneratedBindings.zig
 .arts
 src/ohos_sign/target/
+.zig-cache/

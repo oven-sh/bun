@@ -1423,6 +1423,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
 
+        // "console.log.bind(x)" => "(() => {}).bind(x)" when `console` is
+        // dropped, so the bound function stays callable instead of the whole
+        // expression collapsing to `undefined` and throwing when invoked.
+        if p.method_call_must_be_replaced_with_undefined && e_.name == b"bind" {
+            e_.target = p.new_expr(E::Arrow::NOOP_RETURN_UNDEFINED, e_.target.loc);
+            p.method_call_must_be_replaced_with_undefined = false;
+        }
+
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {
             // we do not need to call p.recordUsageOfRuntimeRequire(); because `require`

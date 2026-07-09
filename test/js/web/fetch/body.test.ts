@@ -519,6 +519,29 @@ for (const { body, fn } of bodyTypes) {
         expect(await p1).toEqual({ value: undefined, done: true });
         expect(await p2).toEqual({ value: undefined, done: true });
       });
+      test("cancel after source close with a queued flush chunk", async () => {
+        // closeSteps' flush enqueues a replacement char into the output queue
+        // and releases the source reader; a subsequent output cancel() must
+        // tolerate the already-released reader.
+        let sc!: ReadableStreamDefaultController;
+        const source = new ReadableStream({
+          start(c) {
+            sc = c;
+          },
+        });
+        const reader = fn(source).textStream().getReader();
+        await Promise.resolve();
+        reader.read();
+        await Promise.resolve();
+        reader.read();
+        await Promise.resolve();
+        sc.enqueue(new Uint8Array([0x41, 0xc2]));
+        sc.enqueue(new Uint8Array([0xa9, 0xc2]));
+        sc.close();
+        await Promise.resolve();
+        await reader.cancel();
+        expect(source.locked).toBe(false);
+      });
       if (body === Response) {
         test("streams a fetch response body", async () => {
           await using server = Bun.serve({

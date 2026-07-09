@@ -1026,7 +1026,12 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+    // closeSteps may have already released the source reader while the output
+    // still has a queued chunk (ClearAlgorithms didn't run); in that state the
+    // source is already terminal, so cancel becomes a no-op.
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+    if (!reader || !reader->m_stream)
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     auto* result = readableStreamReaderGenericCancel(globalObject, reader, reason);
     RETURN_IF_EXCEPTION(scope, nullptr);
     readableStreamDefaultReaderRelease(globalObject, reader);

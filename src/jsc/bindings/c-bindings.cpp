@@ -106,6 +106,36 @@ extern "C" void bun_ignore_sigpipe()
     signal(SIGPIPE, SIG_IGN);
 #endif
 }
+
+#if defined(__OHOS__)
+static void ohos_sigsys_handler(int sig, siginfo_t* info, void* uctx) {
+    (void)sig;
+    (void)info;
+    (void)uctx;
+    int syscall_nr = -1;
+    FILE* f = fopen("/proc/self/syscall", "r");
+    if (f) {
+        char buf[128] = {};
+        if (fgets(buf, sizeof(buf), f)) {
+            char* end = buf;
+            long val = strtol(buf, &end, 0);
+            if (end != buf) syscall_nr = (int)val;
+        }
+        fclose(f);
+    }
+    fprintf(stderr, "\n*** SIGSYS: blocked syscall #%d ***\n", syscall_nr);
+    fflush(stderr);
+}
+
+extern "C" void ohos_setup_sigsys_handler() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = ohos_sigsys_handler;
+    sigaction(SIGSYS, &sa, nullptr);
+}
+#endif
+
 extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 {
 #ifdef __APPLE__

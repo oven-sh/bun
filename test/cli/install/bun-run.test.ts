@@ -731,7 +731,7 @@ describe.concurrent("bun run", () => {
     });
 
     it("does not hoist a redirect glued to the -w value", async () => {
-      using dir = tempDir("npm-ws-redirect", rootScriptRepo("npm run greet -w app>&2"));
+      using dir = tempDir("npm-ws-redirect", rootScriptRepo("npm run greet -w app>out.txt"));
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "start"],
         cwd: String(dir),
@@ -744,9 +744,9 @@ describe.concurrent("bun run", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // Falls back to the plain prefix swap: the greet script runs with `-w app`
-      // passed through and its output redirected to stderr.
-      expect(stderr).toContain("greet-done");
+      // passed through and its output redirected into out.txt.
       expect(stderr).not.toContain("--filter");
+      expect(await Bun.file(join(String(dir), "out.txt")).text()).toContain("greet-done");
       expect(exitCode).toBe(0);
     });
 

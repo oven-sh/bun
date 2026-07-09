@@ -1604,7 +1604,15 @@ function renderNativeHeaders(res) {
       closeDelimited = true;
       res[kMustCloseConnection] = true;
     } else if (res._removedContLen) {
-      forceChunked = true;
+      // Node's _storeHeader takes the `!useChunkedEncodingByDefault` branch
+      // (HTTP/1.0, or the user cleared the flag) before it ever auto-adds
+      // Transfer-Encoding, so the response is close-delimited there too.
+      if (res.useChunkedEncodingByDefault === false) {
+        closeDelimited = true;
+        res[kMustCloseConnection] = true;
+      } else {
+        forceChunked = true;
+      }
     }
   }
 

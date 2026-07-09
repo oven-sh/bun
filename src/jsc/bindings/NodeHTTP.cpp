@@ -612,6 +612,23 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
+// Transfer-Encoding is `1#transfer-coding` (RFC 9112 §6.1): look for the
+// "chunked" token anywhere in a comma-separated list. Mirrors node:http's
+// /(?:^|\W)chunked(?:$|\W)/i chunkExpression.
+static bool transferEncodingHasChunked(const WTF::String& value)
+{
+    size_t pos = 0;
+    while ((pos = value.findIgnoringASCIICase("chunked"_s, pos)) != WTF::notFound) {
+        bool leftOk = pos == 0 || !isASCIIAlphanumeric(value[pos - 1]);
+        size_t end = pos + 7;
+        bool rightOk = end >= value.length() || !isASCIIAlphanumeric(value[end]);
+        if (leftOk && rightOk)
+            return true;
+        pos = end;
+    }
+    return false;
+}
+
 template<bool isSSL>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
@@ -668,6 +685,12 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // Prevent automatic Transfer-Encoding: chunked insertion when user provides one
         if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+            // The uWS writer never chunk-frames an HTTP/1.0 (fromAncientRequest)
+            // response on its own, but once Transfer-Encoding: chunked is on the
+            // wire the body MUST be chunk-framed to match it (Node does the same).
+            if (data->fromAncientRequest && transferEncodingHasChunked(value)) {
+                data->fromAncientRequest = false;
+            }
         }
 
         // RFC 9112 §9.6: a server that sends the "close" connection option MUST
@@ -766,6 +789,9 @@ static void NodeHTTPServer__writeHead(
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
                     } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+                        if (httpResponseData->fromAncientRequest && transferEncodingHasChunked(value)) {
+                            httpResponseData->fromAncientRequest = false;
+                        }
                     }
                 }
 

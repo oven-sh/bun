@@ -167,6 +167,7 @@ extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
+extern "C" bool Bun__isMainThreadVM();
 extern "C" const char* Bun__githubURL;
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
@@ -797,6 +798,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (!Bun__isMainThreadVM()) {
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Setting process.umask() is not supported in workers"_s));
+        return {};
+    }
+
     auto value = callFrame->argument(0);
 
     mode_t newUmask;
@@ -988,6 +995,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "process.chdir() is not supported in workers"_s));
+        return {};
+    }
 
     auto value = callFrame->argument(0);
     Bun::V::validateString(scope, globalObject, value, "directory"_s);
@@ -1374,7 +1386,6 @@ extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObj
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
-extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
@@ -3103,6 +3114,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "process.setuid() is not supported in workers"_s));
+        return {};
+    }
     auto value = callFrame->argument(0);
     uint32_t id = 0;
     auto is_number = value.isNumber();
@@ -3121,6 +3136,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionseteuid, (JSGlobalObject * globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "process.seteuid() is not supported in workers"_s));
+        return {};
+    }
     auto value = callFrame->argument(0);
     uint32_t id = 0;
     auto is_number = value.isNumber();
@@ -3139,6 +3158,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetegid, (JSGlobalObject * globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "process.setegid() is not supported in workers"_s));
+        return {};
+    }
     auto value = callFrame->argument(0);
     uint32_t id = 0;
     auto is_number = value.isNumber();
@@ -3157,6 +3180,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgid, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "process.setgid() is not supported in workers"_s));
+        return {};
+    }
     auto value = callFrame->argument(0);
     uint32_t id = 0;
     auto is_number = value.isNumber();
@@ -3175,6 +3202,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "process.setgroups() is not supported in workers"_s));
+        return {};
+    }
     auto groups = callFrame->argument(0);
     Bun::V::validateArray(scope, globalObject, groups, "groups"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
@@ -3356,6 +3387,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
+    visitor.append(thisObject->m_workerThreadTitle);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
 
@@ -4136,6 +4168,12 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        auto* processObject = defaultGlobalObject(globalObject)->processObject();
+        if (auto* cached = processObject->workerThreadTitle()) {
+            RELEASE_AND_RETURN(scope, JSValue::encode(cached));
+        }
+    }
 #if !OS(WINDOWS)
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
@@ -4177,6 +4215,11 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     JSC::JSString* jsString = dynamicDowncast<JSC::JSString>(JSValue::decode(value));
     if (!thisObject || !jsString) {
         return false;
+    }
+    if (!Bun__isMainThreadVM()) {
+        auto* processObject = defaultGlobalObject(globalObject)->processObject();
+        processObject->setWorkerThreadTitle(vm, jsString);
+        return true;
     }
 #if !OS(WINDOWS)
     BunString str = Bun::toStringRef(globalObject, jsString);

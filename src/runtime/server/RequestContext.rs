@@ -954,6 +954,32 @@ where
         let resp = ctx.resp.expect("infallible: resp bound");
         // SAFETY: FFI handle, just checked Some
         let has_responded = resp.has_responded();
+
+        // The status line is already committed (a direct ReadableStream's
+        // pull() threw synchronously after do_render_stream wrote headers).
+        // error() cannot replace a response whose status is on the wire;
+        // report the failure and terminate the body so the client observes an
+        // incomplete message instead of a second header block spliced into
+        // the chunked body.
+        if !has_responded && ctx.flags.has_written_status() {
+            if !value.is_empty_or_undefined_or_null()
+                && let Some(server) = ctx.server
+            {
+                // SAFETY: BACKREF; see drain_microtasks() re: the const→mut cast.
+                unsafe {
+                    (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                        .run_error_handler(value, None);
+                }
+            }
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                ctx.force_close();
+            } else {
+                ctx.end_stream(ctx.should_close_connection());
+            }
+            return;
+        }
+
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
             let should_deinit_context = core::cell::Cell::new(match original_state {

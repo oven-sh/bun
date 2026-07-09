@@ -40,6 +40,7 @@ public:
     // visitChildrenImpl MUST visit: m_source, m_destination, m_reader, m_writer, m_signal,
     // m_promise, m_currentWrite, m_shutdownActionPromise, m_shutdownError.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

@@ -17,6 +17,8 @@
 #include "JSReadableStreamDefaultController.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -447,6 +449,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_readMany);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_releaseLock);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_closed);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_constructor);
 
@@ -583,10 +586,31 @@ static const HashTableValue JSReadableStreamDefaultReaderPrototypeTableValues[] 
 
 const ClassInfo JSReadableStreamDefaultReaderPrototype::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReaderPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStreamDefaultReader>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    size_t requestCount;
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        requestCount = thisObject->m_readRequests.size();
+    }
+    data->putDirect(vm, Identifier::fromString(vm, "readRequests"_s), jsNumber(requestCount), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "close"_s), thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamDefaultReader"_s, data));
+}
+
 void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamDefaultReader::info(), JSReadableStreamDefaultReaderPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamDefaultReaderPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -659,12 +683,31 @@ void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultReader>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_closedPromise);
-    visitor.append(thisObject->m_pipeOperation);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_pipeOperation);
     WTF::Locker locker { thisObject->cellLock() };
     for (auto& request : thisObject->m_readRequests)
-        visitor.append(request);
+        visitor.appendHidden(request);
+}
+
+void JSReadableStreamDefaultReader::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultReader>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pipeOperation, "pipeOperation"_s);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        uint32_t i = 0;
+        for (auto& entry : thisObject->m_readRequests) {
+            if (auto* request = entry.get())
+                analyzer.analyzeIndexEdge(cell, request, i);
+            ++i;
+        }
+    }
 }
 
 // Prototype accessors and host functions

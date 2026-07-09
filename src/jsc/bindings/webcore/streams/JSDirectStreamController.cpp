@@ -11,6 +11,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -98,17 +99,35 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSDirectStreamController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_underlyingSource);
-    visitor.append(thisObject->m_pull);
-    visitor.append(thisObject->m_pendingRead);
-    visitor.append(thisObject->m_deferCloseReason);
-    visitor.append(thisObject->m_arrayBufferSink);
-    visitor.append(thisObject->m_array);
-    visitor.append(thisObject->m_closingPromise);
-    visitor.append(thisObject->m_finalChunk);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_underlyingSource);
+    visitor.appendHidden(thisObject->m_pull);
+    visitor.appendHidden(thisObject->m_pendingRead);
+    visitor.appendHidden(thisObject->m_deferCloseReason);
+    visitor.appendHidden(thisObject->m_arrayBufferSink);
+    visitor.appendHidden(thisObject->m_array);
+    visitor.appendHidden(thisObject->m_closingPromise);
+    visitor.appendHidden(thisObject->m_finalChunk);
     Locker locker { thisObject->cellLock() };
     thisObject->m_textAccumulator.visit(locker, visitor);
+}
+
+void JSDirectStreamController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSDirectStreamController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_underlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pull, "pull"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingRead, "pendingRead"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_deferCloseReason, "deferCloseReason"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_arrayBufferSink, "arrayBufferSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_array, "array"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closingPromise, "closingPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_finalChunk, "finalChunk"_s);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_textAccumulator.analyzeHeap(locker, cell, analyzer);
 }
 
 static size_t byteLengthOf(JSValue value)

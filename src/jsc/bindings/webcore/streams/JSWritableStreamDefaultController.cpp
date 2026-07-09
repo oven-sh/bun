@@ -11,12 +11,15 @@
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
 #include "JSWritableStream.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -146,6 +149,7 @@ using namespace Bun::WebStreams;
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructorGetter);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamDefaultControllerPrototypeGetter_signal);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamDefaultControllerPrototypeFunction_error);
+static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamDefaultControllerPrototype_inspectCustom);
 
 class JSWritableStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -187,10 +191,24 @@ static const HashTableValue JSWritableStreamDefaultControllerPrototypeTableValue
 
 const ClassInfo JSWritableStreamDefaultControllerPrototype::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSWritableStreamDefaultController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStreamDefaultController"_s, data));
+}
+
 void JSWritableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSWritableStreamDefaultController::info(), JSWritableStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamDefaultControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -276,20 +294,37 @@ void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
     auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_abortController);
-    visitor.append(thisObject->m_algorithms.underlyingObject);
-    visitor.append(thisObject->m_algorithms.method1);
-    visitor.append(thisObject->m_algorithms.method2);
-    visitor.append(thisObject->m_algorithms.method3);
-    visitor.append(thisObject->m_algorithms.algorithmContext);
-    visitor.append(thisObject->m_strategySizeAlgorithm);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_abortController);
+    visitor.appendHidden(thisObject->m_algorithms.underlyingObject);
+    visitor.appendHidden(thisObject->m_algorithms.method1);
+    visitor.appendHidden(thisObject->m_algorithms.method2);
+    visitor.appendHidden(thisObject->m_algorithms.method3);
+    visitor.appendHidden(thisObject->m_algorithms.algorithmContext);
+    visitor.appendHidden(thisObject->m_strategySizeAlgorithm);
     // ONE non-recursive cellLock scope covers the barrier container (StreamQueue.h).
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_queue.visit(locker, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultController);
+
+void JSWritableStreamDefaultController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_abortController, "abortController"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_strategySizeAlgorithm, "strategySizeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "writeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "closeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method3, "abortAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_queue.analyzeHeap(locker, cell, analyzer);
+}
 
 // [[AbortSteps]](reason)
 JSPromise* JSWritableStreamDefaultController::abortSteps(JSGlobalObject* globalObject, JSValue reason)

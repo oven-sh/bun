@@ -13,6 +13,8 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -25,6 +27,7 @@
 #include <JavaScriptCore/JSDataView.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -210,6 +213,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_d
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_error);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom);
 
 class JSReadableByteStreamControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -254,10 +258,24 @@ static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[]
 
 const ClassInfo JSReadableByteStreamControllerPrototype::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    (void)thisObject;
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableByteStreamController"_s, data));
+}
+
 void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableByteStreamController::info(), JSReadableByteStreamControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableByteStreamControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -343,20 +361,42 @@ void JSReadableByteStreamController::visitChildrenImpl(JSCell* cell, Visitor& vi
     auto* thisObject = uncheckedDowncast<JSReadableByteStreamController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_byobRequest);
-    visitor.append(thisObject->m_algorithms.underlyingObject);
-    visitor.append(thisObject->m_algorithms.method1);
-    visitor.append(thisObject->m_algorithms.method2);
-    visitor.append(thisObject->m_algorithms.algorithmContext);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_byobRequest);
+    visitor.appendHidden(thisObject->m_algorithms.underlyingObject);
+    visitor.appendHidden(thisObject->m_algorithms.method1);
+    visitor.appendHidden(thisObject->m_algorithms.method2);
+    visitor.appendHidden(thisObject->m_algorithms.algorithmContext);
     // ONE non-recursive cellLock scope covers BOTH barrier containers (StreamQueue.h).
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_queue.visit(locker, visitor);
     for (auto& descriptor : thisObject->m_pendingPullIntos)
-        visitor.append(descriptor);
+        visitor.appendHidden(descriptor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableByteStreamController);
+
+void JSReadableByteStreamController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableByteStreamController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_byobRequest, "byobRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "pullAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "cancelAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        uint32_t i = 0;
+        for (auto& entry : thisObject->m_pendingPullIntos) {
+            if (auto* descriptor = entry.get())
+                analyzer.analyzeIndexEdge(cell, descriptor, i);
+            ++i;
+        }
+    }
+}
 
 // [[CancelSteps]](reason)
 JSPromise* JSReadableByteStreamController::cancelSteps(JSGlobalObject* globalObject, JSValue reason)

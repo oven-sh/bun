@@ -14,6 +14,8 @@
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultController.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -21,6 +23,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -168,6 +171,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_cl
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_desiredSize);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_ready);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_constructor);
+static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototype_inspectCustom);
 
 class JSWritableStreamDefaultWriterPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -299,10 +303,32 @@ static const HashTableValue JSWritableStreamDefaultWriterPrototypeTableValues[] 
 
 const ClassInfo JSWritableStreamDefaultWriterPrototype::s_info = { "WritableStreamDefaultWriter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultWriterPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSWritableStreamDefaultWriter>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "close"_s), thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "ready"_s), thisObject->m_readyPromise.get() ? JSValue(thisObject->m_readyPromise.get()) : jsUndefined(), 0);
+    JSValue desiredSizeValue = jsNull();
+    if (thisObject->m_stream.get()) {
+        auto desiredSize = writableStreamDefaultWriterGetDesiredSize(thisObject);
+        desiredSizeValue = desiredSize ? jsNumber(*desiredSize) : jsNull();
+    }
+    data->putDirect(vm, Identifier::fromString(vm, "desiredSize"_s), desiredSizeValue, 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStreamDefaultWriter"_s, data));
+}
+
 void JSWritableStreamDefaultWriterPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSWritableStreamDefaultWriter::info(), JSWritableStreamDefaultWriterPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamDefaultWriterPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -368,10 +394,21 @@ void JSWritableStreamDefaultWriter::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultWriter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_closedPromise);
-    visitor.append(thisObject->m_readyPromise);
-    visitor.append(thisObject->m_pipeOperation);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_readyPromise);
+    visitor.appendHidden(thisObject->m_pipeOperation);
+}
+
+void JSWritableStreamDefaultWriter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultWriter>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readyPromise, "readyPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pipeOperation, "pipeOperation"_s);
 }
 
 // Prototype accessors and host functions

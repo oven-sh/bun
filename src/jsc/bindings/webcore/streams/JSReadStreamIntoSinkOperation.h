@@ -26,6 +26,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit ALL FOUR barriers: m_stream, m_reader, m_sink, m_result.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

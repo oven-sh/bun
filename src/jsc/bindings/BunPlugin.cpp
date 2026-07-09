@@ -661,6 +661,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
                             JSC::MarkedArgumentBuffer values;
                             values.ensureCapacity(names.size());
+                            if (values.hasOverflowed()) [[unlikely]] {
+                                JSC::throwOutOfMemoryError(globalObject, scope);
+                                return {};
+                            }
                             for (auto& name : names) {
                                 JSValue value = object->get(globalObject, name);
                                 RETURN_IF_EXCEPTION(scope, {});

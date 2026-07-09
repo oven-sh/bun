@@ -186,8 +186,9 @@ function prebuiltVersion(name: string, tgzPath: string): StoredVersion {
 /**
  * A version backed by a directory of source files. The tarball is
  * packed on first request. A file is written at mode 0755 when it is a
- * `bin` / `directories.bin` target, 0644 otherwise — both pure
- * functions of the committed bytes. The on-disk mode is deliberately
+ * `bin` target (not `directories.bin`; `npm pack` only reads
+ * `pkg.bin`), 0644 otherwise — a pure function of the committed
+ * bytes. The on-disk mode is deliberately
  * not consulted: `statSync().mode` never carries an execute bit on
  * Windows, so using it would give the same fixture a different
  * `dist.integrity` per platform.
@@ -214,7 +215,7 @@ function directoryVersion(name: string, version: string, versionDir: string): St
     manifest,
     tarball: tarballFromFiles(async () => {
       const files = readFileTree(versionDir);
-      return { files, mode: binModeMap(await manifest(), Object.keys(files)) };
+      return { files, mode: binModeMap(await manifest()) };
     }),
   };
 }

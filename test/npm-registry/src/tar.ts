@@ -21,6 +21,7 @@
  * one `extract_tarball.rs` uses, so it is not an independent check.
  */
 
+import { posix } from "node:path";
 import type { FileTree } from "./types";
 
 /**
@@ -74,7 +75,8 @@ function putOctal(block: Uint8Array, offset: number, width: number, value: numbe
  */
 function splitName(path: string): { name: string; prefix: string } {
   const bytes = encoder.encode(path);
-  if (bytes.length <= 100) return { name: path, prefix: "" };
+  // node-tar's splitPrefix enters the split branch at exactly 100 too.
+  if (bytes.length < 100) return { name: path, prefix: "" };
   // Walk candidate split points from the right so `name` stays as short as
   // the format allows, maximizing room in `prefix`.
   for (let i = path.length - 1; i > 0; i--) {
@@ -123,13 +125,11 @@ function toBytes(contents: string | Uint8Array): Uint8Array {
  * ("optimize for compressibility").
  */
 function npmPacklistSort(a: string, b: string): number {
-  const ext = (p: string) => {
-    const s = p.lastIndexOf("/");
-    const d = p.lastIndexOf(".");
-    return d > s && d > 0 && d < p.length - 1 ? p.slice(d).toLowerCase() : "";
-  };
-  const base = (p: string) => p.slice(p.lastIndexOf("/") + 1).toLowerCase();
-  return ext(a).localeCompare(ext(b), "en") || base(a).localeCompare(base(b), "en") || a.localeCompare(b, "en");
+  return (
+    posix.extname(a).toLowerCase().localeCompare(posix.extname(b).toLowerCase(), "en") ||
+    posix.basename(a).toLowerCase().localeCompare(posix.basename(b).toLowerCase(), "en") ||
+    a.localeCompare(b, "en")
+  );
 }
 
 export interface TarballStats {

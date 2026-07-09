@@ -223,22 +223,23 @@ async function runCell(mode: Mode, scenario: Scenario): Promise<string> {
 
   const dir = tmpdirSync();
   const cache1 = join(dir, ".bun-cache-1");
-  // The second axis is `BUN_INSTALL_CACHE_DIR`: the warm cell reuses
-  // pass 1's cache dir (on-disk manifests under the 300 s window, so
-  // pass 2 never hits the network); the cold cell points pass 2 at a
-  // fresh empty dir, isolating the manifest-cache variable.
+  // The second axis is the install cache directory: the warm cell
+  // reuses pass 1's (on-disk manifests under the 300 s window, so
+  // pass 2 never hits the network for them); the cold cell points
+  // pass 2 at a fresh empty dir, isolating the manifest-cache variable.
   const cache2 = mode.manifests === "warm" ? cache1 : join(dir, ".bun-cache-2");
-  const env = (cacheDir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir });
-  await Promise.all([
-    write(
-      join(dir, "bunfig.toml"),
-      `
+  // Set via bunfig `cache` and the env var together so neither a CI-
+  // exported BUN_INSTALL_CACHE_DIR nor a bunfig default can win.
+  const bunfig = (cacheDir: string) => `
 [install]
+cache = "${cacheDir.replaceAll("\\", "\\\\")}"
 registry = "${registry.url}"
 saveTextLockfile = true
 linker = "${mode.linker}"
-`,
-    ),
+`;
+  const env = (cacheDir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir });
+  await Promise.all([
+    write(join(dir, "bunfig.toml"), bunfig(cache1)),
     write(join(dir, "package.json"), JSON.stringify({ name: "matrix-root", version: "1.0.0", ...scenario.root })),
     write(join(dir, scenario.probeDir ?? ".", "probe.js"), PROBE_PRELUDE + scenario.probe),
     ...Object.entries(scenario.files ?? {}).map(([path, contents]) => write(join(dir, path), contents)),
@@ -258,6 +259,7 @@ linker = "${mode.linker}"
   await Promise.all([
     rm(join(dir, "node_modules"), { recursive: true, force: true }),
     rm(join(dir, "bun.lock"), { force: true }),
+    write(join(dir, "bunfig.toml"), bunfig(cache2)),
   ]);
   const second = await run(dir, ["install"], env(cache2));
   expect({ label, err: second.stderr, exitCode: second.exitCode }).toEqual({
@@ -265,7 +267,7 @@ linker = "${mode.linker}"
     err: expect.not.stringContaining("error:"),
     exitCode: 0,
   });
-  // The axis is real: warm must not have touched the registry.
+  // The axis is real: a warm pass 2 issued no packument requests.
   const packuments2 = registry.requests.slice(requestsAfterFirst).filter(r => !r.path.includes(".tgz")).length;
   if (mode.manifests === "warm") expect({ label, packuments2 }).toEqual({ label, packuments2: 0 });
   else expect(packuments2).toBeGreaterThan(0);

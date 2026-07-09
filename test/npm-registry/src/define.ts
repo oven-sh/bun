@@ -119,23 +119,19 @@ const REGISTRY_ONLY_KEYS: readonly string[] = ["tarball", "dist"] satisfies read
 
 /**
  * The per-file tar modes `npm pack` would assign for an in-code
- * definition: 0755 for every `bin` / `directories.bin` target, 0644
- * for everything else. `npm pack` on disk preserves the filesystem
- * mode; an in-memory definition has none, so derive the default from
- * intent. A {@link VersionSpec} can still override per entry.
+ * definition: 0755 for every `bin` target (pacote's `isPackageBin`
+ * reads only `pkg.bin`, never `directories.bin`), 0644 for everything
+ * else. `npm pack` on disk preserves the filesystem mode; an in-memory
+ * definition has none, so derive the default from intent. A
+ * {@link VersionSpec} can still override per entry.
  */
-export function binModeMap(manifest: Manifest, filePaths: Iterable<string>): Record<string, number> {
+export function binModeMap(manifest: Manifest): Record<string, number> {
   const modes: Record<string, number> = {};
   const mark = (p: string) => (modes[p.replace(/^\.\//, "")] = 0o755);
   const bin = manifest.bin;
   if (typeof bin === "string") mark(bin);
   else if (typeof bin === "object" && bin !== null) {
     for (const target of Object.values(bin as Record<string, string>)) mark(target);
-  }
-  const binDir = (manifest.directories as { bin?: string } | undefined)?.bin;
-  if (typeof binDir === "string") {
-    const prefix = `${binDir.replace(/^\.\//, "").replace(/\/+$/, "")}/`;
-    for (const path of filePaths) if (path.startsWith(prefix)) mark(path);
   }
   return modes;
 }
@@ -172,7 +168,7 @@ function storedVersion(name: string, version: Version, spec: VersionSpec): Store
   } else {
     const { files: extraFiles, mode: explicit } = splitSpecTree(extra ?? {});
     const files = { "package.json": `${JSON.stringify(raw, null, 2)}\n`, ...extraFiles };
-    const mode = { ...binModeMap(manifest, Object.keys(files)), ...explicit };
+    const mode = { ...binModeMap(manifest), ...explicit };
     tarball = tarballFromFiles(async () => ({ files, mode }));
   }
 

@@ -682,6 +682,17 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             if (stashedVirtualEntry && globalObject->onLoadPlugins.hasVirtualModules()) {
                 globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
             }
+            // Re-establish the module loader's invariant that
+            // `mustDoExpensiveRelativeLookup` is only set while
+            // `virtualModules` exists. `resolveModuleMockSpecifier` set the
+            // flag on the assumption we'd reach `addModuleMock()` (which
+            // allocates the map), but on these failure paths we never do —
+            // leaving the flag dangling would trip
+            // `ASSERT(!mustDoExpensiveRelativeLookup)` in moduleLoaderResolve
+            // on the next import.
+            if (!globalObject->onLoadPlugins.hasVirtualModules()) {
+                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
+            }
             if (!stashedRequireMapEntry.isUndefined()) {
                 JSC::Exception* savedException = scope.exception();
                 if (savedException) {
@@ -703,16 +714,24 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         // previously overwritten by a mock — otherwise require() returns the
         // patched mock exports instead of re-evaluating the real source.
         // Stash the taken entry so we can reinstate it if the require fails.
-        stashedRequireMapEntry = requireMap->get(globalObject, specifierString);
-        if (scope.exception()) [[unlikely]] {
-            restoreStash();
-            return {};
-        }
-        if (!stashedRequireMapEntry.isUndefined()) {
-            requireMap->remove(globalObject, specifierString);
+        //
+        // Only a prior mock (a `stashedVirtualEntry`) can have patched
+        // `.exports`; when the module was merely require()'d, the cached
+        // entry already holds the real exports — keep it so the internal
+        // require() below reuses it instead of re-running the module's
+        // top-level side effects.
+        if (stashedVirtualEntry) {
+            stashedRequireMapEntry = requireMap->get(globalObject, specifierString);
             if (scope.exception()) [[unlikely]] {
                 restoreStash();
                 return {};
+            }
+            if (!stashedRequireMapEntry.isUndefined()) {
+                requireMap->remove(globalObject, specifierString);
+                if (scope.exception()) [[unlikely]] {
+                    restoreStash();
+                    return {};
+                }
             }
         }
 

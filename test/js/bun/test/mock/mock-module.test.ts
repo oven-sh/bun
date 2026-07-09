@@ -423,3 +423,86 @@ test("jest.requireMock with a relative specifier doesn't break later ESM imports
   expect(stderr).not.toContain("0 pass");
   expect(exitCode).toBe(0);
 });
+
+test("a failing jest.mock() with a relative specifier doesn't break later ESM imports", async () => {
+  // The auto-mock path sets `mustDoExpensiveRelativeLookup` for `./` and
+  // `file:` specifiers on the assumption the mock install (which allocates
+  // virtualModules) will follow. When the internal require() throws (typo'd
+  // path), the install never happens — the flag must be reset or the module
+  // loader's `!mustDoExpensiveRelativeLookup` assert fires on the next ESM
+  // import under the debug/ASAN build. Fresh process so virtualModules
+  // starts null.
+  using dir = tempDir("failing-mock-esm", {
+    "real.ts": `export const value = 42;`,
+    "fixture.test.ts": `
+      import { test, expect, jest } from "bun:test";
+      test("failing mock then import", async () => {
+        // Typo'd relative specifier → resolution fails → require() throws.
+        expect(() => jest.mock("./my-fixtrue")).toThrow();
+        // A real ESM import afterwards must not hit the assert.
+        const mod = await import("./real.ts");
+        expect(mod.value).toBe(42);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "fixture.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("0 pass");
+  expect(exitCode).toBe(0);
+});
+
+test("auto-mocking an already-required module doesn't re-run its side effects", async () => {
+  // When the module was merely require()'d (never mocked), its requireMap
+  // entry holds the real exports — the auto-mock's internal require() must
+  // reuse it instead of dropping the cache and re-evaluating the source.
+  // Fresh process so the counter and module cache start clean.
+  using dir = tempDir("automock-no-reeval", {
+    "side-effect.cjs": `
+      globalThis.__sideEffectRuns = (globalThis.__sideEffectRuns ?? 0) + 1;
+      module.exports = {
+        fn() {
+          return "real";
+        },
+      };
+    `,
+    "fixture.test.ts": `
+      import { test, expect, jest } from "bun:test";
+      test("no double evaluation", () => {
+        require("./side-effect.cjs");
+        expect(globalThis.__sideEffectRuns).toBe(1);
+
+        jest.mock("./side-effect.cjs");
+        // The auto-mock must have been built from the cached real exports,
+        // not a second evaluation.
+        expect(globalThis.__sideEffectRuns).toBe(1);
+
+        const mocked = require("./side-effect.cjs");
+        expect(mocked.fn.mock).toBeDefined();
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "fixture.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("0 pass");
+  expect(exitCode).toBe(0);
+});

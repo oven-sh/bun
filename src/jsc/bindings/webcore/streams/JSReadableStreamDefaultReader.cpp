@@ -181,14 +181,9 @@ static JSObject* createReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject,
     return result;
 }
 
-// Drains the whole queue (after an optional already-read head chunk) into a fresh array,
-// runs the close-if-requested / pull-if-needed step, resets the queue, and returns the
-// `{value, size, done: false}` result. `size` is the PRE-drain [[queueTotalSize]], and the
-// pull decision runs against it (the drain leaves [[queueTotalSize]] untouched until the
-// final ResetQueue), matching the readMany contract.
-// Appends every queued chunk to `into` at `base`, runs the close-if-requested /
-// pull-if-needed step, resets the queue, and returns the PRE-drain [[queueTotalSize]]
-// (the pull decision runs against it, matching the readMany contract).
+// Appends every queued chunk to `into` at `base`, resets the queue, THEN runs the
+// close/pull step; returns the PRE-drain [[queueTotalSize]]. Reset must precede the step:
+// its user JS may reentrantly enqueue (must survive) or close() (must see an empty queue).
 static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* __restrict stream, JSArray* __restrict into, unsigned base)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -227,22 +222,27 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
         RETURN_IF_EXCEPTION(scope, size);
     }
 
-    if (stream->m_state != ReadableStreamState::Closed) {
-        bool closeRequested = isByte ? byteController->m_closeRequested : defaultController->m_closeRequested;
-        if (closeRequested)
-            readableStreamCloseIfPossible(globalObject, stream);
-        else if (isByte)
-            readableByteStreamControllerCallPullIfNeeded(globalObject, byteController);
-        else
-            readableStreamDefaultControllerCallPullIfNeeded(globalObject, defaultController);
-        RETURN_IF_EXCEPTION(scope, size);
-    }
     if (isByte) {
         WTF::Locker locker { byteController->cellLock() };
         byteController->m_queue.resetQueue(locker);
     } else {
         WTF::Locker locker { defaultController->cellLock() };
         defaultController->m_queue.resetQueue(locker);
+    }
+    if (stream->m_state != ReadableStreamState::Closed) {
+        bool closeRequested = isByte ? byteController->m_closeRequested : defaultController->m_closeRequested;
+        // Pull DECISION against the PRE-drain total (readMany cadence: a full batch defers
+        // the next pull to the next wake); the queue is already reset, so reentrant enqueues survive.
+        double hwm = isByte ? byteController->m_strategyHWM : defaultController->m_strategyHWM;
+        if (closeRequested)
+            readableStreamCloseIfPossible(globalObject, stream);
+        else if (hwm - size > 0) {
+            if (isByte)
+                readableByteStreamControllerCallPullIfNeeded(globalObject, byteController);
+            else
+                readableStreamDefaultControllerCallPullIfNeeded(globalObject, defaultController);
+        }
+        RETURN_IF_EXCEPTION(scope, size);
     }
     return size;
 }

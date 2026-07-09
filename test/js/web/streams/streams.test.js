@@ -2446,3 +2446,44 @@ test("byte streams transfer resizable ArrayBuffers to fixed-length", async () =>
     signalCode: null,
   });
 });
+
+// https://github.com/oven-sh/bun/pull/33193 — the bulk drain must reset the queue BEFORE
+// the user pull(): reentrant enqueues must survive and a reentrant close() must take effect.
+describe("bulk drain runs the user pull() against the already-reset queue", () => {
+  const makeSource = enqueue => {
+    let pulls = 0;
+    return {
+      start(c) { c.enqueue(enqueue("A")); },
+      pull(c) {
+        if (++pulls >= 2) {
+          c.enqueue(enqueue("B"));
+          c.close();
+        }
+      },
+    };
+  };
+
+  test("text() keeps a chunk enqueued during the drain and settles on close()", async () => {
+    const rs = new ReadableStream(makeSource(s => s), { highWaterMark: 2 });
+    await Bun.sleep(0); // let start + the initial pull settle so pull #2 fires inside the drain
+    expect(await rs.text()).toBe("AB");
+  });
+
+  test("text() on a byte stream keeps a chunk enqueued during the drain", async () => {
+    const encoder = new TextEncoder();
+    const rs = new ReadableStream({ type: "bytes", ...makeSource(s => encoder.encode(s)) }, { highWaterMark: 2 });
+    await Bun.sleep(0);
+    expect(await rs.text()).toBe("AB");
+  });
+
+  test("readMany() leaves the reentrantly-enqueued chunk readable and the stream closable", async () => {
+    const rs = new ReadableStream(makeSource(s => s), { highWaterMark: 2 });
+    await Bun.sleep(0);
+    const reader = rs.getReader();
+    const first = await reader.readMany();
+    expect(first).toEqual({ value: ["A"], size: 1, done: false });
+    expect(await reader.read()).toEqual({ value: "B", done: false });
+    expect(await reader.read()).toEqual({ value: undefined, done: true });
+    await reader.closed;
+  });
+});

@@ -383,16 +383,15 @@ const SocketHandlers: SocketHandler = {
       // will be handled in onConnectEnd
       return;
     }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
+    // The second argument is "authorized" (handshake + chain verification),
+    // matching the public Bun.connect handshake callback. node:tls decides
+    // what to do with verification results in JS via the rejectUnauthorized /
+    // checkServerIdentity handling below, so a verification-class result (an
+    // X509 code such as UNABLE_TO_VERIFY_LEAF_SIGNATURE) still means the TLS
+    // session itself was established. Only a fatal TLS protocol failure tears
+    // the socket down here: those arrive as EPROTO carrying the OpenSSL
+    // "error:...:SSL routines:..." reason (or an already decomposed ERR_SSL_*
+    // / ERR_OSSL_* code).
     const isProtocolFailure =
       !success &&
       verifyError?.code != null &&
@@ -407,9 +406,7 @@ const SocketHandlers: SocketHandler = {
     self._securePending = false;
     self.secureConnecting = false;
     // ECONNRESET and protocol-level failures returned above, so reaching here
-    // means the TLS session itself was established - even when `success`
-    // (authorized) is false purely because of the native hostname verdict,
-    // which arrives with no error object.
+    // means the TLS session itself was established.
     self._secureEstablished = true;
 
     self.emit("secure", self);
@@ -1119,16 +1116,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       // will be handled in onConnectEnd
       return;
     }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
+    // The second argument is "authorized" (handshake + chain verification),
+    // matching the public Bun.connect handshake callback. node:tls decides
+    // what to do with verification results in JS via the rejectUnauthorized /
+    // checkServerIdentity handling below, so a verification-class result (an
+    // X509 code such as UNABLE_TO_VERIFY_LEAF_SIGNATURE) still means the TLS
+    // session itself was established. Only a fatal TLS protocol failure tears
+    // the socket down here: those arrive as EPROTO carrying the OpenSSL
+    // "error:...:SSL routines:..." reason (or an already decomposed ERR_SSL_*
+    // / ERR_OSSL_* code).
     const isProtocolFailure =
       !success &&
       verifyError?.code != null &&
@@ -1143,9 +1139,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self._securePending = false;
     self.secureConnecting = false;
     // ECONNRESET and protocol-level failures returned above, so reaching here
-    // means the TLS session itself was established - even when `success`
-    // (authorized) is false purely because of the native hostname verdict,
-    // which arrives with no error object.
+    // means the TLS session itself was established.
     self._secureEstablished = true;
 
     self.emit("secure", self);

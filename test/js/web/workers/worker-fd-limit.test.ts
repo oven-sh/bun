@@ -44,11 +44,7 @@ test.skipIf(!isLinux)(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The Worker may either run to completion (message:42) or surface a
     // catchable error for a later fd-consuming open (error:...). Either is

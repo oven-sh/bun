@@ -110,8 +110,7 @@ impl GarbageCollectionController {
     pub fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
-        self.gc_timer =
-            uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self));
+        self.gc_timer = uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self));
         self.gc_repeating_timer =
             uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();

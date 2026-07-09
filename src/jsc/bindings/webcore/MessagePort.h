@@ -134,7 +134,6 @@ public:
     bool isClosing() const { return m_isClosing; }
 
 private:
-
     // Held for the port's entire lifetime — never nulled — so that the GC
     // thread's hasPendingActivity() can dereference it without racing the
     // mutator. close()/disentangle() flip pipe-side state bits instead.

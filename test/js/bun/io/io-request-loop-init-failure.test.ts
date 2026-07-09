@@ -117,10 +117,6 @@ int install_epoll_ctl_add_fault(int err) {
   `;
 
   async function run(fixture: string, expected: string) {
-    if (built == null) {
-      console.warn("SKIP io-loop-init-fault: cc or seccomp headers not available");
-      return;
-    }
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
       env: bunEnv,
@@ -157,10 +153,13 @@ int install_epoll_ctl_add_fault(int err) {
   ];
 
   for (const { name, value } of errnos) {
-    test(`Bun.file(fifo).text() rejects (not aborts) when epoll_ctl(ADD) returns ${name}`, async () => {
-      if (built == null) return run("", "");
-      const fifo = makeFifo(`r-${name}`);
-      await run(readFixture(built.so, fifo, value), `REJECTED:${name}:epoll_ctl`);
-    });
+    // built == null when cc or linux/seccomp.h are unavailable on the host.
+    test.skipIf(built == null)(
+      `Bun.file(fifo).text() rejects (not aborts) when epoll_ctl(ADD) returns ${name}`,
+      async () => {
+        const fifo = makeFifo(`r-${name}`);
+        await run(readFixture(built!.so, fifo, value), `REJECTED:${name}:epoll_ctl`);
+      },
+    );
   }
 });

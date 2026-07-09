@@ -927,6 +927,62 @@ test("the listener registry survives tampered Map/Set/WeakMap prototypes", async
   expect(exitCode).toBe(0);
 });
 
+// EventTarget dedupes on (type, callback): the first registration of a listener
+// wins outright, including its once-ness, and later adds of the same function
+// are no-ops. Wrapping each add in a fresh closure defeated that.
+test.each([
+  ["on+on", (p, fn) => (p.on("message", fn), p.on("message", fn)), { count: 1, calls: 1, persists: true }],
+  ["on+once", (p, fn) => (p.on("message", fn), p.once("message", fn)), { count: 1, calls: 1, persists: true }],
+  ["once+on", (p, fn) => (p.once("message", fn), p.on("message", fn)), { count: 1, calls: 1, persists: false }],
+  ["once+once", (p, fn) => (p.once("message", fn), p.once("message", fn)), { count: 1, calls: 1, persists: false }],
+])("%s registers one listener, first-add wins", async (_name, setup, want) => {
+  const { port1, port2 } = new MessageChannel();
+  let calls = 0;
+  const fn = () => calls++;
+  setup(port1, fn);
+  expect(port1.listenerCount("message")).toBe(want.count);
+
+  port2.postMessage(1);
+  for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+  expect(calls).toBe(want.calls);
+  expect(port1.listenerCount("message")).toBe(want.persists ? 1 : 0);
+
+  port1.off("message", fn);
+  expect(port1.listenerCount("message")).toBe(0);
+  port1.close();
+  port2.close();
+});
+
+// off() used to resolve the wrapper through a single slot stamped on the user's
+// function, so one listener shared across two events (or two ports) lost track.
+test("off() removes only the listener it names, per event and per port", () => {
+  const fn = () => {};
+  {
+    const { port1, port2 } = new MessageChannel();
+    port1.on("message", fn);
+    port1.on("close", fn);
+    port1.off("message", fn);
+    expect({ message: port1.listenerCount("message"), close: port1.listenerCount("close") }).toEqual({
+      message: 0,
+      close: 1,
+    });
+    port1.close();
+    port2.close();
+  }
+  {
+    const a = new MessageChannel();
+    const b = new MessageChannel();
+    a.port1.on("message", fn);
+    b.port1.on("message", fn);
+    a.port1.off("message", fn);
+    expect({ a: a.port1.listenerCount("message"), b: b.port1.listenerCount("message") }).toEqual({ a: 0, b: 1 });
+    a.port1.close();
+    a.port2.close();
+    b.port1.close();
+    b.port2.close();
+  }
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");

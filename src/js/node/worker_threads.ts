@@ -101,10 +101,11 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
 function injectFakeEmitter(Class) {
-  // Per-instance registry of wrapped listeners so listenerCount/eventNames/
-  // removeAllListeners work over EventTarget's opaque internal map. Keyed by a
-  // module-local symbol rather than a WeakMap: WeakMap.prototype.get/set are
-  // user-overridable and JSC exposes no @get/@set private name for them.
+  // Per-instance registry mapping each event to (user listener -> wrapper), so
+  // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
+  // internal map and off() can find the wrapper a given listener registered.
+  // Keyed by a module-local symbol rather than a WeakMap: WeakMap.prototype
+  // .get/.set are user-overridable and JSC has no @get/@set private name.
   const kListenerRegistry = Symbol("listenerRegistry");
   function registryFor(target, create) {
     let map = target[kListenerRegistry];
@@ -124,14 +125,10 @@ function injectFakeEmitter(Class) {
     return event.detail;
   }
 
-  const wrappedListener = Symbol("wrappedListener");
-
   function wrapped(run, listener) {
-    const callback = function (event) {
+    return function (event) {
       return listener(run(event));
     };
-    listener[wrappedListener] = callback;
-    return callback;
   }
 
   function functionForEventType(event, listener) {
@@ -159,21 +156,30 @@ function injectFakeEmitter(Class) {
     return MessageEvent;
   }
 
+  // EventTarget dedupes on (type, callback), so in node the FIRST registration of
+  // a listener wins outright -- including its once-ness -- and later adds of the
+  // same function are no-ops. Keying wrappers per listener reproduces that.
+  function register(target, event, listener, wrapper, options) {
+    const map = registryFor(target, true)!;
+    let byListener = map.$get(event);
+    if (!byListener) map.$set(event, (byListener = new Map()));
+    if (byListener.$has(listener)) return false;
+    target.addEventListener(event, wrapper, options);
+    byListener.$set(listener, wrapper);
+    return true;
+  }
+
   function on(event, listener) {
-    const wrapper = functionForEventType(event, listener);
-    this.addEventListener(event, wrapper);
-    const map = registryFor(this, true)!;
-    let set = map.$get(event);
-    if (!set) map.$set(event, (set = new Set()));
-    set.$add(wrapper);
+    register(this, event, listener, functionForEventType(event, listener), undefined);
     return this;
   }
 
   function off(event, listener) {
-    const wrapper = listener ? listener[wrappedListener] || listener : undefined;
-    if (wrapper) {
+    if (listener) {
+      const byListener = registryFor(this, false)?.$get(event);
+      const wrapper = byListener?.$get(listener) ?? listener;
       this.removeEventListener(event, wrapper);
-      registryFor(this, false)?.$get(event)?.$delete(wrapper);
+      byListener?.$delete(listener);
     } else {
       this.removeEventListener(event);
     }
@@ -187,17 +193,10 @@ function injectFakeEmitter(Class) {
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.
     function onceWrapper(ev) {
-      registryFor(target, false)?.$get(event)?.$delete(onceWrapper);
+      registryFor(target, false)?.$get(event)?.$delete(listener);
       return wrapper(ev);
     }
-    // off()/removeListener() look the registered function up through the user's
-    // listener, so point it at the wrapper we actually registered.
-    listener[wrappedListener] = onceWrapper;
-    this.addEventListener(event, onceWrapper, { once: true });
-    const map = registryFor(this, true)!;
-    let set = map.$get(event);
-    if (!set) map.$set(event, (set = new Set()));
-    set.$add(onceWrapper);
+    register(this, event, listener, onceWrapper, { once: true });
     return this;
   }
 
@@ -239,9 +238,9 @@ function injectFakeEmitter(Class) {
     const map = registryFor(this, false);
     if (!map) return this;
     const removeType = t => {
-      const set = map.$get(t);
-      if (set) {
-        for (const w of set) this.removeEventListener(t, w);
+      const byListener = map.$get(t);
+      if (byListener) {
+        for (const w of byListener.values()) this.removeEventListener(t, w);
         map.$delete(t);
       }
     };

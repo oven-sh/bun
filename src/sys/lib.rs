@@ -6184,6 +6184,27 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
+/// OHOS: sign a binary by path using the in-process ohos_sign crate.
+/// Idempotent: skips if the file already has a valid `.codesign` section.
+#[cfg(target_env = "ohos")]
+pub fn ohos_sign_binary(path: &ZStr) {
+    let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+    let p = std::path::Path::new(path_str);
+    if let Ok(bytes) = std::fs::read(p) {
+        if !ohos_sign::has_codesign(&bytes) {
+            let _ = ohos_sign::sign_selfsign_inplace(p);
+        }
+    }
+}
+
+/// OHOS: sign a binary by byte path (convenience wrapper).
+#[cfg(target_env = "ohos")]
+pub fn ohos_sign_binary_bytes(path: &[u8]) {
+    // SAFETY: path bytes must be valid UTF-8 and NUL-terminated after the slice.
+    let zstr = unsafe { ZStr::from_raw(path.as_ptr(), path.len()) };
+    ohos_sign_binary(zstr);
+}
+
 /// sys.zig:4557 — `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(all(unix, not(target_env = "ohos")))]

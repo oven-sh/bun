@@ -3210,6 +3210,10 @@ where
                                 return;
                             }
                             this.ref_();
+                            // Same as do_render_stream's Pending branch: the
+                            // body is in flight, so `handle_reject` must not
+                            // fall through to render_missing() and end it.
+                            this.flags.set_has_marked_pending(true);
                             byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory

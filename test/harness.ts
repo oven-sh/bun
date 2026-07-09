@@ -1828,15 +1828,22 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
+    // Bind to 127.0.0.1 explicitly: a bare port makes verdaccio listen on "localhost",
+    // which bun's listener binds IPv6-first ([::1]), unreachable in environments whose
+    // resolver only returns 127.0.0.1 for localhost.
+    this.process = fork(
+      require.resolve("verdaccio/bin/verdaccio"),
+      ["-c", this.configPath, "-l", `127.0.0.1:${this.port}`],
+      {
+        silent,
+        // Prefer using a release build of Bun since it's faster
+        execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+        env: {
+          ...(bunEnv as any),
+          NODE_NO_WARNINGS: "1",
+        },
       },
-    });
+    );
 
     this.process.stderr?.on("data", data => {
       console.error(`[verdaccio] stderr: ${data}`);

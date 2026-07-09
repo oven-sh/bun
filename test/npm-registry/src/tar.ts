@@ -61,11 +61,13 @@ function putString(block: Uint8Array, offset: number, value: string): void {
 }
 
 /**
- * Writes a numeric field as node-tar does: (width-2) zero-padded octal
- * digits, then space, then NUL.
+ * Writes a numeric field as node-tar's `padOctal` does: (width-2)
+ * zero-padded octal digits + space + NUL, or — when the value already
+ * fills width-1 digits — just the digits + NUL.
  */
 function putOctal(block: Uint8Array, offset: number, width: number, value: number): void {
-  putString(block, offset, value.toString(8).padStart(width - 2, "0") + " \0");
+  const s = value.toString(8);
+  putString(block, offset, s.length === width - 1 ? s + "\0" : s.padStart(width - 2, "0") + " \0");
 }
 
 /**

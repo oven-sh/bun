@@ -258,7 +258,7 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
         readableStreamDefaultControllerError(globalObject, controller, error);
         RETURN_IF_EXCEPTION(scope, void());
-        if (reader) {
+        if (reader && reader->m_stream) {
             readableStreamDefaultReaderRelease(globalObject, reader);
             RETURN_IF_EXCEPTION(scope, void());
         }

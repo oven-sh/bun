@@ -542,6 +542,28 @@ for (const { body, fn } of bodyTypes) {
         await reader.cancel();
         expect(source.locked).toBe(false);
       });
+      test("re-entrant closeSteps via flush enqueue does not double-release", async () => {
+        let sc!: ReadableStreamDefaultController;
+        const source = new ReadableStream({
+          start(c) {
+            sc = c;
+          },
+        });
+        const reader = fn(source).textStream().getReader();
+        await Promise.resolve();
+        const p1 = reader.read();
+        const p2 = reader.read();
+        await Promise.resolve();
+        await Promise.resolve();
+        // 0xC2 is held back; the chunk-step's callPullIfNeeded queues a third
+        // TextDecode read on the source reader.
+        sc.enqueue(new Uint8Array([0xc2]));
+        await Promise.resolve();
+        sc.close();
+        expect((await p1).value).toBe("\ufffd");
+        expect((await p2).done).toBe(true);
+        expect(source.locked).toBe(false);
+      });
       if (body === Response) {
         test("streams a fetch response body", async () => {
           await using server = Bun.serve({

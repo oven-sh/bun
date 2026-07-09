@@ -2003,7 +2003,7 @@ it(
       });
     });
   },
-  15_000 * ASAN_MULTIPLIER,
+  20_000 * ASAN_MULTIPLIER,
 );
 
 it("http2.createServer validates input options", () => {

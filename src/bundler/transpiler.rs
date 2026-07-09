@@ -738,6 +738,7 @@ impl<'a> Transpiler<'a> {
                 env.load_process()?;
                 if self.options.force_node_env == options::ForceNodeEnv::Production {
                     env.map.put(b"NODE_ENV", b"production")?;
+                    env.map.put(b"BUN_ENV", b"production")?;
                 }
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {

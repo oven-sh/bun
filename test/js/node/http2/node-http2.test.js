@@ -5311,10 +5311,8 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
   );
 });
 
-// RFC 7231 §5.1.1: the expectation-name is a case-insensitive token. A strict
-// compare made http2.createServer miss the interim 100 Continue (falling
-// through to 417 Expectation Failed) for non-lowercase casings such as the
-// "100-Continue" that Apache HttpComponents httpcore sends. See issue #20415.
+// https://github.com/oven-sh/bun/issues/20415
+// RFC 7231 §5.1.1: expectation-name is a case-insensitive token.
 it.each(["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"])(
   "http2 server matches Expect: %s case-insensitively (#20415)",
   async expectValue => {

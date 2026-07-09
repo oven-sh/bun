@@ -109,7 +109,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JS
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSReadableStreamBYOBRequest>(thisValue);
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBRequest"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "view"_s), thisObject->m_view.get() ? JSValue(thisObject->m_view.get()) : jsNull(), 0);
     data->putDirect(vm, Identifier::fromString(vm, "controller"_s), thisObject->m_controller.get() ? JSValue(thisObject->m_controller.get()) : jsUndefined(), 0);

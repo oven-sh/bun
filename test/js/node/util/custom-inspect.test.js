@@ -283,8 +283,34 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(out).toContain("ignoreBOM: true");
   });
 
+  test("ReadableStreamBYOBRequest", async () => {
+    let out;
+    const rs = new ReadableStream({
+      type: "bytes",
+      autoAllocateChunkSize: 16,
+      pull(c) {
+        out = inspect(c.byobRequest);
+        c.byobRequest.view[0] = 1;
+        c.byobRequest.respond(1);
+        c.close();
+      },
+    });
+    await rs.getReader().read();
+    expect(out).toStartWith("ReadableStreamBYOBRequest {");
+    expect(out).toContain("view: Uint8Array");
+    expect(out).toContain("controller: ReadableByteStreamController {}");
+  });
+
   test("depth < 0 returns the instance", () => {
     const rs = new ReadableStream();
     expect(rs[customSymbol](-1, {})).toBe(rs);
+  });
+
+  test("wrong receiver throws ERR_INVALID_THIS", () => {
+    expect(() => ReadableStream.prototype[customSymbol].call({}, 2, {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+    );
+    // util.inspect skips the custom function on prototype objects, so this must not recurse.
+    expect(inspect(ReadableStream.prototype)).toContain("[ReadableStream]");
   });
 });

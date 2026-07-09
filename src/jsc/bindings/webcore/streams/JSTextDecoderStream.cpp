@@ -198,7 +198,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSTextDecoderStream>(thisValue);
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     // encoding/fatal/ignoreBOM live on the TextDecoder held by m_decoder; read them via the
     // public prototype getters this class already exposes so no extra coupling is introduced.
     JSObject* data = constructEmptyObject(lexicalGlobalObject);

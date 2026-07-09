@@ -245,7 +245,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, 
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(thisValue);
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableByteStreamController"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     (void)thisObject;
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableByteStreamController"_s, data));

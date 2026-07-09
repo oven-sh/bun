@@ -851,6 +851,56 @@ it("getEphemeralKeyInfo() reports the negotiated TLS 1.2 ECDHE group, matching N
   });
 });
 
+it("getEphemeralKeyInfo() reports no key on a resumed TLS 1.2 session, matching Node", async () => {
+  // A resumed abbreviated handshake has no ServerKeyExchange, so Node's
+  // SSL_get_peer_tmp_key is empty. BoringSSL serializes the original
+  // handshake's group_id into the session blob, so without a resumption
+  // check SSL_get_negotiated_group would surface it here.
+  const server = tls.createServer({ ...COMMON_CERT_, maxVersion: "TLSv1.2" }, socket => {
+    socket.write("x");
+    socket.on("error", () => {});
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const base = {
+    port,
+    host: "127.0.0.1",
+    ca: COMMON_CERT_.cert,
+    servername: "localhost",
+    maxVersion: "TLSv1.2",
+  } as const;
+
+  async function connect(extra: tls.ConnectionOptions) {
+    const client = tlsConnect({ ...base, ...extra });
+    await once(client, "secureConnect");
+    await once(client, "data");
+    return client;
+  }
+
+  try {
+    const full = await connect({});
+    try {
+      expect(full.isSessionReused()).toBe(false);
+      expect(full.getEphemeralKeyInfo()).toStrictEqual({ type: "ECDH", name: "X25519", size: 253 });
+      var session = full.getSession();
+    } finally {
+      full.destroy();
+    }
+
+    const resumed = await connect({ session });
+    try {
+      expect(resumed.isSessionReused()).toBe(true);
+      expect(resumed.getEphemeralKeyInfo()).toStrictEqual(NO_EPHEMERAL_KEY);
+    } finally {
+      resumed.destroy();
+    }
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 it("new tls.TLSSocket(socket, { isServer: false }) + _start() runs the handshake over the wrapped socket", async () => {
   // The client STARTTLS pattern: wrap an already-connected plaintext socket,
   // then start the handshake with the internal _start() entry point. This

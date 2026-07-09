@@ -1031,12 +1031,15 @@ pub(super) fn get_ephemeral_key_info(
 
     // BoringSSL has no `SSL_get_peer_tmp_key`, but the negotiated named group
     // carries the same information for a TLS <= 1.2 (EC)DHE key exchange.
-    // Node reports no ephemeral key on TLS 1.3 (its `SSL_get_peer_tmp_key`
-    // only surfaces the ServerKeyExchange key) and on a non-forward-secret
-    // (RSA) key exchange, where `SSL_get_negotiated_group` is `NID_undef`;
-    // match both. The tls.ts wrapper shapes the empty result into Node's
-    // fixed {type, name, size} key set.
-    if ffi::SSL_version(ssl) >= i32::from(ffi::TLS1_3_VERSION) {
+    // Node reports no ephemeral key on TLS 1.3 or a resumed session (its
+    // `SSL_get_peer_tmp_key` only surfaces the ServerKeyExchange key) and on
+    // a non-forward-secret (RSA) key exchange, where
+    // `SSL_get_negotiated_group` is `NID_undef`; match all three. The tls.ts
+    // wrapper shapes the empty result into Node's fixed {type, name, size}
+    // key set. BoringSSL serializes `group_id` into the session blob, so a
+    // resumed session must be checked separately.
+    if ffi::SSL_version(ssl) >= i32::from(ffi::TLS1_3_VERSION) || ffi::SSL_session_reused(ssl) != 0
+    {
         return Ok(result);
     }
     let nid = ffi::SSL_get_negotiated_group(ssl);

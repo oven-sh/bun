@@ -3658,7 +3658,7 @@ pub enum GetFinalPathNameByHandleError {
 
 /// `\Device\<volume>` prefix → DOS drive letter, learned from spellings the
 /// lowbox already holds (cwd + exe dir; the mount manager is denied inside one).
-/// Junction/8.3 spellings stay unlearned: the pairing could name another volume.
+/// Junctions stay unlearned; a wrong pairing only ever misses (identity check).
 struct NtDeviceMap {
     map: Vec<(Vec<u16>, u16)>,
     /// cwd spelling last probed; a chdir re-probes on the next denied query.
@@ -3724,9 +3724,70 @@ fn eq_w_ordinal_ignore_case(a: &[u16], b: &[u16]) -> bool {
         } == externs::CSTR_EQUAL
 }
 
+/// Attribute-only `CreateFileW` (0 access): exempt from share-mode arbitration
+/// and the smallest ACL surface — don't add access bits. `pathz` must be
+/// NUL-terminated; `FILE_FLAG_BACKUP_SEMANTICS` covers directories, harmless on files.
+fn attr_only_open(pathz: &[u16]) -> HANDLE {
+    debug_assert_eq!(pathz.last(), Some(&0));
+    // SAFETY: `pathz` is NUL-terminated (caller contract, debug-asserted).
+    unsafe {
+        CreateFileW(
+            pathz.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            core::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            core::ptr::null_mut(),
+        )
+    }
+}
+
+/// True only when opening `dos` (attribute-only) reaches the file behind `h`:
+/// volume serial + file index equal — hardlink-equivalent identity (any
+/// hardlink passes; it still names the queried file).
+fn verified_same_file(h: HANDLE, dos: &[u16]) -> bool {
+    const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    let mut z = bun_paths::w_path_buffer_pool::get();
+    // `\\?\` is required: reconstructed answers can exceed MAX_PATH.
+    if PFX.len() + dos.len() + 1 > z.0.len() {
+        return false;
+    }
+    z.0[..PFX.len()].copy_from_slice(&PFX);
+    z.0[PFX.len()..PFX.len() + dos.len()].copy_from_slice(dos);
+    z.0[PFX.len() + dos.len()] = 0;
+    let verify = attr_only_open(&z.0[..PFX.len() + dos.len() + 1]);
+    if verify == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    let mut queried: BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+    let mut opened: BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: both handles are live; the out-params are valid for writes.
+    let ok = unsafe {
+        GetFileInformationByHandle(h, &mut queried) != 0
+            && GetFileInformationByHandle(verify, &mut opened) != 0
+    };
+    // SAFETY: `verify` is the live handle opened above.
+    unsafe {
+        let _ = externs::CloseHandle(verify);
+    }
+    // Unsupported-ID filesystems report zero/sentinel indexes (network
+    // redirectors; ReFS 128-bit degradation): degeneracy must miss, never match.
+    let real_id = |i: &BY_HANDLE_FILE_INFORMATION| {
+        i.dwVolumeSerialNumber != 0
+            && (i.nFileIndexHigh, i.nFileIndexLow) != (0, 0)
+            && (i.nFileIndexHigh, i.nFileIndexLow) != (u32::MAX, u32::MAX)
+    };
+    ok && real_id(&queried)
+        && real_id(&opened)
+        && queried.dwVolumeSerialNumber == opened.dwVolumeSerialNumber
+        && queried.nFileIndexHigh == opened.nFileIndexHigh
+        && queried.nFileIndexLow == opened.nFileIndexLow
+}
+
 /// Record `\Device\X → L:` when `dos` (`L:\a\b`) provably names its own handle's
-/// NT path (`VOLUME_NAME_NONE` tail == `dos` minus drive). Junction/8.3/subst
-/// spellings usually fail that test — a case-insensitive alias can still pass.
+/// NT path (`VOLUME_NAME_NONE` tail == `dos` minus drive). A case-insensitive
+/// alias can still pass — harmless: every answer is identity-verified.
 fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     if dos.len() < 3
         || dos[0] >= 128
@@ -3741,18 +3802,7 @@ fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     }
     z.0[..dos.len()].copy_from_slice(dos);
     z.0[dos.len()] = 0;
-    // SAFETY: NUL written above; attribute-only open (no access requested).
-    let h = unsafe {
-        CreateFileW(
-            z.0.as_ptr(),
-            0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            core::ptr::null_mut(),
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
-            core::ptr::null_mut(),
-        )
-    };
+    let h = attr_only_open(&z.0[..dos.len() + 1]);
     if h == INVALID_HANDLE_VALUE {
         return;
     }
@@ -3797,8 +3847,8 @@ fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
 
 /// `VOLUME_NAME_DOS` was denied (AppContainer token). Answer with
 /// `<drive>:<VOLUME_NAME_NT path minus its device prefix>` via the learned
-/// device map; degrade to the original error for volumes never seen under a
-/// DOS spelling.
+/// device map — identity-verified against the queried handle before being
+/// returned; degrade to the original error otherwise.
 fn lowbox_dos_name_fallback(
     hFile: HANDLE,
     out_buffer: &mut [u16],
@@ -3857,6 +3907,15 @@ fn lowbox_dos_name_fallback(
         // The real API NUL-terminates and raw-shape callers read
         // `buf[len]`; the bounds check above reserved that slot.
         out_buffer[total] = 0;
+        // A wrongly learned pairing must never surface a wrong path: require
+        // the reconstruction to reach the queried file itself.
+        if !verified_same_file(hFile, &out_buffer[..total]) {
+            bun_sys::syslog!(
+                "GetFinalPathNameByHandleW({:p}) = denied (reconstruction failed identity check)",
+                hFile
+            );
+            return Err(GetFinalPathNameByHandleError::FileNotFound);
+        }
         bun_sys::syslog!(
             "GetFinalPathNameByHandleW({:p}) = {} (NT device fallback)",
             hFile,
@@ -5282,8 +5341,9 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 #[cfg(test)]
 mod tests {
     use super::{
-        E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _,
-        eq_w_ordinal_ignore_case,
+        E, HANDLE, INVALID_HANDLE_VALUE, SystemErrno, Win32Error, Win32ErrorExt as _,
+        Win32ErrorUnwrap as _, attr_only_open, eq_w_ordinal_ignore_case, externs,
+        verified_same_file,
     };
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
@@ -5344,5 +5404,74 @@ mod tests {
     #[test]
     fn eq_w_ignore_case_accepts_lone_surrogate_self_compare() {
         assert!(eq_w_ordinal_ignore_case(&[0xD800], &[0xD800]));
+    }
+
+    /// Separator-normalized wide string: `\\?\` opens bypass normalization and
+    /// some CI images set TEMP with forward slashes.
+    fn wz_str(s: &str) -> Vec<u16> {
+        s.replace('/', "\\").encode_utf16().collect()
+    }
+
+    /// Bare (un-prefixed) wide path — `verified_same_file` prepends `\\?\`.
+    fn wz(p: &std::path::Path) -> Vec<u16> {
+        wz_str(&p.to_string_lossy())
+    }
+
+    /// Opens through the same production helper the verifier uses.
+    fn open_probe(p: &std::path::Path) -> HANDLE {
+        let mut path = wz(p);
+        path.push(0);
+        attr_only_open(&path)
+    }
+
+    /// Removes the temp fixtures even when an assertion fails mid-test.
+    struct RemoveOnDrop(Vec<std::path::PathBuf>);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            for p in &self.0 {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+
+    #[test]
+    fn verified_same_file_matches_only_the_queried_file() {
+        let dir = std::env::temp_dir();
+        let a = dir.join(format!("bun-vsf-a-{}", std::process::id()));
+        let b = dir.join(format!("bun-vsf-b-{}", std::process::id()));
+        let _cleanup = RemoveOnDrop(vec![a.clone(), b.clone()]);
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+
+        let h = open_probe(&a);
+        assert_ne!(h, INVALID_HANDLE_VALUE);
+        // SAFETY: `h` is the live handle opened above; closed on every path
+        // because the guard drops after the asserts.
+        let _close = scopeguard::guard(h, |h| unsafe {
+            let _ = externs::CloseHandle(h);
+        });
+
+        assert!(verified_same_file(h, &wz(&a)));
+        // Production always verifies a reconstructed spelling, never the
+        // original: a case-changed spelling must still verify.
+        assert!(verified_same_file(
+            h,
+            &wz_str(&a.to_string_lossy().to_lowercase())
+        ));
+        assert!(!verified_same_file(h, &wz(&b)));
+        let missing = dir.join(format!("bun-vsf-missing-{}", std::process::id()));
+        assert!(!verified_same_file(h, &wz(&missing)));
+    }
+
+    #[test]
+    fn verified_same_file_accepts_directories() {
+        let dir = std::env::temp_dir();
+        let h = open_probe(&dir);
+        assert_ne!(h, INVALID_HANDLE_VALUE);
+        // SAFETY: `h` is the live handle opened above.
+        let _close = scopeguard::guard(h, |h| unsafe {
+            let _ = externs::CloseHandle(h);
+        });
+        assert!(verified_same_file(h, &wz(&dir)));
     }
 }

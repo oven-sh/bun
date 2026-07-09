@@ -686,12 +686,25 @@ describe("non-persistent connection never dispatches a pipelined follow-up", () 
     const socket = net.connect(server.port, "127.0.0.1", () => socket.write(payload + payload));
     socket.on("data", chunk => {
       chunks.push(chunk);
-      if ((Buffer.concat(chunks).toString("latin1").match(/HTTP\/1\.1 200/g) ?? []).length === 2) resolve();
+      if (
+        (
+          Buffer.concat(chunks)
+            .toString("latin1")
+            .match(/HTTP\/1\.1 200/g) ?? []
+        ).length === 2
+      )
+        resolve();
     });
     socket.on("error", () => {});
     await promise;
     socket.destroy();
-    expect((Buffer.concat(chunks).toString("latin1").match(/HTTP\/1\.1 200/g) ?? []).length).toBe(2);
+    expect(
+      (
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .match(/HTTP\/1\.1 200/g) ?? []
+      ).length,
+    ).toBe(2);
   });
 });
 

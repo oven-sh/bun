@@ -278,7 +278,7 @@ static EncodedJSValue textDecoderStreamDelegatedGetter(JSGlobalObject* lexicalGl
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
+    const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, attributeName);
     RELEASE_AND_RETURN(scope, JSValue::encode(stream->m_decoder->get(lexicalGlobalObject, property)));
@@ -303,7 +303,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_readable, (JSGlobalO
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
+    const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     return JSValue::encode(stream->m_transform->m_readable.get());
@@ -313,7 +313,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_writable, (JSGlobalO
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
+    const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     return JSValue::encode(stream->m_transform->m_writable.get());

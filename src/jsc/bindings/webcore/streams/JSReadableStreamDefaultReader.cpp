@@ -73,7 +73,7 @@ void readableStreamDefaultReaderErrorReadRequests(JSGlobalObject* globalObject, 
     MarkedArgumentBuffer readRequests;
     detachReadRequests(vm, globalObject, reader, readRequests);
     RETURN_IF_EXCEPTION(scope, void());
-    for (size_t i = 0; i < readRequests.size(); ++i) {
+    for (size_t i = 0, count = readRequests.size(); i < count; ++i) {
         uncheckedDowncast<WebCore::JSReadRequest>(readRequests.at(i))->errorSteps(globalObject, error);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -103,9 +103,10 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
     auto* stream = reader->m_stream.get();
     ASSERT(stream);
     stream->m_disturbed = true;
-    if (stream->m_state == ReadableStreamState::Closed)
+    const ReadableStreamState state = stream->m_state;
+    if (state == ReadableStreamState::Closed)
         RELEASE_AND_RETURN(scope, readRequest->closeSteps(globalObject));
-    if (stream->m_state == ReadableStreamState::Errored) {
+    if (state == ReadableStreamState::Errored) {
         JSValue storedError = stream->m_storedError.get();
         RELEASE_AND_RETURN(scope, readRequest->errorSteps(globalObject, storedError ? storedError : jsUndefined()));
     }
@@ -186,7 +187,7 @@ static JSObject* createReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject,
 // Appends every queued chunk to `into` at `base`, runs the close-if-requested /
 // pull-if-needed step, resets the queue, and returns the PRE-drain [[queueTotalSize]]
 // (the pull decision runs against it, matching the readMany contract).
-static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSArray* into, unsigned base)
+static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* __restrict stream, JSArray* __restrict into, unsigned base)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isByte = stream->m_controllerKind == ControllerKind::Byte;
@@ -376,16 +377,18 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         return {};
     }
     stream->m_disturbed = true;
-    if (stream->m_state == ReadableStreamState::Errored) {
+    const ReadableStreamState state = stream->m_state;
+    if (state == ReadableStreamState::Errored) {
         JSValue storedError = stream->m_storedError.get();
         throwException(globalObject, scope, storedError ? storedError : jsUndefined());
         return {};
     }
 
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    switch (stream->m_controllerKind) {
+    const ControllerKind controllerKind = stream->m_controllerKind;
+    switch (controllerKind) {
     case ControllerKind::Direct: {
-        if (stream->m_state == ReadableStreamState::Closed)
+        if (state == ReadableStreamState::Closed)
             break;
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
         JSValue pulled = controller->onPull(globalObject);
@@ -399,7 +402,7 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         return result;
     }
     case ControllerKind::None:
-        if (stream->m_state == ReadableStreamState::Closed)
+        if (state == ReadableStreamState::Closed)
             break;
         throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This ReadableStream has no controller"_s));
         return {};
@@ -409,7 +412,7 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         return {};
     case ControllerKind::Default:
     case ControllerKind::Byte: {
-        bool isByte = stream->m_controllerKind == ControllerKind::Byte;
+        bool isByte = controllerKind == ControllerKind::Byte;
         bool queueIsEmpty = isByte ? byteControllerOf(stream)->m_queue.isEmpty() : defaultControllerOf(stream)->m_queue.isEmpty();
         if (!queueIsEmpty)
             RELEASE_AND_RETURN(scope, drainQueueForReadMany(vm, globalObject, stream, JSValue()));
@@ -678,7 +681,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_constructo
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_closed, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(JSValue::decode(thisValue));
+    const auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(JSValue::decode(thisValue));
     if (!reader) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a ReadableStreamDefaultReader"_s)));
     return JSValue::encode(reader->m_closedPromise.get());

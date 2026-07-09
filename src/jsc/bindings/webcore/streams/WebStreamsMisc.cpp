@@ -448,7 +448,7 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
 // record" sites only. Empty return = a VM termination the caller must propagate.
 JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
 {
-    JSC::Exception* exception = catchScope.exception();
+    const JSC::Exception* exception = catchScope.exception();
     ASSERT(exception);
     JSValue thrown = exception->value();
     if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]

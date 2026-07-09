@@ -492,10 +492,10 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
 {
-    if (m_bunMode == BunStreamMode::Default) [[likely]]
+    const auto mode = m_bunMode;
+    if (mode == BunStreamMode::Default) [[likely]]
         return;
     // Clear the mode BEFORE running the thunk so re-entrant consumers see it done.
-    auto mode = m_bunMode;
     m_bunMode = BunStreamMode::Default;
     if (mode == BunStreamMode::DirectPending)
         setUpDirectStreamController(globalObject, this, DirectSinkKind::ArrayBuffer, m_bunHighWaterMark);
@@ -770,7 +770,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter, (JSGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativeTypeGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    const auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
     return JSValue::encode(jsNumber(stream->m_nativeType));
 }
 
@@ -787,7 +787,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativeTypeSetter, (JSGlobalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_disturbedGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    const auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
     return JSValue::encode(jsBoolean(stream->m_disturbed));
 }
 

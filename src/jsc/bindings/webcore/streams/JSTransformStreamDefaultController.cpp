@@ -32,7 +32,7 @@ using namespace JSC;
 // that teardown) can see a readable with no controller. A torn-down readable is terminal.
 static JSReadableStreamDefaultController* transformReadableController(JSTransformStream* stream)
 {
-    auto* readable = stream->m_readable.get();
+    const auto* readable = stream->m_readable.get();
     if (readable->m_controllerKind != ControllerKind::Default)
         return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
@@ -262,7 +262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSPerformTransformRejected, (JSGl
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue rejection = callFrame->argument(0);
-    auto* controller = uncheckedDowncast<JSTransformStreamDefaultController>(callFrame->argument(1));
+    const auto* controller = uncheckedDowncast<JSTransformStreamDefaultController>(callFrame->argument(1));
     transformStreamError(globalObject, controller->m_stream.get(), rejection);
     RETURN_IF_EXCEPTION(scope, {});
     throwException(globalObject, scope, rejection);
@@ -285,7 +285,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desir
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(JSValue::decode(thisValue));
+    const auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, globalObject, "TransformStreamDefaultController"_s);
     auto* readableController = transformReadableController(thisObject->m_stream.get());

@@ -67,7 +67,7 @@ void readableStreamBYOBReaderErrorReadIntoRequests(JSGlobalObject* globalObject,
     MarkedArgumentBuffer readIntoRequests;
     detachReadIntoRequests(vm, globalObject, reader, readIntoRequests);
     RETURN_IF_EXCEPTION(scope, void());
-    for (size_t i = 0; i < readIntoRequests.size(); ++i) {
+    for (size_t i = 0, count = readIntoRequests.size(); i < count; ++i) {
         uncheckedDowncast<WebCore::JSReadIntoRequest>(readIntoRequests.at(i))->errorSteps(globalObject, error);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -370,7 +370,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBReaderPrototypeGetter_constructor, 
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBReaderPrototypeGetter_closed, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(JSValue::decode(thisValue));
+    const auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(JSValue::decode(thisValue));
     if (!reader) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a ReadableStreamBYOBReader"_s)));
     return JSValue::encode(reader->m_closedPromise.get());

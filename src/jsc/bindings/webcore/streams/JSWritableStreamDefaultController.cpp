@@ -319,7 +319,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onWSControllerStartFulfilled, (JSGl
     auto* controller = dynamicDowncast<JSWritableStreamDefaultController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    auto* stream = controller->m_stream.get();
+    const auto* stream = controller->m_stream.get();
     ASSERT(stream->m_state == WritableStreamState::Writable || stream->m_state == WritableStreamState::Erroring);
     UNUSED_PARAM(stream);
     controller->m_started = true;
@@ -347,7 +347,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onWSSinkCloseFulfilled, (JSGlobalOb
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* controller = dynamicDowncast<JSWritableStreamDefaultController>(callFrame->argument(1));
+    const auto* controller = dynamicDowncast<JSWritableStreamDefaultController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
     writableStreamFinishInFlightClose(globalObject, controller->m_stream.get());
@@ -359,7 +359,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onWSSinkCloseRejected, (JSGlobalObj
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* controller = dynamicDowncast<JSWritableStreamDefaultController>(callFrame->argument(1));
+    const auto* controller = dynamicDowncast<JSWritableStreamDefaultController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
     writableStreamFinishInFlightCloseWithError(globalObject, controller->m_stream.get(), callFrame->argument(0));
@@ -424,7 +424,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerPrototypeGetter_signal
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSWritableStreamDefaultController>(JSValue::decode(thisValue));
+    const auto* thisObject = dynamicDowncast<JSWritableStreamDefaultController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, globalObject, "WritableStreamDefaultController"_s);
     auto* jsAbortController = uncheckedDowncast<JSAbortController>(thisObject->m_abortController.get());

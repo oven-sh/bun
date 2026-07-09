@@ -167,9 +167,10 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
     size_t byteLength = 0;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk))
         byteLength = view->isDetached() ? 0 : view->byteLength();
-    else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk))
-        byteLength = (!buffer->impl() || buffer->impl()->isDetached()) ? 0 : buffer->impl()->byteLength();
-    else {
+    else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
+        auto* impl = buffer->impl();
+        byteLength = (!impl || impl->isDetached()) ? 0 : impl->byteLength();
+    } else {
         throwTypeError(globalObject, scope, "Expected text, ArrayBuffer or ArrayBufferView"_s);
         return {};
     }
@@ -226,12 +227,14 @@ static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamCon
 static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto& accumulator = controller->m_textAccumulator;
-    if (!accumulator.hasString && !accumulator.hasBuffer)
+    const bool hasString = accumulator.hasString;
+    const bool hasBuffer = accumulator.hasBuffer;
+    if (!hasString && !hasBuffer)
         return emptyString();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
-    if (accumulator.hasString && !accumulator.hasBuffer) {
+    if (hasString && !hasBuffer) {
         if (Bun::WebStreams::exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();
@@ -254,8 +257,9 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             if (!view->isDetached())
                 bytes.append(view->span());
         } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
-            if (buffer->impl() && !buffer->impl()->isDetached())
-                bytes.append(buffer->impl()->span());
+            auto* impl = buffer->impl();
+            if (impl && !impl->isDetached())
+                bytes.append(impl->span());
         }
     }
     if (!accumulator.rope.isEmpty()) {

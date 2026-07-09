@@ -395,9 +395,10 @@ static void scheduleNativeSourceCallClose(JSGlobalObject* globalObject, JSNative
 
 static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t resultBytes)
 {
-    if (resultBytes >= adapter->m_chunkSize && !adapter->m_hasResized) {
+    const size_t chunkSize = adapter->m_chunkSize;
+    if (resultBytes >= chunkSize && !adapter->m_hasResized) {
         adapter->m_hasResized = true;
-        adapter->m_chunkSize = std::min<size_t>(adapter->m_chunkSize * 2, nativeSourceMaxChunkSize);
+        adapter->m_chunkSize = std::min<size_t>(chunkSize * 2, nativeSourceMaxChunkSize);
     }
 }
 
@@ -411,12 +412,13 @@ static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUin
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    const size_t chunkSize = adapter->m_chunkSize;
     if (JSObject* pending = adapter->m_pendingView.get()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
-        if (!view->isDetached() && view->possiblySharedBuffer() && view->possiblySharedBuffer()->byteLength() >= adapter->m_chunkSize)
+        if (!view->isDetached() && view->possiblySharedBuffer() && view->possiblySharedBuffer()->byteLength() >= chunkSize)
             return view;
     }
-    auto* fresh = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), adapter->m_chunkSize);
+    auto* fresh = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
     RETURN_IF_EXCEPTION(scope, nullptr);
     adapter->m_pendingView.set(vm, adapter, fresh);
     return fresh;
@@ -1078,7 +1080,7 @@ static bool rsisWriteChunkArrayFrom(JSC::VM& vm, JSGlobalObject* globalObject, J
 
 static void rsisAfterBatch(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
-    auto* stream = op->m_stream.get();
+    const auto* stream = op->m_stream.get();
     if (op->m_didClose || (stream && stream->m_state == ReadableStreamState::Closed)) {
         rsisFinish(globalObject, op);
         return;

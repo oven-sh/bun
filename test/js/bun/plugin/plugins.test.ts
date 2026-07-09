@@ -814,3 +814,40 @@ it.concurrent("onResolve into a custom namespace with no matching onLoad is a ha
   ]);
   expect(exitCode).toBe(0);
 });
+
+it.concurrent("the unmatched-onLoad guard does not trip on absolute paths containing ':'", async () => {
+  // ':' is a legal POSIX filename character. On Windows the absolute-path
+  // check in bun_paths::is_absolute covers "X:\...", so a real file's path
+  // cannot be mistaken for a plugin namespace there either.
+  if (process.platform === "win32") return;
+
+  using dir = tempDir("plugin-colon-in-path", {
+    "sub:dir/mod.js": `export default "from-colon-dir";`,
+    "sub:dir/asset.xyz": `ignored`,
+    "entry.js": `
+      Bun.plugin({
+        name: "dummy",
+        setup(b) {
+          b.onLoad({ filter: /^never$/, namespace: "dummy" }, () => ({ contents: "", loader: "js" }));
+        },
+      });
+      const js = await import("./sub:dir/mod.js");
+      const asset = await import("./sub:dir/asset.xyz");
+      console.log(JSON.stringify({ js: js.default, asset: typeof asset.default }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    js: "from-colon-dir",
+    asset: "string",
+  });
+  expect(exitCode).toBe(0);
+});

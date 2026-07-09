@@ -480,6 +480,113 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
     });
 
+    it("fetch Response whose body is still arriving", async () => {
+      using dir = tempDir("bun-write-response-fetch-streaming", {});
+      const dest = path.join(String(dir), "out.bin");
+      const size = 32 * 16384;
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                for (let i = 0; i < 32; i++) c.enqueue(Buffer.alloc(16384, 0x41 + (i % 26)));
+                c.close();
+              },
+            }),
+          ),
+      });
+      // A chunked body large enough to pause the HTTP thread for backpressure
+      // before the JS side has told it whether to stream or buffer. Before the
+      // fix, Bun.write overwrote `locked.task` without firing the producer's
+      // `on_start_buffering`, so the fetch tasklet stayed paused forever.
+      const res = await fetch(server.url);
+      const n = await Bun.write(dest, res);
+      expect({ n, size: Bun.file(dest).size, bodyUsed: res.bodyUsed }).toEqual({
+        n: size,
+        size,
+        bodyUsed: true,
+      });
+      // first and last chunk contents
+      const buf = await Bun.file(dest).bytes();
+      expect(buf[0]).toBe(0x41);
+      expect(buf[size - 1]).toBe(0x41 + (31 % 26));
+    });
+
+    it("fetch Response after its .body getter was touched", async () => {
+      using dir = tempDir("bun-write-response-fetch-body-touched", {});
+      const dest = path.join(String(dir), "out.txt");
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.enqueue(new TextEncoder().encode("fetch-body-content"));
+                c.close();
+              },
+            }),
+          ),
+      });
+      const res = await fetch(server.url);
+      // Materialises a ByteStream-backed readable on `locked.readable`
+      // without consuming it.
+      void res.body;
+      const n = await Bun.write(dest, res);
+      expect({ n, text: await Bun.file(dest).text() }).toEqual({
+        n: 18,
+        text: "fetch-body-content",
+      });
+    });
+
+    it("server Request after its .body getter was touched", async () => {
+      using dir = tempDir("bun-write-server-req-body-touched", {});
+      const dest = path.join(String(dir), "out.txt");
+      const { promise, resolve, reject } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          if (!req.body) return new Response("no-body");
+          try {
+            resolve(await Bun.write(dest, req));
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      });
+      const res = await fetch(server.url, { method: "POST", body: "server-request-payload" });
+      expect(await res.text()).toBe("ok");
+      expect({ n: await promise, text: await Bun.file(dest).text() }).toEqual({
+        n: 22,
+        text: "server-request-payload",
+      });
+    });
+
+    it("new Response(req.body) inside a server handler", async () => {
+      // The original #13237 reproduction.
+      using dir = tempDir("bun-write-server-req-body-wrapped", {});
+      const dest = path.join(String(dir), "out.txt");
+      const { promise, resolve, reject } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            resolve(await Bun.write(dest, new Response(req.body)));
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      });
+      const res = await fetch(server.url, { method: "POST", body: "wrapped-request-payload" });
+      expect(await res.text()).toBe("ok");
+      expect({ n: await promise, text: await Bun.file(dest).text() }).toEqual({
+        n: 23,
+        text: "wrapped-request-payload",
+      });
+    });
+
     it("rejects a locked source without truncating the destination", async () => {
       using dir = tempDir("bun-write-response-rs-locked", {
         "out.txt": "PRECIOUS-EXISTING-CONTENTS",

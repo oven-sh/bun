@@ -5382,6 +5382,41 @@ pub fn write_file_internal(
                         return result.map(ControlFlow::Break);
                     }
 
+                    // No readable yet. A native producer (fetch, server request)
+                    // registers `on_start_buffering` on the locked body; fire it
+                    // with the producer's own task before we replace `locked.task`
+                    // below, so the producer switches to buffer-all and eventually
+                    // `resolve()`s. Without this a fetch body that paused for
+                    // backpressure waits forever for a signal that never arrives.
+                    // SAFETY: re-borrow the Locked body value.
+                    if let BodyValue::Locked(locked) = unsafe { &mut *body_value } {
+                        if let (Some(on_start_buffering), Some(producer_task)) =
+                            (locked.on_start_buffering.take(), locked.task)
+                        {
+                            on_start_buffering(producer_task);
+                            // The hook may have resolved the body synchronously
+                            // (the server does so for an empty request body):
+                            // re-dispatch that terminal state.
+                            // SAFETY: re-borrow after the producer hook.
+                            match unsafe { &mut *body_value } {
+                                BodyValue::Locked(_) => {}
+                                BodyValue::Error(err_ref) => {
+                                    let err_js = err_ref.to_js(global_this);
+                                    destination_blob.detach();
+                                    // SAFETY: re-borrow; `err_ref` ended above.
+                                    let _ = unsafe { &mut *body_value }.use_();
+                                    return Ok(ControlFlow::Break(
+                                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                            global_this,
+                                            err_js,
+                                        ),
+                                    ));
+                                }
+                                other => return Ok(ControlFlow::Continue(other.use_())),
+                            }
+                        }
+                    }
+
                     let task =
                         bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                             global_this: bun_ptr::BackRef::new(global_this),

@@ -938,7 +938,14 @@ where
         // Pass the rejection reason through verbatim (including `null` and
         // `undefined`) so `error()` sees the same value the already-settled
         // path delivers. Only an empty JSValue is normalized.
-        Self::handle_reject(ctx, if err.is_empty() { JSValue::UNDEFINED } else { err });
+        Self::handle_reject(
+            ctx,
+            if err.is_empty() {
+                JSValue::UNDEFINED
+            } else {
+                err
+            },
+        );
         Ok(JSValue::UNDEFINED)
     }
 

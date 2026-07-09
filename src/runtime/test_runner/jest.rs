@@ -168,16 +168,16 @@ impl<'a> TestRunner<'a> {
         }
         if active_file.phase == bun_test::Phase::Execution {
             if let Some(group) = active_file.execution.active_group_ref() {
-                let mut latest = bun_core::Timespec::EPOCH;
+                let mut latest: Option<bun_core::Timespec> = None;
                 for seq in group.sequences_const(&active_file.execution) {
                     let Some(entry) = seq.active_entry else { continue };
                     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
                     let ts = unsafe { entry.as_ref() }.timespec;
-                    if ts.order(&latest) == core::cmp::Ordering::Greater {
-                        latest = ts;
+                    if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
+                        latest = Some(ts);
                     }
                 }
-                if !latest.eql(&bun_core::Timespec::EPOCH) {
+                if let Some(latest) = latest {
                     return latest;
                 }
             }

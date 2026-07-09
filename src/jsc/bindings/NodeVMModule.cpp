@@ -81,8 +81,15 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     reconcileEvaluationState(vm);
 
+    // ES2024 Evaluate() step 2: for evaluating-async, return the cached
+    // [[TopLevelCapability]] promise. m_evaluationResult is set only after the
+    // first evaluate() returned, so Evaluating-without-result is sync re-entry.
+    if (m_status == Status::Evaluating && m_evaluationResult) {
+        return m_evaluationResult.get();
+    }
+
     if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must be one of linked, evaluated, or errored"_s);
         return {};
     }
 

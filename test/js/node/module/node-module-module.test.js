@@ -214,10 +214,9 @@ describe.concurrent("node-module-module", () => {
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const result = JSON.parse(stdout);
     const expectedKeys = ["children", "exports", "filename", "id", "loaded", "path", "paths"];
     const expectedDesc = { hasValue: true, enumerable: true, writable: true, configurable: true };

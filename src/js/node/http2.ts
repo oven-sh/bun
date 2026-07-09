@@ -414,6 +414,7 @@ const kRequestHeaders = Symbol("requestHeaders");
 // set so a second sendTrailers() in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not
 // ERR_HTTP2_INVALID_STREAM.
 const kSendingTrailers = Symbol("sendingTrailers");
+const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
 // node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
 const kBoundSession = Symbol("boundSession");
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
@@ -3677,6 +3678,21 @@ function emitConnectNT(self, socket) {
 function destroyWithInvalidSessionNT(stream) {
   if (!stream.destroyed) stream.destroy($ERR_HTTP2_INVALID_SESSION());
 }
+// A gracefully closed, idle session whose settings() ACK has not arrived yet gets a short,
+// bounded grace instead of an immediate destroy. Node never needs this: it coalesces the
+// SETTINGS frame into the same write as the request, so its ACK always beats the response
+// the caller is closing from. Bun flushes the request first, so the ACK can still be one
+// round-trip away when close() runs - destroying then silently drops the user's settings
+// callback and its 'localSettings' event. An ACK is mandatory (RFC 9113 6.5.3) and its
+// dispatch completes the destroy at once; a peer that never sends one only delays the
+// teardown by the grace, never past it.
+function scheduleSettingsAckGraceNT(session) {
+  if (session[kSettingsAckGraceTimer] !== undefined) return;
+  const timer = setTimeout(destroyIfNotDestroyedNT, 250, session);
+  // Never keeps the event loop alive: if nothing else does, the process is exiting anyway.
+  timer.unref?.();
+  session[kSettingsAckGraceTimer] = timer;
+}
 function destroyIfNotDestroyedNT(target) {
   if (!target.destroyed) target.destroy();
 }
@@ -4563,6 +4579,12 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
+    // The frame is queued on the native session; flush it now (as close() does for its
+    // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
+    // write for every settings() call, so its SETTINGS goes out with the current batch -
+    // a late frame here means the ACK trails the peer's response and a session closed at
+    // that response's end never resolves the settings callback.
+    this.#parser?.flush?.();
     // Queue the callback so this call's own ACK invokes it (after 'localSettings');
     // the null seed absorbs the initial-preface ACK that has no user callback.
     this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
@@ -4913,7 +4935,12 @@ class ClientHttp2Session extends Http2Session {
             stream.destroy();
           }
           if (self.#connections === 0 && self.#closed) {
-            self.destroy();
+            // Deferred like close()'s own destroy: this runs inside a native dispatch
+            // batch, and frames the engine already received but has not dispatched yet
+            // must still reach JS. An outstanding settings() ACK gets a bounded grace
+            // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+            if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
+            else setImmediate(destroyIfNotDestroyedNT, self);
           }
         } else if (state === 5) {
           // 5 = local closed aka write is closed
@@ -4996,6 +5023,14 @@ class ClientHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      // This ACK may be the only thing a gracefully closed, idle session was waiting for.
+      if (self.#pendingSettingsAckCount === 0 && self[kSettingsAckGraceTimer] !== undefined) {
+        clearTimeout(self[kSettingsAckGraceTimer]);
+        self[kSettingsAckGraceTimer] = undefined;
+      }
+      if (self.#closed && self.#connections === 0 && self.#pendingSettingsAckCount === 0 && !self.destroyed) {
+        setImmediate(destroyIfNotDestroyedNT, self);
+      }
       const queued = self.#pendingSettingsCallbacks.shift();
       // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
       // callback first and emits 'localSettings' after it.
@@ -5341,6 +5376,12 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
+    // The frame is queued on the native session; flush it now (as close() does for its
+    // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
+    // write for every settings() call, so its SETTINGS goes out with the current batch -
+    // a late frame here means the ACK trails the peer's response and a session closed at
+    // that response's end never resolves the settings callback.
+    this.#parser?.flush?.();
     // Queue the callback so this call's own ACK invokes it (after 'localSettings');
     // the null seed absorbs the initial-preface ACK that has no user callback.
     this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
@@ -5492,11 +5533,18 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.flush?.();
     // Requests queued while the socket is still connecting count as in-flight too: they are
     // rejected with ERR_HTTP2_GOAWAY_SESSION from #onConnect (node's requestOnConnect), not
-    // canceled by an early destroy. Node's kMaybeDestroy waits on handle.hasPendingData()
-    // (nghttp2_session_want_write()/want_read()), which does NOT track outstanding SETTINGS
-    // ACKs — close() must not depend on the peer sending one.
+    // canceled by an early destroy.
+    //
+    // A settings() whose ACK has not arrived also keeps the graceful close from destroying
+    // the session yet: node always observes that ACK before it gets here because it batches
+    // the SETTINGS frame into the same write as the request (so the ACK beats the response),
+    // and the vendored tests close() from the response's 'end' relying on it. The wait is
+    // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
+    // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
+    // the session down. destroy() remains immediate.
     if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
-      setImmediate(destroyIfNotDestroyedNT, this);
+      if (this.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(this);
+      else setImmediate(destroyIfNotDestroyedNT, this);
     }
   }
 

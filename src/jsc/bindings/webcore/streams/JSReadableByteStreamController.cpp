@@ -602,7 +602,7 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
     JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    if (pullPromise) {
+    if (pullPromise && pullPromise->status() != JSPromise::Status::Fulfilled) {
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
         return;
     }

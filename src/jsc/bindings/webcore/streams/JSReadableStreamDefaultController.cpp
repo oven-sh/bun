@@ -498,12 +498,13 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    if (pullPromise) {
+    if (pullPromise && pullPromise->status() != JSPromise::Status::Fulfilled) {
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
         return;
     }
-    // A pull() that returned a non-thenable completed synchronously: skip the wrapper promise.
-    // When nothing during the pull set m_pullAgain, the upon-fulfillment steps are a no-op and
+    // A non-thenable return, or an already-fulfilled promise from an internal pull arm,
+    // completed synchronously: skip the performPromiseThen reactions. When nothing during
+    // the pull set m_pullAgain, the upon-fulfillment steps are just m_pulling = false and
     // can run inline. When m_pullAgain is set (enqueue()'s trailing callPullIfNeeded), defer
     // the re-pull as its own microtask to preserve spec timing and bound stack depth.
     if (!controller->m_pullAgain) {

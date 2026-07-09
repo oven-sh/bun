@@ -2388,19 +2388,12 @@ mod spawn_process_body {
     #[cfg(windows)]
     const DISCARD_SCRATCH_LEN: usize = 64 * 1024;
 
-    // One process-global scratch for all discard reads: contents are garbage
-    // by design and never read back; a zeroed static lives in .bss (no commit
-    // until first touch), so one buffer beats per-thread copies.
+    // One process-global scratch for all discard reads: contents are garbage by
+    // design and never read back (discard pipes are never IPC pipes — the one
+    // libuv mode that parses read buffers); concurrent kernel writers are fine.
     #[cfg(windows)]
-    struct DiscardScratch(core::cell::UnsafeCell<[u8; DISCARD_SCRATCH_LEN]>);
-    // SAFETY: written only by kernel ReadFile completions during discard reads;
-    // concurrent writers produce garbage by design and discard pipes are never
-    // IPC pipes — the one libuv mode that parses read buffers.
-    #[cfg(windows)]
-    unsafe impl Sync for DiscardScratch {}
-    #[cfg(windows)]
-    static DISCARD_SCRATCH: DiscardScratch =
-        DiscardScratch(core::cell::UnsafeCell::new([0; DISCARD_SCRATCH_LEN]));
+    static DISCARD_SCRATCH: bun_core::RacyCell<[u8; DISCARD_SCRATCH_LEN]> =
+        bun_core::RacyCell::new([0; DISCARD_SCRATCH_LEN]);
 
     /// Null `pipe`'s slot on its owning Process (the exit path reads it) and
     /// close it; the close callback frees the Box and drops the Process ref.
@@ -2433,7 +2426,7 @@ mod spawn_process_body {
             _suggested_size: usize,
             buffer: *mut uv::uv_buf_t,
         ) {
-            let base = DISCARD_SCRATCH.0.get().cast::<u8>();
+            let base = DISCARD_SCRATCH.get().cast::<u8>();
             // SAFETY: `buffer` is libuv's out-param; the scratch is a
             // process-lifetime static, so it outlives every read.
             unsafe {

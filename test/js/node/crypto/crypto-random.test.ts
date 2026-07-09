@@ -360,9 +360,13 @@ describe("generatePrime propagates generation failures", () => {
   };
 
   it("generatePrimeSync throws when BN_generate_prime_ex rejects the size", () => {
-    expect(() => generatePrimeSync(1, { bigint: true })).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
+    expect(() => generatePrimeSync(1, { bigint: true })).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
     expect(() => generatePrimeSync(1)).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
-    expect(() => generatePrimeSync(2147483647, { bigint: true })).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
+    expect(() => generatePrimeSync(2147483647, { bigint: true })).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+    );
   });
 
   it("generatePrimeSync throws instead of returning an untested composite on {add: 0n}", () => {

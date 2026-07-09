@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
@@ -530,20 +530,37 @@ pub(crate) fn js_file_generation(
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
+/// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
+/// late call after the watchdog moved on cannot mark the currently-running one.
 pub(crate) fn js_node_test_mark_result(
     _global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     use super::execution::Result as ExecResult;
-    let [mode] = callframe.arguments_as_array::<1>();
+    let [mode, done] = callframe.arguments_as_array::<2>();
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-    let active = buntest.get_current_state_data();
+    // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
+    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
+    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
+    let bound = match unsafe { (*dcb).r#ref.as_deref() } {
+        Some(refdata) => refdata.phase.clone(),
+        // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
+        // drain before it stamps the DoneCallback — the runner has not moved
+        // on, so the live index IS the intended sequence.
+        None if unsafe { !(*dcb).called } => buntest.get_current_state_data(),
+        // done() already ran and reported — nothing left to mark.
+        None => return Ok(JSValue::UNDEFINED),
+    };
     let Some((sequence_ptr, _)) =
-        buntest.execution.get_current_and_valid_execution_sequence(&active)
+        buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {
         return Ok(JSValue::UNDEFINED);
     };

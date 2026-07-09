@@ -704,7 +704,8 @@ class TestPlan {
             makeTestFailure(`plan timed out after ${wait}ms with ${this.actual} assertions when expecting ${expected}`),
           );
         }, wait);
-        timer.unref?.();
+        // Not unref'd: count()/the timer callback always clear it, and on
+        // Windows an unref'd timer alone under bun:test busy-spins (8664279d).
       }
       this.#pending = { resolve, reject, timer };
     });
@@ -877,7 +878,9 @@ class TestNode {
 // bun:test module object, which is public API.
 const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // Overrides the running bun:test sequence result: `false` → skip, `true` → todo.
-const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 1);
+// `done` binds the intended sequence so a late call after the bun:test watchdog
+// moved on cannot write onto the currently-running test.
+const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1489,6 +1492,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             // reject `pending` afterward with no one listening.
             pending.catch(() => {});
             await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
+            // A t.test() that fulfilled the plan from an async callback was
+            // scheduled onto subtestChain during the wait; drain again so its
+            // failure reaches failedSubtests below (Node fails the parent).
+            const drain = drainSubtestChain(node);
+            await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
           }
         } catch (err) {
           failure = err;
@@ -1671,9 +1679,9 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         // (Node counts these as skip/todo even when the body threw); a declared
         // todo body's failure must reach bun:test's own todo accounting instead.
         if (node.skipped) {
-          markCurrentResult(false);
+          markCurrentResult(false, done);
         } else if (node.todoFlag && !declaredTodo) {
-          markCurrentResult(true);
+          markCurrentResult(true, done);
         } else {
           done(failure);
           return;

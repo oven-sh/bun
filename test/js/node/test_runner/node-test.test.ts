@@ -168,6 +168,18 @@ describe("node:test", () => {
     });
   });
 
+  test("should fail the parent when a t.test() that fulfills plan({wait}) throws", async () => {
+    const { exitCode, stderr } = await runTests(["24-plan-wait-late-subtest.js"]);
+    // The error message from makeTestFailure — must not be satisfied by the
+    // fixture's own source lines echoed in the failure context.
+    expect(stderr).toContain("error: 1 subtest failed");
+    expect(stderr).toContain("boom");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
   test("should reset the module-level mock tracker between --rerun-each iterations", async () => {
     // ESM entry: --rerun-each currently only re-evaluates ESM entry files.
     const { exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs"], {}, ["--rerun-each=3"]);

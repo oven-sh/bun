@@ -3213,9 +3213,10 @@ function emitStreamErrorFromCodeNT(stream, rstCode) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
-    // node only tears down live streams (closeSession skips streams already gone from its set);
-    // re-destroying a destroyed Duplex with an error would re-emit it as an uncaught exception.
-    if (stream.destroyed) {
+    // node only tears down live streams (closeSession skips streams already gone from its set). A
+    // stream already closed (close() ran; destroy is a setImmediate behind) has also committed to
+    // its rstCode, so a late session error has nothing to add and would race the pending destroy.
+    if (stream.destroyed || stream.closed) {
       if (destroy_self) self.destroy();
       return;
     }

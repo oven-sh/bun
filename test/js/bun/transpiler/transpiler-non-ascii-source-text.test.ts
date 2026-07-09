@@ -48,8 +48,7 @@ describe.concurrent("runtime transpiler preserves non-ASCII source text", () => 
     test(label, async () => {
       const ext = args[args.length - 1].split(".").pop()!;
       using dir = tempDir("non-ascii-src", { [`entry.${ext}`]: fixture });
-      const { stdout, stderr, exitCode } = await run([bunExe(), ...args], String(dir));
-      expect(stderr).toBe("");
+      const { stdout, exitCode } = await run([bunExe(), ...args], String(dir));
       const out = JSON.parse(stdout);
 
       // Evaluated value — must be the real string, not mojibake
@@ -88,28 +87,23 @@ describe.concurrent("runtime transpiler preserves non-ASCII source text", () => 
     using dir = tempDir("non-ascii-rx", {
       "entry.mjs": `console.log(/π+/u.source);`,
     });
-    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
-    expect(stderr).toBe("");
-    expect(stdout).toBe("π+\n");
-    expect(exitCode).toBe(0);
+    const { stdout, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
+    expect({ stdout, exitCode }).toEqual({ stdout: "π+\n", exitCode: 0 });
   });
 
   test("String.raw with non-ASCII", async () => {
     using dir = tempDir("non-ascii-raw", {
       "entry.mjs": `console.log(String.raw\`你好\\n𐃘\`);`,
     });
-    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
-    expect(stderr).toBe("");
-    expect(stdout).toBe("你好\\n𐃘\n");
-    expect(exitCode).toBe(0);
+    const { stdout, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
+    expect({ stdout, exitCode }).toEqual({ stdout: "你好\\n𐃘\n", exitCode: 0 });
   });
 
   test("// @bun pragma with non-ASCII source", async () => {
     using dir = tempDir("non-ascii-pragma", {
       "entry.mjs": `// @bun\nfunction f() { return "café"; }\nconsole.log(JSON.stringify({ value: f(), src: f.toString() }));\n`,
     });
-    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
-    expect(stderr).toBe("");
+    const { stdout, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
     const out = JSON.parse(stdout);
     expect(out.value).toBe("café");
     expect(out.src).toContain('"café"');

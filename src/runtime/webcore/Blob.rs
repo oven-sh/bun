@@ -4906,8 +4906,12 @@ pub fn write_file_with_source_destination(
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
-        let blob_value =
-            source_blob.get_slice_from(ctx, source_blob.offset.get(), 0, BlobContentType::default());
+        let blob_value = source_blob.get_slice_from(
+            ctx,
+            source_blob.offset.get(),
+            0,
+            BlobContentType::default(),
+        );
         return Ok(JSPromise::resolved_promise_value(ctx, blob_value));
     } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();

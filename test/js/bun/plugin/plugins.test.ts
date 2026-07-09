@@ -816,11 +816,13 @@ it.concurrent("onResolve into a custom namespace with no matching onLoad is a ha
 });
 
 // ':' is a legal POSIX filename character; Windows cannot create it on disk.
-it.skipIf(isWindows).concurrent("the unmatched-onLoad guard does not trip on absolute paths containing ':'", async () => {
-  using dir = tempDir("plugin-colon-in-path", {
-    "sub:dir/mod.js": `export default "from-colon-dir";`,
-    "sub:dir/asset.xyz": `ignored`,
-    "entry.js": `
+it.skipIf(isWindows).concurrent(
+  "the unmatched-onLoad guard does not trip on absolute paths containing ':'",
+  async () => {
+    using dir = tempDir("plugin-colon-in-path", {
+      "sub:dir/mod.js": `export default "from-colon-dir";`,
+      "sub:dir/asset.xyz": `ignored`,
+      "entry.js": `
       Bun.plugin({
         name: "dummy",
         setup(b) {
@@ -831,19 +833,20 @@ it.skipIf(isWindows).concurrent("the unmatched-onLoad guard does not trip on abs
       const asset = await import("./sub:dir/asset.xyz");
       console.log(JSON.stringify({ js: js.default, asset: typeof asset.default }));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "entry.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
-    js: "from-colon-dir",
-    asset: "string",
-  });
-  expect(exitCode).toBe(0);
-});
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+      js: "from-colon-dir",
+      asset: "string",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

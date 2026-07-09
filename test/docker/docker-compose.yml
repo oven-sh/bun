@@ -77,17 +77,20 @@ services:
       start_interval: 1s
 
   # MySQL Services
+  # These images bake a pre-initialized data dir so cold container start is
+  # `exec mysqld` (~2-3s) instead of the stock entrypoint's first-boot init
+  # (`mysqld --initialize` + temp server + tzinfo load, ~60s on loaded CI
+  # hosts). State lives on the container's CoW layer, so a fresh container is a
+  # fresh database.
   mysql_plain:
-    image: mysql:8.4
-    environment:
-      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
-      MYSQL_DATABASE: bun_sql_test
+    build:
+      context: .
+      dockerfile: Dockerfile.mysql-plain
+    image: bun-mysql-plain:local
     ports:
       - target: 3306
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/mysql
     healthcheck:
       # 127.0.0.1 (not localhost) forces TCP — `localhost` would use the unix
       # socket, which is up during the entrypoint's temporary init server and
@@ -95,36 +98,30 @@ services:
       # so we don't go healthy until the real server is accepting connections.
       test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
       # Once start_period elapses the engine probes at `interval`, not
-      # `start_interval`, so a long interval wedges health at "starting" if
-      # init overshoots the window. MySQL 8.4 first-boot init (timezone load +
-      # temp server) has been observed at ~65s on loaded CI hosts, hence 180s
-      # here; interval stays short so overshooting any service's start_period
-      # recovers within one probe instead of freezing `compose up --wait`.
+      # `start_interval`, so a long interval would wedge health at "starting"
+      # if init overshot the window; keep interval short so an overshoot on any
+      # service recovers within one probe.
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 180s
+      start_period: 60s
       start_interval: 1s
 
   mysql_native_password:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: bun
-      MYSQL_DATABASE: bun_sql_test
-      MYSQL_ROOT_HOST: "%"
-    command: --default-authentication-plugin=mysql_native_password
+    build:
+      context: .
+      dockerfile: Dockerfile.mysql-native-password
+    image: bun-mysql-native-password:local
     ports:
       - target: 3306
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 180s
+      start_period: 60s
       start_interval: 1s
 
   mysql_tls:
@@ -134,21 +131,16 @@ services:
       args:
         MYSQL_VERSION: 8.4
     image: bun-mysql-tls:local
-    environment:
-      MYSQL_ROOT_PASSWORD: bun
-      MYSQL_DATABASE: bun_sql_test
     ports:
       - target: 3306
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 180s
+      start_period: 60s
       start_interval: 1s
 
   # Redis/Valkey Services

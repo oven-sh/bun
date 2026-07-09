@@ -238,11 +238,12 @@ class DockerComposeHelper {
     }
 
     // Start the service and wait for it to be healthy.
-    // --wait-timeout bounds how long `--wait` blocks for a health transition;
-    // 180 covers the slowest observed cold start (mysql 8.4 first-boot init on
-    // a loaded CI host, with three mysqld containers contending for the same
-    // tmpfs, has been seen at ~65s) with headroom, and matches the longest
-    // start_period in docker-compose.yml.
+    // --wait-timeout bounds how long `--wait` blocks for a health transition.
+    // All services are expected to go healthy within a few seconds (mysql
+    // images bake a pre-initialized data dir so first boot is just `exec
+    // mysqld`); 180 is generous headroom so a slow host or a service whose
+    // init regresses surfaces as a single diagnosable failure here rather than
+    // cascading through every test file that asks for it.
     const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "180", service]);
 
     if (exitCode !== 0) {

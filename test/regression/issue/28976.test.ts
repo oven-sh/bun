@@ -1,14 +1,4 @@
 // https://github.com/oven-sh/bun/issues/28976
-//
-// When a client aborts an in-flight POST request that had a body, the
-// server-side `res.on('close')`, `req.socket.on('close')`, and
-// `req.socket.on('end')` listeners never fired — the handler kept running
-// to completion on a dead socket. Code that relied on those events to
-// cancel downstream work (LLM streams, DB queries, upstream fetches) had
-// no way to detect the disconnect.
-//
-// The bug was specific to bodies being present: without a body (e.g. a
-// bare POST or GET), the events fired.
 import { expect, test } from "bun:test";
 import http from "node:http";
 import net from "node:net";

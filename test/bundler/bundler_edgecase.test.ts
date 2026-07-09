@@ -2656,6 +2656,46 @@ describe("bundler", () => {
       `);
     },
   });
+  itBundled("edgecase/NonAsciiIdentifierPreserved", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        class Cafá {}
+        class 模块 {}
+        const aπ = 1;
+        const a𝒜 = 2;
+        const élan = 3;
+        console.log(JSON.stringify([Café.name, naïve.name, Cafá.name, 模块.name, aπ, a𝒜, élan]));
+      `,
+    },
+    target: "node",
+    run: { stdout: '["Café","naïve","Cafá","模块",1,2,3]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("class Café");
+      expect(out).toContain("function naïve");
+      expect(out).toContain("class Cafá");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+    },
+  });
+  itBundled("edgecase/NonAsciiIdentifierPreservedBunTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        console.log(JSON.stringify([Café.name, naïve.name]));
+      `,
+    },
+    target: "bun",
+    run: { stdout: '["Café","naïve"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

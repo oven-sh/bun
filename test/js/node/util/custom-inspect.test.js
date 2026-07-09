@@ -306,11 +306,13 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(rs[customSymbol](-1, {})).toBe(rs);
   });
 
-  test("wrong receiver throws ERR_INVALID_THIS", () => {
-    expect(() => ReadableStream.prototype[customSymbol].call({}, 2, {})).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_THIS" }),
-    );
-    // util.inspect skips the custom function on prototype objects, so this must not recurse.
+  test("wrong receiver returns the receiver (no infinite recursion)", () => {
+    const o = {};
+    expect(ReadableStream.prototype[customSymbol].call(o, 2, {})).toBe(o);
+    // util.inspect and Bun.inspect must both fall through to default formatting
+    // rather than recursing on a custom function that returned its own `this`.
     expect(inspect(ReadableStream.prototype)).toContain("[ReadableStream]");
+    expect(Bun.inspect(ReadableStream.prototype).length > 0).toBeTrue();
+    expect(Bun.inspect(TransformStream.prototype).length > 0).toBeTrue();
   });
 });

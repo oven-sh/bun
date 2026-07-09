@@ -284,7 +284,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototype_inspectCustom, (JSG
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSReadableStreamBYOBReader>(thisValue);
     if (!thisObject) [[unlikely]]
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBReader"_s);
+        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
     size_t requestCount;

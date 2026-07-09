@@ -173,7 +173,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSTextEncoderStream>(thisValue);
     if (!thisObject) [[unlikely]]
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
+        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), jsNontrivialString(vm, "utf-8"_s), 0);
     auto* transform = thisObject->m_transform.get();

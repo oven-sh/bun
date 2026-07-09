@@ -211,7 +211,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom, (JSGlobalObje
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSTransformStream>(thisValue);
     if (!thisObject) [[unlikely]]
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
+        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
     data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);

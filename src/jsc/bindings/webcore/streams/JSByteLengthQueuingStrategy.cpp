@@ -180,7 +180,7 @@ JSC_DEFINE_HOST_FUNCTION(jsByteLengthQueuingStrategyPrototype_inspectCustom, (JS
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSByteLengthQueuingStrategy>(thisValue);
     if (!thisObject) [[unlikely]]
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ByteLengthQueuingStrategy"_s);
+        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(thisObject->m_highWaterMark), 0);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ByteLengthQueuingStrategy"_s, data));

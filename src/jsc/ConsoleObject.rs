@@ -3954,8 +3954,7 @@ pub mod formatter {
                     C,
                 )
             })?;
-            // Strings are printed directly, otherwise we recurse. It is
-            // possible to end up in an infinite loop.
+            // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
                     .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
@@ -3964,12 +3963,17 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                self.format::<C>(
-                    Tag::get(result, self.global_this)?,
-                    writer_,
-                    result,
-                    self.global_this,
-                )?;
+                // A custom inspector that returns its own `this` (Node's web
+                // streams do for depth<0, and so does any wrong-receiver call
+                // on the prototype) would recurse forever; re-tag without the
+                // custom hook so it falls through to default formatting, same
+                // as util.inspect's `ret !== context` check.
+                let tag = if result == self.custom_formatted_object.this {
+                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
+                } else {
+                    Tag::get(result, self.global_this)?
+                };
+                self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
         }

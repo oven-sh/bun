@@ -189,7 +189,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObjec
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSWritableStream>(thisValue);
     if (!thisObject) [[unlikely]]
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStream"_s);
+        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isWritableStreamLocked(thisObject)), 0);
     ASCIILiteral state;

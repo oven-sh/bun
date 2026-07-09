@@ -409,7 +409,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObjec
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
     if (!thisObject) [[unlikely]]
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isReadableStreamLocked(thisObject)), 0);
     ASCIILiteral state;

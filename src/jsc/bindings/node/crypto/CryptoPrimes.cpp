@@ -190,10 +190,13 @@ extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGl
 }
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, [](int32_t a, int32_t b) -> bool {
+    m_generated = m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, [](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
         return true;
     });
+    if (!m_generated) {
+        m_opensslError = ERR_get_error();
+    }
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
@@ -204,6 +207,17 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callba
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!m_generated) {
+        JSValue err = createCryptoError(globalObject, scope, m_opensslError, nullptr);
+        RETURN_IF_EXCEPTION(scope, );
+        Bun__EventLoop__runCallback1(
+            globalObject,
+            JSValue::encode(callback),
+            JSValue::encode(jsUndefined()),
+            JSValue::encode(err));
+        return;
+    }
 
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
@@ -494,10 +508,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
     }
 
-    prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [](int32_t a, int32_t b) -> bool {
+    bool generated = prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
         return true;
     });
+    if (!generated) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error());
+        return {};
+    }
 
     return JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint));
 }

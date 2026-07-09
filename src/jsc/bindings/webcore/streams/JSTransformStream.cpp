@@ -14,6 +14,7 @@
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -22,6 +23,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -33,6 +35,7 @@ using namespace Bun::WebStreams;
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_writable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_constructor);
+static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom);
 
 class JSTransformStreamPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -201,10 +204,26 @@ static const HashTableValue JSTransformStreamPrototypeTableValues[] = {
 
 const ClassInfo JSTransformStreamPrototype::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSTransformStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "backpressure"_s), jsBoolean(thisObject->m_backpressure), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStream"_s, data));
+}
+
 void JSTransformStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTransformStream::info(), JSTransformStreamPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsTransformStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

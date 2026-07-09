@@ -12,12 +12,14 @@
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -137,6 +139,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultControllerPrototypeGette
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_error);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototype_inspectCustom);
 
 class JSReadableStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -180,10 +183,24 @@ static const HashTableValue JSReadableStreamDefaultControllerPrototypeTableValue
 
 const ClassInfo JSReadableStreamDefaultControllerPrototype::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStreamDefaultController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    (void)thisObject;
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamDefaultController"_s, data));
+}
+
 void JSReadableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamDefaultController::info(), JSReadableStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamDefaultControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

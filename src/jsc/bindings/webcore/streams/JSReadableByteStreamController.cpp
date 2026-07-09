@@ -14,6 +14,7 @@
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -26,6 +27,7 @@
 #include <JavaScriptCore/JSDataView.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -191,6 +193,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_d
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_error);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom);
 
 class JSReadableByteStreamControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -235,10 +238,24 @@ static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[]
 
 const ClassInfo JSReadableByteStreamControllerPrototype::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    (void)thisObject;
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableByteStreamController"_s, data));
+}
+
 void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableByteStreamController::info(), JSReadableByteStreamControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableByteStreamControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

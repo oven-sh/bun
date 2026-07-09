@@ -17,6 +17,7 @@
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -26,6 +27,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -142,6 +144,7 @@ static BYOBReadArguments convertBYOBReadArguments(JSC::VM& vm, JSGlobalObject* g
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_cancel);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_releaseLock);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBReaderPrototypeGetter_closed);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBReaderPrototypeGetter_constructor);
 
@@ -274,10 +277,31 @@ static const HashTableValue JSReadableStreamBYOBReaderPrototypeTableValues[] = {
 
 const ClassInfo JSReadableStreamBYOBReaderPrototype::s_info = { "ReadableStreamBYOBReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBReaderPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStreamBYOBReader>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    size_t requestCount;
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        requestCount = thisObject->m_readIntoRequests.size();
+    }
+    data->putDirect(vm, Identifier::fromString(vm, "readIntoRequests"_s), jsNumber(requestCount), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "close"_s), thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamBYOBReader"_s, data));
+}
+
 void JSReadableStreamBYOBReaderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamBYOBReader::info(), JSReadableStreamBYOBReaderPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamBYOBReaderPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

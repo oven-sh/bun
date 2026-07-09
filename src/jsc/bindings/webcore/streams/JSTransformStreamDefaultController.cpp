@@ -13,12 +13,14 @@
 #include "JSTextEncoderStream.h"
 #include "JSTransformStream.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -120,6 +122,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGett
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_error);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_terminate);
+static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCustom);
 
 class JSTransformStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -163,10 +166,24 @@ static const HashTableValue JSTransformStreamDefaultControllerPrototypeTableValu
 
 const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStreamDefaultController"_s, data));
+}
+
 void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTransformStreamDefaultController::info(), JSTransformStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsTransformStreamDefaultControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

@@ -158,3 +158,131 @@ for (const [name, inspect] of process.versions.bun
     expect(() => inspect(obj)).toThrow();
   });
 }
+
+describe("Web Streams [nodejs.util.inspect.custom]", () => {
+  const inspect = util.inspect;
+
+  test("ReadableStream", () => {
+    expect(inspect(new ReadableStream())).toBe("ReadableStream { locked: false, state: 'readable', supportsBYOB: false }");
+    expect(inspect(new ReadableStream({ type: "bytes" }))).toBe(
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }",
+    );
+    const rs = new ReadableStream();
+    rs.getReader();
+    expect(inspect(rs)).toBe("ReadableStream { locked: true, state: 'readable', supportsBYOB: false }");
+  });
+
+  test("WritableStream", () => {
+    expect(inspect(new WritableStream())).toBe("WritableStream { locked: false, state: 'writable' }");
+    const ws = new WritableStream();
+    ws.getWriter();
+    expect(inspect(ws)).toBe("WritableStream { locked: true, state: 'writable' }");
+  });
+
+  test("TransformStream", () => {
+    const out = inspect(new TransformStream());
+    expect(out).toStartWith("TransformStream {");
+    expect(out).toContain("readable: ReadableStream {");
+    expect(out).toContain("writable: WritableStream {");
+    expect(out).toContain("backpressure: true");
+  });
+
+  test("ReadableStreamDefaultReader", () => {
+    const out = inspect(new ReadableStream().getReader());
+    expect(out).toStartWith("ReadableStreamDefaultReader {");
+    expect(out).toContain("stream: ReadableStream {");
+    expect(out).toContain("readRequests: 0");
+    expect(out).toContain("close: Promise");
+  });
+
+  test("ReadableStreamBYOBReader", () => {
+    const out = inspect(new ReadableStream({ type: "bytes" }).getReader({ mode: "byob" }));
+    expect(out).toStartWith("ReadableStreamBYOBReader {");
+    expect(out).toContain("readIntoRequests: 0");
+  });
+
+  test("ReadableStreamDefaultController", () => {
+    let controller;
+    new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    expect(inspect(controller)).toBe("ReadableStreamDefaultController {}");
+  });
+
+  test("ReadableByteStreamController", () => {
+    let controller;
+    new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    expect(inspect(controller)).toBe("ReadableByteStreamController {}");
+  });
+
+  test("WritableStreamDefaultWriter", () => {
+    const out = inspect(new WritableStream().getWriter());
+    expect(out).toStartWith("WritableStreamDefaultWriter {");
+    expect(out).toContain("stream: WritableStream {");
+    expect(out).toContain("close: Promise");
+    expect(out).toContain("ready: Promise");
+    expect(out).toContain("desiredSize: 1");
+  });
+
+  test("WritableStreamDefaultController", () => {
+    let controller;
+    new WritableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const out = inspect(controller);
+    expect(out).toStartWith("WritableStreamDefaultController {");
+    expect(out).toContain("stream: WritableStream {");
+  });
+
+  test("TransformStreamDefaultController", () => {
+    let controller;
+    new TransformStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const out = inspect(controller);
+    expect(out).toStartWith("TransformStreamDefaultController {");
+    expect(out).toContain("stream: TransformStream {");
+  });
+
+  test("ByteLengthQueuingStrategy", () => {
+    expect(inspect(new ByteLengthQueuingStrategy({ highWaterMark: 16 }))).toBe(
+      "ByteLengthQueuingStrategy { highWaterMark: 16 }",
+    );
+  });
+
+  test("CountQueuingStrategy", () => {
+    expect(inspect(new CountQueuingStrategy({ highWaterMark: 8 }))).toBe("CountQueuingStrategy { highWaterMark: 8 }");
+  });
+
+  test("TextEncoderStream", () => {
+    const out = inspect(new TextEncoderStream());
+    expect(out).toStartWith("TextEncoderStream {");
+    expect(out).toContain("encoding: 'utf-8'");
+    expect(out).toContain("readable: ReadableStream {");
+    expect(out).toContain("writable: WritableStream {");
+  });
+
+  test("TextDecoderStream", () => {
+    const out = inspect(new TextDecoderStream("utf-8", { fatal: true, ignoreBOM: true }));
+    expect(out).toStartWith("TextDecoderStream {");
+    expect(out).toContain("encoding: 'utf-8'");
+    expect(out).toContain("fatal: true");
+    expect(out).toContain("ignoreBOM: true");
+  });
+
+  test("depth < 0 returns the instance", () => {
+    const rs = new ReadableStream();
+    expect(rs[customSymbol](-1, {})).toBe(rs);
+  });
+});

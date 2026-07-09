@@ -58,9 +58,9 @@ public:
     // adaptive chunk size (256 KiB default, doubled once up to 2 MiB).
     size_t m_chunkSize { 0 };
     // #hasResized — the one-shot chunk-size adaptation already happened.
-    bool m_hasResized { false };
+    bool m_hasResized : 1 { false };
     // #closed
-    bool m_closed { false };
+    bool m_closed : 1 { false };
 
 private:
     JSNativeStreamSourceAdapter(JSC::VM&, JSC::Structure*);

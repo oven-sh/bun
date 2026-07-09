@@ -97,7 +97,7 @@ void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSGlobalObject* globa
 // Provably-non-throwing leaf: reads members and does queue arithmetic only.
 std::optional<double> writableStreamDefaultWriterGetDesiredSize(JSWritableStreamDefaultWriter* writer)
 {
-    auto* stream = writer->m_stream.get();
+    const auto* stream = writer->m_stream.get();
     switch (stream->m_state) {
     case WritableStreamState::Errored:
     case WritableStreamState::Erroring:
@@ -388,7 +388,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_constructo
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_closed, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
+    const auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a WritableStreamDefaultWriter"_s)));
     return JSValue::encode(writer->m_closedPromise.get());
@@ -411,7 +411,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_desiredSiz
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_ready, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
+    const auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'ready' getter can only be used on a WritableStreamDefaultWriter"_s)));
     return JSValue::encode(writer->m_readyPromise.get());
@@ -455,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_releaseL
     auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(callFrame->thisValue());
     if (!writer) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "WritableStreamDefaultWriter"_s);
-    auto* stream = writer->m_stream.get();
+    const auto* stream = writer->m_stream.get();
     if (!stream)
         return JSValue::encode(jsUndefined());
     ASSERT(stream->m_writer);

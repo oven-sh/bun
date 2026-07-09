@@ -219,7 +219,7 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
 
 void JSStreamPipeToOperation::checkErrorsMustBePropagatedForward(JSGlobalObject* globalObject)
 {
-    auto* source = m_source.get();
+    const auto* source = m_source.get();
     if (source->m_state != ReadableStreamState::Errored)
         return;
     JSValue storedError = source->m_storedError.get();
@@ -233,7 +233,7 @@ void JSStreamPipeToOperation::checkErrorsMustBePropagatedForward(JSGlobalObject*
 
 void JSStreamPipeToOperation::checkErrorsMustBePropagatedBackward(JSGlobalObject* globalObject)
 {
-    auto* destination = m_destination.get();
+    const auto* destination = m_destination.get();
     if (destination->m_state != WritableStreamState::Errored)
         return;
     JSValue storedError = destination->m_storedError.get();
@@ -587,8 +587,8 @@ void startPipeToOperation(JSGlobalObject* globalObject, JSStreamPipeToOperation*
         op->m_abortAlgorithmId = WebCore::AbortSignal::addAbortAlgorithmToSignal(signal, WebCore::JSAbortAlgorithm::create(vm, boundAlgorithm));
     }
 
-    auto* reader = op->m_reader.get();
-    auto* writer = op->m_writer.get();
+    const auto* reader = op->m_reader.get();
+    const auto* writer = op->m_writer.get();
     WebCore::registerPipeReaction(globalObject, reader->m_closedPromise.get(), runtime->onPipeSourceClosedFulfilled(), runtime->onPipeSourceClosedRejected(), op);
     WebCore::registerPipeReaction(globalObject, writer->m_closedPromise.get(), runtime->onPipeDestClosedFulfilled(), runtime->onPipeDestClosedRejected(), op);
 
@@ -612,7 +612,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     op->m_readInFlight = false;
     if (op->m_finalized)
         return;
-    auto* writer = op->m_writer.get();
+    const auto* writer = op->m_writer.get();
     auto* runtime = JSStreamsRuntime::from(globalObject);
     // The sink write is deferred by one microtask so an enqueue() inside the source never
     // synchronously reenters the destination's write algorithm. m_currentWrite is the deferred

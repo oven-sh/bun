@@ -44,9 +44,9 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_sink;
     // the JSPromise readStreamIntoSink returned (what Rust's Signal protocol awaits).
     JSC::WriteBarrier<JSC::JSPromise> m_result;
-    bool m_didThrow { false };
-    bool m_didClose { false };
-    bool m_started { false };
+    bool m_didThrow : 1 { false };
+    bool m_didClose : 1 { false };
+    bool m_started : 1 { false };
 
 private:
     JSReadStreamIntoSinkOperation(JSC::VM&, JSC::Structure*);

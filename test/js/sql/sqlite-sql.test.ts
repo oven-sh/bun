@@ -1304,6 +1304,33 @@ describe("Transactions", () => {
     // B and ran afterwards, so it survives.
     expect(accounts.map(r => r.balance)).toEqual([900, 507]);
   });
+
+  test("a queued begin that is synchronously rejected drains cleanly", async () => {
+    // beginDistributed() and begin('readonly', cb) queue a reserved acquisition
+    // behind an open transaction, then hit pool.release() synchronously in
+    // onTransactionConnected's error path. The drain must not recurse.
+    const hold = Promise.withResolvers<void>();
+    const txn = sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      await hold.promise;
+    });
+
+    const dist = sql.beginDistributed("x", async () => {}).catch(e => e);
+    const ro = sql.begin("readonly", async () => {}).catch(e => e);
+    const after = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`;
+
+    hold.resolve();
+    await txn;
+
+    expect((await dist)?.message).toBe("This adapter doesn't support distributed transactions.");
+    expect((await ro)?.message).toBe(
+      "SQLite doesn't support 'readonly' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.",
+    );
+    await after;
+
+    const accounts = await sql`SELECT balance FROM accounts ORDER BY id`;
+    expect(accounts.map(r => r.balance)).toEqual([900, 507]);
+  });
 });
 
 describe("SQLite-specific features", () => {

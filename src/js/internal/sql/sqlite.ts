@@ -479,20 +479,28 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
+  #draining = false;
+
   #drainConnectQueue() {
-    const queue = this.connectQueue;
-    // Hand the connection to queued acquisitions in FIFO order, stopping as
-    // soon as a reserved acquisition takes exclusive ownership again.
-    let head = 0;
-    while (head < queue.length && !this.reservedConnection) {
-      const pending = queue[head++];
-      if (this._closed) {
-        pending.onConnected(this.connectionClosedError(), null);
-        continue;
+    // A reserved acquisition may call release() synchronously (e.g. begin with
+    // an invalid option); skipping re-entrance keeps the outer loop in control.
+    if (this.#draining) return;
+    this.#draining = true;
+    try {
+      const queue = this.connectQueue;
+      let head = 0;
+      while (head < queue.length && !this.reservedConnection) {
+        const pending = queue[head++];
+        if (this._closed) {
+          pending.onConnected(this.connectionClosedError(), null);
+          continue;
+        }
+        this.#handConnection(pending.onConnected, pending.reserved);
       }
-      this.#handConnection(pending.onConnected, pending.reserved);
+      if (head > 0) queue.splice(0, head);
+    } finally {
+      this.#draining = false;
     }
-    if (head > 0) queue.splice(0, head);
   }
 
   release(_connection: BunSQLiteModule.Database, _connectingEvent?: boolean) {

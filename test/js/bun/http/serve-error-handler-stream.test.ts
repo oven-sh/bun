@@ -9,7 +9,7 @@
 // Each case runs in a subprocess so a pre-fix ASAN crash is observed as a
 // test failure rather than killing the parent runner before junit is written.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "serve-error-handler-stream-fixture.ts");
@@ -19,7 +19,11 @@ const CHUNK_LEN = 64;
 async function runFixture(path: string, close = false) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), fixture, path, ...(close ? ["close"] : [])],
-    env: { ...bunEnv, Malloc: "1" },
+    // Malloc=1 forces system malloc so bmalloc/libpas pools don't mask the
+    // UAF from ASAN. bmalloc's SystemHeap is unimplemented on Windows and
+    // would RELEASE_BASSERT, so leave bmalloc in place there (no ASAN lane
+    // on Windows anyway).
+    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
     stdout: "pipe",
     stderr: "pipe",
   });

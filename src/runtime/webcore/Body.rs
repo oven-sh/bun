@@ -1967,9 +1967,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         // Step 2: null body → a new empty closed ReadableStream.
         // Steps 3-6: decode directly from the body's backing bytes.
-        let stream = self
-            .get_body_value()
-            .to_text_readable_stream(global_this)?;
+        let stream = self.get_body_value().to_text_readable_stream(global_this)?;
         if stream.is_null() {
             return ReadableStream::empty(global_this);
         }

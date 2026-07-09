@@ -1317,7 +1317,8 @@ describe("Transactions", () => {
 
     const dist = sql.beginDistributed("x", async () => {}).catch(e => e);
     const ro = sql.begin("readonly", async () => {}).catch(e => e);
-    const after = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`;
+    // .execute() issues the query eagerly so it enters the drain queue.
+    const after = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`.execute();
 
     hold.resolve();
     await txn;

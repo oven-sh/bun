@@ -857,8 +857,10 @@ class EventEmitterAsyncResource extends EventEmitter {
     const asyncResource = this.#asyncResource;
     // The base EventEmitter picks its emit variant by stamping an own property;
     // that own property is deleted in the constructor above, so pick per-call
-    // from this[kCapture] (matching Node, which branches inside prototype emit).
-    const emit = this[kCapture] ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+    // from this[kCapture]. The default branch reads super.emit at call time
+    // (Node routes through super.emit) so a userland monkeypatch of
+    // EventEmitter.prototype.emit is observed like it is for plain emitters.
+    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
     ArrayPrototypeUnshift.$call(args, emit, this, event);
     return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }

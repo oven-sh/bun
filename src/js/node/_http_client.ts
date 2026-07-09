@@ -80,14 +80,10 @@ class HTTPClientAsyncResource {
   }
 }
 
-// In Node the native HTTPParser is an AsyncWrap that re-enters the request's
-// async scope around its JS callbacks. Bun's parser binding ignores the
-// resource argument, so a reused keep-alive socket would otherwise dispatch
-// parser callbacks in the AsyncLocalStorage context of whichever request first
-// connected it. We bridge this in JS: tickOnSocket snapshots the active
-// $asyncContext frame on the request, and the socket data/end listeners run
-// inside it. The raw frame is used directly so http.request() does not flip on
-// async-context tracking when no AsyncLocalStorage is in use.
+// Node's parser AsyncWrap + _http_agent asyncResetHandle() make every socket
+// callback re-enter the current request's async scope; Bun bridges this in
+// JS by snapshotting the frame at tickOnSocket and running each socket
+// listener (data/end/error/close/drain/timeout) inside it.
 const kClientAsyncContext = Symbol("kClientAsyncContext");
 const runInFrame = require("internal/async_context_frame").run;
 
@@ -500,6 +496,10 @@ function emitAbortNT(req) {
 }
 
 function ondrain() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], ondrainInner, this);
+}
+
+function ondrainInner() {
   const msg = this._httpMessage;
   if (msg && !msg.finished && msg[kNeedDrain]) {
     msg[kNeedDrain] = false;
@@ -508,6 +508,10 @@ function ondrain() {
 }
 
 function socketCloseListener() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketCloseListenerInner, this);
+}
+
+function socketCloseListenerInner() {
   const socket = this;
   const req = socket._httpMessage;
   $debug("HTTP socket close");
@@ -554,6 +558,10 @@ function socketCloseListener() {
 }
 
 function socketErrorListener(err) {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketErrorListenerInner, this, err);
+}
+
+function socketErrorListenerInner(err) {
   const socket = this;
   const req = socket._httpMessage;
   $debug("SOCKET ERROR:", err);
@@ -920,6 +928,10 @@ function tickOnSocket(req, socket) {
 }
 
 function emitRequestTimeout() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], emitRequestTimeoutInner, this);
+}
+
+function emitRequestTimeoutInner() {
   const req = this._httpMessage;
   if (req) {
     req.emit("timeout");

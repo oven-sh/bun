@@ -24,6 +24,14 @@ var {
   PerformanceObserverEntryList,
 } = globalThis;
 
+// `extends PerformanceEntry` can't work (WebCore ctor throws); link here via
+// the captured global. Construction is gated by hasObserver() so this module
+// has loaded first. Guarded so a pre-require delete degrades, not throws.
+if (PerformanceEntry) {
+  Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+  Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
+}
+
 var constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,
   NODE_PERFORMANCE_ENTRY_TYPE_GC: 0,
@@ -325,6 +333,7 @@ export default {
   PerformanceMeasure,
   PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
+  PerformanceNodeEntry,
   PerformanceNodeTiming,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");

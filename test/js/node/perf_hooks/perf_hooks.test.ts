@@ -37,6 +37,8 @@ test("timerify entry shape", async () => {
 
   expect(entry).toBeInstanceOf(PerformanceEntry);
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
+  expect(typeof perf.PerformanceNodeEntry).toBe("function");
+  expect(entry).toBeInstanceOf(perf.PerformanceNodeEntry);
   expect(entry.name).toBe("work");
   expect(entry.entryType).toBe("function");
   expect(typeof entry.startTime).toBe("number");

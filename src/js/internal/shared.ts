@@ -183,9 +183,9 @@ function enqueueNodeEntry(entry) {
 // Node's PerformanceNodeEntry — the shape used by every JS-side entry type
 // ('function', 'net', 'dns', 'http'). Lives here (not in perf_hooks.ts) so
 // stopPerf can construct it without a circular require. The prototype chain
-// is linked lazily on first construction so the many importers of this file
-// do not eagerly materialize the WebCore PerformanceEntry constructor.
-let performanceNodeEntryLinked = false;
+// is linked to PerformanceEntry by perf_hooks.ts at load time using its
+// captured global (every construction is gated behind hasObserver(), which
+// is only true after perf_hooks has loaded).
 class PerformanceNodeEntry {
   name;
   entryType;
@@ -194,15 +194,6 @@ class PerformanceNodeEntry {
   detail;
 
   constructor(name, entryType, startTime, duration, detail) {
-    if (!performanceNodeEntryLinked) {
-      performanceNodeEntryLinked = true;
-      // `extends PerformanceEntry` can't work (the WebCore constructor throws
-      // "Illegal constructor"); instances carry own data fields, so the
-      // inherited brand-checked accessors are shadowed and never invoked.
-      const PerformanceEntry = globalThis.PerformanceEntry;
-      Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
-      Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
-    }
     this.name = name;
     this.entryType = entryType;
     this.startTime = startTime;
@@ -220,7 +211,6 @@ class PerformanceNodeEntry {
     };
   }
 }
-Object.defineProperty(PerformanceNodeEntry, "name", { value: "PerformanceNodeEntry" });
 
 function startPerf(target, key, context) {
   context.startTime = performance.now();

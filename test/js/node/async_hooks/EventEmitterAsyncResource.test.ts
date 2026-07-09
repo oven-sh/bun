@@ -60,4 +60,28 @@ describe("EventEmitterAsyncResource", () => {
     expect(event).toBe("test");
     expect(rejectionStore).toBe(123);
   });
+
+  // Node routes EventEmitterAsyncResource.emit through super.emit, so a
+  // userland monkeypatch of EventEmitter.prototype.emit is observed like it
+  // is for plain EventEmitter instances.
+  test("emit routes through EventEmitter.prototype.emit", () => {
+    const original = EventEmitter.prototype.emit;
+    let calls = 0;
+    try {
+      EventEmitter.prototype.emit = function (...args) {
+        calls++;
+        return original.apply(this, args);
+      };
+      const ee = new EventEmitterAsyncResource("test");
+      let fired = false;
+      ee.on("x", () => {
+        fired = true;
+      });
+      ee.emit("x");
+      expect(fired).toBe(true);
+      expect(calls).toBe(1);
+    } finally {
+      EventEmitter.prototype.emit = original;
+    }
+  });
 });

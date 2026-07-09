@@ -28,7 +28,10 @@ describe("AsyncLocalStorage", () => {
       expect(inner.getStore()).toBe("d2");
     });
 
-    // disable() during the callback: getStore() is undefined afterwards
+    // disable() during the callback: run() finally re-enables (Node's is
+    // unconditionally enterWith(prior)), so getStore() falls through to
+    // defaultValue. Verified against Node v26.4.0 (both --async-context-frame
+    // and --no-async-context-frame).
     const s3 = new AsyncLocalStorage({ defaultValue: "d3" });
     expect(
       s3.run("z", () => {
@@ -36,7 +39,24 @@ describe("AsyncLocalStorage", () => {
         return 9;
       }),
     ).toBe(9);
-    expect(s3.getStore()).toBeUndefined();
+    expect(s3.getStore()).toBe("d3");
+
+    // Bare disable() without run(): getStore() returns defaultValue, not
+    // undefined (Node v26 both impls).
+    const s4 = new AsyncLocalStorage({ defaultValue: "d4" });
+    s4.enterWith("v");
+    s4.disable();
+    expect(s4.getStore()).toBe("d4");
+  });
+
+  // The Object.is short-circuit must still clear #disabled so the NEXT run()
+  // captures wasDisabled=false and restores properly. Verified against Node.
+  test("run(undefined)/exit() on a disabled storage re-enables it", () => {
+    const als = new AsyncLocalStorage();
+    als.disable();
+    als.exit(() => {});
+    als.run("Y", () => {});
+    expect(als.getStore()).toBeUndefined();
   });
 
   // Behaviour verified against Node v26.4.0.
@@ -648,8 +668,107 @@ describe("async context passes through", () => {
       });
       s.run("USER", () => req.emit("custom"));
       expect(customStore).toBe("USER");
-    } finally {
+
+      // Session-level 'close' must observe the SESSION's construction-time
+      // context (undefined here), not the last stream's — Node fires it in
+      // the Http2Session AsyncWrap scope, not any Http2Stream's. The
+      // withStreamFrame-wrapped streamEnd calls self.destroy() while the
+      // stream's frame is installed, so destroy() must run its own emits in
+      // the session frame.
+      const sessionCloseStore = new Promise(r => client.on("close", () => r(s.getStore())));
       client.close();
+      expect(await sessionCloseStore).toBeUndefined();
+    } finally {
+      if (!client.destroyed) client.destroy();
+      await new Promise(r => server.close(r));
+    }
+  });
+  test("http agent reuse: req 'error'/'close' see the reused request's context", async () => {
+    const http = require("http");
+    const net = require("net");
+    const s = new AsyncLocalStorage<string>();
+    let dataHits = 0;
+    // Keep-alive reuses ONE connection: first request served, second RST'd.
+    const server = net.createServer(sock => {
+      sock.on("data", () => {
+        dataHits++;
+        if (dataHits === 1) sock.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+        else sock.resetAndDestroy();
+      });
+    });
+    await new Promise<void>(r => server.listen(0, r));
+    const port = (server.address() as import("net").AddressInfo).port;
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const { errorStore, closeStore } = await new Promise<{ errorStore: unknown; closeStore: unknown }>(
+        (resolve, reject) => {
+          s.run("first", () => {
+            const r1 = http.request({ host: "127.0.0.1", port, agent }, res => {
+              res.resume();
+              res.on("end", () => {
+                // setImmediate() lets the agent register the freed socket.
+                setImmediate(() => {
+                  s.run("second", () => {
+                    const r2 = http.request({ host: "127.0.0.1", port, agent });
+                    let errorStore: unknown, closeStore: unknown;
+                    r2.on("error", () => {
+                      errorStore = s.getStore();
+                    });
+                    r2.on("close", () => {
+                      closeStore = s.getStore();
+                      resolve({ errorStore, closeStore });
+                    });
+                    r2.end();
+                  });
+                });
+              });
+            });
+            r1.on("error", reject);
+            r1.end();
+          });
+        },
+      );
+      expect(errorStore).toBe("second");
+      expect(closeStore).toBe("second");
+    } finally {
+      agent.destroy();
+      await new Promise(r => server.close(r));
+    }
+  });
+  test("http.request clears its captured async-context frame on 'close'", async () => {
+    const http = require("http");
+    const server = http.createServer((_req, res) => res.end("ok"));
+    await new Promise<void>(r => server.listen(0, r));
+    const port = (server.address() as import("net").AddressInfo).port;
+    const agent = new http.Agent({ keepAlive: true });
+    const s = new AsyncLocalStorage<object>();
+    let req: any;
+    try {
+      await s.run(
+        { marker: true },
+        () =>
+          new Promise<void>((resolve, reject) => {
+            req = http.request({ host: "127.0.0.1", port, agent }, res => {
+              res.resume();
+            });
+            req.on("error", reject);
+            req.on("close", resolve);
+            req.end();
+          }),
+      );
+      // req is retained past 'close'; closeRequest() must have cleared the
+      // frame slot so the store is not pinned by the retained request. This
+      // is Bun's counterpart to Node's parser.initialize resource leak (Bun's
+      // parser binding ignores the resource argument, so the vendored
+      // test-async-local-storage-http-parser-leak.js is a compat-only no-op
+      // — this is the coverage that fails if the closeRequest cleanup drops).
+      const kClientAsyncContext = Object.getOwnPropertySymbols(req).find(
+        sym => sym.description === "kClientAsyncContext",
+      );
+      expect(kClientAsyncContext).toBeDefined();
+      expect(req[kClientAsyncContext!]).toBeUndefined();
+    } finally {
+      agent.destroy();
       await new Promise(r => server.close(r));
     }
   });

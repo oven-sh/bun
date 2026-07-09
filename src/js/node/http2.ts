@@ -408,6 +408,11 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
+function emitSessionCloseNT(self: Http2Session) {
+  if (self.listenerCount("close") > 0) {
+    runInFrame(self[bunHTTP2AsyncContextFrame], self.emit, self, "close");
+  }
+}
 function emitErrorNT(self: any, error: any, destroy: boolean) {
   if (destroy) {
     if (self.listenerCount("error") > 0) {
@@ -1973,6 +1978,9 @@ type Settings = {
 class Http2Session extends EventEmitter {
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
+  // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
+  // run inside it so 'close' doesn't inherit the last stream's frame.
+  [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
     switch (event) {
       case "stream": {
@@ -2098,11 +2106,11 @@ class Http2Stream extends Duplex {
   [bunHTTP2StreamFinal]: VoidFunction | null = null;
   [bunHTTP2StreamStatus]: number = 0;
   // Async-context frame captured at construction so native-driven callbacks
-  // (response/data/end/…) observe the AsyncLocalStorage context that created
-  // the stream, matching Node's Http2Stream AsyncWrap semantics. Read only by
-  // withStreamFrame at the native→JS seam; user-initiated emit() is untouched.
-  // The raw frame is snapshotted directly so session.request()/pushStream()
-  // do not flip on async-context tracking when no AsyncLocalStorage is in use.
+  // (response/data/end/…) on client streams observe the AsyncLocalStorage
+  // context that request() ran in, matching Node's Http2Stream AsyncWrap.
+  // Read only by withStreamFrame; user-initiated emit() is untouched. The raw
+  // frame is snapshotted directly so session.request() does not flip on
+  // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number | undefined = undefined;
@@ -3504,14 +3512,15 @@ class ServerHttp2Session extends Http2Session {
       // setStreamContext host call needed.
       return stream;
     },
-    frameError: withStreamFrame(
-      (self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) => {
-        if (!self || typeof stream !== "object") return;
-        // Emit the frameError event with the frame type and error code
-        process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
-      },
-    ),
-    aborted: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) => {
+    // Server handlers are NOT withStreamFrame-wrapped: streamStart runs in
+    // the native handler_pair! wrap's parser-construction context, so a
+    // peer-initiated stream's captured frame equals what every handler sees.
+    frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
+      if (!self || typeof stream !== "object") return;
+      // Emit the frameError event with the frame type and error code
+      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+    },
+    aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
@@ -3522,14 +3531,14 @@ class ServerHttp2Session extends Http2Session {
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    }),
-    streamError: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) => {
+    },
+    streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    }),
-    streamEnd: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) => {
+    },
+    streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
       if (state == 6 || state == 7) {
         if (stream.readable) {
@@ -3561,65 +3570,63 @@ class ServerHttp2Session extends Http2Session {
         // 5 = local closed aka write is closed
         markWritableDone(stream);
       }
-    }),
-    streamData: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) => {
+    },
+    streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
-    }),
-    streamHeaders: withStreamFrame(
-      (
-        self: ServerHttp2Session,
-        stream: ServerHttp2Stream,
-        headersTuple: [string[], Record<string, any>, string[] | undefined],
-        flags: number,
-      ) => {
-        if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
-        let rawheaders = headersTuple[0];
-        let headers = headersTuple[1];
-        if (self.#strictFieldWhitespaceValidation) {
-          // stripInvalidWhitespaceFields returns its input by identity when nothing was
-          // stripped (the common case) — only then can the native-built object be reused.
-          const filtered = stripInvalidWhitespaceFields(rawheaders);
-          if (filtered !== rawheaders) {
-            rawheaders = filtered;
-            headers = toHeaderObject(filtered, headersTuple[2] || []);
-          }
+    },
+    streamHeaders(
+      self: ServerHttp2Session,
+      stream: ServerHttp2Stream,
+      headersTuple: [string[], Record<string, any>, string[] | undefined],
+      flags: number,
+    ) {
+      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      let rawheaders = headersTuple[0];
+      let headers = headersTuple[1];
+      if (self.#strictFieldWhitespaceValidation) {
+        // stripInvalidWhitespaceFields returns its input by identity when nothing was
+        // stripped (the common case) — only then can the native-built object be reused.
+        const filtered = stripInvalidWhitespaceFields(rawheaders);
+        if (filtered !== rawheaders) {
+          rawheaders = filtered;
+          headers = toHeaderObject(filtered, headersTuple[2] || []);
         }
-        // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
-        // from them). kRequestHeaders survives respond() overwriting the bunHTTP2Headers slot. Only
-        // the first HEADERS block counts - this handler also fires for trailers.
-        if (stream[kRequestHeaders] === undefined) {
-          stream[kRequestHeaders] = headers;
+      }
+      // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
+      // from them). kRequestHeaders survives respond() overwriting the bunHTTP2Headers slot. Only
+      // the first HEADERS block counts - this handler also fires for trailers.
+      if (stream[kRequestHeaders] === undefined) {
+        stream[kRequestHeaders] = headers;
+      }
+      if (stream[bunHTTP2Headers] == null) {
+        stream[bunHTTP2Headers] = headers;
+      }
+      if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
+        stream[kHeadRequest] = true;
+      }
+      const status = stream[bunHTTP2StreamStatus];
+      if ((status & StreamState.StreamResponded) !== 0) {
+        stream.emit("trailers", headers, flags, rawheaders);
+      } else {
+        // Set the StreamResponded bit BEFORE dispatching the 'stream' event
+        // synchronously to user code. The user handler may call
+        // stream.respond()/stream.end() which set other bits (WantTrailer,
+        // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
+        // and wrote it back AFTER the emit, we'd clobber any bits set by the
+        // user handler — in particular, losing WantTrailer/FinalCalled breaks
+        // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
+        stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+        if (onServerStreamCreatedChannel.hasSubscribers) {
+          onServerStreamCreatedChannel.publish({ stream, headers });
         }
-        if (stream[bunHTTP2Headers] == null) {
-          stream[bunHTTP2Headers] = headers;
+        if (onServerStreamStartChannel.hasSubscribers) {
+          onServerStreamStartChannel.publish({ stream, headers });
         }
-        if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
-          stream[kHeadRequest] = true;
-        }
-        const status = stream[bunHTTP2StreamStatus];
-        if ((status & StreamState.StreamResponded) !== 0) {
-          stream.emit("trailers", headers, flags, rawheaders);
-        } else {
-          // Set the StreamResponded bit BEFORE dispatching the 'stream' event
-          // synchronously to user code. The user handler may call
-          // stream.respond()/stream.end() which set other bits (WantTrailer,
-          // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
-          // and wrote it back AFTER the emit, we'd clobber any bits set by the
-          // user handler — in particular, losing WantTrailer/FinalCalled breaks
-          // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
-          stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
-          if (onServerStreamCreatedChannel.hasSubscribers) {
-            onServerStreamCreatedChannel.publish({ stream, headers });
-          }
-          if (onServerStreamStartChannel.hasSubscribers) {
-            onServerStreamStartChannel.publish({ stream, headers });
-          }
-          self[kServer].emit("stream", stream, headers, flags, rawheaders);
-          self.emit("stream", stream, headers, flags, rawheaders);
-        }
-      },
-    ),
+        self[kServer].emit("stream", stream, headers, flags, rawheaders);
+        self.emit("stream", stream, headers, flags, rawheaders);
+      }
+    },
     localSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
@@ -3657,7 +3664,7 @@ class ServerHttp2Session extends Http2Session {
       }
       self.destroy(errorCode as number);
     },
-    wantTrailers: withStreamFrame((self: ServerHttp2Session, stream: ServerHttp2Stream) => {
+    wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
@@ -3669,7 +3676,7 @@ class ServerHttp2Session extends Http2Session {
       } else {
         stream.emit("wantTrailers");
       }
-    }),
+    },
     goaway(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       if (self.destroyed) return;
@@ -4094,11 +4101,11 @@ class ServerHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
 
     if (error) {
-      this.emit("error", error);
+      runInFrame(this[bunHTTP2AsyncContextFrame], this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitEventNT, this, "close");
+    process.nextTick(emitSessionCloseNT, this);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -4913,11 +4920,11 @@ class ClientHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
 
     if (error) {
-      this.emit("error", error);
+      runInFrame(this[bunHTTP2AsyncContextFrame], this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitEventNT, this, "close");
+    process.nextTick(emitSessionCloseNT, this);
   }
 
   request(headers: any, options?: any) {

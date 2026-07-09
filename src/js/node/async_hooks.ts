@@ -73,6 +73,9 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
+// Node parity: dispose() is enterWith(previousStore), which on a fresh ALS
+// installs [als, undefined] instead of splicing like run(). Bun's
+// cleanupAsyncHooksData resets top-level next tick, so residue is bounded.
 class RunScope {
   #storage;
   #previousStore;
@@ -179,6 +182,10 @@ class AsyncLocalStorage {
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
     if (Object.is(this.getStore(), store_value)) {
+      // run() always re-enables (Node's docs; Node's frame impl has no
+      // disabled flag at all). Must clear before returning so the NEXT
+      // run() doesn't capture wasDisabled=true and skip its restore.
+      this.#disabled = false;
       return callback(...args);
     }
     var context = get() as any[]; // we make sure to .slice() before mutating
@@ -259,13 +266,13 @@ class AsyncLocalStorage {
             this.#disabled = false;
             context2.push(this, previous_value);
             set(context2);
+          } else {
+            // idx===-1 && !hasPrevious: disable() removed us; Node's finally
+            // is unconditionally enterWith(prior), which re-enables regardless.
+            this.#disabled = false;
           }
         }
-        // With no previous entry the storage is absent from the context after
-        // restoration, so getStore() falls through to #defaultValue — unless a
-        // disable() during the callback left the storage disabled, in which
-        // case getStore() short-circuits to undefined.
-        const expectedStore = hasPrevious ? previous_value : this.#disabled ? undefined : this.#defaultValue;
+        const expectedStore = hasPrevious ? previous_value : this.#defaultValue;
         $assert(
           this.getStore() === expectedStore,
           "run: previous_value",
@@ -301,8 +308,10 @@ class AsyncLocalStorage {
 
   getStore() {
     $debug("getStore " + (this as any).__id__);
-    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    if (this.#disabled) return;
+    // Node v26: both ALS impls return #defaultValue after disable() — the
+    // frame impl has no disabled flag; the legacy impl's not-enabled branch
+    // is `return this.#defaultValue`.
+    if (this.#disabled) return this.#defaultValue;
     var context = get();
     if (context) {
       var { length } = context;

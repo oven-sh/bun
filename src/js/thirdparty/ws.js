@@ -223,7 +223,17 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, maxPayload, handshakeTimeout);
+            this.#createWebSocket(
+              url,
+              protocols,
+              headers,
+              method,
+              proxy,
+              tlsOptions,
+              disableDeflate,
+              maxPayload,
+              handshakeTimeout,
+            );
           }
         },
         write() {},
@@ -252,12 +262,32 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, maxPayload, handshakeTimeout);
+        this.#createWebSocket(
+          url,
+          protocols,
+          headers,
+          method,
+          proxy,
+          tlsOptions,
+          disableDeflate,
+          maxPayload,
+          handshakeTimeout,
+        );
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, maxPayload, handshakeTimeout);
+    this.#createWebSocket(
+      url,
+      protocols,
+      headers,
+      method,
+      proxy,
+      tlsOptions,
+      disableDeflate,
+      maxPayload,
+      handshakeTimeout,
+    );
   }
 
   #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate, maxPayload, handshakeTimeout) {

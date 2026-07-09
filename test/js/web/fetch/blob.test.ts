@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import fs from "node:fs";
@@ -628,10 +628,15 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
       // wherever the previous part left the cursor
       await check(new Blob([f, "-", f]), "0123456789-0123456789");
       await check(new Blob([f.slice(2, 6), "|", f.slice(7, 9)]), "2345|78");
-      // the caller's fd position must not be mutated by the constructor
-      const buf = Buffer.alloc(20);
-      const n = fs.readSync(fd, buf, 0, 20, null);
-      expect(buf.subarray(0, n).toString()).toBe("0123456789");
+      if (!isWindows) {
+        // On POSIX pread(2) never touches the fd cursor, so the constructor
+        // must not mutate the caller's position. Windows ReadFile with an
+        // OVERLAPPED offset on a synchronous handle advances the pointer (a
+        // libuv/Node quirk), so this guarantee does not hold there.
+        const buf = Buffer.alloc(20);
+        const n = fs.readSync(fd, buf, 0, 20, null);
+        expect(buf.subarray(0, n).toString()).toBe("0123456789");
+      }
     } finally {
       fs.closeSync(fd);
     }

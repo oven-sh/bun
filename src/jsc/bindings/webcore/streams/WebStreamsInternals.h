@@ -192,26 +192,6 @@ void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSVa
 // clearException() anywhere in the subsystem.
 JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&); // userJS: no — WebStreamsMisc.cpp
 
-// Body.textStream() streaming UTF-8 decode state: the partial trailing sequence carried
-// across chunk boundaries plus the once-per-stream BOM decision. Held-back bytes are
-// always [lead(>=0xC0), cont*(0x80..0xBF)], never zero, so pendingLen is the index of
-// the first zero in `pending` (0..3). Embedded inline (native adapter) or marshalled
-// to/from a 4-byte Uint8Array (the SourceKind::TextDecode context).
-struct StreamingUTF8DecodeState {
-    uint8_t pending[3] { 0, 0, 0 };
-    bool bomSeen { false };
-
-    unsigned pendingLen() const { return (pending[0] != 0) + (pending[0] != 0 && pending[1] != 0) + (pending[0] != 0 && pending[1] != 0 && pending[2] != 0); }
-    void clearPending() { pending[0] = pending[1] = pending[2] = 0; }
-    void setPending(const uint8_t* src, unsigned len)
-    {
-        ASSERT(len <= 3);
-        clearPending();
-        for (unsigned i = 0; i < len; ++i)
-            pending[i] = src[i];
-    }
-};
-static_assert(sizeof(StreamingUTF8DecodeState) == 4);
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
 // back a trailing incomplete sequence (unless `flush`), and returns the decoded span with
 // invalid sequences replaced by U+FFFD. The returned string may be empty.
@@ -279,8 +259,8 @@ JSC::JSPromise* byteTeeCancelAlgorithm(JSC::JSGlobalObject*, JSStreamTeeState*, 
 JSC::JSPromise* fromIterablePullAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (iterator `next`) — ReadableStreamOperations.cpp
 JSC::JSPromise* fromIterableCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: yes (iterator `return`) — ReadableStreamOperations.cpp
 // TextDecode (Body.textStream() reading from an existing byte ReadableStream; the
-// controller's algorithmContext is the source reader, underlyingObject is the state
-// Uint8Array):
+// controller's algorithmContext is the source reader, decode state inline on
+// m_algorithms.textDecodeState):
 JSC::JSPromise* textDecodePullAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (source pull) — ReadableStreamOperations.cpp
 JSC::JSPromise* textDecodeCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void textDecodeReadRequestChunkSteps(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — ReadableStreamOperations.cpp

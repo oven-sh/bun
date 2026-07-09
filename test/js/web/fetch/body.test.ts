@@ -392,7 +392,7 @@ for (const { body, fn } of bodyTypes) {
         await stream.cancel("stop");
         expect(cancelled).toBe("stop");
       });
-      test("cancels the source stream when it produces a non-ArrayBufferView chunk", async () => {
+      test("cancels the source stream when it produces a non-BufferSource chunk", async () => {
         let cancelled: unknown;
         const input = new ReadableStream({
           start(controller) {
@@ -408,6 +408,31 @@ for (const { body, fn } of bodyTypes) {
           }
         }).toThrow(TypeError);
         expect(cancelled).toBeInstanceOf(TypeError);
+      });
+      test("accepts raw ArrayBuffer chunks from a ReadableStream body", async () => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hi").buffer);
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("hi");
+      });
+      test("concurrent reads with a source that closes without enqueueing", async () => {
+        let sc!: ReadableStreamDefaultController;
+        const source = new ReadableStream({
+          start(c) {
+            sc = c;
+          },
+        });
+        const reader = fn(source).textStream().getReader();
+        await Promise.resolve();
+        const p1 = reader.read();
+        const p2 = reader.read();
+        await Promise.resolve();
+        sc.close();
+        expect(await p1).toEqual({ value: undefined, done: true });
+        expect(await p2).toEqual({ value: undefined, done: true });
       });
       test("streams a fetch response body", async () => {
         await using server = Bun.serve({
@@ -426,9 +451,10 @@ for (const { body, fn } of bodyTypes) {
         });
         const res = await fetch(server.url);
         const stream = res.textStream();
+        expect(res.bodyUsed).toBe(true);
+        expect(() => res.textStream()).toThrow(TypeError);
         const out = (await Array.fromAsync(stream)).join("");
         expect(out).toBe("hello world 🫠");
-        expect(res.bodyUsed).toBe(true);
       });
       test("streams an incoming request body server-side", async () => {
         const { promise, resolve, reject } = Promise.withResolvers<{

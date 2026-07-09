@@ -967,13 +967,11 @@ impl Value {
         } else {
             reader.to_readable_stream(global_this)?
         };
-        locked.readable = webcore::readable_stream::Strong::init(
-            ReadableStream {
-                ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                value: stream_value,
-            },
-            global_this,
-        );
+        let readable = ReadableStream {
+            ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+            value: stream_value,
+        };
+        locked.readable = webcore::readable_stream::Strong::init(readable, global_this);
 
         if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
             on_readable_stream_available(
@@ -981,6 +979,13 @@ impl Value {
                 global_this,
                 locked.readable.get(global_this).unwrap(),
             );
+        }
+
+        // In text mode the returned stream emits strings, so it must not be
+        // cached as the body's byte stream (consulted by `.body`, `bodyUsed`,
+        // and `throw_if_body_unusable`). Mark the body consumed instead.
+        if text_mode {
+            *self = Value::Used;
         }
 
         Ok(stream_value)

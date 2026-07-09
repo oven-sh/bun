@@ -27,9 +27,9 @@
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSAsyncFromSyncIterator.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
@@ -976,21 +976,8 @@ static EncodedJSValue fromIterableCancelFulfilled(JSGlobalObject* globalObject, 
 }
 
 // SourceKind::TextDecode — Body.textStream() over an existing byte ReadableStream. The
-// controller's algorithmContext is the source JSReadableStreamDefaultReader; underlyingObject
-// is a 4-byte Uint8Array holding the StreamingUTF8DecodeState verbatim.
-
-static constexpr size_t textDecodeStateSize = sizeof(StreamingUTF8DecodeState);
-static_assert(textDecodeStateSize == 4);
-
-static void textDecodeLoadState(JSC::JSUint8Array* stateView, StreamingUTF8DecodeState& state)
-{
-    memcpy(&state, stateView->typedVector(), textDecodeStateSize);
-}
-
-static void textDecodeStoreState(JSC::JSUint8Array* stateView, const StreamingUTF8DecodeState& state)
-{
-    memcpy(stateView->typedVector(), &state, textDecodeStateSize);
-}
+// controller's algorithmContext is the source JSReadableStreamDefaultReader; the
+// StreamingUTF8DecodeState is inline on m_algorithms.textDecodeState.
 
 JSReadableStream* readableStreamTextDecodeFrom(JSGlobalObject* globalObject, JSReadableStream* source)
 {
@@ -1008,9 +995,6 @@ JSReadableStream* readableStreamTextDecodeFrom(JSGlobalObject* globalObject, JSR
     auto* controller = JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<JSReadableStreamDefaultController>(vm, *domGlobalObject));
     controller->m_algorithms.kind = SourceKind::TextDecode;
     controller->m_algorithms.algorithmContext.set(vm, controller, reader);
-    auto* stateView = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), textDecodeStateSize);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    controller->m_algorithms.underlyingObject.set(vm, controller, stateView);
     setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), /* highWaterMark */ 0);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return stream;
@@ -1040,9 +1024,15 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk);
-    if (!view || view->isDetached()) [[unlikely]] {
-        auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not an ArrayBufferView"_s);
+    if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
+        return;
+    std::span<const uint8_t> bytes;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk); view && !view->isDetached()) {
+        bytes = std::span { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
+    } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk); buffer && buffer->impl() && !buffer->impl()->isDetached()) {
+        bytes = std::span { static_cast<const uint8_t*>(buffer->impl()->data()), buffer->impl()->byteLength() };
+    } else {
+        auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());
         if (auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get())) {
             auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
@@ -1051,14 +1041,10 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
                 markPromiseAsHandled(vm, cancelResult);
         }
         readableStreamDefaultControllerError(globalObject, controller, error);
+        RETURN_IF_EXCEPTION(scope, void());
         return;
     }
-    auto* stateView = uncheckedDowncast<JSC::JSUint8Array>(controller->m_algorithms.underlyingObject.get().getObject());
-    StreamingUTF8DecodeState state;
-    textDecodeLoadState(stateView, state);
-    std::span<const uint8_t> bytes { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
-    WTF::String decoded = streamingUTF8Decode(bytes, state, /* flush */ false);
-    textDecodeStoreState(stateView, state);
+    WTF::String decoded = streamingUTF8Decode(bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
     if (decoded.isEmpty()) {
         // No output from this chunk (held back as an incomplete sequence). Arm
         // `m_pullAgain` so the controller re-pulls once this pull settles.
@@ -1072,11 +1058,9 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stateView = uncheckedDowncast<JSC::JSUint8Array>(controller->m_algorithms.underlyingObject.get().getObject());
-    StreamingUTF8DecodeState state;
-    textDecodeLoadState(stateView, state);
-    WTF::String decoded = streamingUTF8Decode({}, state, /* flush */ true);
-    textDecodeStoreState(stateView, state);
+    if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
+        return;
+    WTF::String decoded = streamingUTF8Decode({}, controller->m_algorithms.textDecodeState, /* flush */ true);
     if (!decoded.isEmpty()) {
         readableStreamDefaultControllerEnqueue(globalObject, controller, jsString(vm, WTF::move(decoded)));
         RETURN_IF_EXCEPTION(scope, void());

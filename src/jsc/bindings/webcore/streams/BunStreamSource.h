@@ -13,7 +13,6 @@
 #include "StreamsForward.h"
 
 #include "JSReadableStreamDefaultController.h"
-#include "WebStreamsInternals.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/Weak.h>
 

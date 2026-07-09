@@ -35,23 +35,15 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
 // flavor would data-race on ref/deref.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub fd: Fd,
     pub size: usize,
 }
 
-impl LinuxMemFdAllocator {
-    /// Close the fd, then free the allocation.
-    ///
-    /// # Safety
-    /// Refcount hit 0; `this` came from `heap::alloc` in `IntrusiveArc::new`.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: sole owner — close fd before reclaiming the Box.
-        unsafe { (*this).fd.close() };
-        // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
-        drop(unsafe { bun_core::heap::take(this) });
+impl Drop for LinuxMemFdAllocator {
+    fn drop(&mut self) {
+        self.fd.close();
     }
 }
 

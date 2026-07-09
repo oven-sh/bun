@@ -1,11 +1,12 @@
 use core::fmt;
 use core::ptr::NonNull;
-use std::cell::UnsafeCell;
+use std::cell::Cell;
 use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, Strong, JsClass as _};
+use bun_ptr::ParentRef;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use super::jest::{Jest, FileId, FileColumns as _};
@@ -235,7 +236,7 @@ pub mod js_fns {
                 }
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
-                    let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
+                    let Some((seq_abs, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
                         return Err(if tag == GenericHookTag::OnTestFinished {
                             global_this.throw(format_args!(
                                 "Cannot call {}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
@@ -249,9 +250,7 @@ pub mod js_fns {
                         });
                     };
 
-                    // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
-                    // into `execution.sequences`; deref at point-of-use only.
-                    let sequence_ref = unsafe { sequence.as_ref() };
+                    let sequence_ref = &bun_test.execution.sequences[seq_abs];
                     let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
                             let mut iter = sequence_ref.active_entry;
@@ -362,21 +361,21 @@ pub type BunTestPtr = Rc<BunTestCell>;
 pub type BunTestPtrWeak = Weak<BunTestCell>;
 pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 
-/// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
-/// `BunTest` (`UnsafeCell` is required for any write reachable through a
-/// shared/`*const` path).
+/// `JsCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
+/// `BunTest` (interior mutability is required for any write reachable through
+/// a shared/`*const` path).
 #[repr(transparent)]
-pub struct BunTestCell(UnsafeCell<BunTest>);
+pub struct BunTestCell(JsCell<BunTest>);
 
 impl BunTestCell {
     #[inline]
     pub fn new(bt: BunTest) -> Rc<Self> {
-        Rc::new(Self(UnsafeCell::new(bt)))
+        Rc::new(Self(JsCell::new(bt)))
     }
 
     /// Returns `&mut` because every call site mutates. The borrow is derived
-    /// from `UnsafeCell::get()` so provenance is valid for writes even while
-    /// other `Rc`/`Weak` handles exist.
+    /// from `JsCell` so provenance is valid for writes even while other
+    /// `Rc`/`Weak` handles exist.
     ///
     /// **Aliasing contract:** the test runner is single-threaded. Callers must not
     /// hold the returned `&mut` across a re-entrancy point (JS callback,
@@ -386,16 +385,16 @@ impl BunTestCell {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn get(&self) -> &mut BunTest {
-        // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
-        unsafe { &mut *self.0.get() }
+        // SAFETY: single-threaded JS VM; callers re-derive across re-entrancy
+        // points rather than holding this borrow. See contract above.
+        unsafe { self.0.get_mut() }
     }
 
     /// Raw pointer for sites that must span re-entrant `.get()` calls without
-    /// holding a live `&mut` (Stacked-Borrows-safe: raw ptrs do not assert
-    /// uniqueness).
+    /// holding a live `&mut` (raw ptrs do not assert uniqueness).
     #[inline]
     pub fn as_ptr(&self) -> *mut BunTest {
-        self.0.get()
+        self.0.as_ptr()
     }
 }
 
@@ -403,20 +402,20 @@ impl core::ops::Deref for BunTestCell {
     type Target = BunTest;
     #[inline]
     fn deref(&self) -> &BunTest {
-        // SAFETY: shared read through `UnsafeCell`; single-threaded — caller
-        // must not hold a live `&mut` from `.get()` concurrently.
-        unsafe { &*self.0.get() }
+        // Shared read; single-threaded — caller must not hold a live `&mut`
+        // from `.get()` concurrently.
+        self.0.get()
     }
 }
 
 /// Back-compat shim for sibling modules (jest.rs) that funneled through this
-/// helper. Now routes through `UnsafeCell::get()` instead of the UB
+/// helper. Now routes through `JsCell` instead of the UB
 /// `*const T as *mut T` cast.
 ///
 /// # Safety
 /// Caller must uphold the aliasing contract documented on [`BunTestCell::get`].
 #[inline]
-#[allow(clippy::mut_from_ref)] // interior mutability: routes through UnsafeCell::get()
+#[allow(clippy::mut_from_ref)] // interior mutability: routes through JsCell
 pub unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
     ptr.get()
 }
@@ -438,8 +437,8 @@ impl BunTestRoot {
             name: None,
             concurrent: false,
             mode: ScopeMode::Normal,
-            only: Only::No,
-            has_callback: false,
+            only: Cell::new(Only::No),
+            has_callback: Cell::new(false),
             test_id_for_debugger: 0,
             line_no: 0,
         });
@@ -460,8 +459,8 @@ impl BunTestRoot {
             name: None,
             concurrent: false,
             mode: ScopeMode::Normal,
-            only: Only::No,
-            has_callback: false,
+            only: Cell::new(Only::No),
+            has_callback: Cell::new(false),
             test_id_for_debugger: 0,
             line_no: 0,
         });
@@ -1060,7 +1059,7 @@ impl BunTest {
                 let should_randomize = per_file_prng.take();
 
                 let mut order = Order::Order::init(Order::Config {
-                    always_use_hooks: self.collection.root_scope.base.only == Only::No && !has_filter,
+                    always_use_hooks: self.collection.root_scope.base.only.get() == Only::No && !has_filter,
                     randomize: should_randomize,
                 });
 
@@ -1445,11 +1444,10 @@ impl RefDataValue {
         if buntest.phase != Phase::Execution {
             return None;
         }
-        let (the_sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
-        // SAFETY: `the_sequence` is a NonNull into `execution.sequences`; deref
-        // at point-of-use only. `active_entry` is a valid intrusive node while
-        // the sequence is live.
-        unsafe { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
+        let (seq_abs, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
+        let active_entry = buntest.execution.sequences[seq_abs].active_entry?;
+        // SAFETY: `active_entry` is a valid intrusive node while the sequence is live.
+        unsafe { Some(&mut *active_entry.as_ptr()) }
     }
 }
 
@@ -1664,12 +1662,12 @@ impl Only {
 }
 
 pub struct BaseScope {
-    pub parent: Option<*mut DescribeScope>,
+    pub parent: Option<ParentRef<DescribeScope>>,
     pub name: Option<Box<[u8]>>,
     pub concurrent: bool,
     pub mode: ScopeMode,
-    pub only: Only,
-    pub has_callback: bool,
+    pub only: Cell<Only>,
+    pub has_callback: Cell<bool>,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub test_id_for_debugger: i32,
     /// only available if using junit reporter, otherwise 0
@@ -1679,12 +1677,10 @@ impl BaseScope {
     pub fn init(
         cfg: BaseScopeCfg,
         name_not_owned: Option<&[u8]>,
-        parent: Option<*mut DescribeScope>,
+        parent: Option<ParentRef<DescribeScope>>,
         has_callback: bool,
     ) -> BaseScope {
-        // SAFETY: `parent` is a live backref into the describe tree; single-threaded,
-        // and the parent outlives this child during construction.
-        let parent_base = parent.map(|p| unsafe { &(*p).base });
+        let parent_base = parent.as_ref().map(|p| &p.get().base);
         BaseScope {
             parent,
             name: name_not_owned.map(Box::<[u8]>::from),
@@ -1698,24 +1694,21 @@ impl BaseScope {
             } else {
                 cfg.self_mode
             },
-            only: if cfg.self_only { Only::Yes } else { Only::No },
-            has_callback,
+            only: Cell::new(if cfg.self_only { Only::Yes } else { Only::No }),
+            has_callback: Cell::new(has_callback),
             test_id_for_debugger: cfg.test_id_for_debugger,
             line_no: cfg.line_no,
         }
     }
 
     pub fn propagate(&mut self, has_callback: bool) {
-        self.has_callback = has_callback;
+        self.has_callback.set(has_callback);
         if let Some(parent) = self.parent {
-            // SAFETY: parent backref valid; tree is single-threaded and parent
-            // outlives child.
-            let parent = unsafe { &mut *parent };
-            if self.only != Only::No {
-                parent.mark_contains_only();
+            if self.only.get() != Only::No {
+                parent.get().mark_contains_only();
             }
-            if self.has_callback {
-                parent.mark_has_callback();
+            if self.has_callback.get() {
+                parent.get().mark_has_callback();
             }
         }
     }
@@ -1755,30 +1748,28 @@ impl DescribeScope {
     }
     // destroy → Drop on Box<DescribeScope>; all fields own their contents.
 
-    fn mark_contains_only(&mut self) {
-        let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
-        while let Some(scope_ptr) = target {
-            // SAFETY: walking parent backrefs; tree is single-threaded
-            let scope = unsafe { &mut *scope_ptr };
-            if scope.base.only == Only::Contains {
+    fn mark_contains_only(&self) {
+        let mut scope: &DescribeScope = self;
+        loop {
+            if scope.base.only.get() == Only::Contains {
                 return; // already marked
             }
             // note that we overwrite '.yes' with '.contains' to support only-inside-only
-            scope.base.only = Only::Contains;
-            target = scope.base.parent;
+            scope.base.only.set(Only::Contains);
+            let Some(parent) = scope.base.parent.as_ref() else { return };
+            scope = parent.get();
         }
     }
 
-    fn mark_has_callback(&mut self) {
-        let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
-        while let Some(scope_ptr) = target {
-            // SAFETY: walking parent backrefs; tree is single-threaded
-            let scope = unsafe { &mut *scope_ptr };
-            if scope.base.has_callback {
+    fn mark_has_callback(&self) {
+        let mut scope: &DescribeScope = self;
+        loop {
+            if scope.base.has_callback.get() {
                 return; // already marked
             }
-            scope.base.has_callback = true;
-            target = scope.base.parent;
+            scope.base.has_callback.set(true);
+            let Some(parent) = scope.base.parent.as_ref() else { return };
+            scope = parent.get();
         }
     }
 
@@ -1788,7 +1779,9 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
+        // SAFETY: `self` outlives the child it is about to own; `from_mut` keeps write provenance.
+        let parent = unsafe { ParentRef::from_raw_mut(std::ptr::from_mut(self)) };
+        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(parent), false));
         child.base.propagate(false);
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
@@ -1805,7 +1798,9 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        // SAFETY: `self` outlives the entry it is about to own; `from_mut` keeps write provenance.
+        let parent = unsafe { ParentRef::from_raw_mut(std::ptr::from_mut(self)) };
+        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(parent), base, phase);
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
@@ -1834,7 +1829,9 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        // SAFETY: `self` outlives the hook it is about to own; `from_mut` keeps write provenance.
+        let parent = unsafe { ParentRef::from_raw_mut(std::ptr::from_mut(self)) };
+        let entry = ExecutionEntry::create(None, callback, cfg, Some(parent), base, phase);
         let list = self.get_hook_entries(tag);
         list.push(entry);
         Ok(&mut **list.last_mut().unwrap())
@@ -1892,7 +1889,7 @@ impl ExecutionEntry {
         name_not_owned: Option<&[u8]>,
         cb: Option<JSValue>,
         cfg: ExecutionEntryCfg,
-        parent: Option<*mut DescribeScope>,
+        parent: Option<ParentRef<DescribeScope>>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {

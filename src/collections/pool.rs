@@ -800,13 +800,11 @@ mod tests {
         let before = drops();
         let mut list: SinglyLinkedList<Tracked> = SinglyLinkedList::default();
         for i in 0..3 {
-            let node = bun_core::heap::into_raw(Box::new(Node {
+            // Ownership moves to the list, whose `Drop` frees it.
+            list.prepend(bun_core::heap::release(Box::new(Node {
                 next: ptr::null_mut(),
                 data: MaybeUninit::new(Tracked(Box::new(i))),
-            }));
-            // SAFETY: freshly allocated and exclusively owned; ownership moves
-            // to the list, whose `Drop` frees it.
-            list.prepend(unsafe { &mut *node });
+            })));
         }
         drop(list);
         assert_eq!(drops(), before + 3);

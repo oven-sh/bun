@@ -1405,10 +1405,12 @@ pub mod js_bundler {
     /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
     /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
-    fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
+    fn bv2_mut<'a>(
+        bv2: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    ) -> &'a mut BundleV2<'static> {
         // SAFETY: see fn doc — live backref (owner-creates-child), single
         // JS-thread, disjoint heap from the `Resolve`/`Load` callers borrow.
-        unsafe { &mut *bv2 }
+        unsafe { bv2.expect("bv2").assume_mut() }
     }
 
     /// `&mut Plugin` for the live `BundleV2` backref stored on `Resolve`/`Load`.
@@ -1421,9 +1423,11 @@ pub mod js_bundler {
     /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
     /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
-    fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
-        // SAFETY: see fn doc — `plugins.is_some()`, disjoint heap.
-        unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
+    fn bv2_plugin<'a>(bv2: Option<bun_ptr::ParentRef<BundleV2<'static>>>) -> &'a mut Plugin {
+        let bv2 = bv2.expect("bv2");
+        // SAFETY: `plugins.is_some()`; the opaque C++ plugin is a distinct
+        // allocation from the bundle, so no `&mut BundleV2` is taken here.
+        unsafe { &mut *bv2.get().plugins.unwrap().as_ptr() }
     }
 
     /// # Safety
@@ -1532,7 +1536,7 @@ pub mod js_bundler {
     }
 
     fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
-        bv2_mut(ctx).on_notify_defer();
+        bv2_mut(core::ptr::NonNull::new(ctx).map(bun_ptr::ParentRef::from)).on_notify_defer();
         Ok(())
     }
 
@@ -1571,9 +1575,10 @@ pub mod js_bundler {
 
             if this.was_file {
                 // Faster path: skip the extra threadpool dispatch
+                let bv2 = this.bv2.expect("bv2").as_mut_ptr();
                 // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
                 unsafe {
-                    (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
+                    (*(*(*bv2).graph.pool.as_ptr()).worker_pool).schedule(
                         bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
                             (*this.parse_task.as_ptr()).task
                         )),

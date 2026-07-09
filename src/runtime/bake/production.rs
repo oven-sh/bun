@@ -110,14 +110,11 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         smol: ctx.runtime_options.smol,
         ..Default::default()
     })?;
-    // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
-    // unique access for the rest of this function.
-    let vm = unsafe { &mut *vm_ptr };
+    // `init_bake` installs the VM as this thread's singleton.
+    let vm = VirtualMachine::get_mut();
     // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
-    // not borrow the local (`defer!` would capture `&vm_ptr`, which under
-    // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
+    // not borrow the local.
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread.
         unsafe { (*p).destroy() };
@@ -199,46 +196,38 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     }
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
+    let vm = VirtualMachine::get();
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
-    vm.load_extra_env_and_source_code_printer();
-    vm.is_main_thread = true;
+    VirtualMachine::get_mut().load_extra_env_and_source_code_printer();
+    VirtualMachine::get_mut().is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
-    // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
-    // borrow `vm` (the VirtualMachine) and the body below can keep using it.
+    // `jsc_vm()` hands out a `&'static VM` (a separate JSC allocation), so the
+    // lock does not borrow the VirtualMachine.
     //
     // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
     // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
     // releases the lock.
-    let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
+    let _api_lock = VirtualMachine::get().jsc_vm().get_api_lock();
 
     // Note: `PerThread` owns its data. Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    // Note: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
-    // the raw VM pointer and re-borrow inside.
-    match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
+    match build_with_vm(ctx, &cwd, &mut pt) {
         Ok(()) => {}
         Err(e) if e == bun_core::err!("JSError") => {
             bun_crash_handler::handle_error_return_trace(e, None);
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
+            let global = VirtualMachine::get().global();
             let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
-            if vm.exit_handler.exit_code == 0 {
-                vm.exit_handler.exit_code = 1;
+            VirtualMachine::get_mut()
+                .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
+            if VirtualMachine::get().exit_handler.exit_code == 0 {
+                VirtualMachine::get_mut().exit_handler.exit_code = 1;
             }
-            vm.on_exit();
-            vm.global_exit();
+            VirtualMachine::get_mut().on_exit();
+            VirtualMachine::get_mut().global_exit();
         }
         Err(e) => return Err(e),
     }
@@ -288,15 +277,11 @@ pub(super) fn write_sourcemap_to_disk(
 pub(super) fn build_with_vm(
     ctx: Context,
     cwd: &[u8],
-    vm_ptr: *mut VirtualMachine,
     pt: &mut PerThread,
 ) -> Result<(), bun_core::Error> {
-    // SAFETY: vm_ptr is the live per-thread VM passed from build_command;
-    // exclusive access on this thread for the duration of the call.
-    let vm = unsafe { &mut *vm_ptr };
     // Load and evaluate the configuration module. `global()` returns
-    // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
-    let global = vm.global();
+    // `&'static`, decoupled from the VM so every `&mut` reborrow stays short.
+    let global = VirtualMachine::get().global();
     // allocator = bun.default_allocator — dropped per §Allocators
 
     bun_core::pretty_errorln!("Loading configuration");
@@ -313,7 +298,7 @@ pub(super) fn build_with_vm(
         unresolved_config_entry_point = prefixed;
     }
 
-    let config_entry_point = match vm.transpiler.resolver.resolve(
+    let config_entry_point = match VirtualMachine::get_mut().transpiler.resolver.resolve(
         cwd,
         &unresolved_config_entry_point,
         bun_ast::ImportKind::EntryPointBuild,
@@ -348,9 +333,10 @@ pub(super) fn build_with_vm(
     let config_entry_point_string =
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
-    let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
-    else {
+    let Some(config_promise) = JSModuleLoader::load_and_evaluate_module_ptr(
+        VirtualMachine::get().global,
+        Some(&config_entry_point_string),
+    ) else {
         debug_assert!(global.has_exception());
         return Err(bun_core::err!("JSError"));
     };
@@ -359,8 +345,8 @@ pub(super) fn build_with_vm(
     // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
-    let jsc_vm = vm.jsc_vm_mut();
+    VirtualMachine::get_mut().wait_for_promise(AnyPromise::Internal(config_promise_ptr));
+    let jsc_vm = VirtualMachine::get_mut().jsc_vm_mut();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
         .unwrap(jsc_vm, UnwrapMode::MarkHandled)
@@ -445,7 +431,7 @@ pub(super) fn build_with_vm(
     let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
-    let vm_log = vm.log_mut().unwrap();
+    let vm_log = VirtualMachine::get().log_mut().unwrap();
     framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
@@ -636,7 +622,8 @@ pub(super) fn build_with_vm(
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+        let mut any_loop =
+            bun_event_loop::AnyEventLoop::js(VirtualMachine::get().event_loop().cast());
 
         // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -828,7 +815,7 @@ pub(super) fn build_with_vm(
     }
 
     *pt = PerThread::init(
-        vm_ptr,
+        VirtualMachine::get_mut_ptr(),
         entry_points,
         bundled_outputs_list,
         module_keys,
@@ -1218,12 +1205,8 @@ pub(super) fn build_with_vm(
         )
     };
     render_promise.set_handled();
-    // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
-    // above accessed the same allocation through `vm_ptr`, invalidating the
-    // earlier `&mut` under Stacked Borrows.
-    let vm = VirtualMachine::get().as_mut();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise));
-    let jsc_vm = vm.jsc_vm_mut();
+    VirtualMachine::get_mut().wait_for_promise(AnyPromise::Normal(render_promise));
+    let jsc_vm = VirtualMachine::get_mut().jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
@@ -1234,7 +1217,7 @@ pub(super) fn build_with_vm(
             return Err(js_err(global.throw_value(err)));
         }
     }
-    vm.wait_for_tasks();
+    VirtualMachine::get_mut().wait_for_tasks();
     Ok(())
 }
 

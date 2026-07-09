@@ -69,7 +69,7 @@ impl PartialEq<bun_core::Error> for ScanError {
 #[repr(transparent)]
 struct ScannerDirIter<'a>(*mut Scanner<'a>);
 impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next(&self, entry: &mut fs::Entry, fd: Fd) {
+    fn next(&self, entry: &fs::Entry, fd: Fd) {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
         // while the resolver walks entries.
@@ -196,7 +196,7 @@ impl<'a> Scanner<'a> {
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr }, fd);
+                    self.next(unsafe { &*entry_ptr }, fd);
                 }
             }
         }
@@ -363,13 +363,13 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
+    pub fn next(&mut self, entry: &fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, true) } {
+        match unsafe { entry.kind(bun_ptr::ParentRef::from_raw(real_fs), true) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;
@@ -389,7 +389,7 @@ impl<'a> Scanner<'a> {
 
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {
-                    let parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                    let parts: [&[u8]; 2] = [entry.dir(), entry.base()];
                     // reshaped for borrowck — drop the &mut borrow from
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
@@ -412,12 +412,12 @@ impl<'a> Scanner<'a> {
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
                     // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
                     name: unsafe { core::ptr::read(&raw const entry.base_) },
-                    dir_path: entry.dir,
+                    dir_path: entry.dir(),
                 });
             }
             fs::EntryKind::File => {
                 // already seen it!
-                if !entry.abs_path.is_empty() {
+                if !entry.abs_path().is_empty() {
                     return;
                 }
 
@@ -426,7 +426,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                let parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                let parts: [&[u8]; 2] = [entry.dir(), entry.base()];
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
@@ -450,8 +450,8 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = Interned::from_static(stored);
-                self.test_files.push(entry.abs_path);
+                entry.set_abs_path(Interned::from_static(stored));
+                self.test_files.push(entry.abs_path());
             }
         }
     }

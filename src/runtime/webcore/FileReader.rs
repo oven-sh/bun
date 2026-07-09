@@ -1,4 +1,4 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::mem;
 
 use bun_collections::VecExt;
@@ -31,14 +31,10 @@ bun_core::declare_scope!(FileReader, visible);
 // `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
 // 0 of `NewSource<FileReader>`) is unchanged.
 pub struct FileReader {
-    /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
-    /// `parent`) and the reader's own `&mut self` both derive from a
-    /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
-    /// (PipeReader.rs). The vtable callbacks fire while a `&mut BufferedReader`
-    /// is live on the caller's stack and re-enter `self.reader` (close/buffer/
-    /// is_done); without `UnsafeCell` materializing `&mut FileReader` there is
-    /// Stacked-Borrows UB. Matches sibling `IOReader` (shell) port.
-    pub reader: UnsafeCell<IOReader>,
+    /// `JsCell` so the vtable back-ref `*mut FileReader` and the reader's own
+    /// `&mut self` both derive from one SharedReadWrite root: the callbacks fire
+    /// with a `&mut BufferedReader` live and re-enter `self.reader`.
+    pub reader: JsCell<IOReader>,
     pub done: Cell<bool>,
     pub pending: JsCell<streams::Pending>,
     pub pending_value: JsCell<Strong>, // Strong.Optional
@@ -68,7 +64,7 @@ pub struct FileReader {
 impl Default for FileReader {
     fn default() -> Self {
         Self {
-            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
+            reader: JsCell::new(IOReader::init::<FileReader>()),
             done: Cell::new(false),
             pending: JsCell::new(streams::Pending::default()),
             pending_value: JsCell::new(Strong::empty()),
@@ -274,11 +270,10 @@ impl Lazy {
 // BufferedReader vtable parent: wires the
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` callbacks.
 //
-// R-2: every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
-// backed, so materializing `&FileReader` via `(&*this)` does not assert Unique
-// over any byte the caller may have borrowed (SharedReadWrite root); the
-// inherent impls re-derive any reader access through `reader()`
-// (`UnsafeCell::get`).
+// R-2: every mutated field on `FileReader` is `Cell`/`JsCell`-backed, so
+// materializing `&FileReader` via `(&*this)` does not assert Unique over any
+// byte the caller may have borrowed (SharedReadWrite root); the inherent impls
+// re-derive any reader access through `reader()` (`JsCell::get_mut`).
 bun_io::impl_buffered_reader_parent! {
     FileReader for FileReader;
     has_on_read_chunk = true;
@@ -297,20 +292,16 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 impl FileReader {
-    /// SharedReadWrite accessor for the embedded `BufferedReader`. See the
-    /// `UnsafeCell` note on the field declaration — this is the single point
-    /// through which all `self.reader` access flows so vtable-callback
+    /// SharedReadWrite accessor for the embedded `BufferedReader` — the single
+    /// point through which all `self.reader` access flows, so vtable-callback
     /// re-entrancy and outer `&mut FileReader` borrows both root at the cell.
-    /// SAFETY: single-threaded (JS event loop); the cell is the sole
-    /// SharedReadWrite root — see the unsafe block below.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn reader(&self) -> &mut IOReader {
-        // SAFETY: `FileReader` is single-threaded (JS event loop) and every
-        // `self.reader` access flows through this accessor, so the `UnsafeCell`
-        // is the sole SharedReadWrite root — no `&mut IOReader` is held live
-        // across a vtable-callback re-entry point (see field doc comment).
-        unsafe { &mut *self.reader.get() }
+        // SAFETY: single JS thread; every access re-derives through this
+        // accessor and no `&mut IOReader` is held live across a vtable-callback
+        // re-entry point (see field doc comment).
+        unsafe { self.reader.get_mut() }
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
@@ -329,7 +320,7 @@ impl FileReader {
     // host-fn could re-enter; `*self =` requires unique access.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
-            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
+            reader: JsCell::new(IOReader::init::<FileReader>()),
             done: Cell::new(false),
             fd: Cell::new(fd),
             ..Default::default()

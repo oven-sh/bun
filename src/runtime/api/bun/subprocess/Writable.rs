@@ -43,20 +43,6 @@ impl<'a> Writable<'a> {
         bun_ptr::BackRef::from(pipe)
     }
 
-    /// Mutable counterpart to [`pipe_sink`](Self::pipe_sink).
-    ///
-    /// Same invariant: `Writable::Pipe` holds a +1 intrusive ref on the
-    /// `FileSink` for the variant's lifetime, and the sink lives in its own
-    /// allocation (disjoint from both the `Writable` value and the parent
-    /// `Subprocess`), so projecting `&mut` here cannot alias any other live
-    /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
-        // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
-        unsafe { &mut *pipe.as_ptr() }
-    }
-
     /// Release one intrusive ref on a `FileSink` held by `Writable::Pipe`
     /// (or freshly returned from `FileSink::create*`). Centralises the
     /// `unsafe { FileSink::deref(ptr) }` so callers stay safe — same
@@ -175,7 +161,7 @@ impl<'a> Writable<'a> {
     pub fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
-        subprocess: &mut Subprocess<'a>,
+        subprocess: &Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> Result<Writable<'a>, bun_core::Error> {
@@ -207,7 +193,7 @@ impl<'a> Writable<'a> {
                         let pipe_nn = NonNull::new(FileSink::create_with_pipe(evtloop, uv_pipe))
                             .expect("FileSink::create_with_pipe returns non-null");
                         let pipe_ptr = pipe_nn.as_ptr();
-                        let pipe = Self::pipe_sink_mut(&pipe_nn);
+                        let pipe = Self::pipe_sink(pipe_nn);
 
                         match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
@@ -228,7 +214,10 @@ impl<'a> Writable<'a> {
                         });
 
                         if let Stdio::ReadableStream(rs) = stdio {
-                            let assign_result = pipe.assign_to_stream(rs, global);
+                            // SAFETY: canonical `*mut FileSink` (+1 held by the
+                            // enum); no `&FileSink` spans the JS re-entry.
+                            let assign_result =
+                                unsafe { FileSink::assign_to_stream(pipe_ptr, rs, global) };
                             if let Some(err_val) = assign_result.to_error() {
                                 subprocess.weak_file_sink_stdin_ptr.set(None);
                                 subprocess.update_flags(|f| {
@@ -259,7 +248,7 @@ impl<'a> Writable<'a> {
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        std::ptr::from_ref::<Subprocess<'a>>(subprocess).cast_mut(),
                         result,
                         super::source_from_blob(blob),
                     )));
@@ -267,7 +256,7 @@ impl<'a> Writable<'a> {
                 Stdio::ArrayBuffer(array_buffer) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        std::ptr::from_ref::<Subprocess<'a>>(subprocess).cast_mut(),
                         result,
                         super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
@@ -306,7 +295,7 @@ impl<'a> Writable<'a> {
                 // `create` returns a freshly-boxed non-null pointer.
                 let pipe_nn = NonNull::new(FileSink::create(evtloop, result.unwrap()))
                     .expect("FileSink::create returns non-null");
-                let pipe = Self::pipe_sink_mut(&pipe_nn);
+                let pipe = Self::pipe_sink(pipe_nn);
 
                 match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
                     bun_sys::Result::Ok(()) => {}
@@ -336,7 +325,10 @@ impl<'a> Writable<'a> {
                 });
 
                 if let Stdio::ReadableStream(rs) = stdio {
-                    let assign_result = pipe.assign_to_stream(rs, global);
+                    // SAFETY: canonical `*mut FileSink` (+1 held by the enum);
+                    // no `&FileSink` spans the JS re-entry.
+                    let assign_result =
+                        unsafe { FileSink::assign_to_stream(pipe_nn.as_ptr(), rs, global) };
                     if let Some(err_val) = assign_result.to_error() {
                         subprocess.weak_file_sink_stdin_ptr.set(None);
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
@@ -364,14 +356,14 @@ impl<'a> Writable<'a> {
                 };
                 Ok(Writable::Buffer(StaticPipeWriter::create(
                     evtloop,
-                    std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                    std::ptr::from_ref::<Subprocess<'a>>(subprocess).cast_mut(),
                     result,
                     super::source_from_blob(blob),
                 )))
             }
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
                 evtloop,
-                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                std::ptr::from_ref::<Subprocess<'a>>(subprocess).cast_mut(),
                 result,
                 super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),
@@ -452,11 +444,12 @@ impl<'a> Writable<'a> {
                     // enum's create-time +1 now that the wrapper holds its own
                     // — mirrors Blob.rs:1899-1902. `stdin` was already swapped
                     // to `Ignore` above so `on_close` won't double-release.
-                    let js = Self::pipe_sink_mut(&pipe_nn).to_js(global_this);
+                    // SAFETY: canonical `*mut FileSink`, +1 held by the enum.
+                    let js = unsafe { FileSink::to_js(pipe_nn.as_ptr(), global_this) };
                     Self::pipe_release(pipe_nn);
                     js
                 } else {
-                    let pipe = Self::pipe_sink_mut(&pipe_nn);
+                    let pipe = Self::pipe_sink(pipe_nn);
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
                     subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
                     if !subprocess
@@ -478,12 +471,17 @@ impl<'a> Writable<'a> {
                     // Rust `FileSink::to_js_with_destructor` takes its own
                     // per-wrapper +1; release the enum's create-time +1 (see
                     // the has-exited arm above and Blob.rs:1899-1902).
-                    let js = pipe.to_js_with_destructor(
-                        global_this,
-                        Some(sink::destructor_ptr_subprocess(
-                            subprocess.as_ctx_ptr().cast::<c_void>(),
-                        )),
-                    );
+                    // SAFETY: canonical `*mut FileSink`, +1 held by the enum; no
+                    // `&FileSink` spans the wrapper creation.
+                    let js = unsafe {
+                        FileSink::to_js_with_destructor(
+                            pipe_nn.as_ptr(),
+                            global_this,
+                            Some(sink::destructor_ptr_subprocess(
+                                subprocess.as_ctx_ptr().cast::<c_void>(),
+                            )),
+                        )
+                    };
                     Self::pipe_release(pipe_nn);
                     js
                 }
@@ -505,7 +503,7 @@ impl<'a> Writable<'a> {
         let parent_ptr = NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>());
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
-                let pipe = Self::pipe_sink_mut(&pipe_nn);
+                let pipe = Self::pipe_sink(pipe_nn);
                 if pipe.signal.get().ptr == parent_ptr {
                     pipe.signal.with_mut(|s| s.clear());
                 }

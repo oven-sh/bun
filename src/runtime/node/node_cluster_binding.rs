@@ -33,20 +33,19 @@ unsafe extern "C" {
 pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
-/// `&mut` to the (lazily-initialized) JS-thread singleton.
+/// Shared reference to the (lazily-initialized) JS-thread singleton.
 ///
-/// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
+/// Centralises the `RacyCell<Option<_>> → &InternalMsgHolder` deref so the
 /// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
-/// must not hold the borrow across a re-entrant `child_singleton()` call.
+/// state — same shape as `cron::vm_mut`). Mutation goes through the holder's
+/// `JsCell`/`Cell` fields, so a re-entrant `child_singleton()` is harmless.
 #[inline]
-fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
+fn child_singleton<'a>() -> &'a InternalMsgHolder {
     // SAFETY: only called on the single JS thread.
     // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
-    // `'static` storage so the returned `&mut` is valid for any caller-chosen
-    // `'a`. Aliasing: each of the three callers borrows for a single
-    // statement/block with no nested call to this fn.
-    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
+    // `'static` storage so the returned reference is valid for any
+    // caller-chosen `'a`. No `&mut` is ever handed out.
+    unsafe { &*(*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 
 #[bun_jsc::host_fn]
@@ -77,14 +76,20 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     if callback.is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        let _ = singleton
-            .callbacks
-            .put(singleton.seq, StrongOptional::create(callback, global));
+        let seq = singleton.seq.get();
+        let strong = StrongOptional::create(callback, global);
+        singleton.callbacks.with_mut(|c| {
+            let _ = c.put(seq, strong);
+        });
     }
 
     // sequence number for InternalMsgHolder
-    message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
-    singleton.seq = singleton.seq.wrapping_add(1);
+    message.put(
+        global,
+        b"seq",
+        JSValue::js_number(singleton.seq.get() as f64),
+    );
+    singleton.seq.set(singleton.seq.get().wrapping_add(1));
 
     // similar code as Bun__Process__send
     #[cfg(debug_assertions)]
@@ -147,8 +152,12 @@ pub(crate) fn on_internal_message_child(
     let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(arguments[0], global);
-    singleton.cb = StrongOptional::create(arguments[1], global);
+    singleton
+        .worker
+        .set(StrongOptional::create(arguments[0], global));
+    singleton
+        .cb
+        .set(StrongOptional::create(arguments[1], global));
     singleton.flush(global)?;
     Ok(JSValue::UNDEFINED)
 }
@@ -190,19 +199,23 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
     if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
+        let seq = ipc_data.internal_msg_queue.seq.get();
+        let strong = StrongOptional::create(callback, global);
+        ipc_data.internal_msg_queue.callbacks.with_mut(|c| {
+            let _ = c.put(seq, strong);
+        });
     }
 
     // sequence number for InternalMsgHolder
     message.put(
         global,
         b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
+        JSValue::js_number(ipc_data.internal_msg_queue.seq.get() as f64),
     );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+    ipc_data
+        .internal_msg_queue
+        .seq
+        .set(ipc_data.internal_msg_queue.seq.get().wrapping_add(1));
 
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
@@ -241,8 +254,14 @@ pub(crate) fn on_internal_message_primary(
         return Ok(JSValue::UNDEFINED);
     };
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments[1], global);
-    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments[2], global);
+    ipc_data
+        .internal_msg_queue
+        .worker
+        .set(StrongOptional::create(arguments[1], global));
+    ipc_data
+        .internal_msg_queue
+        .cb
+        .set(StrongOptional::create(arguments[2], global));
     Ok(JSValue::UNDEFINED)
 }
 
@@ -270,15 +289,19 @@ pub(crate) fn handle_internal_message_primary(
             let entry = ipc_data
                 .internal_msg_queue
                 .callbacks
+                .get()
                 .get(&ack)
                 .map(|s| s.get());
             if let Some(callback_opt) = entry {
-                ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
+                ipc_data.internal_msg_queue.callbacks.with_mut(|c| {
+                    c.swap_remove(&ack);
+                });
                 let cb = callback_opt.unwrap();
+                let worker = ipc_data.internal_msg_queue.worker.get().get().unwrap();
                 event_loop.run_callback(
                     cb,
                     global,
-                    ipc_data.internal_msg_queue.worker.get().unwrap(),
+                    worker,
                     &[
                         message,
                         JSValue::NULL, // handle
@@ -288,11 +311,12 @@ pub(crate) fn handle_internal_message_primary(
             }
         }
     }
-    let cb = ipc_data.internal_msg_queue.cb.get().unwrap();
+    let cb = ipc_data.internal_msg_queue.cb.get().get().unwrap();
+    let worker = ipc_data.internal_msg_queue.worker.get().get().unwrap();
     event_loop.run_callback(
         cb,
         global,
-        ipc_data.internal_msg_queue.worker.get().unwrap(),
+        worker,
         &[
             message,
             JSValue::NULL, // handle

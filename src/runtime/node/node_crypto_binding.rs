@@ -125,9 +125,9 @@ macro_rules! extern_crypto_job {
             }
 
             #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
-            pub(crate) extern "C" fn __schedule(this: &mut Job) {
-                // SAFETY: `this` is a live pointer returned by `__create`.
-                unsafe { Job::schedule(this) };
+            pub(crate) extern "C" fn __schedule(this: *mut Job) {
+                // SAFETY: `this` is the owned, unscheduled pointer from `__create`.
+                Job::schedule(unsafe { bun_core::heap::take(this) });
             }
 
             #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]

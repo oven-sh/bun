@@ -80,10 +80,12 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> CtxKind
 }
 
 impl AnyRequestContext {
-    pub fn init<T: CtxKind>(request_ctx: *const T) -> Self {
+    // Takes `*mut T`: callers write through `ptr` in `dispatch!`, so the
+    // pointer must carry mutable provenance.
+    pub fn init<T: CtxKind>(request_ctx: *mut T) -> Self {
         Self {
             tag: T::TAG,
-            ptr: request_ctx as *mut (),
+            ptr: request_ctx.cast::<()>(),
         }
     }
 }
@@ -222,14 +224,16 @@ impl AnyRequestContext {
     /// inside `NewServer` has a stable address, so deriving `&mut` here is
     /// sound as long as the caller upholds the usual single-writer rule on the
     /// JS thread.
-    pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
+    pub fn dev_server_mut(self) -> Option<bun_ptr::ParentRef<crate::bake::DevServer::DevServer>> {
         dispatch!(self, None, |_T, ctx| {
             let server = ctx.server?.as_ptr();
             // SAFETY: `ctx.server` is a non-null backref that outlives this context
             // and `dev_server` is a `Box` field never moved while requests are in
             // flight, so dereferencing for exclusive access on the JS thread is sound.
             let ds = unsafe { (*server).dev_server.as_deref_mut()? };
-            Some(core::ptr::from_mut(ds))
+            // SAFETY: the `Box<DevServer>` slot outlives every `AnyRequestContext`;
+            // `from_raw_mut` keeps the write provenance `assume_mut` needs.
+            Some(unsafe { bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(ds)) })
         })
     }
 

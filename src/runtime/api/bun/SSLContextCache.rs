@@ -19,6 +19,7 @@
 //! `tls.ts` SHA-256/WeakRef memo: every path that turns an `SSLConfig` into an
 //! `SSL_CTX*` goes through here, so one config = one CTX per process.
 
+use core::cell::Cell;
 use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
 
@@ -62,7 +63,7 @@ pub struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
-    pub ctx: *mut boringssl::SSL_CTX,
+    pub ctx: Cell<*mut boringssl::SSL_CTX>,
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
     /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
     /// owner).
@@ -105,8 +106,8 @@ impl SSLContextCache {
                 // SAFETY: map values are live heap Entries (heap::alloc below); freed only
                 // via compact_locked / Drop, both of which hold this mutex.
                 let entry = unsafe { &**entry };
-                if !entry.ctx.is_null() {
-                    let ctx = entry.ctx;
+                let ctx = entry.ctx.get();
+                if !ctx.is_null() {
                     // SAFETY: ctx non-null and tombstone write is serialized by this mutex.
                     unsafe { boringssl::SSL_CTX_up_ref(ctx) };
                     return Some(ctx);
@@ -131,10 +132,13 @@ impl SSLContextCache {
         // Prefer the already-cached one and drop ours so callers converge.
         let gop = bun_core::handle_oom(self.map.get_or_put(d));
         if gop.found_existing {
+            let entry_ptr: *mut Entry = *gop.value_ptr;
             // SAFETY: existing map value is a live heap Entry (see above).
-            let entry = unsafe { &mut **gop.value_ptr };
-            if !entry.ctx.is_null() {
-                let existing = entry.ctx;
+            let entry = unsafe { &*entry_ptr };
+            // Read the slot out before SSL_CTX_free below, which can re-enter
+            // `bun_ssl_ctx_cache_on_free` and write this same `ctx` cell.
+            let existing = entry.ctx.get();
+            if !existing.is_null() {
                 // SAFETY: existing non-null; ctx is the fresh CTX we just built and own.
                 unsafe {
                     boringssl::SSL_CTX_up_ref(existing);
@@ -146,23 +150,23 @@ impl SSLContextCache {
             // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
             // it did, the entry would never tombstone and `entry.ctx` would dangle
             // after the CTX is freed. Don't cache it; caller still owns the ref.
-            // SAFETY: ctx is a valid SSL_CTX*; entry is a valid heap pointer.
+            // SAFETY: ctx is a valid SSL_CTX*; entry_ptr is a valid heap pointer.
             if unsafe {
                 boringssl::SSL_CTX_set_ex_data(
                     ctx,
                     c::us_ssl_ctx_cache_ex_idx(),
-                    std::ptr::from_mut::<Entry>(entry).cast::<c_void>(),
+                    entry_ptr.cast::<c_void>(),
                 )
             } != 1
             {
                 return Some(ctx);
             }
-            entry.ctx = ctx;
+            entry.ctx.set(ctx);
             return Some(ctx);
         }
 
         let entry = bun_core::heap::into_raw(Box::new(Entry {
-            ctx,
+            ctx: Cell::new(ctx),
             owner: owner_ptr,
         }));
         *gop.value_ptr = entry;
@@ -195,7 +199,7 @@ impl SSLContextCache {
         while i < self.map.count() {
             let entry = self.map.values()[i];
             // SAFETY: map values are live heap Entries; we hold the mutex.
-            if unsafe { (*entry).ctx.is_null() } {
+            if unsafe { (*entry).ctx.get().is_null() } {
                 // SAFETY: entry was heap-allocated in get_or_create_digest; ex_data
                 // back-pointer is already moot (ctx == null means CRYPTO_EX_free ran).
                 drop(unsafe { bun_core::heap::take(entry) });
@@ -236,9 +240,9 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
     }
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
-    let entry: &mut Entry = unsafe { bun_ptr::callback_ctx::<Entry>(ptr) };
+    let entry: &Entry = unsafe { &*ptr.cast::<Entry>() };
     let _guard = entry.owner.mutex.lock_guard();
-    entry.ctx = ptr::null_mut();
+    entry.ctx.set(ptr::null_mut());
 }
 
 impl Drop for SSLContextCache {
@@ -251,11 +255,12 @@ impl Drop for SSLContextCache {
         for &entry in self.map.values() {
             // SAFETY: map values are live heap Entries; we hold the mutex.
             let e = unsafe { &*entry };
-            if !e.ctx.is_null() {
+            let ctx = e.ctx.get();
+            if !ctx.is_null() {
                 // SAFETY: ctx non-null; clearing the ex_data slot we set.
                 unsafe {
                     boringssl::SSL_CTX_set_ex_data(
-                        e.ctx,
+                        ctx,
                         c::us_ssl_ctx_cache_ex_idx(),
                         ptr::null_mut(),
                     );

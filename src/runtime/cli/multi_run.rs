@@ -801,9 +801,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
+    // SAFETY: `env_ptr` is the process-lifetime loader singleton (see above).
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
-        // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
-        Some(unsafe { &mut *env_ptr }),
+        Some(unsafe { bun_ptr::ParentRef::from_raw_mut(env_ptr) }),
         None,
     );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop

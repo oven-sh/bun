@@ -2128,9 +2128,9 @@ impl GlobalData {
 
 impl Drop for GlobalData {
     fn drop(&mut self) {
-        // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
-        // value field — open-code the channel teardown so the c-ares state
-        // frees when this box drops in `deinit_runtime_state`.
+        // `Resolver`'s refcount destructor frees the heap allocation, which is
+        // wrong for a value field — open-code the channel teardown so the
+        // c-ares state frees when this box drops in `deinit_runtime_state`.
         if let Some(channel) = self.resolver.channel.take() {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
@@ -2336,20 +2336,14 @@ pub mod internal {
             false
         }
 
-        /// # Safety
-        /// `this` must be the heap-allocated `Request` returned by `Request::new`
-        /// with `refcount == 0`; freed by this call.
-        // `this` is reclaimed via `heap::take` (Box::from_raw); forming
-        // `&mut *this` at entry would invalidate the pointer's allocation
-        // provenance, so the param must stay `*mut`.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
-        pub fn deinit(this: *mut Self) {
-            // SAFETY: this is a heap-allocated Request with refcount==0
-            unsafe {
-                debug_assert!((*this).notify.is_empty());
-                // `result_buf` (Box<[ResultEntry]>) and `key.host` freed by Drop.
-                drop(bun_core::heap::take(this));
-            }
+        /// Callers must have unlinked the entry from the cache and observed
+        /// `refcount == 0` before taking ownership.
+        // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+        #[allow(clippy::boxed_local)]
+        pub fn deinit(this: Box<Self>) {
+            debug_assert!(this.notify.is_empty());
+            // `result_buf` (Box<[ResultEntry]>) and `key.host` free here, on Drop.
+            drop(this);
         }
     }
 
@@ -2392,7 +2386,7 @@ pub mod internal {
                             bun_output::scoped_log!(dns, "get: expired entry");
                             if (*entry).refcount == 0 {
                                 let _ = self.delete_entry_at(len, i);
-                                Request::deinit(entry);
+                                Request::deinit(bun_core::heap::take(entry));
                                 len = self.len;
                             }
                             continue;
@@ -2449,7 +2443,7 @@ pub mod internal {
                     // SAFETY: entries are valid
                     unsafe {
                         if (**e).refcount == 0 {
-                            Request::deinit(*e);
+                            Request::deinit(bun_core::heap::take(*e));
                             *e = entry;
                             return true;
                         }
@@ -3250,7 +3244,7 @@ pub mod internal {
             if (*req).refcount == 0 && (guard.is_nearly_full() || !(*req).valid) {
                 bun_output::scoped_log!(dns, "cache --");
                 guard.remove(req);
-                Request::deinit(req);
+                Request::deinit(bun_core::heap::take(req));
             }
         }
     }
@@ -3699,7 +3693,9 @@ impl bun_ptr::RefCounted for Resolver {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        Self::deinit(this);
+        // SAFETY: the refcount hit zero, so `this` is the sole live pointer to
+        // the `heap::into_raw` allocation from `init`.
+        Self::deinit(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -4046,14 +4042,10 @@ impl Resolver {
         unsafe { Self::deref(Box::into_raw(self)) };
     }
 
-    fn deinit(this: *mut Self) {
-        // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
-        // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
-        unsafe {
-            if let Some(channel) = (*this).channel.get() {
-                c_ares::Channel::destroy(channel);
-            }
-            drop(bun_core::heap::take(this));
+    fn deinit(self: Box<Self>) {
+        if let Some(channel) = self.channel.get() {
+            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
+            unsafe { c_ares::Channel::destroy(channel) };
         }
     }
 
@@ -4211,22 +4203,14 @@ impl Resolver {
 
     /// Dispatch to the GetAddrInfo PendingCache by field enum.
     ///
-    /// R-2: returns `&mut` from `&self` via `JsCell::get_mut`. Callers hold
-    /// the borrow only for the duration of a slot read/claim/unset and never
-    /// across a re-entrant call (the c-ares callback path that re-enters the
-    /// resolver runs *after* the borrow is dropped).
-    #[allow(clippy::mut_from_ref)]
-    fn pending_host_cache(&self, field: PendingCacheField) -> &mut PendingCache {
-        // SAFETY: single-JS-thread invariant; caller holds the borrow only for
-        // a short, non-reentrant window (see fn doc).
-        unsafe {
-            match field {
-                PendingCacheField::PendingHostCacheCares => self.pending_host_cache_cares.get_mut(),
-                PendingCacheField::PendingHostCacheNative => {
-                    self.pending_host_cache_native.get_mut()
-                }
-                _ => unreachable!(),
-            }
+    /// Every `HiveArray` slot op takes `&self` (buffer is `UnsafeCell`, `used` is
+    /// `Cell`-backed), so slot pointers handed out as `CacheHit` keep their write
+    /// permission across the re-entrant c-ares/JS callback path.
+    fn pending_host_cache(&self, field: PendingCacheField) -> &PendingCache {
+        match field {
+            PendingCacheField::PendingHostCacheCares => self.pending_host_cache_cares.get(),
+            PendingCacheField::PendingHostCacheNative => self.pending_host_cache_native.get(),
+            _ => unreachable!(),
         }
     }
 
@@ -4658,12 +4642,12 @@ impl Resolver {
 
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.ptr_at(index) };
+            let entry = unsafe { &*cache.ptr_at(index) };
             if R::key_hash(entry) == R::key_hash(key)
                 && R::key_len(entry) == R::key_len(key)
                 && R::key_name(entry) == R::key_name(key)
             {
-                return LookupCacheHit::Inflight(std::ptr::from_mut(entry));
+                return LookupCacheHit::Inflight(cache.ptr_at(index));
             }
         }
 
@@ -4684,9 +4668,9 @@ impl Resolver {
 
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.ptr_at(index) };
+            let entry = unsafe { &*cache.ptr_at(index) };
             if entry.hash == key.hash && entry.len == key.len && entry.name == key.name {
-                return CacheHit::Inflight(std::ptr::from_mut(entry));
+                return CacheHit::Inflight(cache.ptr_at(index));
             }
         }
 
@@ -4900,8 +4884,7 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+            let loop_ = self.vm().platform_loop_opt().expect("event_loop_handle");
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };

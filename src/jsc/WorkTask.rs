@@ -78,19 +78,18 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
 
         // The intrusive `task` field is recovered via container_of in
         // run_from_thread_pool, so this must live at a stable heap address as a
-        // raw pointer. Paired with `heap::take` in `destroy`.
+        // raw pointer. Paired with `heap::take` at the `destroy` call site.
         bun_core::heap::into_raw(this)
     }
 
     // Not `impl Drop` — `ref_.unref` is also called from `run_from_js`,
     // and `Self` is held as a raw pointer (intrusive task), so destruction
     // is explicit.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` was produced by heap::alloc in create_on_js_thread and
-        // has not been freed.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.ref_.unref(Async::js_vm_ctx());
-        // drop(this) — Box freed at scope exit
+    // `boxed_local`: the `Box` is the point — it is the ownership unit being
+    // reclaimed, and every owned field drops with it.
+    #[allow(clippy::boxed_local)]
+    pub fn destroy(mut self: Box<Self>) {
+        self.ref_.unref(Async::js_vm_ctx());
     }
 
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
@@ -108,12 +107,15 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::run(ctx, this);
     }
 
-    pub fn run_from_js(this: &mut Self) -> Result<(), crate::JsTerminated> {
+    /// Consumes the task. The keep-alive is dropped and the box freed *before*
+    /// `Context::then` re-enters JS, so no borrow of `Self` spans the callback.
+    pub fn run_from_js(this: Box<Self>) -> Result<(), crate::JsTerminated> {
         let ctx = this.ctx;
         let tracker = this.async_task_tracker;
-        let global_this = this.global_this.get();
-        this.ref_.unref(Async::js_vm_ctx());
+        let global_this = this.global_this;
+        Self::destroy(this);
 
+        let global_this = global_this.get();
         let _dispatch = tracker.dispatch(global_this);
         Context::then(ctx, global_this)
     }

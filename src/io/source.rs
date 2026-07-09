@@ -213,13 +213,16 @@ impl File {
     extern "C" fn on_close_complete(fs: *mut uv::fs_t) {
         // SAFETY: fs points to the .fs field of a Box<File> allocated in open_file().
         // Unique ownership: by the time libuv fires this callback the parent has
-        // detached (fs.data == null) and no Rust `&mut File` is live; this callback
-        // is the sole owner and reclaims the Box below.
-        let file = unsafe { &mut *File::from_fs(fs) };
-        debug_assert!(file.state == FileState::Closing);
-        file.fs.deinit();
-        // SAFETY: file was allocated via Box::new in open_file(); reclaim and drop.
-        drop(unsafe { bun_core::heap::take(file as *mut File) });
+        // detached (fs.data == null) and this callback is the sole owner.
+        let file = unsafe { bun_core::heap::take(File::from_fs(fs)) };
+        file.finish_close();
+    }
+
+    /// Terminal step of the close state machine: the callback owns the `Box`,
+    /// so deinit the request and free the allocation by dropping `self`.
+    fn finish_close(mut self: Box<Self>) {
+        debug_assert!(self.state == FileState::Closing);
+        self.fs.deinit();
     }
 }
 

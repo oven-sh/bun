@@ -211,11 +211,12 @@ impl MySQLQuery {
         columns_value: JSValue,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<(), AnyMySQLError> {
-        // SAFETY: `statement` was copied from `self.statement` by `run_prepared_query`;
-        // the intrusive ref held there keeps the allocation alive across this call. The
-        // caller passes the raw pointer before reborrowing `self`, so this is the only
-        // live mutable access path to the statement for the duration of this function.
-        let statement = unsafe { &mut *statement };
+        // Non-null, and the intrusive ref in `self.statement` keeps it alive across this
+        // call. Access is shared-only: `execution_flags` is a `Cell`, so `self.bind`
+        // below (which can run user JS) never spans a `&mut` to the statement.
+        let statement = bun_ptr::ParentRef::from(
+            core::ptr::NonNull::new(statement).expect("bind_and_execute_impl: statement non-null"),
+        );
 
         // Bind before touching the writer so a bind failure (user-triggerable via JS
         // getters / param-count mismatch) doesn't leave a partial packet header in
@@ -252,6 +253,7 @@ impl MySQLQuery {
             param_types: &statement.signature.fields,
             new_params_bind_flag: statement
                 .execution_flags
+                .get()
                 .contains(ExecutionFlags::NEED_TO_SEND_PARAMS),
             params: ExecuteParams {
                 len: params.len(),
@@ -265,9 +267,12 @@ impl MySQLQuery {
         let mut packet = writer.start(0)?;
         execute.write(writer)?;
         packet.end()?;
-        statement
-            .execution_flags
-            .remove(ExecutionFlags::NEED_TO_SEND_PARAMS);
+        statement.execution_flags.set(
+            statement
+                .execution_flags
+                .get()
+                .difference(ExecutionFlags::NEED_TO_SEND_PARAMS),
+        );
         self.status = Status::Running;
         Ok(())
     }

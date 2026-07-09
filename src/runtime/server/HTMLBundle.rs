@@ -346,7 +346,7 @@ impl Route {
                         method,
                         resp,
                         route: this,
-                        is_response_pending: true,
+                        is_response_pending: Cell::new(true),
                     }));
 
                     route.pending_responses.with_mut(|v| v.push(pending));
@@ -598,8 +598,7 @@ impl Route {
                 // entry-point until after cloning so we retain the sole owner for
                 // the `clone()` mutable borrow. Static routes are keyed by
                 // `dest_path`, so registration order is immaterial.
-                let mut this_html_route: Option<(core::ptr::NonNull<StaticRoute>, Box<[u8]>)> =
-                    None;
+                let mut this_html_route: Option<(Box<StaticRoute>, Box<[u8]>)> = None;
 
                 // Create static routes for each output file
                 // Index loop because the SourceMap branch reads a sibling entry.
@@ -658,7 +657,7 @@ impl Route {
                     }
 
                     let cached_blob_size = blob.size() as u64;
-                    let static_route = bun_core::heap::into_raw_nn(Box::new(StaticRoute {
+                    let static_route = Box::new(StaticRoute {
                         ref_count: Cell::new(1),
                         blob,
                         server: Cell::new(Some(server)),
@@ -666,7 +665,7 @@ impl Route {
                         headers,
                         cached_blob_size,
                         has_content_disposition: false,
-                    }));
+                    });
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.
@@ -687,21 +686,18 @@ impl Route {
 
                     bun_core::handle_oom(server.append_static_route(
                         route_path,
-                        AnyRoute::Static(static_route),
+                        AnyRoute::Static(bun_core::heap::into_raw_nn(static_route)),
                         MethodOptional::Any,
                     ));
                 }
 
-                let (html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
+                let (mut html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
                     panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
                 });
-                // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
-                // sole owner before registration.
-                let html_route_clone =
-                    bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
+                let html_route_clone = bun_core::handle_oom(html_route.clone(global_this));
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
-                    AnyRoute::Static(html_route),
+                    AnyRoute::Static(bun_core::heap::into_raw_nn(html_route)),
                     MethodOptional::Any,
                 ));
                 self.state.set(State::Html(html_route_clone));
@@ -726,20 +722,16 @@ impl Route {
         for pending_response_ptr in pending {
             // SAFETY: every entry was created via heap::alloc in on_any_request and
             // is removed exactly once (here, or via on_aborted which removes without freeing).
-            let pending_response = unsafe { &mut *pending_response_ptr };
-            // `defer pending_response.deinit()` — heap::take + Drop at scope end.
-            let _drop = scopeguard::guard(pending_response_ptr, |p| {
-                // SAFETY: see above; reconstitutes the Box and runs `Drop`.
-                drop(unsafe { bun_core::heap::take(p) });
-            });
+            // Taking the Box back gives unique ownership; it runs `Drop` at scope end.
+            let pending_response = unsafe { bun_core::heap::take(pending_response_ptr) };
 
             let resp = pending_response.resp;
             let method = pending_response.method;
-            if !pending_response.is_response_pending {
+            if !pending_response.is_response_pending.get() {
                 // Aborted
                 continue;
             }
-            pending_response.is_response_pending = false;
+            pending_response.is_response_pending.set(false);
             resp.clear_aborted();
 
             match self.state.get() {
@@ -793,7 +785,7 @@ impl Drop for Route {
 pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
-    is_response_pending: bool,
+    is_response_pending: Cell<bool>,
     // Raw ptr because the route owns the Vec containing this
     // PendingResponse; an `IntrusiveRc<Route>` field would form a cycle through
     // `Drop`. The ref is bumped/dropped manually via `RefCount::<Route>` calls.
@@ -802,7 +794,7 @@ pub struct PendingResponse {
 
 impl Drop for PendingResponse {
     fn drop(&mut self) {
-        if self.is_response_pending {
+        if self.is_response_pending.get() {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
@@ -821,9 +813,9 @@ impl PendingResponse {
     /// (via `heap::take`) by this call.
     unsafe fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
         // SAFETY: caller contract.
-        let this_ref = unsafe { &mut *this };
-        debug_assert!(this_ref.is_response_pending);
-        this_ref.is_response_pending = false;
+        let this_ref = unsafe { &*this };
+        debug_assert!(this_ref.is_response_pending.get());
+        this_ref.is_response_pending.set(false);
 
         // Technically, this could be the final ref count, but we don't want to risk it
         let route_ptr = this_ref.route;

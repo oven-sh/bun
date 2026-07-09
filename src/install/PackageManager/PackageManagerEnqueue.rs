@@ -511,20 +511,18 @@ pub fn enqueue_dependency_to_root(
 
             struct Closure {
                 err: Option<bun_core::Error>,
-                // raw `*mut` — `sleep_until`
-                // also receives this pointer, so `&mut` here would alias.
-                manager: *mut PackageManager,
+                manager: bun_ptr::ParentRef<PackageManager>,
             }
             impl Closure {
                 fn is_done(&mut self) -> bool {
-                    // SAFETY: `self.manager` is the raw provenance root set
-                    // below; `sleep_until`/`tick_raw` hold no `&mut` across
-                    // this callback, so this is the unique live borrow.
-                    let manager = unsafe { &mut *self.manager };
-                    if manager.pending_task_count() > 0 {
+                    if self.manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.
-                        let log_level = manager.options.log_level;
+                        let log_level = self.manager.options.log_level;
+                        // SAFETY: `sleep_until`/`tick_raw` hold no borrow across
+                        // this callback; the `&mut` is moved into `run_tasks` and
+                        // is dead before any output or further read below.
+                        let manager = unsafe { self.manager.assume_mut() };
                         if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
                             manager,
                             &mut (),
@@ -535,17 +533,17 @@ pub fn enqueue_dependency_to_root(
                             return true;
                         }
 
-                        if verbose_install() && manager.pending_task_count() > 0 {
+                        if verbose_install() && self.manager.pending_task_count() > 0 {
                             if PackageManager::has_enough_time_passed_between_waiting_messages() {
                                 bun_core::pretty_errorln!(
                                     "<d>[PackageManager]<r> waiting for {} tasks\n",
-                                    manager.pending_task_count()
+                                    self.manager.pending_task_count()
                                 );
                             }
                         }
                     }
 
-                    manager.pending_task_count() == 0
+                    self.manager.pending_task_count() == 0
                 }
             }
 
@@ -556,12 +554,12 @@ pub fn enqueue_dependency_to_root(
             let mgr: *mut PackageManager = this;
             let mut closure = Closure {
                 err: None,
-                manager: mgr,
+                // SAFETY: `mgr` derives from the live exclusive `this` borrow, so
+                // it carries the write provenance `assume_mut` requires.
+                manager: unsafe { bun_ptr::ParentRef::from_raw_mut(mgr) },
             };
-            // SAFETY: `mgr` derived from the live exclusive `this` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Closure::is_done`, so the callback's `&mut *closure.manager`
-            // is the unique live borrow.
+            // SAFETY: `sleep_until` + `tick_raw` hold no `&mut PackageManager`
+            // across `Closure::is_done`.
             unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
 
             if this.options.log_level.show_progress() {
@@ -1108,8 +1106,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 );
                                                 if let Some(new_resolve_result) =
                                                     get_or_put_resolved_package_with_find_result(
-                                                        // SAFETY: see `this_ptr` note above.
-                                                        unsafe { &mut *this_ptr },
+                                                        this,
                                                         name_hash,
                                                         name,
                                                         dependency,
@@ -1234,8 +1231,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
+                // SAFETY: sole live loader borrow; `log` is a disjoint field.
                 let resolved = Repository::find_commit(
-                    this.env_mut(),
+                    unsafe { this.env_mut() },
                     this.log_mut(),
                     repo_fd,
                     alias,
@@ -1729,7 +1727,8 @@ fn enqueue_git_clone(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                env: crate::repository::SharedEnv::get(this.env_mut()),
+                // SAFETY: sole live loader borrow.
+                env: crate::repository::SharedEnv::get(unsafe { this.env_mut() }),
                 dep_id,
                 res: *res,
             }),
@@ -1815,6 +1814,7 @@ pub fn enqueue_git_checkout(
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
+                    // SAFETY: sole live loader borrow (outer `unsafe` block covers this call).
                     env: crate::repository::SharedEnv::get(this.env_mut()),
                 }),
             },
@@ -2007,8 +2007,7 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.lockfile`.
         this.to_update
             // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            && unsafe { &*(*this_ptr).lockfile }.is_root_dependency(this, dependency_id)
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(
@@ -2080,10 +2079,7 @@ fn get_or_put_resolved_package_with_find_result(
     // order-independence guard can tell them apart from range-resolved
     // entries (which it treats as network-order artefacts).
     if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
-        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
+        this.lockfile.mark_exact_pin(package.meta.id);
     }
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
@@ -2537,8 +2533,7 @@ fn get_or_put_resolved_package(
             let manifest_ref: bun_ptr::BackRef<Npm::PackageManifest> =
                 bun_ptr::BackRef::new(manifest);
             get_or_put_resolved_package_with_find_result(
-                // SAFETY: see `this_ptr` note above.
-                unsafe { &mut *this_ptr },
+                this,
                 name_hash,
                 name,
                 dependency,

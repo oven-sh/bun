@@ -138,8 +138,7 @@ extern "C" fn on_data(
     }
 
     let global_this = udp_socket.global_this.get();
-    // SAFETY: buf valid for the duration of this callback per uws contract.
-    let buf = unsafe { &mut *buf };
+    let buf = uws::udp::PacketBuffer::opaque_mut(buf);
 
     let mut i: c_int = 0;
     while i < packets {
@@ -1138,15 +1137,10 @@ impl UDPSocket {
             callframe: &'a CallFrame,
             result: JsResult<JSValue>,
         }
-        extern "C" fn run(ctx: *mut Ctx<'_>, payload_roots: *mut MarkedArgumentBuffer) {
-            // SAFETY: ctx points to the stack-local Ctx passed to
-            // MarkedArgumentBuffer::run below; exclusive for this call.
-            let ctx = unsafe { &mut *ctx };
-            // SAFETY: payload_roots is the stack MarkedArgumentBuffer that
-            // MarkedArgumentBuffer::run lends exclusively to this callback.
-            let payload_roots = unsafe { &mut *payload_roots };
-            ctx.result =
-                UDPSocket::send_many_impl(ctx.this, ctx.global_this, ctx.callframe, payload_roots);
+        extern "C" fn run(ctx: &mut Ctx<'_>, payload_roots: &mut MarkedArgumentBuffer) {
+            let (this, global_this, callframe) = (ctx.this, ctx.global_this, ctx.callframe);
+            let result = UDPSocket::send_many_impl(this, global_this, callframe, payload_roots);
+            ctx.result = result;
         }
         let mut ctx = Ctx {
             this,

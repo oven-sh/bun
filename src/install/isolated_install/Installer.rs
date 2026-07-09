@@ -84,12 +84,10 @@ pub struct Installer<'a> {
     pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
-    /// BACKREF. Raw pointer (not `&'a mut`) because
-    /// `Task::run`/`Task::callback` execute concurrently on the thread pool
-    /// and each derefs this field; a `&'a mut` here would assert exclusivity
-    /// every concurrent task violates. Never null. Access via `manager()` /
-    /// `manager_mut()` (main thread only for `_mut`).
-    pub manager: *mut PackageManager,
+    /// BACKREF. `ParentRef` (not `&'a mut`) because `Task::run`/`Task::callback`
+    /// execute concurrently on the thread pool and each derefs this field.
+    /// Access via `manager()` / `manager_mut()` (main thread only for `_mut`).
+    pub manager: bun_ptr::ParentRef<PackageManager>,
     pub command_ctx: Command::Context<'a>,
 
     pub store: &'a Store,
@@ -128,23 +126,26 @@ impl<'a> Installer<'a> {
     // BACKREF accessors — `manager` points outside `Self`; see field doc.
     #[inline]
     pub fn manager(&self) -> &'a PackageManager {
-        // SAFETY: BACKREF — never null; pointee outlives `'a`.
-        unsafe { &*self.manager }
+        // SAFETY: BACKREF — pointee outlives `'a`. `ParentRef::get` would tie the
+        // borrow to `&self`; callers need `'a`.
+        unsafe { &*self.manager.as_ptr() }
     }
+    /// # Safety
+    /// Main thread only: `Task::run` / `Task::callback` deref `self.manager`
+    /// on the pool, so nothing may be written through the result while pool
+    /// tasks are in flight. The result must be the only live
+    /// `&mut PackageManager` — do not re-derive one, directly or through an
+    /// `Installer` callback, while an outer one is still in use. `run_tasks`
+    /// is passed one and its callbacks re-derive: that overlap is a known
+    /// defect of `runTasks::run_tasks`'s signature, not licensed here.
+    /// `*self.manager` outlives `'a`; the return is `'a` (not elided) so
+    /// `start_task` can hold it across `&mut self.tasks[i]`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn manager_mut(&self) -> &'a mut PackageManager {
-        // SAFETY: BACKREF — never null; disjoint from `*self`. Return is `'a`
-        // (not elided) so `start_task` can hold it across `&mut self.tasks[i]`
-        // — same field-disjoint shape the prior `&'a mut` field permitted.
-        // Caller must be on the main thread (only main mutates
-        // `PackageManager`; `Task::run` / `Task::callback` on the pool read
-        // via the raw field, never this accessor). A
-        // `debug_assert!(is_main_thread())` is deferred until
-        // `bun_crash_handler::cli_state::set_main_thread_id` is actually
-        // wired at startup — today the sentinel is never set, so the assert
-        // would fire unconditionally.
-        unsafe { &mut *self.manager }
+    pub unsafe fn manager_mut(&self) -> &'a mut PackageManager {
+        // SAFETY: caller upholds the contract above; the BACKREF was built with
+        // `from_raw_mut`, so it carries write provenance.
+        unsafe { self.manager.assume_mut() }
     }
     #[inline]
     pub fn lockfile(&self) -> &'a Lockfile {
@@ -159,7 +160,8 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub fn start_task(&mut self, entry_id: StoreEntryId) {
-        let manager = self.manager_mut();
+        // SAFETY: main thread; no other `&mut PackageManager` is live here.
+        let manager = unsafe { self.manager_mut() };
         let task = &mut self.tasks[entry_id.get() as usize];
         debug_assert!(matches!(
             task.result,
@@ -178,7 +180,10 @@ impl<'a> Installer<'a> {
     }
 
     pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
-        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
+        // SAFETY: main thread. Bound in a `let` so the `&mut` ends at the
+        // semicolon, before `start_task` below re-derives one.
+        let removed = unsafe { self.manager_mut() }.task_queue.remove(&task_id);
+        if let Some(removed) = removed {
             let store = self.store;
 
             let node_pkg_ids = store.nodes.items_pkg_id();
@@ -238,7 +243,10 @@ impl<'a> Installer<'a> {
         err: bun_core::Error,
         url: &[u8],
     ) {
-        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
+        // SAFETY: main thread. Bound in a `let` so the `&mut` ends at the
+        // semicolon, before `on_task_fail` below re-derives one.
+        let removed = unsafe { self.manager_mut() }.task_queue.remove(&task_id);
+        if let Some(removed) = removed {
             let callbacks = removed;
 
             let entry_steps = self.store.entries.items_step();
@@ -286,23 +294,16 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
         let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
-            self.manager_mut(),
+            // SAFETY: main thread; no other `&mut PackageManager` is live here.
+            unsafe { self.manager_mut() },
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
-        // sole ownership lives in this scope.
-        struct PatchTaskGuard(*mut install::PatchTask);
-        impl Drop for PatchTaskGuard {
-            fn drop(&mut self) {
-                // SAFETY: exclusive owner; created by `heap::alloc` in `new_*`.
-                unsafe { install::PatchTask::destroy(self.0) };
-            }
-        }
-        let _guard = PatchTaskGuard(patch_task_ptr);
-        // SAFETY: exclusive owner — see above.
-        let patch_task = unsafe { &mut *patch_task_ptr };
+        // SAFETY: `new_apply_patch_hash` returns a freshly `Box`-allocated PatchTask
+        // via `heap::into_raw`; reclaim that same `Box` so ownership is plain and an
+        // unwind (or the early return below) frees it without a guard.
+        let mut patch_task = unsafe { bun_core::heap::take(patch_task_ptr) };
         // Every peer variant shares one patched cache dir (named by the patch
         // contents hash, not the peer set). Once it exists, reuse it: rebuilding
         // it replaces the directory under earlier entries' running hardlink tasks.
@@ -320,6 +321,7 @@ impl<'a> Installer<'a> {
                 apply.logger.clone_to_with_recycled(log, true);
             }
         }
+        patch_task.destroy();
     }
 
     /// Called from main thread
@@ -447,7 +449,8 @@ impl<'a> Installer<'a> {
     }
 
     pub fn decrement_pending_tasks(&mut self) {
-        self.manager_mut().decrement_pending_tasks();
+        // SAFETY: main thread; no other `&mut PackageManager` is live here.
+        unsafe { self.manager_mut() }.decrement_pending_tasks();
     }
 
     /// Called from main thread
@@ -835,18 +838,12 @@ impl Task {
         //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
         let installer_ptr = self.installer;
         let installer = installer_ptr.get();
-        let manager_ptr: *mut PackageManager = installer.manager;
+        // BACKREF copy — read-only deref sites below go through safe `Deref`/`get()`.
+        // Mutation and narrowed `addr_of_mut!` field projections still go through the
+        // raw `manager_ptr`, which shares `manager_ref`'s provenance tag.
+        let manager_ref = installer.manager;
+        let manager_ptr: *mut PackageManager = manager_ref.as_mut_ptr();
         let lockfile_ptr: *mut Lockfile = installer.lockfile;
-        // BACKREF — `manager_ptr` is non-null and the `PackageManager` outlives
-        // every `Task` (see top-of-fn note). Wrapped once as `ParentRef` so the
-        // read-only deref sites below go through safe `Deref`/`get()` instead
-        // of per-site `unsafe { &* }`. Mutation and narrowed `addr_of_mut!`
-        // field projections still go through the raw `manager_ptr` directly
-        // (same provenance tag as `manager_ref.ptr`). Safe `From<NonNull>`
-        // construction — non-null is guaranteed by the BACKREF field invariant.
-        let manager_ref = bun_ptr::ParentRef::<PackageManager>::from(
-            core::ptr::NonNull::new(manager_ptr).expect("Installer.manager BACKREF is non-null"),
-        );
         // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
         // same provenance as `&*lockfile_ptr`. `lockfile_ptr` itself is kept
         // raw for the narrowed `addr_of_mut!((*lockfile_ptr).trusted_dependencies)`
@@ -1130,8 +1127,10 @@ impl Task {
                     // Concurrent task threads may race the same once-init path — that
                     // is a data-level race the once-init guards, not an aliasing
                     // violation here because no long-lived `&mut PackageManager` exists.
-                    let (cache_dir, cache_dir_path) =
-                        directories::get_cache_directory_and_abs_path(unsafe { &mut *manager_ptr });
+                    let (cache_dir, cache_dir_path) = directories::get_cache_directory_and_abs_path(
+                        // SAFETY: see above — no other borrow of the parent is live.
+                        unsafe { manager_ref.assume_mut() },
+                    );
 
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
 
@@ -1948,10 +1947,17 @@ impl Task {
         }
     }
 
-    /// Called from task thread
+    /// Called from task thread. ABI-fixed pool trampoline: one deref, then a
+    /// safe `&mut self` method.
     pub unsafe fn callback(task: *mut thread_pool::Task) {
-        // SAFETY: task points to Task.task field
-        let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
+        // SAFETY: `task` points to the `task` field of a live `Task`; the pool
+        // grants exclusive access for the duration of this call.
+        unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) }.run_on_pool();
+    }
+
+    /// Called from task thread
+    fn run_on_pool(&mut self) {
+        let this: &mut Task = self;
 
         let res = match this.run() {
             Ok(r) => r,
@@ -1969,7 +1975,7 @@ impl Task {
         // would not prevent the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
         let installer = installer_ptr.get();
-        let manager_ptr: *mut PackageManager = installer.manager;
+        let manager_ptr: *mut PackageManager = installer.manager.as_mut_ptr();
 
         match res {
             Yield::Yield => {}

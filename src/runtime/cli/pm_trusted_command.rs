@@ -57,9 +57,9 @@ impl UntrustedCommand {
         Output::flush();
 
         // Reshaped for borrowck — `LoadResult` returned by
-        // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
-        // subsequent `pm` access goes through `pm_raw`. Same singleton pattern
-        // as `package_manager_command.rs::print_hash`.
+        // `load_lockfile_from_cwd` mutably borrows `pm`, so the
+        // `update_lockfile_if_needed` call below goes through `pm_raw`. Same
+        // singleton pattern as `package_manager_command.rs::print_hash`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
@@ -71,10 +71,6 @@ impl UntrustedCommand {
         // here.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
 
-        // SAFETY: `load_lockfile` is not used past this point; `pm_raw` is the
-        // only path to the singleton for the rest of this fn (same as the
-        // original `pm`).
-        let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
@@ -289,8 +285,8 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
-        let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
+        // SAFETY: `pm_raw` is the singleton, derived from `pm` above.
+        let log: &mut bun_ast::Log = unsafe { (*pm_raw).log_mut() };
         // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow for the discovery phase.
         let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
 
@@ -378,9 +374,8 @@ impl TrustCommand {
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
 
-                // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
                 let result = package_scripts.get_list(
-                    unsafe { &mut *log },
+                    log,
                     lockfile,
                     &mut node_modules_path,
                     alias,

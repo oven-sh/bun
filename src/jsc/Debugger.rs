@@ -106,11 +106,12 @@ pub struct Debugger {
     // `'static` is genuine: borrowed from process-lifetime env-var storage;
     // default `""`.
     pub from_environment_variable: &'static [u8],
-    pub script_execution_context_id: u32,
+    /// Mutated through a shared `&Debugger` on the JS thread; `Cell` because
+    /// reentrant JS may independently borrow the VM while this is live.
+    pub script_execution_context_id: Cell<u32>,
     pub next_debugger_id: u64,
-    pub poll_ref: KeepAlive,
-    pub wait_for_connection: Wait,
-    // wait_for_connection: bool = false,
+    pub poll_ref: Cell<KeepAlive>,
+    pub wait_for_connection: Cell<Wait>,
     pub set_breakpoint_on_first_line: bool,
     pub mode: Mode,
 
@@ -120,7 +121,7 @@ pub struct Debugger {
     /// provide the interior mutability. JS-thread only.
     pub extension_agent: ErasedAgentSlot,
     pub http_server_agent: HTTPServerAgent,
-    pub must_block_until_connected: bool,
+    pub must_block_until_connected: Cell<bool>,
 }
 
 impl Default for Debugger {
@@ -128,17 +129,17 @@ impl Default for Debugger {
         Self {
             path_or_port: None,
             from_environment_variable: b"",
-            script_execution_context_id: 0,
+            script_execution_context_id: Cell::new(0),
             next_debugger_id: 1,
-            poll_ref: KeepAlive::default(),
-            wait_for_connection: Wait::Off,
+            poll_ref: Cell::new(KeepAlive::default()),
+            wait_for_connection: Cell::new(Wait::Off),
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
             extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
-            must_block_until_connected: false,
+            must_block_until_connected: Cell::new(false),
         }
     }
 }
@@ -162,16 +163,26 @@ static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 impl Debugger {
+    /// `poll_ref.ref_()` through the `Cell`. `KeepAlive` is not `Copy`, so
+    /// take-mutate-restore; the call never runs JS.
+    #[inline]
+    pub fn poll_ref_ref(&self, ctx: bun_io::EventLoopCtx) {
+        let mut keep_alive = self.poll_ref.take();
+        keep_alive.ref_(ctx);
+        self.poll_ref.set(keep_alive);
+    }
+
+    /// `poll_ref.unref()` through the `Cell`. See [`Self::poll_ref_ref`].
+    #[inline]
+    pub fn poll_ref_unref(&self, ctx: bun_io::EventLoopCtx) {
+        let mut keep_alive = self.poll_ref.take();
+        keep_alive.unref(ctx);
+        self.poll_ref.set(keep_alive);
+    }
+
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
-    ///
-    /// Aliasing: `this.debugger` is read through a raw pointer
-    /// with fresh short-lived borrows because `event_loop().tick()` /
-    /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
-    /// and may form independent `&mut VirtualMachine` borrows. Holding a
-    /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
-    /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
         // `this` is the live per-thread VM; same allocation as
         // `VirtualMachine::get()` — route through the safe thread-local
@@ -181,18 +192,21 @@ impl Debugger {
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
         let _ = this; // release: param otherwise unused
         let this: &VirtualMachine = VirtualMachine::get();
-        let Some(dbg) = this.debugger_mut() else {
+        let Some(dbg) = this.debugger() else {
             return;
         };
         bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
-        if !dbg.must_block_until_connected {
+        if !dbg.must_block_until_connected.get() {
             return;
         }
-        let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
+        let (ctx_id, wait) = (
+            dbg.script_execution_context_id.get(),
+            dbg.wait_for_connection.get(),
+        );
         // Reset `must_block_until_connected` on every exit path.
         let _reset = scopeguard::guard((), |()| {
-            if let Some(d) = this.debugger_mut() {
-                d.must_block_until_connected = false;
+            if let Some(d) = this.debugger() {
+                d.must_block_until_connected.set(false);
             }
         });
 
@@ -249,8 +263,8 @@ impl Debugger {
                     // SAFETY: `vm` is the per-thread singleton; called on the
                     // JS thread (libuv timer callback). Unwinding across
                     // `extern "C"` is UB so we early-return if no debugger.
-                    if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-                        d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                    if let Some(d) = VirtualMachine::get().debugger() {
+                        d.poll_ref_unref(get_vm_ctx(AllocatorType::Js));
                     }
                     // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
                     // at offset 0); `deinit_timer` matches `uv_close_cb`.
@@ -276,12 +290,9 @@ impl Debugger {
             }
         }
 
-        // Drop the long-lived `&mut Debugger` before re-entering JS — see
-        // the aliasing note on this fn. Each loop iteration re-fetches via `debugger_mut()`
-        // so re-entrant JS may independently borrow the VM.
         loop {
-            let wait = match this.debugger.as_deref() {
-                Some(d) => d.wait_for_connection,
+            let wait = match this.debugger() {
+                Some(d) => d.wait_for_connection.get(),
                 None => break,
             };
             if wait == Wait::Off {
@@ -289,8 +300,8 @@ impl Debugger {
             }
             this.event_loop_mut().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
-            let wait = match this.debugger.as_deref() {
-                Some(d) => d.wait_for_connection,
+            let wait = match this.debugger() {
+                Some(d) => d.wait_for_connection.get(),
                 None => break,
             };
             match wait {
@@ -328,8 +339,8 @@ impl Debugger {
                     let elapsed =
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        if let Some(d) = this.debugger_mut() {
-                            d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                        if let Some(d) = this.debugger() {
+                            d.poll_ref_unref(get_vm_ctx(AllocatorType::Js));
                         }
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
                         break;
@@ -363,9 +374,10 @@ impl Debugger {
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
         let this_ref: &VirtualMachine = VirtualMachine::get();
         let dbg = this_ref
-            .debugger_mut()
+            .debugger()
             .expect("Debugger::create: vm.debugger is None");
-        dbg.script_execution_context_id = Bun__createJSDebugger(global_object);
+        dbg.script_execution_context_id
+            .set(Bun__createJSDebugger(global_object));
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
@@ -395,10 +407,10 @@ impl Debugger {
         this_ref.event_loop_mut().ensure_waker();
 
         // Re-borrow after `ensure_waker` (which may touch `*this`).
-        let dbg = this_ref.debugger_mut().unwrap();
-        if dbg.wait_for_connection != Wait::Off {
-            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-            dbg.must_block_until_connected = true;
+        let dbg = this_ref.debugger().unwrap();
+        if dbg.wait_for_connection.get() != Wait::Off {
+            dbg.poll_ref_ref(get_vm_ctx(AllocatorType::Js));
+            dbg.must_block_until_connected.set(true);
         }
         Ok(())
     }
@@ -491,7 +503,7 @@ impl Debugger {
         let (ctx_id, is_connect, from_env, path_or_port) =
             match unsafe { (*other_vm).debugger.as_deref() } {
                 Some(d) => (
-                    d.script_execution_context_id,
+                    d.script_execution_context_id.get(),
                     d.mode == Mode::Connect,
                     d.from_environment_variable,
                     d.path_or_port,
@@ -557,16 +569,15 @@ impl Debugger {
 
 // HOST_EXPORT(Debugger__didConnect, c)
 pub fn did_connect() {
-    let this = VirtualMachine::get().as_mut();
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread. If the debugger is missing we early-return
-    // defensively (extern "C" — unwinding is UB).
-    let Some(dbg) = this.debugger.as_deref_mut() else {
+    let this = VirtualMachine::get();
+    // Called on the JS thread; early-return if the debugger is missing
+    // (extern "C" — unwinding is UB).
+    let Some(dbg) = this.debugger() else {
         return;
     };
-    if dbg.wait_for_connection != Wait::Off {
-        dbg.wait_for_connection = Wait::Off;
-        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+    if dbg.wait_for_connection.get() != Wait::Off {
+        dbg.wait_for_connection.set(Wait::Off);
+        dbg.poll_ref_unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop_mut().wakeup();
     }
 }
@@ -820,8 +831,7 @@ impl TestReporterAgent {
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn handle_mut(&self) -> &mut TestReporterHandle {
+    fn handle_mut(&mut self) -> &mut TestReporterHandle {
         debug_assert!(!self.handle.is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap
         // allocation owned by the inspector backend. `TestReporterHandle` is an
@@ -833,7 +843,7 @@ impl TestReporterAgent {
     ///
     /// Since we may have to call .deinit on the name string.
     pub fn report_test_found(
-        &self,
+        &mut self,
         call_frame: &CallFrame,
         test_id: i32,
         name: &mut BunString,
@@ -846,13 +856,13 @@ impl TestReporterAgent {
     }
 
     /// Caller must ensure that it is enabled first.
-    pub fn report_test_start(&self, test_id: i32) {
+    pub fn report_test_start(&mut self, test_id: i32) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestStart");
         self.handle_mut().report_test_start(test_id);
     }
 
     /// Caller must ensure that it is enabled first.
-    pub fn report_test_end(&self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
+    pub fn report_test_end(&mut self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestEnd");
         self.handle_mut()
             .report_test_end(test_id, bun_test_status, elapsed);

@@ -71,7 +71,7 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
 pub fn find_imported_files_in_css_order<'a>(
-    this: &'a mut LinkerContext,
+    this: &'a LinkerContext,
     temp_arena: &'a Arena,
     entry_points: &[Index],
 ) -> Vec<CssImportOrder> {
@@ -303,9 +303,7 @@ pub fn find_imported_files_in_css_order<'a>(
 
     let mut visitor = Visitor {
         arena,
-        parse_graph: bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
-        ),
+        parse_graph: this.parse_graph.expect("parse_graph set in load()"),
         visited: Vec::<Index>::init_capacity(16),
         css_asts: css_asts_slice,
         all_import_records: all_import_records_slice,

@@ -146,8 +146,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let w = &mut result_writer;
 
     let debug_info: &mut SelfInfo = match get_self_debug_info() {
-        // SAFETY: lazy debug-only singleton; lldb stopped-process, sole `&mut`.
-        Ok(di) => unsafe { &mut *di },
+        Ok(di) => di,
         Err(err) => {
             if write!(
                 w,
@@ -460,7 +459,7 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(debug_assertions)]
 #[inline]
-fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
+fn get_self_debug_info() -> Result<&'static mut SelfInfo, Error> {
     zig_std_debug::get_self_debug_info()
 }
 #[cfg(debug_assertions)]

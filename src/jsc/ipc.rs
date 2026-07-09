@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
@@ -5,7 +6,7 @@ use crate as jsc;
 use crate::js_value::Protected;
 use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
+use crate::{JSGlobalObject, JSValue, JsCell, JsError, JsResult, SerializedFlags, Task};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, strings};
@@ -52,39 +53,39 @@ use bun_uws;
 /// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
 /// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
 pub struct InternalMsgHolder {
-    pub seq: i32,
+    pub seq: Cell<i32>,
 
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, crate::StrongOptional>,
-    pub worker: crate::StrongOptional,
-    pub cb: crate::StrongOptional,
-    pub messages: Vec<crate::StrongOptional>,
+    pub callbacks: JsCell<bun_collections::ArrayHashMap<i32, crate::StrongOptional>>,
+    pub worker: JsCell<crate::StrongOptional>,
+    pub cb: JsCell<crate::StrongOptional>,
+    pub messages: JsCell<Vec<crate::StrongOptional>>,
 }
 
 impl Default for InternalMsgHolder {
     fn default() -> Self {
         Self {
-            seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
-            worker: crate::StrongOptional::empty(),
-            cb: crate::StrongOptional::empty(),
-            messages: Vec::new(),
+            seq: Cell::new(0),
+            callbacks: JsCell::new(bun_collections::ArrayHashMap::default()),
+            worker: JsCell::new(crate::StrongOptional::empty()),
+            cb: JsCell::new(crate::StrongOptional::empty()),
+            messages: JsCell::new(Vec::new()),
         }
     }
 }
 
 impl InternalMsgHolder {
     pub fn is_ready(&self) -> bool {
-        self.worker.has() && self.cb.has()
+        self.worker.get().has() && self.cb.get().has()
     }
 
-    pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
-        self.messages
-            .push(crate::StrongOptional::create(message, global));
+    pub fn enqueue(&self, message: JSValue, global: &JSGlobalObject) {
+        let strong = crate::StrongOptional::create(message, global);
+        self.messages.with_mut(|m| m.push(strong));
     }
 
-    pub fn dispatch(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    pub fn dispatch(&self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
         if !self.is_ready() {
             self.enqueue(message, global);
             return Ok(());
@@ -92,9 +93,9 @@ impl InternalMsgHolder {
         self.dispatch_unsafe(message, global)
     }
 
-    fn dispatch_unsafe(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        let cb = self.cb.get().unwrap();
-        let worker = self.worker.get().unwrap();
+    fn dispatch_unsafe(&self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let cb = self.cb.get().get().unwrap();
+        let worker = self.worker.get().get().unwrap();
 
         let event_loop = global.bun_vm().event_loop_mut();
 
@@ -103,14 +104,18 @@ impl InternalMsgHolder {
                 let ack = p.to_int32();
                 // Note: peek the JSValue first (ending the immutable borrow),
                 // then swap_remove (which drops the Strong).
-                let entry = self.callbacks.get(&ack).map(|s| s.get());
+                let entry = self.callbacks.get().get(&ack).map(|s| s.get());
                 if let Some(callback_opt) = entry {
                     if let Some(callback) = callback_opt {
-                        self.callbacks.swap_remove(&ack);
+                        self.callbacks.with_mut(|c| {
+                            c.swap_remove(&ack);
+                        });
+                        // Read the worker out of the cell before re-entering JS.
+                        let worker = self.worker.get().get().unwrap();
                         event_loop.run_callback(
                             callback,
                             global,
-                            self.worker.get().unwrap(),
+                            worker,
                             &[
                                 message,
                                 JSValue::NULL, // handle
@@ -133,26 +138,15 @@ impl InternalMsgHolder {
         Ok(())
     }
 
-    pub fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    pub fn flush(&self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
+        // The `JsCell` fields make `Self` non-`Freeze`, so `&self` is neither
+        // `noalias` nor `readonly`: `dispatch_unsafe` re-reads `cb`/`worker`
+        // through the cells on every iteration, even when JS rewrites them.
+        let messages = self.messages.replace(Vec::new());
         for strong in messages {
             if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, global)?;
+                self.dispatch_unsafe(message, global)?;
             }
             // strong drops here (== `strong.deinit()`)
         }
@@ -772,7 +766,9 @@ pub struct WindowsWrite {
     pub write_req: uv::uv_write_t,
     pub write_buffer: uv::uv_buf_t,
     pub write_slice: Box<[u8]>,
-    pub owner: Option<*mut SendQueue>,
+    /// BACKREF to the SendQueue that issued the write; `None` once the queue
+    /// has disconnected (see `_socket_closed`).
+    pub owner: Option<bun_ptr::BackRef<SendQueue>>,
 }
 
 #[cfg(windows)]
@@ -888,6 +884,28 @@ pub enum SocketUnion {
     Closed,
 }
 
+const TASK_CLOSE_SOCKET: u8 = 0;
+const TASK_AFTER_IPC_CLOSED: u8 = 1;
+
+/// The one site that turns a `ManagedTask` ctx pointer back into
+/// `&mut SendQueue`. Each arm scopes that borrow so none of them is live
+/// across a call that re-enters JS.
+fn send_queue_task<const KIND: u8>(this: *mut SendQueue) -> bun_event_loop::JsResult<()> {
+    if KIND == TASK_CLOSE_SOCKET {
+        // SAFETY: `this` is the live `*mut SendQueue` handed to `ManagedTask::new`;
+        // the task is cancelled in `Drop` before the storage is freed.
+        unsafe { &mut *this }._close_socket_task();
+    } else {
+        // SAFETY: as above. The reborrow dies with the statement, so no
+        // `&mut SendQueue` is live once `handle_ipc_close` re-enters JS.
+        if let Some(owner) = unsafe { &mut *this }._on_after_ipc_closed() {
+            // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
+            unsafe { (*owner).handle_ipc_close() };
+        }
+    }
+    Ok(())
+}
+
 impl SendQueue {
     /// Safe `&dyn SendQueueOwner` accessor — wraps the per-use raw deref +
     /// autoref for `&self`-taking trait methods (`kind`, `this_jsvalue`,
@@ -999,12 +1017,10 @@ impl SendQueue {
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
         if was_open && self.after_close_task.is_none() {
-            // Note: `bun_event_loop::JsResult` erases the error to `*mut ()`;
-            // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
-            let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
-                let _ = Self::_on_after_ipc_closed(p);
-                Ok(())
-            });
+            let task = ManagedTask::new(
+                std::ptr::from_mut::<SendQueue>(self),
+                send_queue_task::<TASK_AFTER_IPC_CLOSED>,
+            );
             self.after_close_task = Some(task);
             // Do NOT materialize `&mut VirtualMachine` from
             // `bun_vm()`'s shared `&VirtualMachine` (Stacked-Borrows UB —
@@ -1055,11 +1071,10 @@ impl SendQueue {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
             return;
         }
-        // Note: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
-        let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
-            let _ = Self::_close_socket_task(p);
-            Ok(())
-        });
+        let task = ManagedTask::new(
+            std::ptr::from_mut::<SendQueue>(self),
+            send_queue_task::<TASK_CLOSE_SOCKET>,
+        );
         self.close_next_tick = Some(task);
         // SAFETY: VirtualMachine::get() returns the singleton; enqueue_task
         // only mutates the task queue.
@@ -1068,29 +1083,23 @@ impl SendQueue {
             .enqueue_task(self.close_next_tick.unwrap());
     }
 
-    fn _close_socket_task(this: *mut SendQueue) -> JsResult<()> {
-        // SAFETY: `this` was the live `*mut SendQueue` passed to ManagedTask::new;
-        // the task is cancelled in Drop before the storage is freed.
-        let this = unsafe { &mut *this };
+    fn _close_socket_task(&mut self) {
         log!("SendQueue#closeSocketTask");
-        debug_assert!(this.close_next_tick.is_some());
-        this.close_next_tick = None;
-        this.close_socket(CloseReason::Normal, CloseFrom::User);
-        Ok(())
+        debug_assert!(self.close_next_tick.is_some());
+        self.close_next_tick = None;
+        self.close_socket(CloseReason::Normal, CloseFrom::User);
     }
 
-    fn _on_after_ipc_closed(this: *mut SendQueue) -> JsResult<()> {
-        // SAFETY: see _close_socket_task.
-        let this = unsafe { &mut *this };
+    /// Returns the owner to notify, so the caller can drop its `&mut self`
+    /// borrow before `handle_ipc_close` re-enters JS.
+    fn _on_after_ipc_closed(&mut self) -> Option<*mut dyn SendQueueOwner> {
         log!("SendQueue#_onAfterIPCClosed");
-        this.after_close_task = None;
-        if this.close_event_sent {
-            return Ok(());
+        self.after_close_task = None;
+        if self.close_event_sent {
+            return None;
         }
-        this.close_event_sent = true;
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*this.owner).handle_ipc_close() };
-        Ok(())
+        self.close_event_sent = true;
+        Some(self.owner)
     }
 
     /// returned pointer is invalidated if the queue is modified
@@ -1446,7 +1455,9 @@ impl SendQueue {
 
             // create write request
             let mut write_req = Box::new(WindowsWrite {
-                owner: Some(self as *mut SendQueue),
+                // SAFETY: reference→raw shares `self`'s tag, so the writes to
+                // `self` below do not invalidate the stored backref.
+                owner: Some(unsafe { bun_ptr::BackRef::from_raw(self as *mut SendQueue) }),
                 write_slice: write_req_slice,
                 write_req: bun_core::ffi::zeroed(),
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
@@ -1526,7 +1537,8 @@ impl SendQueue {
         // Explicit `&` so the slice `.len()` autoref doesn't trigger
         // `dangerous_implicit_autorefs` on the raw-ptr place.
         let write_len = unsafe { (&(*write_req).write_slice).len() };
-        let this: *mut SendQueue = 'blk: {
+        let mut owner: bun_ptr::BackRef<SendQueue> = 'blk: {
+            // SAFETY: libuv handed back the request it was given; still live here.
             let owner = unsafe { (*write_req).owner };
             WindowsWrite::destroy(write_req);
             match owner {
@@ -1534,8 +1546,9 @@ impl SendQueue {
                 None => return, // orelse case if disconnected before the write completes
             }
         };
-        // SAFETY: owner is a BACKREF into the live SendQueue (cleared in _socket_closed if not).
-        let this: &mut SendQueue = unsafe { &mut *this };
+        // SAFETY: the SendQueue outlives the write request (the backref is cleared
+        // in `_socket_closed` otherwise); no other borrow of it is live.
+        let this: &mut SendQueue = unsafe { owner.get_mut() };
 
         let vm = VirtualMachine::get();
         // RAII: `enter()` now, `exit()` on drop — replaces the

@@ -630,59 +630,68 @@ impl SourceMapStore {
     }
 
     /// `SourceMapStore.sweepWeakRefs` — pop expired weak-refs, decrement,
-    /// reschedule. Called from the high-tier `EventLoopTimer` dispatch with
-    /// the raw `*EventLoopTimer`.
+    /// reschedule. Trampoline for the high-tier `EventLoopTimer` dispatch:
+    /// recovers the owning `DevServer` once, then runs the safe body.
     ///
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
     /// `SourceMapStore` that is itself the `source_maps` field of a live
     /// heap-allocated `DevServer`.
-    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
-    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
-    // the deref is of that recovered parent pointer, not the parameter.
-    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
+        // SAFETY: caller contract — two `container_of` steps recover the live
+        // `DevServer`; no other reference to it is live for this call.
+        let dev: &mut DevServer = unsafe {
+            let store = SourceMapStore::from_timer_ptr(timer);
+            &mut *bun_core::from_field_ptr!(DevServer, source_maps, store)
+        };
+        Self::sweep_weak_refs_inner(dev, now_ts);
+    }
+
+    /// Safe body of the sweep. Borrows the whole `DevServer` so that no
+    /// `&mut SourceMapStore` is live across the (re-entrant)
+    /// `emit_memory_visualizer_message_if_needed`.
+    fn sweep_weak_refs_inner(
+        dev: &mut DevServer,
+        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
+    ) {
         map_log!("sweepWeakRefs");
-        // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
-        let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
-        // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
-        debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
+        debug_assert!(dev.magic == Magic::Valid);
 
         // Mixed-sign comparison: a negative `expire` must count as expired.
         // Keep `now` as i64 (already clamped ≥0) so the comparison stays
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
+        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns,
+        // after every borrow of `dev.source_maps` has ended.
 
-        while let Some(item) = store.weak_refs.read_item() {
+        while let Some(item) = dev.source_maps.weak_refs.read_item() {
             if item.expire <= now {
-                store.unref_count(item.key(), item.count);
+                dev.source_maps.unref_count(item.key(), item.count);
             } else {
-                store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
+                dev.source_maps
+                    .weak_refs
+                    .unget(&[item])
+                    .expect("unreachable"); // space exists since the last item was just removed.
+                dev.source_maps.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
                 Self::timer_all().update(
-                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                    core::ptr::addr_of_mut!(dev.source_maps.weak_ref_sweep_timer),
                     &Timespec {
                         sec: item.expire + 1,
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+                dev.emit_memory_visualizer_message_if_needed();
                 return;
             }
         }
 
-        store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+        dev.source_maps.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
+        dev.emit_memory_visualizer_message_if_needed();
     }
 
     /// This is used in exactly one place: remapping errors.

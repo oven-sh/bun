@@ -265,9 +265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let len = decls.len();
         let mut i: usize = 0;
         'outer: while i < len {
-            // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
-            // and decls[j] (write at end). j <= i always holds.
-            let decl: &mut G::Decl = unsafe { &mut *decls.as_mut_ptr().add(i) };
+            let decl: &mut G::Decl = &mut decls[i];
             i += 1;
 
             self.visit_binding(decl.binding, None);

@@ -159,7 +159,8 @@ impl PmVersionCommand {
                         script_command,
                         b"preversion",
                         &package_json_dir,
-                        pm.env_mut(),
+                        // SAFETY: `pm: &mut PackageManager`; sole loader borrow.
+                        unsafe { pm.env_mut() },
                         &[],
                         silent,
                         use_system_shell,
@@ -239,7 +240,8 @@ impl PmVersionCommand {
                         script_command,
                         b"version",
                         &package_json_dir,
-                        pm.env_mut(),
+                        // SAFETY: `pm: &mut PackageManager`; sole loader borrow.
+                        unsafe { pm.env_mut() },
                         &[],
                         silent,
                         use_system_shell,
@@ -260,7 +262,8 @@ impl PmVersionCommand {
                         script_command,
                         b"postversion",
                         &package_json_dir,
-                        pm.env_mut(),
+                        // SAFETY: `pm: &mut PackageManager`; sole loader borrow.
+                        unsafe { pm.env_mut() },
                         &[],
                         silent,
                         use_system_shell,

@@ -2429,10 +2429,6 @@ impl TsfnQueue {
 // Drop on TsfnQueue: LinearFifo drops itself.
 
 impl ThreadSafeFunction {
-    pub fn new(init: ThreadSafeFunction) -> *mut ThreadSafeFunction {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
     // This has two states:
     // 1. We need to run potentially multiple tasks.
     // 2. We need to finalize the ThreadSafeFunction.
@@ -2784,7 +2780,7 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         })
     };
 
-    let function = ThreadSafeFunction::new(ThreadSafeFunction {
+    let mut function = Box::new(ThreadSafeFunction {
         // SAFETY: `event_loop()` is the live JS-thread loop (non-null, stable
         // address) and outlives every threadsafe function.
         event_loop: unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) },
@@ -2806,14 +2802,11 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         aborted: AtomicBool::new(true),
     });
 
-    // SAFETY: function is non-null (just allocated).
-    let function_ref = unsafe { &mut *function };
-
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    function_ref.ref_();
-    function_ref.tracker.did_schedule(vm.global());
+    function.ref_();
+    function.tracker.did_schedule(vm.global());
 
-    *result = function;
+    *result = bun_core::heap::into_raw(function);
     env.ok()
 }
 

@@ -2662,9 +2662,8 @@ mod json_tape_tests {
             self.0
         }
         /// `Parser::tape_mut` — a fresh reborrow of the root pointer per call.
-        #[allow(clippy::mut_from_ref)]
-        fn get(&self) -> &mut JsonTape {
-            // SAFETY: sole owner; each call hands out one short-lived borrow.
+        fn get(&mut self) -> &mut JsonTape {
+            // SAFETY: sole owner; `&mut self` makes the reborrow exclusive.
             unsafe { &mut *self.0.as_ptr() }
         }
     }
@@ -2682,7 +2681,7 @@ mod json_tape_tests {
     /// the inner node must survive, because `properties()` is read afterwards.
     #[test]
     fn object_json_survives_later_tape_writes() {
-        let tape = TapeOwner::new();
+        let mut tape = TapeOwner::new();
 
         // Inner `{"b": null}`.
         let kb = tape.get().alloc_str(b"b");
@@ -2707,7 +2706,7 @@ mod json_tape_tests {
 
     #[test]
     fn array_json_survives_later_tape_writes() {
-        let tape = TapeOwner::new();
+        let mut tape = TapeOwner::new();
 
         let (first, count) = tape.get().append_items(&[JsonValue::Null], &[]);
         // SAFETY: the tape's own pointer, as `Parser` passes it.
@@ -2741,7 +2740,7 @@ mod json_tape_tests {
     /// later strings spill into new chunks.
     #[test]
     fn alloc_str_chunks_never_move() {
-        let tape = TapeOwner::new();
+        let mut tape = TapeOwner::new();
         let a = tape.get().alloc_str(b"first");
         // Force a fresh chunk: bigger than what is left in the current one.
         let big = vec![b'x'; JsonTape::STR_CHUNK + 1];

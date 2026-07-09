@@ -20,33 +20,23 @@ use bun_resolver::DataURL;
 
 use crate::chunk::{Content, CssImportOrderKind};
 
-// Raw pointers rather than `&mut` / `&` so that
-// (a) the container_of `container_of` recovery of `*mut BundleV2` from
-// `linker` retains write provenance over the whole bundle, and (b) multiple
-// tasks may hold pointers to the same `LinkerContext` concurrently without
-// materializing aliased Rust references.
-pub struct PrepareCssAstTask {
+// `linker` stays raw so the container_of recovery of `*mut BundleV2` keeps
+// write provenance over the whole bundle, and so many tasks may point at the
+// same `LinkerContext` without materializing aliased Rust references.
+pub struct PrepareCssAstTask<'a> {
     pub task: ThreadPoolLib::Task,
-    pub chunk: *mut Chunk,
+    pub chunk: &'a mut Chunk,
     pub linker: *mut LinkerContext<'static>,
 }
 
 // SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). Both raw-ptr fields point at `Send` types
-// (`Chunk: Send`, `LinkerContext: Send`); the callback writes only the
-// per-chunk `chunk.content.css` cell (see `prepare_css_asts_for_chunk`
-// CONCURRENCY note).
-unsafe impl Send for PrepareCssAstTask {}
+// `OwnedTask: Send` route). `Chunk: Send` and `LinkerContext: Send`; the
+// callback writes only the per-chunk `chunk.content.css` cell.
+unsafe impl Send for PrepareCssAstTask<'_> {}
 
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
-// (per-chunk disjoint via `*mut Chunk`). Reads `linker.parse_graph`
-// SoA columns + `linker.graph.ast.css` shared. Every CSS chunk gets exactly
-// one task, so `&mut *chunk` is unique; `linker` is shared across all tasks
-// and is therefore borrowed as `&LinkerContext` (the impl only reads `c` and
-// only ever writes `chunk`). `PrepareCssAstTask` is `Send` by virtue of
-// `LinkerContext: Send` + `Chunk: Send` (both raw-ptr fields point at types
-// with `unsafe impl Send`).
+// CONCURRENCY: thread-pool callback — one task per CSS chunk, so each task
+// owns its chunk's `&mut`. Writes `chunk.content.css`; reads `linker`
+// (`parse_graph` SoA columns + `graph.ast.css`) shared across all tasks.
 /// # Safety
 ///
 /// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
@@ -55,11 +45,10 @@ unsafe impl Send for PrepareCssAstTask {}
 pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
     // node); the thread pool hands us exclusive access for the callback's
-    // duration. We only read the two raw-pointer fields.
-    let prepare_css_asts: &PrepareCssAstTask =
-        unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
+    // duration, so the typed recovery below is unique.
+    let prepare_css_asts: &mut PrepareCssAstTask =
+        unsafe { &mut *bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
-    let chunk: *mut Chunk = prepare_css_asts.chunk;
     let worker = {
         // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
         // carrying provenance over the full `BundleV2` allocation. Recover the
@@ -71,18 +60,19 @@ pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 
     // SAFETY: `linker` outlives this task (owned by the bundle) and is shared
     // across every concurrently-running `PrepareCssAstTask`, so it must be a
-    // shared `&LinkerContext` — never `&mut`, which would alias across worker
-    // threads. Each CSS chunk gets exactly one `PrepareCssAstTask` (see
-    // generateChunksInParallel.rs), so `&mut *chunk` is unique. `worker.arena`
-    // was initialized in `Worker::create()` and points at the worker's heap
-    // arena.
-    prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
+    // shared `&LinkerContext` — never `&mut`, which would alias across threads.
+    prepare_css_asts_for_chunk_impl(
+        unsafe { &*linker },
+        &mut *prepare_css_asts.chunk,
+        worker.arena(),
+    );
 }
 
 fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
-    // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-    // across the log write below (split borrow).
-    let parse_graph = unsafe { &*c.parse_graph };
+    // Backref copy: the `&Graph` is tied to this local, not to `*c`, so it can be
+    // held across the log write below (split borrow).
+    let parse_graph_ref = c.parse_graph.expect("parse_graph set in load()");
+    let parse_graph = parse_graph_ref.get();
     let asts = c.graph.ast.items_css();
 
     // Prepare CSS asts

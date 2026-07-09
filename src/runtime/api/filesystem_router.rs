@@ -77,9 +77,8 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         Fs::FileSystem::instance()
     }
     #[inline]
-    fn fs_impl(&self) -> *mut Fs::Implementation {
-        // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
+    fn fs_impl(&self) -> bun_ptr::ParentRef<Fs::Implementation> {
+        bun_ptr::ParentRef::new(&self.0.fs_ref().fs)
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
@@ -408,16 +407,14 @@ impl FileSystemRouter {
                         continue 'outer;
                     }
                     // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
-                    // accessor for the process-lifetime singleton; `&mut .fs` (the
-                    // `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared
-                    // borrow of `*entry_ptr` is live across this block.
+                    // accessor for the process-lifetime singleton; `.fs` (the
+                    // `Implementation` field) is the lazy-stat receiver.
                     let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
+                        let fs_impl = &vm.transpiler.fs_mut().fs;
                         // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
                         // EntryStore (checked non-null above); the lazy-stat rewrite is
-                        // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
+                        // serialized on `Entry.mutex`.
+                        unsafe { &*entry_ptr }.kind(bun_ptr::ParentRef::new(fs_impl), false)
                     };
                     if kind == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {
@@ -425,7 +422,7 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                        let abs_parts: [&[u8]; 2] = [entry.dir(), entry.base()];
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
@@ -845,31 +842,28 @@ impl MatchedRoute {
 
     // Note: `deinit` is called only from `finalize`; not exposed as `Drop` because
     // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
-    fn deinit(this: *mut MatchedRoute) {
-        // SAFETY: called from finalize on mutator thread.
-        let this_ref = unsafe { &mut *this };
-        this_ref.query_string_map.set(None);
-        this_ref.param_map.set(None);
-        if this_ref.needs_deinit {
+    fn deinit(mut this: Box<MatchedRoute>) {
+        this.query_string_map.set(None);
+        this.param_map.set(None);
+        if this.needs_deinit {
             // We own the `path` allocation from `match` as
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this_ref.pathname_backing = ZigStringSlice::EMPTY;
-            *this_ref.params_list_holder.get_mut() = route_param::List::default();
+            this.pathname_backing = ZigStringSlice::EMPTY;
+            *this.params_list_holder.get_mut() = route_param::List::default();
         }
 
-        if let Some(p) = this_ref.origin.take() {
+        if let Some(p) = this.origin.take() {
             p.get().deref();
         }
-        if let Some(p) = this_ref.asset_prefix.take() {
+        if let Some(p) = this.asset_prefix.take() {
             p.get().deref();
         }
-        if let Some(p) = this_ref.base_dir.take() {
+        if let Some(p) = this.base_dir.take() {
             p.get().deref();
         }
 
-        // SAFETY: `this` was heap-allocated by codegen at construction.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(this);
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -878,9 +872,7 @@ impl MatchedRoute {
     }
 
     pub fn finalize(self: Box<Self>) {
-        // `deinit` frees the allocation itself; hand ownership back so its
-        // existing raw-ptr teardown path stays intact.
-        Self::deinit(Box::into_raw(self));
+        Self::deinit(self);
     }
 
     #[bun_jsc::host_fn(getter)]

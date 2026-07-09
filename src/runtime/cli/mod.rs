@@ -1210,6 +1210,10 @@ pub mod command {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
                 // Never taken for a plain `bun` binary; ~2 KB of argv-splice
                 // and ctx-setup code lives behind this cold call.
+                // SAFETY: non-null interior pointer of the process-static
+                // `UnsafeCell<Graph>`; `JsCell` is `repr(transparent)` over it.
+                let graph: &'static bun_jsc::JsCell<bun_standalone_graph::Graph> =
+                    unsafe { &*graph.cast::<bun_jsc::JsCell<bun_standalone_graph::Graph>>() };
                 return boot_standalone(graph, log);
             }
         }
@@ -1348,12 +1352,10 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn boot_standalone(
-        graph: *mut bun_standalone_graph::Graph,
+        graph: &'static bun_jsc::JsCell<bun_standalone_graph::Graph>,
         log: &mut bun_ast::Log,
     ) -> CmdResult {
-        // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
-        // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        let compile_exec_argv = graph.get().compile_exec_argv;
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
@@ -1363,10 +1365,10 @@ pub mod command {
             // standalone executable silently drops `BUN_OPTIONS` flags.
             let original_argv_len = bun::argv().len();
             let bun_options_argc = bun::bun_options_argc();
-            if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
+            if !compile_exec_argv.is_empty() || bun_options_argc > 0 {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
-                if !graph.compile_exec_argv.is_empty() {
-                    bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
+                if !compile_exec_argv.is_empty() {
+                    bun::append_options_env(compile_exec_argv, &mut argv_list);
                 }
 
                 // Store the full argv including user arguments
@@ -1417,7 +1419,10 @@ pub mod command {
             .map(|a| a.to_vec().into_boxed_slice())
             .collect();
 
-        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+        let entry_name = graph
+            .with_mut(|g| g.entry_point().name)
+            .to_vec()
+            .into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
         Ok(())
     }

@@ -122,13 +122,13 @@ pub use bun_spawn::process::StdioKind;
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
     /// Intrusively-refcounted `Process`. Allocated via
-    /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
-    /// from construction is released in [`Subprocess::finalize`] via
-    /// `Process::deref()`. Not `Arc` — `Process` carries its own
-    /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
-    /// boundary by raw identity, so wrapping in `Arc` would double-count and
-    /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub process: bun_ptr::BackRef<Process>,
+    /// `heap::alloc` in `Process::init_posix`/`init_windows`; this handle owns
+    /// the +1 ref from construction, released in [`Subprocess::finalize`] (or
+    /// the `spawn_maybe_sync` error path) via `RefPtr::deref()`. Not `Arc` —
+    /// `Process` carries its own `ThreadSafeRefCount` and crosses the
+    /// `ProcessAutoKiller`/waiter-thread boundary by raw identity, so wrapping
+    /// in `Arc` would double-count and `Arc::from_raw` on a `Box` alloc is UB.
+    pub process: RefPtr<Process>,
     pub stdin: JsCell<Writable<'a>>,
     pub stdout: JsCell<Readable>,
     pub stderr: JsCell<Readable>,
@@ -228,22 +228,20 @@ impl<'a> Subprocess<'a> {
     /// the raw pointer is sound.
     #[inline]
     pub fn process(&self) -> &Process {
-        self.process.get()
+        self.process.data()
     }
 
     /// Mutably borrow the owned [`Process`].
     ///
-    /// Centralises the `BackRef<Process> → &mut Process` projection so callers
+    /// Centralises the `RefPtr<Process> → &mut Process` projection so callers
     /// (including `js_bun_spawn_bindings`) stay safe. Caller must be on the
     /// owning JS thread with no other live `&mut Process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — all access is on the single JS-mutator
-        // thread. R-2: `&self`
-        // (interior-mutability) so callers don't need `&mut Subprocess`;
-        // `Process` lives in a separate allocation (BackRef) so the returned
-        // `&mut` never aliases `*self`. Single JS-mutator thread.
+        // SAFETY: `RefPtr::as_ptr` is the sanctioned mutation route and we own
+        // a ref, so the pointee is live. `Process` is a separate allocation, so
+        // the `&mut` never aliases `*self`. Single JS-mutator thread.
         unsafe { &mut *self.process.as_ptr() }
     }
 
@@ -1264,12 +1262,10 @@ impl Subprocess<'_> {
         if exit_handler_pending {
             this.deref();
         }
-        // Release the intrusive ref now,
-        // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
-        // no code path reads `this.process` after this (finalize runs once).
-        // SAFETY: `process` is the live Box-backed Process; deref() frees it
-        // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(this.process.as_ptr()) };
+        // Release the intrusive ref now, not when `ref_count` → 0. The handle
+        // is left dangling but no code path reads `this.process` after this
+        // (finalize runs once); `deref()` frees the Box at zero.
+        this.process.deref();
 
         if this.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(this.event_loop_timer.as_ptr());

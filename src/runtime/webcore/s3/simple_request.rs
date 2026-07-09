@@ -326,19 +326,11 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    ///
-    /// # Safety
-    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
-    /// is being transferred to this call (it is reclaimed and dropped here exactly once).
     //
-    // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
-    // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract;
-        // `this` is dropped at scope exit.
-        let mut this = unsafe { bun_core::heap::take(this) };
+    // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): ownership of the task
+    // transfers here and the box is dropped at scope exit.
+    pub fn on_response(self: Box<Self>) -> JsTerminatedResult<()> {
+        let mut this = self;
 
         if !this.result.is_success() {
             this.error_with_body(ErrorType::Failure)?;

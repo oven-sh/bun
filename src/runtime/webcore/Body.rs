@@ -41,28 +41,10 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-/// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
-#[inline]
-#[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
-}
-
 fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
-    if let Some(store) = blob_store_mut(blob) {
-        store.mime_type = mime_type.clone();
+    if let Some(store) = blob.store.get() {
+        store.mime_type.set(mime_type.clone());
     }
     blob.content_type
         .set(blob::BlobContentType::from(mime_type));
@@ -74,16 +56,17 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
 // ────────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
+fn as_dom_form_data<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
     // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
     // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
     // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
+    DOMFormData::from_js(value)
 }
 #[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
+fn as_url_search_params<'a>(value: JSValue) -> Option<&'a mut URLSearchParams> {
     // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
+    // `URLSearchParams` is an opaque ZST FFI handle (S008) — safe deref.
+    URLSearchParams::from_js(value).map(|p| bun_opaque::opaque_deref_mut(p.as_ptr()))
 }
 
 bun_core::declare_scope!(BodyValue, visible);
@@ -678,20 +661,20 @@ impl Value {
     /// `Body.Value` is not itself a JS class — it lives inside a `Request` or
     /// `Response` wrapper — so the generic `JSValue::as_::<T: JsClass>()` path
     /// cannot be used. Instead, try both wrapper classes and return the inner
-    /// body pointer.
+    /// body reference.
     ///
-    /// Returns a raw pointer; the storage is owned
-    /// by the JSC heap cell and outlives the call only as long as `value` is
-    /// kept alive by the caller.
-    pub fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
+    /// The storage is owned by the JSC heap cell and stays live as long as
+    /// `value` is. Keep the borrow short and do not hold it across a call that
+    /// re-enters JS and may touch this same body.
+    pub fn from_request_or_response(value: JSValue) -> Option<&'static mut Value> {
         if value.is_empty_or_undefined_or_null() {
             return None;
         }
         if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
-            return Some(std::ptr::from_mut::<Value>(req.get_body_value()));
+            return Some(req.get_body_value());
         }
         if let Some(res) = value.as_class_ref::<crate::webcore::Response>() {
-            return Some(std::ptr::from_mut::<Value>(res.get_body_value()));
+            return Some(res.get_body_value());
         }
         None
     }
@@ -960,17 +943,16 @@ impl Value {
         }
 
         if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+            return Ok(Value::Blob(Blob::from_dom_form_data(
+                global_this,
+                form_data,
+            )));
         }
 
         if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                search_params,
             )));
         }
 
@@ -1015,11 +997,10 @@ impl Value {
             }
 
             match readable.ptr {
-                webcore::readable_stream::Source::Blob(blob) => {
-                    // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
-                    // lifetime of the ReadableStream JS wrapper.
-                    let result = if let Some(any_blob) = unsafe { (*blob).to_any_blob(global_this) }
-                    {
+                webcore::readable_stream::Source::Blob(_) => {
+                    // BACKREF: see `Source::blob()` — payload valid while the stream lives.
+                    let loader = readable.ptr.blob().expect("matched Blob");
+                    let result = if let Some(any_blob) = loader.to_any_blob(global_this) {
                         match any_blob {
                             AnyBlob::Blob(b) => Value::Blob(b),
                             AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
@@ -1072,9 +1053,7 @@ impl Value {
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
-        // Opaque C++ handle, mutated via FFI. Taking
-        // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
-        headers: Option<NonNull<FetchHeaders>>,
+        headers: Option<&FetchHeaders>,
     ) -> JsTerminated<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
@@ -1149,12 +1128,10 @@ impl Value {
                     Action::None | Action::GetBlob => {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
-                        let blob = unsafe { &mut *blob_ptr };
+                        // Only `&Blob` is needed below (fields are `Cell`/`JsCell`), so no
+                        // `&mut` is live across `to_js`, which re-enters C++/JS.
+                        let blob: &Blob = unsafe { &*blob_ptr };
                         if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                             if let Some(content_type) =
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
@@ -1665,11 +1642,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// short and do not hold it across a call that re-enters JS.
     #[allow(clippy::mut_from_ref)]
     fn get_body_value(&self) -> &mut Value;
-    /// `FetchHeaders` is an
-    /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
-    /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
-    /// avoids deriving `&mut T` from `&T` at the call sites (UB).
-    fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// Borrows the owned handle in `self`; the `+1` stays with the owner.
+    fn get_fetch_headers(&self) -> Option<&FetchHeaders>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -2177,12 +2151,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
-        let blob = unsafe { &mut *blob_ptr };
+        // Only `&Blob` is needed below (fields are `Cell`/`JsCell`), so no `&mut`
+        // is live across `to_js`, which re-enters C++/JS.
+        let blob: &Blob = unsafe { &*blob_ptr };
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mime_type = MimeType::init(content_slice.slice(), true, None);

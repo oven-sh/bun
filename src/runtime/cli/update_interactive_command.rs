@@ -2312,14 +2312,10 @@ fn update_default_catalog(
     // source == placement; otherwise re-`put` the mutated arena slot at the
     // placement-mandated location.
     let mut fresh_obj = E::Object::default();
-    let (existing, source) = find_catalog_object(package_json, b"catalog");
+    let (mut existing, source) = find_catalog_object(package_json, b"catalog");
     {
-        let catalog_obj: &mut E::Object = match existing {
-            Some(mut o) => {
-                // SAFETY: `StoreRef` derefs into the live arena slot for the
-                // duration of this block; no other `&mut` to it is live.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
+        let catalog_obj: &mut E::Object = match existing.as_mut() {
+            Some(o) => &mut **o,
             None => &mut fresh_obj,
         };
 
@@ -2394,26 +2390,20 @@ fn update_named_catalog(
     // Reshaped — see `update_default_catalog` for the
     // shallow-copy-vs-in-place + lookup-vs-placement rationale.
     let mut fresh_catalogs = E::Object::default();
-    let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
+    let (mut existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
     {
-        let catalogs_obj: &mut E::Object = match existing_catalogs {
-            Some(mut o) => {
-                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
+        let catalogs_obj: &mut E::Object = match existing_catalogs.as_mut() {
+            Some(o) => &mut **o,
             None => &mut fresh_catalogs,
         };
 
         // Get or create the specific catalog
         let mut fresh_catalog = E::Object::default();
-        let existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
+        let mut existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
             .get(catalog_name)
             .and_then(|e| e.data.e_object());
-        let catalog_obj: &mut E::Object = match existing_catalog {
-            Some(mut o) => {
-                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
+        let catalog_obj: &mut E::Object = match existing_catalog.as_mut() {
+            Some(o) => &mut **o,
             None => &mut fresh_catalog,
         };
 

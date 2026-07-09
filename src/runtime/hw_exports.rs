@@ -211,10 +211,13 @@ pub(crate) mod sql_hooks {
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> *mut bun_uws::SslCtx {
-        // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
-        let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
+        // SAFETY: `cache` points at `runtime_state().ssl_ctx_cache`, live for
+        // the VM; the shared borrow scopes mutation inside `with_mut`.
+        let cache = unsafe {
+            &*cache.cast::<bun_jsc::JsCell<crate::api::SSLContextCache::SSLContextCache>>()
+        };
         cache
-            .get_or_create_opts(opts, err)
+            .with_mut(|c| c.get_or_create_opts(opts, err))
             .unwrap_or(core::ptr::null_mut())
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {

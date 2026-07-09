@@ -955,9 +955,10 @@ mod _async_tasks {
         }
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit =
-                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
+            let _deinit = scopeguard::guard(core::ptr::from_mut(self), |p| {
+                // SAFETY: self was Box::leak'd in create(); reclaimed exactly once on scope exit
+                Self::destroy(unsafe { bun_core::heap::take(p) })
+            });
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
@@ -991,16 +992,10 @@ mod _async_tasks {
             Ok(())
         }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            // `bun_sys::Error` frees its path on Drop.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+        pub fn destroy(mut self: Box<Self>) {
+            self.r#ref.unref(bun_io::js_vm_ctx());
+            // Dropping `self` releases `promise`, unprotects+drops `args`, and lets
+            // `result`'s `bun_sys::Error` free its path — in field order.
         }
     }
 
@@ -1311,8 +1306,9 @@ mod _async_tasks {
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| unsafe {
-                Self::destroy(p)
+            let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| {
+                // SAFETY: `p` is that Box::leak'd allocation, reclaimed exactly once here.
+                Self::destroy(unsafe { bun_core::heap::take(p) })
             });
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
@@ -1356,17 +1352,18 @@ mod _async_tasks {
             Ok(())
         }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+        /// Takes the `Box`, so the ownership transfer is in the signature. Must keep
+        /// the same signature as `UVFSRequest::destroy`: both are reached through the
+        /// one `for_each_fs_async_op!` table in `dispatch.rs`, and `UVFSRequest` is a
+        /// distinct struct on Windows but an alias for this type everywhere else.
+        // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+        #[allow(clippy::boxed_local)]
+        pub fn destroy(mut this: Box<Self>) {
             // `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            this.r#ref.unref(bun_io::js_vm_ctx());
+            // `args: ThreadSafe<A>` unprotects + drops with `this`.
+            this.promise = JSPromiseStrong::default();
         }
     }
 
@@ -1728,7 +1725,7 @@ mod _async_tasks {
                 // outlives this task; `cp_on_finish` enqueues it concurrently.
                 unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
                 // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                Self::destroy(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
                 return Ok(());
             }
             let go_ptr = self.evtloop.global_object();
@@ -1771,7 +1768,7 @@ mod _async_tasks {
             let _dispatch = self.tracker.dispatch(global_object);
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            Self::destroy(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
             // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
             // valid after `destroy` dropped only the `Strong` wrapper.
             let promise = unsafe { &mut *promise };
@@ -1783,24 +1780,16 @@ mod _async_tasks {
             Ok(())
         }
 
-        /// SAFETY: `this` must be the pointer returned by Box::leak in
-        /// `create_with_shell_task()`/`create_mini()`; called exactly once.
-        pub unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            // `bun_sys::Error` owns its path slice (`Box<[u8]>`) and frees it on
-            // Drop (in `heap::take` below).
+        // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+        #[allow(clippy::boxed_local)]
+        pub fn destroy(mut this: Box<Self>) {
             if !IS_SHELL {
-                this_ref
-                    .r#ref
-                    .unref(event_loop_handle_to_ctx(this_ref.evtloop));
+                this.r#ref.unref(event_loop_handle_to_ctx(this.evtloop));
             }
-            // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
+            // Released here, before the remaining fields drop below.
+            this.promise = JSPromiseStrong::default();
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
-            drop(unsafe { bun_core::heap::take(this) });
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2621,8 +2610,8 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            // SAFETY: self was Box::leak'd in create(); reclaimed exactly once here.
+            Self::destroy(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
             // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
             let promise = unsafe { &mut *promise };
             if success {
@@ -2633,22 +2622,22 @@ mod _async_tasks {
             Ok(())
         }
 
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            debug_assert!(this_ref.root_fd == FD::INVALID); // should already have closed it
+        /// Takes the `Box`. Same signature as `AsyncFSTask::destroy` /
+        /// `UVFSRequest::destroy`: all three are reached through the one
+        /// `for_each_fs_async_op!` table in `dispatch.rs`.
+        // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+        #[allow(clippy::boxed_local)]
+        pub fn destroy(mut this: Box<Self>) {
+            debug_assert!(this.root_fd == FD::INVALID); // should already have closed it
             // `bun_sys::Error` frees on Drop; nothing to do.
-            let _ = this_ref.pending_err.take();
+            let _ = this.pending_err.take();
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
-            this_ref.free_root_path();
-            this_ref.clear_result_list();
-            // `JSPromiseStrong` releases on Drop (via heap::take below).
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            this.r#ref.unref(bun_io::js_vm_ctx());
+            // `args.deinit()` → `Drop` on `args::Readdir` when `this` drops.
+            this.free_root_path();
+            this.clear_result_list();
+            // `JSPromiseStrong` releases on Drop.
         }
     }
 
@@ -5888,10 +5877,6 @@ impl NodeFS {
         // `OSPathBuffer = [u16; PATH_MAX_WIDE]` (65 534 B) which fits inside
         // `PathBuffer` (`MAX_PATH_BYTES` = 98 302 B); on POSIX it is the same
         // type. The `assert!` below verifies the alignment at runtime.
-        // Keep the raw `*mut PathBuffer` so error-return paths can re-derive a fresh
-        // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
-        // `working_mem` under stacked borrows). On every such path `working_mem` is
-        // not used afterward, so the re-derive is sound.
         let sync_error_buf_ptr: *mut PathBuffer = &raw mut self.sync_error_buf;
         assert!(
             sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
@@ -5929,17 +5914,15 @@ impl NodeFS {
                                     {
                                         // is a directory. break.
                                         if !res {
-                                            // SAFETY: `working_mem` is not used after this return; re-derive
-                                            // the &mut PathBuffer from the stored raw ptr instead of `&mut self`.
-                                            let buf = unsafe { &mut *sync_error_buf_ptr };
+                                            // `working_mem` is not read after this return.
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(
-                                                    buf,
-                                                    without_nt_prefix(&(&path[..])[..len as usize]),
-                                                )
-                                                .into(),
+                                                path: self
+                                                    .os_path_into_sync_error_buf(without_nt_prefix(
+                                                        &(&path[..])[..len as usize],
+                                                    ))
+                                                    .into(),
                                                 ..Default::default()
                                             });
                                         }
@@ -5958,17 +5941,14 @@ impl NodeFS {
                                 #[cfg(windows)]
                                 let p = {
                                     // `parent` aliases `working_mem` (== sync_error_buf). Copy it
-                                    // out to a temp before re-deriving `&mut PathBuffer` so we
+                                    // out to a temp before writing into `sync_error_buf` so we
                                     // never hold `&mut buf` and `&buf[..]` simultaneously.
+                                    // `working_mem`/`parent` are not read after this return.
                                     let stripped = without_nt_prefix(&parent[..]);
                                     let n = stripped.len();
                                     let mut tmp = paths::os_path_buffer_pool::get();
                                     tmp[..n].copy_from_slice(stripped);
-                                    // SAFETY: `working_mem`/`parent` are not used after this return.
-                                    Self::os_path_into_buf(
-                                        unsafe { &mut *sync_error_buf_ptr },
-                                        &tmp[..n],
-                                    )
+                                    self.os_path_into_sync_error_buf(&tmp[..n])
                                 };
                                 #[cfg(not(windows))]
                                 let p = without_nt_prefix(&parent[..]);
@@ -6003,12 +5983,10 @@ impl NodeFS {
                             E::EEXIST => {}
                             // NOENT shouldn't happen here
                             _ => {
-                                // SAFETY: `working_mem` is not used after this return.
-                                let buf = unsafe { &mut *sync_error_buf_ptr };
-                                return Err(err.with_path(Self::os_path_into_buf(
-                                    buf,
-                                    without_nt_prefix(&path[..]),
-                                )));
+                                // `working_mem` is not read after this return.
+                                return Err(err.with_path(
+                                    self.os_path_into_sync_error_buf(without_nt_prefix(&path[..])),
+                                ));
                             }
                         }
                     }
@@ -6032,11 +6010,10 @@ impl NodeFS {
             Err(err) => match err.get_errno() {
                 E::EEXIST => {}
                 _ => {
-                    // SAFETY: `working_mem` is not used after this return.
-                    let buf = unsafe { &mut *sync_error_buf_ptr };
-                    return Err(
-                        err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(&path[..])))
-                    );
+                    // `working_mem`/`final_` are not read after this return.
+                    return Err(err.with_path(
+                        self.os_path_into_sync_error_buf(without_nt_prefix(&path[..])),
+                    ));
                 }
             },
             Ok(_) => {}
@@ -8233,9 +8210,7 @@ impl NodeFS {
     }
 
     /// Free-function form of [`os_path_into_sync_error_buf`] that does not borrow
-    /// `&mut self`. Needed by `mkdir_recursive_os_path_impl`, which holds a long-lived
-    /// `&mut OSPathBuffer` reinterpreted from `sync_error_buf` and so must not reborrow
-    /// `&mut self` on its error-return paths (PORTING.md §Forbidden aliased `&mut`).
+    /// `&mut self`.
     fn os_path_into_buf<'a>(buf: &'a mut PathBuffer, slice: &[OSPathChar]) -> &'a [u8] {
         #[cfg(windows)]
         {

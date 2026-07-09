@@ -18,6 +18,14 @@ pub struct NewWebSocket<const SSL_FLAG: i32> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
+/// Shared cork trampoline: `user_data` is the `(&mut C, fn(&mut C))` pair on
+/// the corking stack frame, alive for the synchronous `uws_ws_cork` call.
+extern "C" fn cork_thunk<C>(user_data: *mut c_void) {
+    // SAFETY: uws_ws_cork forwards, unchanged, the pointer to that live pair.
+    let data = unsafe { bun_core::callback_ctx::<(&mut C, fn(&mut C))>(user_data) };
+    (data.1)(&mut *data.0);
+}
+
 impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     /// Reborrow as the un-parameterized handle type. Both `NewWebSocket<_>` and
     /// `RawWebSocket` are `#[repr(C)]` opaque ZSTs over `UnsafeCell<[u8; 0]>`,
@@ -109,23 +117,13 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     /// Rust cannot const-generic over a fn value, so we tunnel
     /// `(ctx, callback)` through the user-data pointer.
     pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn wrap<C>(user_data: *mut c_void) {
-            // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
-            // which outlives the synchronous uws_ws_cork call.
-            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // SAFETY: `data.0` was set from `&mut C` on the enclosing `cork`
-            // stack frame, which outlives this synchronous callback.
-            (data.1)(unsafe { &mut *data.0 });
-        }
-        let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
+        let mut data: (&mut C, fn(&mut C)) = (ctx, callback);
         // `data` lives on this stack frame for the duration of the synchronous
-        // uws_ws_cork call; the shim only forwards the pointer back to `wrap`.
+        // uws_ws_cork call; the shim only forwards the pointer to `cork_thunk`.
         c::uws_ws_cork(
             SSL_FLAG,
             self.raw(),
-            Some(wrap::<C>),
+            Some(cork_thunk::<C>),
             (&raw mut data).cast::<c_void>(),
         )
     }
@@ -314,22 +312,12 @@ impl AnyWebSocket {
 
     // See NewWebSocket::cork — same fn-pointer tunneling.
     pub fn cork<C>(self, ctx: &mut C, callback: fn(&mut C)) {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn wrap<C>(user_data: *mut c_void) {
-            // SAFETY: user_data points at a stack tuple alive for the duration
-            // of the synchronous uws_ws_cork call.
-            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // SAFETY: `data.0` was set from `&mut C` on the enclosing `cork`
-            // stack frame, which outlives this synchronous callback.
-            (data.1)(unsafe { &mut *data.0 });
-        }
-        let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
+        let mut data: (&mut C, fn(&mut C)) = (ctx, callback);
         let ud = (&raw mut data).cast::<c_void>();
         let (ssl, ws) = self.split();
         // `data` lives on this stack frame for the duration of the synchronous
-        // uws_ws_cork call; the shim only forwards `ud` back to `wrap`.
-        c::uws_ws_cork(ssl, ws, Some(wrap::<C>), ud)
+        // uws_ws_cork call; the shim only forwards `ud` to `cork_thunk`.
+        c::uws_ws_cork(ssl, ws, Some(cork_thunk::<C>), ud)
     }
 
     pub fn subscribe(self, topic: &[u8]) -> bool {

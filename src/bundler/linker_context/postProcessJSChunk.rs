@@ -49,7 +49,9 @@ pub fn post_process_js_chunk(
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;
-    let c: &mut LinkerContext = ctx.c();
+    // SAFETY: caller must ensure no peer `generate_chunk` task holds an
+    // overlapping borrow of the linker; see `GenerateChunkCtx::c`.
+    let c: &mut LinkerContext = unsafe { ctx.c() };
     debug_assert!(matches!(
         chunk.content,
         crate::chunk::Content::Javascript(_)

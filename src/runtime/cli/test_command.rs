@@ -804,8 +804,8 @@ impl CommandLineReporter {
 
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
         writer: &mut impl bun_io::Write,
     ) {
@@ -816,14 +816,14 @@ impl CommandLineReporter {
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
             BoundedArray::default();
         let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
+            test_entry.base.parent.map(|p| p.as_ptr());
 
         while let Some(scope) = parent_ {
             if scopes_stack.push(scope).is_err() {
                 break;
             }
             // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = unsafe { (*scope).base.parent.map(|p| p.as_ptr()) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -1024,9 +1024,9 @@ impl CommandLineReporter {
 
     fn maybe_print_junit_line(
         status: bun_test::Execution::Result,
-        buntest: &mut bun_test::BunTest,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
         let Some(cmd_reporter) = buntest.reporter else {
@@ -1043,7 +1043,7 @@ impl CommandLineReporter {
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
             BoundedArray::default();
         let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
+            test_entry.base.parent.map(|p| p.as_ptr());
         let assertions = sequence.expect_call_count;
         let line_number = test_entry.base.line_no;
 
@@ -1060,7 +1060,7 @@ impl CommandLineReporter {
                 break;
             }
             // SAFETY: scope kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = unsafe { (*scope).base.parent.map(|p| p.as_ptr()) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -1232,9 +1232,9 @@ impl CommandLineReporter {
     }
 
     pub fn handle_test_completed(
-        buntest: &mut bun_test::BunTest,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
         let mut output_buf: Vec<u8> = Vec::new();
@@ -2002,12 +2002,10 @@ impl TestCommand {
 
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
-        // `Loader::init` borrows the map; erase to `'static` via raw pointer round-trip
+        // `Loader::init` borrows the map; `Box::leak` gives it a `'static` borrow
         // (the map is never freed — process-lifetime singleton).
-        let env_map: *mut DotEnv::Map = bun_core::heap::into_raw(Box::new(DotEnv::Map::init()));
-        // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
-        let mut env_loader: Box<DotEnv::Loader> =
-            Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
+        let env_map: &'static mut DotEnv::Map = Box::leak(Box::new(DotEnv::Map::init()));
+        let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init(env_map));
         jsc::initialize(false);
         bun_http::http_thread::init(&Default::default());
 

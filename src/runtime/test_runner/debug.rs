@@ -29,8 +29,8 @@ pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
         describe.base.mode.tag_name(),
-        describe.base.only.tag_name(),
-        describe.base.has_callback,
+        describe.base.only.get().tag_name(),
+        describe.base.has_callback.get(),
     ));
 
     for entry in describe.before_all.as_slice() {
@@ -60,7 +60,7 @@ pub(crate) fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> 
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
-        current.base.only.tag_name(),
+        current.base.only.get().tag_name(),
     ));
     Ok(())
 }
@@ -93,8 +93,8 @@ pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),
                     entry.base.concurrent,
                     entry.base.mode.tag_name(),
-                    entry.base.only.tag_name(),
-                    entry.base.has_callback,
+                    entry.base.only.get().tag_name(),
+                    entry.base.has_callback.get(),
                 ));
                 current_entry = entry.next.and_then(NonNull::new);
             }

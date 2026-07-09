@@ -31,6 +31,7 @@ use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
+use crate::JsCell;
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
@@ -456,29 +457,26 @@ impl Fetcher {
 // wrapper showed up on the
 // async-import hot path. Const-init `Cell<ptr>` (no dtor).
 #[thread_local]
-static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
+static SOURCE_CODE_PRINTER: Cell<Option<NonNull<JsCell<BufferPrinter>>>> = Cell::new(None);
 
-/// Get-or-leak accessor for the `#[thread_local]` `Cell<Option<NonNull<T>>>`
-/// slot above. Returns `&'static mut T` because the Box is leaked for the
-/// worker thread's lifetime and `#[thread_local]` guarantees per-thread
-/// exclusive access; callers reborrow `&'static T` where a shared ref suffices.
+/// Get-or-leak accessor for the `#[thread_local]` slot above. Returns
+/// `&'static JsCell<T>`: the Box is leaked for the worker thread's lifetime,
+/// and the cell supplies the `&self` mutation callers need without ever
+/// handing out a `&mut T` that could alias the writeback guard's pointer.
 #[inline]
 fn tls_get_or_leak<T>(
-    slot: &Cell<Option<NonNull<T>>>,
-    init: impl FnOnce() -> Box<T>,
-) -> &'static mut T {
+    slot: &Cell<Option<NonNull<JsCell<T>>>>,
+    init: impl FnOnce() -> Box<JsCell<T>>,
+) -> &'static JsCell<T> {
     let p = slot.get().unwrap_or_else(|| {
         let p = bun_core::heap::into_raw_nn(init());
         slot.set(Some(p));
         p
     });
-    // SAFETY: `p` is the `NonNull` produced by `heap::into_raw_nn(Box<T>)`
-    // (either just now or on a prior call) and never freed — the slot is a
-    // per-worker-thread leak. `#[thread_local]` storage means only this thread
-    // ever observes `p`, and every borrow returned here is scoped to one
-    // `TranspilerJob::run()` activation (no `&T`/`&mut T` from a prior call
-    // survives), so the `&mut` is exclusive for its actual use.
-    unsafe { &mut *p.as_ptr() }
+    // SAFETY: `p` is the `NonNull` produced by `heap::into_raw_nn` (either just
+    // now or on a prior call) and never freed — the slot is a per-worker-thread
+    // leak, so the pointee outlives every `'static` borrow handed out here.
+    unsafe { p.as_ref() }
 }
 
 impl TranspilerJob {
@@ -808,7 +806,7 @@ impl TranspilerJob {
         // raw-pointer laundering (which the unused-assignment lint can't see).
         let should_close_input_file_fd = Cell::new(fd.is_none());
 
-        let mut input_file_fd: Fd = Fd::INVALID;
+        let input_file_fd: Cell<Fd> = Cell::new(Fd::INVALID);
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
@@ -828,10 +826,7 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: fd,
-            // SAFETY: `input_file_fd` is a stack local declared above and
-            // outlives `parse_options`; `addr_of_mut!` avoids forming an
-            // intermediate `&mut` so the close-guard's later borrow stays sound.
-            file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
+            file_fd_ptr: Some(&input_file_fd),
             file_hash: Some(hash),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
@@ -851,10 +846,7 @@ impl TranspilerJob {
                 && is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
-                // SAFETY: `cache` is a stack local declared above and outlives
-                // `parse_options`; `addr_of_mut!` avoids an intermediate `&mut`
-                // so the post-parse `cache.entry.take()` reborrow stays sound.
-                Some(unsafe { &mut *ptr::addr_of_mut!(cache) })
+                Some(&mut cache)
             } else {
                 None
             },
@@ -868,18 +860,11 @@ impl TranspilerJob {
 
         // `defer { if should_close && input_file_fd.isValid() { close } }`
         let _close_fd_guard = scopeguard::guard(
-            (
-                &should_close_input_file_fd,
-                ptr::addr_of_mut!(input_file_fd),
-            ),
-            |(should, fd_ptr)| {
-                // SAFETY: `input_file_fd` outlives this guard (declared earlier
-                // in fn scope); no `&mut` alias is live at drop time.
-                unsafe {
-                    if should.get() && (*fd_ptr).is_valid() {
-                        (*fd_ptr).close();
-                        *fd_ptr = Fd::INVALID;
-                    }
+            (&should_close_input_file_fd, &input_file_fd),
+            |(should, fd)| {
+                if should.get() && fd.get().is_valid() {
+                    fd.get().close();
+                    fd.set(Fd::INVALID);
                 }
             },
         );
@@ -912,7 +897,7 @@ impl TranspilerJob {
         let Some(mut parse_result) = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
         else {
-            if is_watcher_enabled && input_file_fd.is_valid() {
+            if is_watcher_enabled && input_file_fd.get().is_valid() {
                 if !is_node_override
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
@@ -923,7 +908,7 @@ impl TranspilerJob {
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
                         let _ = unsafe { iw.assume_mut() }.add_file::<true>(
-                            input_file_fd,
+                            input_file_fd.get(),
                             path.text,
                             hash,
                             loader,
@@ -938,7 +923,7 @@ impl TranspilerJob {
             return;
         };
 
-        if is_watcher_enabled && input_file_fd.is_valid() {
+        if is_watcher_enabled && input_file_fd.get().is_valid() {
             if !is_node_override
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
@@ -949,7 +934,7 @@ impl TranspilerJob {
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
                     let _ = unsafe { iw.assume_mut() }.add_file::<true>(
-                        input_file_fd,
+                        input_file_fd.get(),
                         path.text,
                         hash,
                         loader,
@@ -1076,17 +1061,14 @@ impl TranspilerJob {
 
         let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
             let writer = BufferWriter::init();
-            let mut bp = Box::new(BufferPrinter::init(writer));
+            let mut bp = BufferPrinter::init(writer);
             bp.ctx.append_null_byte = false;
-            bp
+            Box::new(JsCell::new(bp))
         });
 
         // Swap the buffer out and write it back via the
         // _writeback guard (the thread-local's buffer is reused).
-        let mut printer = core::mem::replace(
-            source_code_printer,
-            BufferPrinter::init(BufferWriter::init()),
-        );
+        let mut printer = source_code_printer.replace(BufferPrinter::init(BufferWriter::init()));
         printer.ctx.reset();
 
         // Cap buffer size to prevent unbounded growth
@@ -1094,12 +1076,9 @@ impl TranspilerJob {
         if printer.ctx.buffer.list.capacity() > MAX_BUFFER_CAP {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
-            *source_code_printer = BufferPrinter::init(writer);
-            source_code_printer.ctx.append_null_byte = false;
-            printer = core::mem::replace(
-                source_code_printer,
-                BufferPrinter::init(BufferWriter::init()),
-            );
+            source_code_printer.set(BufferPrinter::init(writer));
+            source_code_printer.with_mut(|p| p.ctx.append_null_byte = false);
+            printer = source_code_printer.replace(BufferPrinter::init(BufferWriter::init()));
         }
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
@@ -1124,12 +1103,6 @@ impl TranspilerJob {
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
-        // Note: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
-        // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
-        // closure returns; the raw pointer stays valid until `module_info` is
-        // moved/touched again (after `print_with_source_map`).
-        let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
-            module_info.as_deref_mut().map(std::ptr::from_mut);
 
         let print_result = {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
@@ -1137,10 +1110,7 @@ impl TranspilerJob {
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
             let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
             let _writeback = scopeguard::guard(
-                (
-                    std::ptr::from_mut::<BufferPrinter>(source_code_printer),
-                    ptr::addr_of_mut!(printer),
-                ),
+                (source_code_printer.as_ptr(), ptr::addr_of_mut!(printer)),
                 |(dst, src)| {
                     // SAFETY: both pointees outlive this scope; no aliases at drop.
                     unsafe {
@@ -1157,7 +1127,7 @@ impl TranspilerJob {
                 &mut printer,
                 js_printer::Format::EsmAscii,
                 mapper.get(),
-                module_info_ptr,
+                module_info.as_deref_mut(),
             )
         };
         if let Err(err) = print_result {
@@ -1171,11 +1141,11 @@ impl TranspilerJob {
         if bun_core::env::DUMP_SOURCE {
             // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
             let vm = unsafe { NonNull::new_unchecked(vm) };
-            dump_source(vm, specifier, source_code_printer);
+            dump_source(vm, specifier, source_code_printer.get());
         }
 
         let source_code = 'brk: {
-            let written = source_code_printer.ctx.get_written();
+            let written = source_code_printer.get().ctx.get_written();
 
             // The `Jsc` vtable bridge `put()` does not write
             // `cache.output_code` (only the `r#impl == None` fallback does,
@@ -1187,8 +1157,8 @@ impl TranspilerJob {
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
-                *source_code_printer = BufferPrinter::init(writer);
-                source_code_printer.ctx.append_null_byte = false;
+                source_code_printer.set(BufferPrinter::init(writer));
+                source_code_printer.with_mut(|p| p.ctx.append_null_byte = false);
             }
             // else: writeback guard already restored `printer` into the thread-local.
 

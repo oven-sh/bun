@@ -33,10 +33,9 @@ mod _impl {
 
     /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
     /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
-    /// zero it invokes [`NativeZlib::deinit`].
+    /// zero the derive's default destructor drops the `Box<NativeZlib>`.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
         pub ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
@@ -249,19 +248,14 @@ mod _impl {
             }
             Ok(JSValue::UNDEFINED)
         }
+    }
 
-        /// RefCount destroy callback. Invoked when `ref_count` reaches zero.
-        /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
-        /// box is freed here.
-        fn deinit(this: *mut Self) {
-            // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
-            // is the heap::alloc pointer produced at construction. `this_value`
-            // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
-            // heap::take below.
-            unsafe {
-                (*this).stream.with_mut(|s| s.close());
-                drop(bun_core::heap::take(this));
-            }
+    // Called by RefCount when the count hits 0. `poll_ref`/`this_value` clean up
+    // via their own Drop impls; the Box free is the derive's default destructor.
+    // `Context` has no Drop, so the `close()` below is load-bearing.
+    impl Drop for NativeZlib {
+        fn drop(&mut self) {
+            self.stream.with_mut(|s| s.close());
         }
     }
 

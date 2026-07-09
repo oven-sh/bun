@@ -35,24 +35,12 @@ impl ShellAsyncSubprocessDone {
     /// Reached only via `runtime::dispatch::run_task` for
     /// `task_tag::ShellAsyncSubprocessDone`, which always passes the
     /// `heap::alloc` payload enqueued by `ShellSubprocess::on_process_exit`.
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc` payload enqueued by
-    /// `ShellSubprocess::on_process_exit`, and `(*this).interp` must outlive
-    /// the call. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
-        // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
-        // every spawned subprocess.
-        let (owned, interp) = unsafe {
-            let owned = bun_core::heap::take(this);
-            let interp = &*owned.interp;
-            (owned, interp)
-        };
-        crate::shell::states::cmd::Cmd::on_subprocess_done(interp, owned.cmd, owned.exit_code);
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub(crate) fn run_from_main_thread(self: Box<Self>) {
+        // SAFETY: `interp` outlives every spawned subprocess.
+        let interp = unsafe { &*self.interp };
+        crate::shell::states::cmd::Cmd::on_subprocess_done(interp, self.cmd, self.exit_code);
     }
 }
 
@@ -67,20 +55,12 @@ pub(crate) struct AsyncDeinitWriter {
 
 impl AsyncDeinitWriter {
     /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellIOWriterAsyncDeinit`, which always passes the
-    /// `heap::alloc` payload enqueued by `IOWriter::async_deinit`.
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc` payload enqueued by
-    /// `IOWriter::async_deinit`. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
-        // enqueued by `IOWriter::async_deinit`.
-        let owned = unsafe { bun_core::heap::take(this) };
-        crate::shell::io_writer::IOWriter::deinit_on_main_thread(owned.writer);
+    /// `task_tag::ShellIOWriterAsyncDeinit`, which hands over the `heap::alloc`
+    /// payload enqueued by `IOWriter::async_deinit`.
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub(crate) fn run_from_main_thread(self: Box<Self>) {
+        crate::shell::io_writer::IOWriter::deinit_on_main_thread(self.writer);
     }
 }
 
@@ -96,18 +76,10 @@ impl AsyncDeinitReader {
     /// Reached only via `runtime::dispatch::run_task` for
     /// `task_tag::ShellIOReaderAsyncDeinit`, which always passes the
     /// `heap::alloc` payload enqueued by `IOReader::async_deinit`.
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc` payload enqueued by
-    /// `IOReader::async_deinit`. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
-        // enqueued by `IOReader::async_deinit`.
-        let owned = unsafe { bun_core::heap::take(this) };
-        crate::shell::io_reader::IOReader::deinit_on_main_thread(owned.reader);
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub(crate) fn run_from_main_thread(self: Box<Self>) {
+        crate::shell::io_reader::IOReader::deinit_on_main_thread(self.reader);
     }
 }
 

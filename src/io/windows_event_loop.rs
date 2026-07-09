@@ -179,12 +179,10 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
-        // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
-        // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
-        // so `&mut Store` is materialised only *after* `&mut self` is retired
-        // inside `deinit_possibly_defer` (via `file_polls_mut()`).
-        let loop_ = vm.loop_mut();
+        // SAFETY: the uws loop is a disjoint allocation from `self`, and
+        // `deinit_possibly_defer` never re-derives it (it only reaches the
+        // `Store` back-pointer), so `loop_` stays the sole live `&mut Loop`.
+        let loop_ = unsafe { vm.loop_mut() };
         self.deinit_possibly_defer(vm, loop_);
     }
 
@@ -210,7 +208,7 @@ impl FilePoll {
     pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        bun_core::scoped_log!(FilePoll, "deactivate - {}", loop_.uv().active_handles);
+        bun_core::scoped_log!(FilePoll, "deactivate - {}", loop_.uv().active_handles.get());
         self.flags.remove(Flags::HasIncrementedPollCount);
     }
 
@@ -220,7 +218,7 @@ impl FilePoll {
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
         );
-        bun_core::scoped_log!(FilePoll, "activate - {}", loop_.uv().active_handles);
+        bun_core::scoped_log!(FilePoll, "activate - {}", loop_.uv().active_handles.get());
         self.flags.insert(Flags::HasIncrementedPollCount);
     }
 
@@ -241,8 +239,9 @@ impl FilePoll {
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
-        // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(event_loop_ctx.loop_mut());
+        // SAFETY: `deactivate` is a leaf counter op; the borrow does not
+        // escape and no other `&mut Loop` is live.
+        self.deactivate(unsafe { event_loop_ctx.loop_mut() });
     }
 
     /// Prevent a poll from keeping the process alive.
@@ -251,8 +250,8 @@ impl FilePoll {
             return;
         }
         bun_core::scoped_log!(FilePoll, "unref");
-        // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(vm.loop_mut());
+        // SAFETY: leaf counter op; the borrow does not escape.
+        self.deactivate(unsafe { vm.loop_mut() });
     }
 
     /// Allow a poll to keep the process alive.
@@ -262,8 +261,8 @@ impl FilePoll {
             return;
         }
         bun_core::scoped_log!(FilePoll, "ref");
-        // this.activate(vm.event_loop_handle.?);
-        self.activate(event_loop_ctx.loop_mut());
+        // SAFETY: leaf counter op; the borrow does not escape.
+        self.activate(unsafe { event_loop_ctx.loop_mut() });
     }
 }
 

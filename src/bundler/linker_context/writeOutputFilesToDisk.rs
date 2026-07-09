@@ -75,9 +75,14 @@ pub fn write_output_files_to_disk(
     let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
     let mut pathbuf = PathBuffer::uninit();
-    // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
-    let bv2: &mut BundleV2 =
-        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
+    // SAFETY: `c` is the `linker` field of a live `BundleV2`; the container_of
+    // pointer keeps write provenance over the whole `BundleV2`, so the
+    // `ParentRef` may later be `assume_mut`'d.
+    let bv2: bun_ptr::ParentRef<BundleV2> = unsafe {
+        bun_ptr::ParentRef::from_raw_mut(LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<
+            LinkerContext,
+        >(c)))
+    };
 
     // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
     // and `chunks` as
@@ -224,6 +229,9 @@ pub fn write_output_files_to_disk(
             .flags
             .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
+            // SAFETY: `bv2` carries write provenance and no other borrow of the
+            // `BundleV2` is live across this call; the `&mut` dies with the stmt.
+            let bv2 = unsafe { bv2.assume_mut() };
             &bv2.transpiler_for_target(options::Target::Browser)
                 .options
                 .public_path
@@ -624,9 +632,12 @@ pub fn write_output_files_to_disk(
         let additional_len = output_files.output_files.len() - additional_start;
         output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
         let additional_output_files = &mut output_files.output_files[additional_start..];
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `c.log_mut()` below (split borrow).
-        let parse_graph = unsafe { &mut *c.parse_graph };
+        // Backref copy: the `&mut Graph` is tied to this local, not to `*c`,
+        // which `c.log_mut()` below borrows (split borrow).
+        let mut parse_graph_ref = c.parse_graph.expect("parse_graph set in load()");
+        // SAFETY: `BundleV2.graph` is disjoint from `*c` (= `BundleV2.linker`);
+        // this is the only `&mut Graph` live in this scope.
+        let parse_graph = unsafe { parse_graph_ref.get_mut() };
         debug_assert_eq!(
             parse_graph.additional_output_files.len(),
             additional_output_files.len()

@@ -762,16 +762,12 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
+                // `dot_env::Loader::load` takes `impl DirEntryProbe` by shared
+                // reference (bun_dotenv sits below `bun_resolver` in the crate
+                // graph); `bun_resolver::fs::DirEntry` impls it.
+                let Some(dir) = dir_info.get_entries_ref(self.resolver.generation) else {
                     return Ok(());
                 };
-                // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` takes
-                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
-                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
-                // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
-                // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -949,7 +945,7 @@ pub struct ParseOptions<'a, 'b> {
     pub file_hash: Option<u32>,
 
     /// On exception, we might still want to watch the file.
-    pub file_fd_ptr: Option<&'b mut FD>,
+    pub file_fd_ptr: Option<&'b core::cell::Cell<FD>>,
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
@@ -1243,12 +1239,11 @@ impl<'a> Transpiler<'a> {
                     // Transfer ownership of both allocations into the global
                     // singleton via `heap::alloc` (the AtomicPtr becomes the
                     // owner; matches `MiniEventLoop::init_global`).
-                    let map: *mut dot_env::Map =
-                        bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
-                    // SAFETY: `map` is a fresh heap allocation with no other
-                    // alias; `Loader` stores it for process lifetime and is
+                    // `Loader` stores the map for process lifetime and is
                     // itself installed into `dot_env::INSTANCE` below.
-                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
+                    let map: &'static mut dot_env::Map =
+                        bun_core::heap::release(Box::new(dot_env::Map::init()));
+                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(map)))
                 }
             },
         };
@@ -1485,7 +1480,7 @@ impl<'a> Transpiler<'a> {
             };
             input_fd = Some(entry.fd);
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
-                *file_fd_ptr = entry.fd;
+                file_fd_ptr.set(entry.fd);
             }
             // `Source.contents: &'static [u8]` (the AST crate's `Str`
             // convention). The bytes live either in the per-thread shared
@@ -2320,7 +2315,7 @@ impl<'a> Transpiler<'a> {
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2535,7 +2530,7 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2563,13 +2558,9 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         // Both set on this (EsmAscii) arm only.
-        // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
-        // null); it is exclusively owned by this print call until T6 reclaims
-        // it after `print_with_source_map` returns.
-        let module_info = module_info.map(|p| unsafe { &mut *p });
         let opts = js_printer::Options {
             bundling: false,
             runtime_imports: ast.runtime_imports.clone(),
@@ -2657,7 +2648,7 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         // env_var feature_flag getters return `Option<bool>`
         // (Some(default) when unset).
@@ -2706,7 +2697,7 @@ impl<'a> Transpiler<'a> {
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         self.print_with_source_map_maybe::<false>(
             print_arena,
@@ -2881,9 +2872,8 @@ impl<'a> Transpiler<'a> {
         let outbase: Box<[u8]> = self.result.outbase.clone();
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
-        // SAFETY: see above (`self.log` is the same pointer as `log`).
         let mut final_result =
-            options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
+            options::TransformResult::init(outbase, output_files, self.log_mut())?;
         // Non-owning fd view; `output_dir_handle` keeps ownership.
         final_result.root_dir = self
             .options

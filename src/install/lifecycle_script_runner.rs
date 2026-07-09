@@ -289,26 +289,10 @@ pub struct LifecycleScriptSubprocess<'a> {
 
 pub struct InstallCtx<'a> {
     pub entry_id: entry::Id,
-    /// Raw `*mut` for the same reason as
-    /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
+    /// Back-reference to the `Installer` that spawned the script; it outlives
+    /// every in-flight `LifecycleScriptSubprocess`. `on_task_complete`/`start_task`
     /// mutate Installer state from inside an exit-handler callback.
-    pub installer: *mut Installer<'a>,
-}
-
-impl<'a> InstallCtx<'a> {
-    /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
-    /// pointer so call sites in `on_process_exit` are safe.
-    ///
-    /// SAFETY (encapsulated): `installer` is non-null and outlives every
-    /// `LifecycleScriptSubprocess` (the `Installer` owns the script-spawn
-    /// loop). Exit-handler callbacks run single-threaded on the main install
-    /// loop, so no other `&`/`&mut Installer` overlaps the returned borrow.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn installer_mut(&self) -> &mut Installer<'a> {
-        // SAFETY: see fn doc.
-        unsafe { &mut *self.installer }
-    }
+    pub installer: bun_ptr::BackRef<Installer<'a>>,
 }
 
 // `io_heap::Intrusive` takes the comparator via `HeapContext::less` on the
@@ -876,7 +860,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if exit.code > 0 {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
+                            let mut installer_ref = ctx.installer;
+                            // SAFETY: exit handlers run single-threaded on the install loop;
+                            // no other borrow of the installer is live here.
+                            let installer = unsafe { installer_ref.get_mut() };
                             installer.store.entries.items_step()[ctx.entry_id.get() as usize]
                                 .store(Step::Done as u32, Ordering::Release);
                             installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
@@ -934,7 +921,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     match self.current_script_index {
                         // preinstall
                         0 => {
-                            let installer = ctx.installer_mut();
+                            let mut installer_ref = ctx.installer;
+                            // SAFETY: exit handlers run single-threaded on the install loop;
+                            // no other borrow of the installer is live here.
+                            let installer = unsafe { installer_ref.get_mut() };
                             let previous_step = installer.store.entries.items_step()
                                 [ctx.entry_id.get() as usize]
                                 .swap(Step::Binaries as u32, Ordering::Release);
@@ -985,7 +975,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if let Some(ctx) = &self.ctx {
-                    let installer = ctx.installer_mut();
+                    let mut installer_ref = ctx.installer;
+                    // SAFETY: exit handlers run single-threaded on the install loop;
+                    // no other borrow of the installer is live here.
+                    let installer = unsafe { installer_ref.get_mut() };
                     let previous_step = installer.store.entries.items_step()
                         [ctx.entry_id.get() as usize]
                         .swap(Step::Done as u32, Ordering::Release);
@@ -1027,7 +1020,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Err(err) => {
                 if self.optional {
                     if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
+                        let mut installer_ref = ctx.installer;
+                        // SAFETY: exit handlers run single-threaded on the install loop;
+                        // no other borrow of the installer is live here.
+                        let installer = unsafe { installer_ref.get_mut() };
                         installer.store.entries.items_step()[ctx.entry_id.get() as usize]
                             .store(Step::Done as u32, Ordering::Release);
                         installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);

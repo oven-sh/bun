@@ -14,7 +14,9 @@ pub fn post_process_css_chunk(
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
 ) -> Result<(), bun_core::Error> {
-    let c = ctx.c();
+    // SAFETY: caller must ensure no peer `generate_chunk` task holds an
+    // overlapping borrow of the linker; see `GenerateChunkCtx::c`.
+    let c = unsafe { ctx.c() };
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {

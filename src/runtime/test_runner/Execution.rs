@@ -347,9 +347,6 @@ impl Execution {
         data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group_begin!();
-        let buntest = buntest_strong.get();
-        let buntest_ptr = NonNull::from(&mut *buntest);
-        let this = &mut buntest.execution;
         let mut now = Timespec::now_force_real_time();
 
         match data {
@@ -362,8 +359,10 @@ impl Execution {
                 // step the sequence
                 // if the group is complete, step the group
 
-                let Some((sequence_ptr, group_ptr)) =
-                    this.get_current_and_valid_execution_sequence(data)
+                let Some((seq_abs, group_index)) = buntest_strong
+                    .get()
+                    .execution
+                    .get_current_and_valid_execution_sequence(data)
                 else {
                     group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
@@ -376,12 +375,13 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
-                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
-                Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
+                debug_assert!(
+                    buntest_strong.get().execution.sequences[seq_abs].active_entry.is_some()
+                );
+                Execution::advance_sequence(buntest_strong, seq_abs, group_index);
 
                 let sequence_result =
-                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
+                    step_sequence(buntest_strong, global_this, group_index, sequence_index, &mut now)?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
@@ -389,11 +389,10 @@ impl Execution {
                     }
                 }
                 // this sequence is complete; execute the next sequence
-                // re-slice from `this` each iteration via the group's range; carry
-                // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
+                // re-derive the group each iteration: `step_sequence` can re-enter through JS.
                 loop {
-                    // SAFETY: group_ptr points into this.groups (disjoint from this.sequences).
-                    let group = unsafe { &mut *group_ptr.as_ptr() };
+                    let this = &mut buntest_strong.get().execution;
+                    let group = &this.groups[group_index];
                     let seq_len = group.sequence_end - group.sequence_start;
                     if group.next_sequence_index >= seq_len {
                         break;
@@ -401,15 +400,14 @@ impl Execution {
                     let next_idx = group.next_sequence_index;
                     let abs_idx = group.sequence_start + next_idx;
                     if this.sequences[abs_idx].executing {
-                        group.next_sequence_index += 1;
+                        this.groups[group_index].next_sequence_index += 1;
                         continue;
                     }
                     let sequence_status =
-                        step_sequence(buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
+                        step_sequence(buntest_strong, global_this, group_index, next_idx, &mut now)?;
                     match sequence_status {
                         AdvanceSequenceStatus::Done => {
-                            // SAFETY: see above
-                            unsafe { &mut *group_ptr.as_ptr() }.next_sequence_index += 1;
+                            buntest_strong.get().execution.groups[group_index].next_sequence_index += 1;
                             continue;
                         }
                         AdvanceSequenceStatus::Execute { timeout } => {
@@ -418,8 +416,9 @@ impl Execution {
                     }
                 }
                 // all sequences have started
-                // SAFETY: see above
-                if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
+                if buntest_strong.get().execution.groups[group_index].remaining_incomplete_entries
+                    == 0
+                {
                     return step_group(buntest_strong, global_this, &mut now);
                 }
                 return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
@@ -443,13 +442,12 @@ impl Execution {
         Some(&self.groups[self.group_index])
     }
 
-    /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
-    /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
-    /// Dereference at point-of-use only.
+    /// Returns `(absolute sequence index, group index)` into `self.sequences` / `self.groups`.
+    /// The caller re-derives the element borrow at point-of-use, so nothing aliases `self`.
     pub fn get_current_and_valid_execution_sequence(
-        &mut self,
+        &self,
         data: &RefDataValue,
-    ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
+    ) -> Option<(usize, usize)> {
         let _g = group_begin!();
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
@@ -475,14 +473,13 @@ impl Execution {
             group_log::log(format_args!("runOneCompleted: the data did not know the group"));
             return None;
         }
-        // Disjoint split-borrow of `self.groups` and `self.sequences`.
-        let group = &mut self.groups[*group_index];
+        let group = &self.groups[*group_index];
         let seq_abs = group.sequence_start + entry_data.sequence_index;
         if seq_abs >= group.sequence_end {
             group_log::log(format_args!("runOneCompleted: the data did not know the sequence"));
             return None;
         }
-        let sequence = &mut self.sequences[seq_abs];
+        let sequence = &self.sequences[seq_abs];
         if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
             group_log::log(format_args!(
                 "runOneCompleted: the data is for a previous repeat count (outdated)",
@@ -500,21 +497,15 @@ impl Execution {
             return None;
         }
         group_log::log(format_args!("runOneCompleted: the data is valid and current"));
-        Some((NonNull::from(sequence), NonNull::from(group)))
+        Some((seq_abs, *group_index))
     }
 
-    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
-    /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
-    fn advance_sequence(
-        buntest: NonNull<BunTest>,
-        sequence_ptr: NonNull<ExecutionSequence>,
-        group_ptr: NonNull<ConcurrentGroup>,
-    ) {
+    /// `seq_abs` / `group_index` index into `buntest.execution.{sequences,groups}`; each element
+    /// borrow is re-derived at point-of-use so none spans a call that can re-enter from JS.
+    fn advance_sequence(buntest_strong: &BunTestPtr, seq_abs: usize, group_index: usize) {
         let _g = group_begin!();
 
-        // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
-        // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        let sequence = &mut buntest_strong.get().execution.sequences[seq_abs];
 
         debug_assert!(sequence.executing);
         if let Some(entry_ptr) = sequence.active_entry {
@@ -569,11 +560,10 @@ impl Execution {
             }
 
             // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
+            Execution::on_sequence_completed(buntest_strong, seq_abs);
 
             // No more retries or repeats; mark sequence as complete
-            // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
+            let group = &mut buntest_strong.get().execution.groups[group_index];
             if group.remaining_incomplete_entries == 0 {
                 debug_assert!(false); // remaining_incomplete_entries should never go below 0
                 return;
@@ -642,7 +632,8 @@ impl Execution {
 
     fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
-    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+    fn on_sequence_completed(buntest_strong: &BunTestPtr, seq_abs: usize) {
+        let sequence = &mut buntest_strong.get().execution.sequences[seq_abs];
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
@@ -672,22 +663,25 @@ impl Execution {
                 _ => Result::Pass,
             };
         }
-        if let Some(first_entry) = sequence.first_entry {
-            if sequence.test_entry.is_some() || sequence.result != Result::Pass {
-                // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
-                // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (callee could be reshaped to avoid this).
+        let first_entry = sequence.first_entry;
+        let test_entry = sequence.test_entry;
+        let result = sequence.result;
+
+        if let Some(first_entry) = first_entry {
+            if test_entry.is_some() || result != Result::Pass {
+                // Shared borrows only: `&BunTest` and the sequence it owns nest without aliasing.
+                let buntest: &BunTest = &***buntest_strong;
                 test_command::CommandLineReporter::handle_test_completed(
-                    unsafe { &mut *buntest.as_ptr() },
-                    sequence,
+                    buntest,
+                    &buntest.execution.sequences[seq_abs],
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    unsafe { &mut *sequence.test_entry.unwrap_or(first_entry).as_ptr() },
+                    unsafe { test_entry.unwrap_or(first_entry).as_ref() },
                     elapsed_ns,
                 );
             }
         }
 
-        if let Some(entry_ptr) = sequence.test_entry {
+        if let Some(entry_ptr) = test_entry {
             // SAFETY: arena-owned entry
             let entry = unsafe { entry_ptr.as_ref() };
             if entry.base.test_id_for_debugger != 0 {
@@ -697,7 +691,7 @@ impl Execution {
                         use bun_jsc::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(
                             entry.base.test_id_for_debugger,
-                            match sequence.result {
+                            match result {
                                 Result::Pass => S::Pass,
                                 Result::Fail => S::Fail,
                                 Result::Skip => S::Skip,
@@ -774,14 +768,12 @@ impl Execution {
     ) -> HandleUncaughtExceptionResult {
         let _g = group_begin!();
 
-        let Some((sequence_ptr, _group_ptr)) =
+        let Some((seq_abs, _group_index)) =
             self.get_current_and_valid_execution_sequence(user_data)
         else {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };
-        // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
-        // remainder of this function, so this is the unique live `&mut` to that element.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        let sequence = &mut self.sequences[seq_abs];
 
         sequence.maybe_skip = true;
         if sequence.active_entry != sequence.test_entry {
@@ -821,28 +813,24 @@ pub(crate) fn step_group(
     now: &mut Timespec,
 ) -> JsResult<StepResult> {
     let _g = group_begin!();
-    let buntest = buntest_strong.get();
-    let this = &mut buntest.execution;
 
     loop {
-        // Carry the active group as NonNull so it does not alias `&mut Execution` re-derived
-        // inside step_group_one.
-        let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
-            Some(g) => NonNull::from(g),
-            None => return Ok(StepResult::Complete),
-        };
-        {
-            // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
-            if !group.executing {
-                Execution::on_group_started(global_this);
-                group.executing = true;
+        // Carry the active group as an index; the element borrow is re-derived at each use.
+        let group_index = {
+            let this = &buntest_strong.get().execution;
+            if this.group_index >= this.groups.len() {
+                return Ok(StepResult::Complete);
             }
+            this.group_index
+        };
+        if !buntest_strong.get().execution.groups[group_index].executing {
+            Execution::on_group_started(global_this);
+            buntest_strong.get().execution.groups[group_index].executing = true;
         }
 
         // loop over items in the group and advance their execution
 
-        let status = step_group_one(buntest_strong, global_this, group_ptr, now)?;
+        let status = step_group_one(buntest_strong, global_this, group_index, now)?;
         match status {
             AdvanceStatus::Execute { timeout } => {
                 return Ok(StepResult::Waiting { timeout });
@@ -850,14 +838,15 @@ pub(crate) fn step_group(
             AdvanceStatus::Done => {}
         }
 
-        // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
-        let group = unsafe { &mut *group_ptr.as_ptr() };
-        group.executing = false;
+        buntest_strong.get().execution.groups[group_index].executing = false;
         Execution::on_group_completed(global_this);
 
         // if there is one sequence and it failed, skip to the next group
-        let (start, end, failure_skip_to) =
-            (group.sequence_start, group.sequence_end, group.failure_skip_to);
+        let this = &mut buntest_strong.get().execution;
+        let (start, end, failure_skip_to) = {
+            let group = &this.groups[group_index];
+            (group.sequence_start, group.sequence_end, group.failure_skip_to)
+        };
         let all_failed = 'blk: {
             for sequence in this.sequences[start..end].iter() {
                 if !sequence.result.is_fail() {
@@ -887,7 +876,7 @@ enum AdvanceStatus {
 fn step_group_one(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
-    group: NonNull<ConcurrentGroup>,
+    group_index: usize,
     now: &mut Timespec,
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
@@ -901,13 +890,12 @@ fn step_group_one(
     };
     let mut active_count: usize = 0;
     let len = {
-        // SAFETY: group points into buntest.execution.groups; read-only here.
-        let g = unsafe { group.as_ref() };
+        let g = &buntest.execution.groups[group_index];
         g.sequence_end - g.sequence_start
     };
     for sequence_index in 0..len {
         let sequence_status =
-            step_sequence(buntest_strong, global_this, group, sequence_index, now)?;
+            step_sequence(buntest_strong, global_this, group_index, sequence_index, now)?;
         match sequence_status {
             AdvanceSequenceStatus::Done => {}
             AdvanceSequenceStatus::Execute { timeout } => {
@@ -939,13 +927,13 @@ enum AdvanceSequenceStatus {
 fn step_sequence(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
-    group: NonNull<ConcurrentGroup>,
+    group_index: usize,
     sequence_index: usize,
     now: &mut Timespec,
 ) -> JsResult<AdvanceSequenceStatus> {
     loop {
         if let Some(r) =
-            step_sequence_one(buntest_strong, global_this, group, sequence_index, now)?
+            step_sequence_one(buntest_strong, global_this, group_index, sequence_index, now)?
         {
             return Ok(r);
         }
@@ -956,23 +944,17 @@ fn step_sequence(
 fn step_sequence_one(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
-    group: NonNull<ConcurrentGroup>,
+    group_index: usize,
     sequence_index: usize,
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
-    let buntest = buntest_strong.get();
-    let buntest_ptr = NonNull::from(&mut *buntest);
-    let this = &mut buntest.execution;
+    let this = &mut buntest_strong.get().execution;
 
-    // Locate the sequence by absolute index, then carry it as NonNull so it can coexist with
-    // `group` (disjoint field) and with later re-borrows through `buntest_ptr` in advance_sequence.
-    // SAFETY: group points into this.groups; read-only.
-    let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
-    let sequence_ptr: NonNull<ExecutionSequence> = NonNull::from(&mut this.sequences[seq_abs]);
-    // SAFETY: sequence_ptr points into this.sequences; this is the unique live `&mut` to that
-    // element until we hand it off to advance_sequence (which takes the NonNull, not the &mut).
-    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    // Locate the sequence by absolute index; every element borrow is re-derived from
+    // `buntest_strong` after any call that can re-enter from JS.
+    let seq_abs = this.groups[group_index].sequence_start + sequence_index;
+    let sequence = &mut this.sequences[seq_abs];
     if sequence.executing {
         let Some(active_entry_ptr) = sequence.active_entry else {
             debug_assert!(false); // sequence is executing with no active entry
@@ -980,10 +962,10 @@ fn step_sequence_one(
                 timeout: Timespec::EPOCH,
             }));
         };
-        // SAFETY: arena-owned entry
-        let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
+        // SAFETY: arena-owned entry; `evaluate_timeout` only needs `&self`.
+        let active_entry = unsafe { active_entry_ptr.as_ref() };
         if active_entry.evaluate_timeout(sequence, now) {
-            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            Execution::advance_sequence(buntest_strong, seq_abs, group_index);
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -999,13 +981,14 @@ fn step_sequence_one(
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
-    // SAFETY: arena-owned entry
-    let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;
     if Some(next_item_ptr) == sequence.first_entry {
         Execution::on_sequence_started(sequence);
     }
-    Execution::on_entry_started(next_item);
+    // SAFETY: arena-owned entry; the `&mut` dies with the call.
+    Execution::on_entry_started(unsafe { &mut *next_item_ptr.as_ptr() });
+    // SAFETY: arena-owned entry; shared read, dead before user JS runs below.
+    let next_item = unsafe { next_item_ptr.as_ref() };
 
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log(format_args!("runSequence queued callback"));
@@ -1028,28 +1011,33 @@ fn step_sequence_one(
             (*on_stack_cell).set(prev_on_stack);
         });
 
+        // Copy out what the callback needs: `run_test_callback` runs user JS, which re-derives
+        // `&mut BunTest`, so no borrow of the entry or of `execution` may span it.
+        let callback = cb.get();
+        let has_done_parameter = next_item.has_done_parameter;
+        let entry_timespec = next_item.timespec;
+
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
-            cb.get(),
-            next_item.has_done_parameter,
+            callback,
+            has_done_parameter,
             callback_data,
-            &next_item.timespec,
+            &entry_timespec,
         )
         .is_some()
         {
             *now = Timespec::now_force_real_time();
-            // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
-            // Box<[ExecutionSequence]>, never reallocated during execution).
-            let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            let sequence = &mut buntest_strong.get().execution.sequences[seq_abs];
+            // SAFETY: arena-owned entry; re-derived after user JS ran.
+            let _ = unsafe { next_item_ptr.as_ref() }.evaluate_timeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            Execution::advance_sequence(buntest_strong, seq_abs, group_index);
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
-            timeout: next_item.timespec,
+            timeout: entry_timespec,
         }));
     } else {
         match next_item.base.mode {
@@ -1079,7 +1067,7 @@ fn step_sequence_one(
                 debug_assert!(false);
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+        Execution::advance_sequence(buntest_strong, seq_abs, group_index);
         return Ok(None); // run again
     }
 }

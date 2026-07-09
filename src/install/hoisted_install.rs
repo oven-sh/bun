@@ -67,12 +67,10 @@ pub(crate) fn install_hoisted_packages(
 
     // Restore-buffers guard — side-effecting rollback,
     // not a free. Captures `*mut PackageManager` so the guard can write back
-    // through the same provenance root the body uses (see `mgr_ptr` below).
+    // through the same provenance root the body uses.
+    // Under Tree Borrows a raw pointer coerced from `this` carries `this`'s own
+    // tag, so `mgr_ptr` and `this` are interchangeable: no reborrow needed.
     let mgr_ptr: *mut PackageManager = this;
-    // SAFETY: `mgr_ptr` is freshly derived from the unique `&mut` fn param;
-    // shadowing `this` with a reborrow through it makes every body access a
-    // child of `mgr_ptr`, so the guard's later derefs keep provenance.
-    let this = unsafe { &mut *mgr_ptr };
 
     let original_trees = core::mem::take(&mut this.lockfile.buffers.trees);
     let original_tree_dep_ids = core::mem::take(&mut this.lockfile.buffers.hoisted_dependencies);
@@ -106,14 +104,6 @@ pub(crate) fn install_hoisted_packages(
             )?;
         }
     }
-    // Re-derive after `filter()` so every subsequent `this` use (progress
-    // setup through the install loop) is a fresh child of `mgr_ptr` under
-    // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
-    // line-77 reborrow's tag.
-    // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
-    // fn param; the line-77 reborrow's tag was popped by `&mut *mgr_ptr` in the
-    // block above, so no other borrow of `*mgr_ptr` is live here.
-    let this = unsafe { &mut *mgr_ptr };
 
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
@@ -154,17 +144,15 @@ pub(crate) fn install_hoisted_packages(
 
     // `defer { progress.root.end(); progress = .{} }`
     let _end_progress = scopeguard::guard(log_level, move |log_level| {
+        // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
+        let this = unsafe { &mut *mgr_ptr };
         if log_level.show_progress() {
-            // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-            let this = unsafe { &mut *mgr_ptr };
             this.progress.root.end();
             this.progress = Progress::default();
         }
         // Defensive: the stored progress-node pointers target stack locals in
         // this frame; clear them so `scripts_node_mut()` / `downloads_node_mut()`
         // can't observe a dangling pointer after the install pass returns.
-        // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-        let this = unsafe { &mut *mgr_ptr };
         this.scripts_node = None;
         this.downloads_node = None;
     });

@@ -185,6 +185,54 @@ test("bare-LF between trailer fields is rejected, not silently accepted", async 
   expect("err" in result).toBe(true);
 });
 
+test("CTL byte in a trailer value fires clientError HPE_INVALID_HEADER_TOKEN", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    // Completing the request would mean the malformed trailer was silently dropped (node fails the message).
+    req.on("end", () => reject(new Error("request completed despite a malformed trailer")));
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTrailer: X-T\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: a\bb\r\n\r\n");
+  });
+  socket.on("error", () => {});
+  const err = await promise;
+  socket.destroy();
+  expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
+});
+
+test("insecureHTTPParser accepts a CTL byte in a trailer value like node", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<{ trailers: any; raw: string[] }>();
+  await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+    req.resume();
+    req.on("end", () => {
+      resolve({ trailers: { ...req.trailers }, raw: [...req.rawTrailers] });
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    reject(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTrailer: X-T\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: a\bb\r\n\r\n");
+  });
+  socket.on("error", reject);
+  const result = await promise;
+  socket.destroy();
+  expect(result).toEqual({ trailers: { "x-t": "a\bb" }, raw: ["X-T", "a\bb"] });
+});
+
 test("createServer({maxHeaderSize:0}) still bounds trailer section", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<any>();
   await using server = createServer({ maxHeaderSize: 0 }, (req, res) => {

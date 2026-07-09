@@ -192,6 +192,7 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
         data: *const u8,
         length: usize,
+        use_insecure_http_parser: bool,
     ) -> JSValue;
 
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
@@ -1954,13 +1955,21 @@ impl NodeHTTPResponse {
     pub(crate) fn take_request_trailers(
         &self,
         global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JSValue {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
             return JSValue::UNDEFINED;
         }
-        Bun__NodeHTTP__parseRequestTrailers(global_object, section.as_ptr(), section.len())
+        // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
+        // the wire; parse them with the same leniency so they surface on req.trailers.
+        let use_insecure_http_parser = callframe.argument(0).to_boolean();
+        Bun__NodeHTTP__parseRequestTrailers(
+            global_object,
+            section.as_ptr(),
+            section.len(),
+            use_insecure_http_parser,
+        )
     }
 
     pub(crate) fn get_bytes_written(

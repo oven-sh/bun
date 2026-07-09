@@ -482,7 +482,7 @@ impl ReadFile {
     /// `do_read_loop` can carry it across the `&mut self` `do_read` call
     /// without two live `&mut` covering overlapping memory (Stacked-Borrows
     /// UB). The slice is materialised only at the syscall boundary.
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_env = "ohos")))]
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
         // `spare_capacity_mut()` is the safe spelling of
         // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately

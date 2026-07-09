@@ -130,34 +130,42 @@ describe("web worker", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/32247
+  // Spawned: founding a SHARE_ENV tree permanently replaces this thread's
+  // process.env object, so doing it in-process would leave every later test
+  // (and any module that captured process.env at import) holding a stale one.
   test("worker-env: SHARE_ENV via the global Worker constructor", async () => {
-    const key = `BUN_TEST_SHARE_ENV_${process.pid}`;
-    process.env[key] = "from-parent";
-    try {
-      const worker = new Worker(
-        "data:text/javascript," +
-          encodeURIComponent(`
-            self.onmessage = e => {
-              const seen = process.env[e.data.key];
-              process.env[e.data.key] = "from-worker";
-              self.postMessage(seen);
-            };
-          `),
-        // The Web Worker constructor doesn't go through node:worker_threads, so the
-        // native option parser must recognize the SHARE_ENV registry symbol itself.
-        { env: wt.SHARE_ENV } as any,
-      );
-      const { promise, resolve, reject } = Promise.withResolvers<string>();
-      worker.onmessage = e => resolve(e.data);
-      worker.onerror = e => reject(e.error ?? new Error(e.message));
-      worker.postMessage({ key });
-      const seen = await promise;
-      worker.terminate();
-      expect(seen).toBe("from-parent");
-      expect(process.env[key]).toBe("from-worker");
-    } finally {
-      delete process.env[key];
-    }
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const wt = require("worker_threads");
+         const key = "BUN_TEST_SHARE_ENV";
+         process.env[key] = "from-parent";
+         // The Web Worker constructor doesn't go through node:worker_threads, so the
+         // native option parser must recognize the SHARE_ENV registry symbol itself.
+         const worker = new Worker(
+           "data:text/javascript," + encodeURIComponent(\`
+             self.onmessage = e => {
+               const seen = process.env[e.data.key];
+               process.env[e.data.key] = "from-worker";
+               self.postMessage(seen);
+             };
+           \`),
+           { env: wt.SHARE_ENV },
+         );
+         worker.onerror = e => { console.error(e.message); process.exit(1); };
+         worker.onmessage = e => {
+           console.log(JSON.stringify({ seen: e.data, parentSees: process.env[key] }));
+           worker.terminate();
+         };
+         worker.postMessage({ key });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ seen: "from-parent", parentSees: "from-worker" });
+    expect(exitCode).toBe(0);
   });
 
   test("worker-env with a lot of properties", done => {

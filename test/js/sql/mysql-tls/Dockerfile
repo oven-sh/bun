@@ -12,7 +12,7 @@ ENV MYSQL_ROOT_PASSWORD=bun \
 
 RUN set -e; \
     docker-entrypoint.sh mysqld --datadir=/var/lib/mysql-init & pid=$!; \
-    for i in $(seq 60); do \
+    for i in $(seq 180); do \
         mysql -h127.0.0.1 -uroot -pbun -e 'SELECT 1' >/dev/null 2>&1 && break; \
         sleep 1; \
     done; \

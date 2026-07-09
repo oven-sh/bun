@@ -1410,28 +1410,21 @@ it("mkdtemp() non-exist dir #2568", done => {
 });
 
 describe("mkdtemp encoding option", () => {
-  const prefix = join(tmpdir(), "mkenc-dé-");
+  const base = tmpdirSync();
+  const prefix = join(base, "mkenc-dé-");
   const prefixBytes = Buffer.from(prefix, "utf8");
 
   it("sync: 'buffer' returns a Buffer of the path bytes", () => {
     const result = mkdtempSync(prefix, { encoding: "buffer" });
-    try {
-      expect(Buffer.isBuffer(result)).toBe(true);
-      expect(result.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
-      expect(result.length).toBe(prefixBytes.length + 6);
-      expect(existsSync(result)).toBe(true);
-    } finally {
-      rmSync(result, { recursive: true, force: true });
-    }
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(result.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(result)).toBe(true);
   });
 
   it("sync: string shorthand 'buffer'", () => {
     const result = mkdtempSync(prefix, "buffer");
-    try {
-      expect(Buffer.isBuffer(result)).toBe(true);
-    } finally {
-      rmSync(result, { recursive: true, force: true });
-    }
+    expect(Buffer.isBuffer(result)).toBe(true);
   });
 
   it.each(["hex", "base64", "base64url", "latin1"] as const)("sync: '%s' re-encodes the path", encoding => {
@@ -1441,30 +1434,21 @@ describe("mkdtemp encoding option", () => {
     expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
     expect(decoded.length).toBe(prefixBytes.length + 6);
     expect(existsSync(decoded)).toBe(true);
-    rmSync(decoded, { recursive: true, force: true });
   });
 
   it("sync: default utf8 still returns a string", () => {
     const result = mkdtempSync(prefix);
-    try {
-      expect(typeof result).toBe("string");
-      expect(result.startsWith(prefix)).toBe(true);
-      expect(existsSync(result)).toBe(true);
-    } finally {
-      rmSync(result, { recursive: true, force: true });
-    }
+    expect(typeof result).toBe("string");
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(existsSync(result)).toBe(true);
   });
 
   it("callback: 'buffer' returns a Buffer", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     mkdtemp(prefix, { encoding: "buffer" }, (err, folder) => (err ? reject(err) : resolve(folder)));
     const result = await promise;
-    try {
-      expect(Buffer.isBuffer(result)).toBe(true);
-      expect(existsSync(result)).toBe(true);
-    } finally {
-      rmSync(result, { recursive: true, force: true });
-    }
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
   });
 
   it("promises: 'hex' re-encodes the path", async () => {
@@ -1473,17 +1457,12 @@ describe("mkdtemp encoding option", () => {
     const decoded = Buffer.from(result, "hex");
     expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
     expect(existsSync(decoded)).toBe(true);
-    rmSync(decoded, { recursive: true, force: true });
   });
 
   it("promises: 'buffer' returns a Buffer", async () => {
     const result = await promises.mkdtemp(prefix, { encoding: "buffer" });
-    try {
-      expect(Buffer.isBuffer(result)).toBe(true);
-      expect(existsSync(result)).toBe(true);
-    } finally {
-      rmSync(result, { recursive: true, force: true });
-    }
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
   });
 });
 

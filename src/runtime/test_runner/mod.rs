@@ -496,10 +496,6 @@ pub mod expect {
     // ── matcher modules (75) ──────────────────────────────────────────
     // Each file is `impl Expect { pub fn to_*(..) }` or a free
     // `#[bun_jsc::host_fn(method)] pub fn to_*(this: &mut Expect, ..)`.
-    // Bodies are real (un-gated); they exercise the full bun_jsc::JSValue
-    // method surface (is_null/is_string/deep_equals/to_fmt/array_iterator
-    // /get_length/...). Any method gap surfaces here when `cfg_jsc!` is
-    // flipped.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
             $( #[path = $file] pub mod $mod; )*

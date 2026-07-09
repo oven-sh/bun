@@ -10,9 +10,9 @@
 // lifecycle_script_runner.rs).
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
-// `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
-// live at `bun_core` crate root (#[macro_export]); alias the crate so the
-// `bun_output::` path resolves in un-gated install modules.
+// `bun_output::declare_scope!` / `scoped_log!` — the macros live at
+// `bun_core` crate root (#[macro_export]); alias the crate so the
+// `bun_output::` path resolves.
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
 
@@ -24,7 +24,7 @@ pub(crate) mod bun_schema {
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
+    pub(crate) use bun_ast::{Expr, ExprData, e as E};
     pub(crate) use bun_parsers::json::*;
 }
 
@@ -481,7 +481,7 @@ impl RunCommand {
         } else {
             "/tmp"
         };
-        const SUFFIX: &str = if cfg!(debug_assertions) {
+        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
             "/bun-node-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
             "/bun-node"
@@ -577,30 +577,59 @@ impl RunCommand {
 
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely that the path is absolute already
-            let argv0_z: &ZStr = if argv0.as_bytes().first() == Some(&b'/') {
-                *optional_bun_path = argv0.as_bytes();
-                argv0
-            } else if optional_bun_path.is_empty() {
-                // otherwise, ask the OS for the absolute path
-                let self_path = bun_core::self_exe_path()?;
-                if !self_path.as_bytes().is_empty() {
-                    *optional_bun_path = self_path.as_bytes();
-                    self_path
-                } else {
-                    argv0
-                }
-            } else {
-                // When argv[0] is
-                // not absolute and the caller pre-supplied a path, that path is the
-                // symlink target (NOT argv[0]).
+            // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
+            // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
+            // execve'd with `argv[0] = <BUN_NODE_DIR>/bun` — exactly the shim
+            // we're about to (re)write. Using that as the symlink target
+            // produces `<BUN_NODE_DIR>/bun -> <BUN_NODE_DIR>/bun` (self-loop),
+            // and the next `/usr/bin/env node` bails with ELOOP "Too many
+            // levels of symbolic links" (#30711). `self_exe_path()` readlinks
+            // `/proc/self/exe` (Linux) / canonicalizes `_NSGetExecutablePath`
+            // (macOS), so it always resolves to the REAL bun regardless of
+            // how the process was invoked. It's memoized via `Once`, so the
+            // cost is paid once per process.
+            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
+                // When the caller pre-supplied a path, that path is the symlink
+                // target.
                 // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
                 // self_exe_path / static literal), so `ptr[len] == 0` holds.
                 unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
+            } else {
+                // Ask the OS for the real absolute path first. Fall back to an
+                // absolute `argv[0]` only if that fails — never trust a bare
+                // `argv[0]` as the target here, because on nested `--bun` the
+                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
+                match bun_core::self_exe_path() {
+                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
+                        *optional_bun_path = self_path.as_bytes();
+                        self_path
+                    }
+                    result => {
+                        let argv0_bytes = argv0.as_bytes();
+                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                            // `self_exe_path()` failed and `argv[0]` is the shim
+                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
+                            // the target would recreate the #30711 self-loop; the
+                            // OUTER bun already planted working shims and PATH, so
+                            // leave them untouched.
+                            return Ok(());
+                        }
+                        if argv0_bytes.first() == Some(&b'/') {
+                            *optional_bun_path = argv0_bytes;
+                            argv0
+                        } else {
+                            // No usable target — propagate the OS error when we
+                            // have one, otherwise leave PATH unmodified.
+                            return match result {
+                                Err(e) => Err(e),
+                                Ok(_) => Ok(()),
+                            };
+                        }
+                    }
+                }
             };
 
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             {
                 // Debug-only cleanup; failures are ignored. The EEXIST branch
                 // below already handles a stale dir.
@@ -708,7 +737,7 @@ impl RunCommand {
             // The dir name is ASCII-only, so widen the const `&str` byte-by-
             // byte into a small stack buffer at runtime (Rust macros require a
             // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if cfg!(debug_assertions) {
+            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
                 "bun-node-debug"
             } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
                 "bun-node"
@@ -724,7 +753,7 @@ impl RunCommand {
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();
 
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             {
                 // Debug builds wipe and recreate the bun-node temp dir so the
                 // ALREADY_EXISTS short-circuit below never reuses a stale
@@ -737,7 +766,7 @@ impl RunCommand {
                 // `PathAlreadyExists` after a sibling re-created it. Swallow
                 // the error — the `CreateHardLinkW` retry below already
                 // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::immutable::to_utf8_alloc_with_type(
+                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
                     &target_path_buffer[..dir_slice_len],
                 );
                 let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);

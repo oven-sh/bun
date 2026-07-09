@@ -124,7 +124,7 @@ impl HmrSocket {
                 for &field in HmrTopic::ALL {
                     let bit = field.as_bit();
                     if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        let _ = ws.subscribe(&[field as u8]);
+                        let _ = ws.subscribe(&field.uws_topic());
 
                         // on-subscribe hooks
                         if feature_flags::BAKE_DEBUGGING_FEATURES {
@@ -169,7 +169,7 @@ impl HmrSocket {
                         // Note: this `else if` condition is identical to the `if`
                         // above and is therefore unreachable; likely a bug
                         // (intended: `!new && old` → unsubscribe).
-                        let _ = ws.unsubscribe(&[field as u8]);
+                        let _ = ws.unsubscribe(&field.uws_topic());
                     }
                 }
                 self.on_unsubscribe(!new_bits & self.subscriptions);

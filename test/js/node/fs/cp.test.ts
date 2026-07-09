@@ -1,7 +1,8 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isArm64, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, isArm64, isLinux, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
+import { isAbsolute, join } from "path";
 
 const impls = [
   ["cpSync", fs.cpSync],
@@ -42,8 +43,10 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      expect(e.code).toBe("EISDIR");
-      expect(e.path).toBe(join(basename, "from"));
+      expect(e.code).toBe("ERR_FS_EISDIR");
+      // The path field echoes the caller's string verbatim (node does not
+      // resolve or normalize it), so expect the same concatenation we passed.
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -136,8 +139,9 @@ for (const [name, copy] of impls) {
         force: false,
         errorOnExist: true,
       });
-      expect(e.code).toBe("EEXIST");
-      expect(e.path).toBe(join(basename, "result", "a.txt"));
+      expect(e.code).toBe("ERR_FS_CP_EEXIST");
+      // As above, the path field carries the caller's string verbatim.
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });
@@ -259,6 +263,55 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(join(basename, "to", "abs_link"), "utf8")).toBe("hello");
     });
 
+    test("symlinks - relative target inside the tree is resolved against the source tree", async () => {
+      // node resolves a relative link target against the directory of the
+      // source link and writes the absolute result into the copy. A verbatim
+      // copy of the link (e.g. a whole-tree clonefile) would keep "../a.txt".
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/sub/keep.txt": "keep",
+      });
+      fs.symlinkSync(join("..", "a.txt"), join(basename, "from", "sub", "link"));
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+      const copiedLink = join(basename, "result", "sub", "link");
+      expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(copiedLink)).toBe(join(basename, "from", "a.txt"));
+      expect(fs.readFileSync(copiedLink, "utf8")).toBe("a");
+    });
+
+    test.skipIf(isWindows)("recursive - file and directory modes are preserved into a fresh destination", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/d/f.txt": "x",
+      });
+      fs.chmodSync(join(basename, "from", "d", "f.txt"), 0o600);
+      fs.chmodSync(join(basename, "from", "d"), 0o700);
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+      expect({
+        dirMode: fs.statSync(join(basename, "result", "d")).mode & 0o777,
+        fileMode: fs.statSync(join(basename, "result", "d", "f.txt")).mode & 0o777,
+        content: fs.readFileSync(join(basename, "result", "d", "f.txt"), "utf8"),
+      }).toEqual({
+        dirMode: 0o700,
+        fileMode: 0o600,
+        content: "x",
+      });
+    });
+
+    test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+      });
+      mkfifo(join(basename, "from", "pipe"), 0o666);
+      expect(fs.lstatSync(join(basename, "from", "pipe")).isFIFO()).toBe(true);
+
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",
@@ -267,6 +320,10 @@ for (const [name, copy] of impls) {
 
       await copy(basename + "/from", basename + "/result", {
         filter: (src: string) => {
+          // cp joins child paths with the platform separator, so on Windows
+          // the filter sees backslash-separated paths; normalize for the
+          // assertion.
+          src = src.replaceAll("\\", "/");
           return src.endsWith("/from") || src.includes("a.txt");
         },
         recursive: true,
@@ -353,7 +410,15 @@ for (const [name, copy] of impls) {
         "hey": "hi",
       });
 
-      await copy(basename + "/hey", basename + "/hey");
+      // node rejects copying a file onto itself with ERR_FS_CP_EINVAL;
+      // the regression this guards against is throwing EBUSY instead.
+      let err: any;
+      try {
+        await copy(basename + "/hey", basename + "/hey");
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_FS_CP_EINVAL");
     });
   });
 }
@@ -404,6 +469,54 @@ test.skipIf(!isWindows || isArm64)("cpSync over symlinks does not leak Windows h
   // With the fix the delta is ~0; allow generous slack for unrelated background
   // activity while still catching a per-symlink leak.
   expect(after - before).toBeLessThan(N / 2);
+});
+
+// Junctions are the one link type Windows lets unprivileged processes create, so
+// node_modules trees from npm/pnpm/bun contain them. cpSync must copy them as
+// links (Node's dereference:false default), and creating the copied link must not
+// require symlink privilege (junction fallback).
+test.skipIf(!isWindows)("cpSync recursive copies a junction as a link to the original target", () => {
+  const basename = tempDirWithFiles("cp-junction", {
+    "from/real/inner.txt": "inner",
+  });
+  fs.symlinkSync(join(basename, "from", "real"), join(basename, "from", "junction"), "junction");
+
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+  const copied = join(basename, "result", "junction");
+  expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
+  // Pin the stored link target, not just that creation succeeded: a relative or
+  // otherwise wrong target still produces a link that lstat reports as a symlink.
+  const copiedTarget = fs.readlinkSync(copied);
+  expect(isAbsolute(copiedTarget)).toBe(true);
+  expect(fs.realpathSync(copiedTarget)).toBe(fs.realpathSync(join(basename, "from", "real")));
+  expect(fs.realpathSync(copied)).toBe(fs.realpathSync(join(basename, "from", "real")));
+  expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
+});
+
+// `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells targets on a network share as
+// `\\?\UNC\server\share\...`. The copied link's target must come out as the absolute
+// `\\server\share\...` form (libuv `fs__realpath_handle`), not a dangling relative path.
+test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC target as a working link", () => {
+  const basename = tempDirWithFiles("cp-unc-link", {
+    "from/keep.txt": "keep",
+    "real/inner.txt": "inner",
+  });
+  // Administrative-share spelling of `real`, like the "windows path handling"
+  // suite in fs.test.ts relies on.
+  const real = fs.realpathSync(join(basename, "real"));
+  const uncReal = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+  expect(fs.readFileSync(join(uncReal, "inner.txt"), "utf8")).toBe("inner");
+  fs.symlinkSync(uncReal, join(basename, "from", "link"), "dir");
+
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+  const copied = join(basename, "result", "link");
+  expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
+  const copiedTarget = fs.readlinkSync(copied);
+  expect(isAbsolute(copiedTarget)).toBe(true);
+  expect(copiedTarget).toStartWith("\\\\");
+  expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
 });
 
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
@@ -520,7 +633,7 @@ test.skipIf(!isPosix)(
             console.log("UNEXPECTED-SUCCESS");
             process.exit(1);
           } catch (e) {
-            if (e?.code !== "EISDIR") {
+            if (e?.code !== "ERR_FS_CP_NON_DIR_TO_DIR") {
               console.log("UNEXPECTED-ERROR:" + (e?.code ?? e?.message));
               process.exit(1);
             }
@@ -541,3 +654,65 @@ test.skipIf(!isPosix)(
     expect(exitCode).toBe(0);
   },
 );
+
+test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {
+  using dir = tempDir("cp-dest-mode", {});
+  const destNames = ["dest-copyFile.bin", "dest-cp.bin"];
+  const src = join(String(dir), "src.bin");
+  fs.writeFileSync(src, "", { mode: 0o600 });
+  fs.truncateSync(src, 1 << 26);
+  fs.chmodSync(src, 0o600);
+
+  const modeAtCreation = new Map<string, string>();
+  const { promise: allCreated, resolve: onAllCreated, reject: onWatchError } = Promise.withResolvers<void>();
+  const watcher = fs.watch(String(dir), (_event, filename) => {
+    if (typeof filename !== "string" || !filename.startsWith("dest-") || modeAtCreation.has(filename)) {
+      return;
+    }
+    try {
+      modeAtCreation.set(filename, (fs.statSync(join(String(dir), filename)).mode & 0o777).toString(8));
+    } catch (err) {
+      onWatchError(err);
+      return;
+    }
+    if (modeAtCreation.size === destNames.length) {
+      onAllCreated();
+    }
+  });
+  using _watcher = { [Symbol.dispose]: () => watcher.close() };
+  watcher.on("error", onWatchError);
+
+  const script = `
+    const fs = require("node:fs");
+    process.umask(0o022);
+    fs.copyFileSync("src.bin", "dest-copyFile.bin");
+    fs.cpSync("src.bin", "dest-cp.bin");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+      BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+    allCreated,
+  ]);
+  const finalMode = (name: string) => (fs.statSync(join(String(dir), name)).mode & 0o777).toString(8);
+  expect({
+    atCreation: Object.fromEntries(modeAtCreation),
+    final: Object.fromEntries(destNames.map(name => [name, finalMode(name)])),
+  }).toEqual({
+    atCreation: { "dest-copyFile.bin": "600", "dest-cp.bin": "600" },
+    final: { "dest-copyFile.bin": "600", "dest-cp.bin": "600" },
+  });
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});

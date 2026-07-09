@@ -114,7 +114,10 @@ assert.strictEqual(window.globalProxy.getSetPropThrowing, 50);
 
 assert.throws(
   () => (window.globalProxy.nonWritableProp = 151),
-  new TypeError('Attempted to assign to readonly property.')
+  // JSC's strict-mode readonly-assignment message differs from V8's
+  typeof Bun === 'undefined'
+    ? new TypeError('Cannot redefine property: nonWritableProp')
+    : new TypeError('Attempted to assign to readonly property.')
 );
 assert.strictEqual(window.globalProxy.nonWritableProp, 51);
 

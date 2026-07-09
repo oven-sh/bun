@@ -43,8 +43,9 @@ class SocketFramer {
 
     while (this.bufferedData.length > 0) {
       if (this.state === FramerState.WaitingForLength) {
-        if (this.sizeBufferIndex + this.bufferedData.length < 4) {
-          const remainingBytes = Math.min(4 - this.sizeBufferIndex, this.bufferedData.length);
+        const bufferedLength = this.bufferedData.length;
+        if (this.sizeBufferIndex + bufferedLength < 4) {
+          const remainingBytes = Math.min(4 - this.sizeBufferIndex, bufferedLength);
           this.bufferedData.copy(this.sizeBuffer, this.sizeBufferIndex, 0, remainingBytes);
           this.sizeBufferIndex += remainingBytes;
           this.bufferedData = this.bufferedData.slice(remainingBytes);
@@ -119,8 +120,9 @@ export default function (
   // If the user types --inspect, we print the URL to the console.
   // If the user is using an editor extension, don't print anything.
   if (!isAutomatic) {
-    if (debug.url) {
-      const { protocol, href, host, pathname } = debug.url;
+    const debugUrl = debug.url;
+    if (debugUrl) {
+      const { protocol, href, host, pathname } = debugUrl;
       if (!protocol.includes("unix")) {
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
         Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
@@ -290,8 +292,9 @@ class Debugger {
         },
         drain: _socket => {},
         close: socket => {
-          if (socket.data) {
-            const { backend, framer } = socket.data;
+          const socketData = socket.data;
+          if (socketData) {
+            const { backend, framer } = socketData;
             backend.close();
             framer.reset();
           }
@@ -335,6 +338,19 @@ class Debugger {
       });
     }
 
+    const isUnix = this.#url!.protocol.includes("unix");
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+      return new Response(null, {
+        status: 400, // Bad Request
+      });
+    }
+
+    if (!isOriginAllowed(headers.get("Origin"))) {
+      return new Response(null, {
+        status: 403, // Forbidden
+      });
+    }
+
     switch (pathname) {
       case "/json/version":
         return Response.json(versionInfo());
@@ -343,15 +359,9 @@ class Debugger {
       // TODO?
     }
 
-    if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
+    if (!isUnix && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
-      });
-    }
-
-    if (!isOriginAllowed(headers.get("Origin"))) {
-      return new Response(null, {
-        status: 403, // Forbidden
       });
     }
 
@@ -496,8 +506,9 @@ async function connectToUnixServer(
       drain: _socket => {},
 
       close: socket => {
-        if (socket.data) {
-          const { backend, framer } = socket.data;
+        const socketData = socket.data;
+        if (socketData) {
+          const { backend, framer } = socketData;
           backend.close();
           framer.reset();
         }
@@ -623,6 +634,25 @@ function isOriginAllowed(origin: string | null): boolean {
     return true;
   }
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
+
+function isHostAllowed(host: string | null, expectedHostname: string): boolean {
+  if (!host) {
+    return true;
+  }
+  let hostname: string;
+  try {
+    ({ hostname } = new URL(`ws://${host}`));
+  } catch {
+    return false;
+  }
+  if (hostname === expectedHostname || hostname === "localhost" || hostname === "localhost6") {
+    return true;
+  }
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return true;
+  }
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
 function randomId() {

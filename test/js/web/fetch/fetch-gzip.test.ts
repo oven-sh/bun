@@ -1,6 +1,6 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -174,6 +174,72 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     }
   });
 
+  // The subprocess reads via `res.body` (ReadableStream) so the
+  // ResponseBodyStreaming signal is set, which makes the chunked-encoding
+  // handler call `decompress_chunk` per on_data instead of buffering the
+  // whole body first. Server writes yield to the event loop between chunks
+  // so they arrive in separate TCP segments / on_data callbacks, driving
+  // the decoder across multiple calls.
+  describe.each(["gzip", "deflate", "br", "zstd"] as const)(
+    "streaming %s decompression over multiple chunks",
+    encoding => {
+      it.concurrent.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", async noLibdeflate => {
+        // Body large enough that the compressed form spans many 17-byte writes.
+        const expected = JSON.stringify({
+          data: Array.from({ length: 64 }, (_, i) => ({ i, s: `item-${i}` })),
+        });
+        const compress = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync, zstd: zstdCompressSync };
+        const compressed = compress[encoding](expected);
+        const server = createNetServer(socket => {
+          socket.setNoDelay(true);
+          socket.write(
+            "HTTP/1.1 200 OK\r\n" +
+              `Content-Encoding: ${encoding}\r\n` +
+              "Transfer-Encoding: chunked\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Connection: close\r\n\r\n",
+          );
+          (async () => {
+            for (let i = 0; i < compressed.length; i += 17) {
+              const chunk = compressed.subarray(i, i + 17);
+              socket.write(chunk.length.toString(16) + "\r\n");
+              socket.write(chunk);
+              socket.write("\r\n");
+              await new Promise(r => setImmediate(r));
+            }
+            socket.end("0\r\n\r\n");
+          })().catch(() => socket.destroy());
+        });
+        await once(server.listen(0), "listening");
+        try {
+          const { port } = server.address() as import("node:net").AddressInfo;
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const res = await fetch(process.argv[1]);
+               if (res.status !== 200) throw new Error("status " + res.status);
+               const chunks = [];
+               for await (const c of res.body) chunks.push(c);
+               process.stdout.write(Buffer.concat(chunks).toString("utf8"));`,
+              `http://127.0.0.1:${port}/`,
+            ],
+            env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: expected,
+            stderr: expect.not.stringContaining("error"),
+            exitCode: 0,
+          });
+        } finally {
+          server.close();
+        }
+      });
+    },
+  );
+
   it("unknown Content-Encoding still passes through untouched", async () => {
     const server = createServer((req, res) => {
       res.setHeader("Content-Encoding", "foobar");
@@ -295,6 +361,209 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   socketToClose.end();
   server.stop();
   done();
+});
+
+// A buffered (non-streaming) fetch() must be able to decompress a response
+// body larger than 1 GiB. The HTTP client's Decompressor runs unbounded, the
+// same as the original Zig implementation; only available memory limits it.
+// Run in a subprocess so the ~1 GiB output buffer does not linger in the test
+// process.
+it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works", async () => {
+  const fixture = /* js */ `
+      import { createGzip } from "node:zlib";
+
+      const CHUNK = Buffer.alloc(1024 * 1024);
+      const N = 1025; // 1 GiB + 1 MiB
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        const gz = createGzip();
+        gz.on("data", c => chunks.push(c));
+        gz.on("end", resolve);
+        gz.on("error", reject);
+        let i = 0;
+        const pump = () => {
+          while (i < N) {
+            i++;
+            if (!gz.write(CHUNK)) return void gz.once("drain", pump);
+          }
+          gz.end();
+        };
+        pump();
+      });
+      const body = Buffer.concat(chunks);
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(body, {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Length": String(body.length),
+            },
+          });
+        },
+      });
+      try {
+        const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+        const buf = await res.arrayBuffer();
+        console.log("OK", buf.byteLength);
+      } finally {
+        server.stop(true);
+      }
+    `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: `OK ${1025 * 1024 * 1024}`,
+    stderr: expect.not.stringContaining("error"),
+    exitCode: 0,
+  });
+}, 60_000);
+
+describe("corrupt compressed responses", () => {
+  // A body decompression failure is a body error: fetch() must resolve (status
+  // and headers are available) and the body reader rejects. Previously, when
+  // head+body arrived in a single read, the decompress error failed the HTTP
+  // task before the head reached JS and fetch() itself rejected, so the error
+  // surface depended on packet timing.
+  const corrupt = (compress: (b: Buffer) => Buffer) => {
+    const payload = compress(Buffer.alloc(18000, "The quick brown fox jumps over the lazy dog. "));
+    // Flip a run of early bytes so every codec reports a decode error (br/zstd
+    // store this input near-literally, so a single mid-stream flip passes).
+    for (let i = 2; i < 8; i++) payload[i] ^= 0xff;
+    return payload;
+  };
+  const bodies: Record<string, [Buffer, string]> = {
+    gzip: [corrupt(gzipSync), "ZlibError"],
+    deflate: [corrupt(deflateSync), "ZlibError"],
+    br: [corrupt(brotliCompressSync), "BrotliDecompressionError"],
+    zstd: [corrupt(zstdCompressSync), "ZstdDecompressionError"],
+  };
+  const listen = (srv: import("node:net").Server) =>
+    new Promise<number>(r => srv.listen(0, "127.0.0.1", () => r((srv.address() as { port: number }).port)));
+
+  for (const [encoding, [body, errorCode]] of Object.entries(bodies)) {
+    for (const framing of ["content-length", "chunked"] as const) {
+      it(`${encoding} ${framing}: fetch() resolves, body read rejects`, async () => {
+        const head =
+          framing === "content-length"
+            ? `HTTP/1.1 200 OK\r\nx-marker: present\r\nContent-Encoding: ${encoding}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`
+            : `HTTP/1.1 200 OK\r\nx-marker: present\r\nContent-Encoding: ${encoding}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n`;
+        const payload =
+          framing === "content-length"
+            ? body
+            : Buffer.concat([Buffer.from(body.length.toString(16) + "\r\n"), body, Buffer.from("\r\n0\r\n\r\n")]);
+
+        // Single write so head+body land in one client read (the case that
+        // previously rejected fetch()). The split-read timing was already
+        // correct and is equivalent after this fix.
+        const srv = createNetServer(sock => {
+          sock.on("error", () => {});
+          sock.end(Buffer.concat([Buffer.from(head), payload]));
+        });
+        const port = await listen(srv);
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/`);
+          expect(res.status).toBe(200);
+          expect(res.headers.get("x-marker")).toBe("present");
+          const bodyErr = await res.arrayBuffer().then(
+            () => null,
+            e => e,
+          );
+          expect(bodyErr).toBeInstanceOf(Error);
+          expect((bodyErr as { code?: string }).code).toBe(errorCode);
+          // The streaming body reader must surface the same failure.
+          const res2 = await fetch(`http://127.0.0.1:${port}/`);
+          expect(res2.status).toBe(200);
+          const reader = res2.body!.getReader();
+          let streamErr: unknown = null;
+          try {
+            while (!(await reader.read()).done) {}
+          } catch (e) {
+            streamErr = e;
+          }
+          expect(streamErr).toBeInstanceOf(Error);
+          expect((streamErr as { code?: string }).code).toBe(errorCode);
+        } finally {
+          srv.close();
+        }
+      });
+    }
+  }
+
+  it("followed redirect with a malformed chunked body rejects fetch()", async () => {
+    // The intermediate 3xx head is not the caller's Response under
+    // redirect:"follow", so a body parse failure there must reject fetch()
+    // rather than resolving with the 302.
+    const srv = createNetServer(sock => {
+      sock.on("error", () => {});
+      sock.end(
+        "HTTP/1.1 302 Found\r\n" +
+          "Location: http://127.0.0.1:1/unreached\r\n" +
+          "Transfer-Encoding: chunked\r\n" +
+          "Connection: close\r\n\r\n" +
+          "ZZ\r\n",
+      );
+    });
+    const port = await listen(srv);
+    try {
+      const followErr = await fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" }).then(
+        r => ({ status: r.status }),
+        e => e,
+      );
+      expect(followErr).toBeInstanceOf(Error);
+      expect((followErr as { code?: string }).code).toBe("InvalidHTTPResponse");
+
+      // With redirect:"manual" the 302 *is* the final response.
+      const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("http://127.0.0.1:1/unreached");
+      const bodyErr = await res.arrayBuffer().then(
+        () => null,
+        e => e,
+      );
+      expect(bodyErr).toBeInstanceOf(Error);
+      expect((bodyErr as { code?: string }).code).toBe("InvalidHTTPResponse");
+    } finally {
+      srv.close();
+    }
+  });
+
+  it("redirect loop with a non-empty body rejects with TooManyRedirects", async () => {
+    // Real-world 302s carry an HTML body, which routes the intermediate
+    // head through clone_metadata(); hitting the redirect limit must still
+    // reject fetch() rather than resolve with that 302.
+    const body = "<html><body>Moved.</body></html>";
+    const srv = createNetServer(sock => {
+      sock.on("error", () => {});
+      let acc = "";
+      sock.on("data", d => {
+        acc += d;
+        if (!acc.includes("\r\n\r\n")) return;
+        acc = "";
+        sock.end(
+          `HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:${port}/loop\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
+        );
+      });
+    });
+    const port = await listen(srv);
+    try {
+      const err = await fetch(`http://127.0.0.1:${port}/`).then(
+        r => ({ status: r.status }),
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { code?: string }).code).toBe("TooManyRedirects");
+    } finally {
+      srv.close();
+    }
+  });
 });
 
 describe("empty compressed responses", () => {

@@ -182,6 +182,38 @@ impl Drop for Bytes {
 
 // No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
 
+/// The integer branches of `Value::from_js` validate against the full range of
+/// the target type, so the bounds are derived from `T` rather than repeated at
+/// every call site.
+fn int_range<T: bun_core::Integer>(field_name: &'static [u8]) -> IntegerRange {
+    IntegerRange {
+        min: T::MIN_I128,
+        max: T::MAX_I128,
+        field_name,
+        ..Default::default()
+    }
+}
+
+fn validate_int<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_integer_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
+
+fn validate_bigint<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_big_int_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
+
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
@@ -277,99 +309,24 @@ impl Value {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {
                 if unsigned {
-                    return Ok(Value::Ushort(
-                        global_object
-                            .validate_integer_range::<u16>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u16::MIN as i128,
-                                    max: u16::MAX as i128,
-                                    field_name: b"u16",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ushort(validate_int(global_object, value, b"u16")?))
+                } else {
+                    Ok(Value::Short(validate_int(global_object, value, b"i16")?))
                 }
-                Ok(Value::Short(
-                    global_object
-                        .validate_integer_range::<i16>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i16::MIN as i128,
-                                max: i16::MAX as i128,
-                                field_name: b"i16",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONG => {
                 if unsigned {
-                    return Ok(Value::Uint(
-                        global_object
-                            .validate_integer_range::<u32>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u32::MIN as i128,
-                                    max: u32::MAX as i128,
-                                    field_name: b"u32",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Uint(validate_int(global_object, value, b"u32")?))
+                } else {
+                    Ok(Value::Int(validate_int(global_object, value, b"i32")?))
                 }
-                Ok(Value::Int(
-                    global_object
-                        .validate_integer_range::<i32>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i32::MIN as i128,
-                                max: i32::MAX as i128,
-                                field_name: b"i32",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONGLONG => {
                 if unsigned {
-                    return Ok(Value::Ulong(
-                        global_object
-                            .validate_big_int_range::<u64>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: 0,
-                                    max: u64::MAX as i128,
-                                    field_name: b"u64",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ulong(validate_bigint(global_object, value, b"u64")?))
+                } else {
+                    Ok(Value::Long(validate_bigint(global_object, value, b"i64")?))
                 }
-                Ok(Value::Long(
-                    global_object
-                        .validate_big_int_range::<i64>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i64::MIN as i128,
-                                max: i64::MAX as i128,
-                                field_name: b"i64",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
 
             FieldType::MYSQL_TYPE_FLOAT => Ok(Value::Float(

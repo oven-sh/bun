@@ -32,6 +32,7 @@
     "../scripts/glob-sources.ts",
     "../scripts/build/error.ts",
     "bake/exit-code-map.mjs",
+    "docker/prestart-map.mjs",
     "../src/runtime/bake/client/**.ts"
   ],
   "exclude": [

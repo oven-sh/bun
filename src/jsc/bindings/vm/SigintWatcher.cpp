@@ -164,6 +164,13 @@ void SigintWatcher::unregisterReceiver(SigintReceiver* module)
 
 void SigintWatcher::ref()
 {
+    // ref()/deref() race across worker_threads (each worker registers its own
+    // global while running vm code with breakOnSigint). The lock makes the
+    // count and the paired install()/uninstall() transition atomic; a lost
+    // increment would otherwise let one worker's deref() tear down the
+    // watcher thread while another worker still holds a reference, and the
+    // underflowing count would trip the ASSERT below.
+    WTF::Locker locker { m_refCountMutex };
     if (m_refCount++ == 0) {
         install();
     }
@@ -171,6 +178,7 @@ void SigintWatcher::ref()
 
 void SigintWatcher::deref()
 {
+    WTF::Locker locker { m_refCountMutex };
     ASSERT(m_refCount > 0);
     if (--m_refCount == 0) {
         uninstall();

@@ -637,7 +637,7 @@ describe.concurrent("socket", () => {
         }),
       ).toThrow(
         expect.objectContaining({
-          code: "ERR_BORINGSSL",
+          code: "ERR_OSSL_PEM_NO_START_LINE",
         }),
       );
 
@@ -651,7 +651,7 @@ describe.concurrent("socket", () => {
         }),
       ).toThrow(
         expect.objectContaining({
-          code: "ERR_BORINGSSL",
+          code: "ERR_OSSL_PEM_NO_START_LINE",
         }),
       );
 
@@ -666,7 +666,7 @@ describe.concurrent("socket", () => {
         }),
       ).toThrow(
         expect.objectContaining({
-          code: "ERR_BORINGSSL",
+          code: "ERR_OSSL_PEM_NO_START_LINE",
         }),
       );
 
@@ -755,6 +755,149 @@ describe.concurrent("socket", () => {
       expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
     }
   });
+  it("upgradeTLS feeds the initialData bytes captured at call time", async () => {
+    const handshake = Promise.withResolvers<void>();
+    const echoed = Promise.withResolvers<string>();
+    const serverTls = { key: tls.key, cert: tls.cert };
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(raw, chunk) {
+          raw.upgradeTLS({
+            isServer: true,
+            initialData: chunk,
+            get tls() {
+              chunk.fill(0);
+              return serverTls;
+            },
+            socket: {
+              open() {},
+              data(secure: Socket, payload: Buffer) {
+                secure.write(payload);
+              },
+              error(_secure: Socket, err: Error) {
+                handshake.reject(err);
+                echoed.reject(err);
+              },
+              close() {
+                handshake.reject(new Error("server socket closed before the echo completed"));
+                echoed.reject(new Error("server socket closed before the echo completed"));
+              },
+            },
+          } as any);
+        },
+        error(_raw, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        close() {},
+      },
+    });
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      tls: { rejectUnauthorized: false },
+      socket: {
+        open() {},
+        handshake(socket, success, authorizationError) {
+          if (!success) {
+            handshake.reject(authorizationError);
+            return;
+          }
+          handshake.resolve();
+          socket.write("ping");
+        },
+        data(_socket, payload) {
+          echoed.resolve(payload.toString());
+        },
+        error(_socket, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        connectError(_socket, err) {
+          handshake.reject(err);
+          echoed.reject(err);
+        },
+        close() {
+          handshake.reject(new Error("client socket closed before the echo completed"));
+          echoed.reject(new Error("client socket closed before the echo completed"));
+        },
+      },
+    });
+    try {
+      await handshake.promise;
+      expect(await echoed.promise).toBe("ping");
+    } finally {
+      client.end();
+    }
+  });
+  it("does not use-after-free when upgradeTLS is called synchronously inside the open handler", async () => {
+    // https://github.com/oven-sh/bun/issues/33387
+    // Calling upgradeTLS from inside the socket's own open callback transfers
+    // the per-connection Handlers (and its OWNS_HANDLERS free) to the raw TLS
+    // twin while the in-flight open scope still holds that same pointer. The
+    // scope used to free it on exit, then the twin double-freed it at GC.
+    using dir = tempDir("upgrade-tls-in-open", {
+      "fixture.mjs": `
+import net from "node:net";
+
+const server = net.createServer(sock => { sock.on("error", () => {}); sock.on("data", () => {}); });
+await new Promise(res => server.listen(0, "127.0.0.1", res));
+const port = server.address().port;
+
+const TLS = {
+  socket: { open() {}, data() {}, error() {}, close() {}, handshake() {}, end() {}, timeout() {}, drain() {} },
+  tls: { rejectUnauthorized: false, servername: "localhost" },
+};
+
+let done = 0;
+// The UAF fires at the first Bun.gc(true) that finalizes a raw twin whose
+// handlers the open scope freed; a small workload triggers it deterministically
+// (the unfixed binary segfaults well before completing).
+const TOTAL = 64, CONCURRENCY = 16;
+
+function oneCycle() {
+  return new Promise(resolve => {
+    let settled = false;
+    const fin = () => { if (settled) return; settled = true; resolve(); };
+    Bun.connect({
+      hostname: "127.0.0.1", port,
+      socket: {
+        open(sock) {
+          try {
+            const result = sock.upgradeTLS(TLS);
+            if (result) { const [raw, tls] = result; try { tls.end(); } catch {} try { raw.end(); } catch {} }
+          } catch {}
+          try { sock.end(); } catch {}
+          fin();
+        },
+        connectError() { fin(); }, error() { fin(); }, close() { fin(); }, data() {},
+      },
+    });
+  });
+}
+async function worker() { while (done < TOTAL) { done++; await oneCycle(); if (done % 8 === 0) Bun.gc(true); } }
+await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+Bun.gc(true); server.close();
+console.log("completed", done, "cycles without crashing");
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("completed 64 cycles without crashing");
+    expect(exitCode).toBe(0);
+  }, 30_000); // subprocess + debug/ASAN startup is slow
 });
 
 it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
@@ -1555,6 +1698,209 @@ it("node:net connect() reusing a server-accepted handle keeps the listener's han
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("STEP1\nSTEP2:connected+data\nSTEP3:second-accept\nDONE\n");
+  expect(exitCode).toBe(0);
+  void stderr;
+});
+
+it.concurrent("setTypeOfService validates its argument instead of asserting", async () => {
+  // The unfixed native binding called JSValue::asInt32() on the raw argument,
+  // which asserts isInt32() on assert builds and silently feeds garbage to
+  // setsockopt on release builds. It must throw a TypeError/RangeError.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open() {}, data() {}, close() {}, error() {} },
+        });
+        const done = Promise.withResolvers();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open(s) {
+              const results = [];
+              const check = (label, fn) => {
+                try {
+                  fn();
+                  results.push(label + "=no-throw");
+                } catch (e) {
+                  results.push(label + "=" + (e?.code ?? e?.constructor?.name));
+                }
+              };
+              check("object", () => s.setTypeOfService({}));
+              check("string", () => s.setTypeOfService("x"));
+              check("nan", () => s.setTypeOfService(NaN));
+              check("neg", () => s.setTypeOfService(-1));
+              check("big", () => s.setTypeOfService(256));
+              check("float", () => s.setTypeOfService(1.5));
+              check("ok", () => s.setTypeOfService(0x10));
+              check("get", () => {
+                const v = s.getTypeOfService();
+                if (!Number.isInteger(v)) throw new TypeError("not an int");
+              });
+              console.log(results.join("\\n"));
+              done.resolve();
+            },
+            data() {},
+            close() {},
+            error(_s, e) { done.reject(e); },
+            connectError(_s, e) { done.reject(e); },
+          },
+        });
+        await done.promise;
+        client.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: [
+      "object=ERR_INVALID_ARG_TYPE",
+      "string=ERR_INVALID_ARG_TYPE",
+      "nan=ERR_INVALID_ARG_TYPE",
+      "neg=ERR_OUT_OF_RANGE",
+      "big=ERR_OUT_OF_RANGE",
+      "float=ERR_INVALID_ARG_TYPE",
+      "ok=no-throw",
+      "get=no-throw",
+    ],
+    exitCode: 0,
+  });
+  void stderr;
+});
+
+it("socket handler validation errors throw instead of crashing", async () => {
+  // Handlers protects its callbacks only after validation succeeds, so the
+  // validation error paths must throw without tearing down a never-protected
+  // Handlers (debug builds assert on the protect/unprotect balance). Run in
+  // a subprocess so a panic is observable as a non-zero exit instead of
+  // killing the test runner.
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        for (const socket of [{}, { data() {}, end: 123 }]) {
+          for (const api of ["connect", "listen"]) {
+            try {
+              Bun[api]({ hostname: "localhost", port: 0, socket });
+            } catch (e) {
+              console.log(api + ":" + e.message);
+            }
+          }
+        }
+        Bun.gc(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(
+    'connect:Expected at least "data" or "drain" callback\n' +
+      'listen:Expected at least "data" or "drain" callback\n' +
+      'connect:Expected "onEnd" callback to be a function\n' +
+      'listen:Expected "onEnd" callback to be a function\n',
+  );
+  expect(exitCode).toBe(0);
+  void stderr;
+});
+
+// https://bun-p9.sentry.io/issues/7573683042/ (BUN-3PK7)
+it("socket handler validation errors don't steal GC protection from live sockets sharing the same callbacks", async () => {
+  // node:net passes one module-level handler table to every connection, so
+  // every live socket protects the same JSFunction identities. A Handlers
+  // dropped on a validation error before protect() ran must not gcUnprotect
+  // those shared functions, or GC collects them while a live socket's
+  // Handlers still points at the freed cells and the socket's finalizer
+  // later dereferences cell->vm() inside Bun__JSValue__unprotect.
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let listener;
+        let errors = 0;
+        (function setup() {
+          // Function expressions (not declarations) so this IIFE is their
+          // only JS root; once setup() returns, the listener's Handlers'
+          // gcProtect is the sole thing keeping them alive.
+          const open = function (s) { s.write("hello"); };
+          const close = function () {};
+          const data = function (s) { s.end(); };
+          const drain = function () {};
+          const error = function () {};
+          const handshake = function () {};
+
+          listener = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: { open, close, data, drain, error, handshake },
+          });
+
+          // Each validation error drops a Handlers whose open/close/data/
+          // drain/error/handshake slots were assigned from the shared
+          // functions but never protect()ed. On an unguarded build each
+          // such drop issues one gcUnprotect per shared callback and the
+          // first one zeroes the listener's protection.
+          for (let i = 0; i < 4; i++) {
+            for (const api of ["connect", "listen"]) {
+              try {
+                Bun[api]({
+                  hostname: "127.0.0.1",
+                  port: api === "connect" ? listener.port : 0,
+                  socket: { open, close, data, drain, error, handshake, session: 1 },
+                });
+              } catch { errors++; }
+            }
+          }
+        })();
+        console.log("errors=" + errors);
+
+        // No JS roots remain for the shared callbacks; if protection was
+        // stolen they are now collectible.
+        for (let i = 0; i < 20; i++) Bun.gc(true);
+
+        // The listener's Handlers still holds the shared callbacks; they
+        // must be live for open -> data -> end to round-trip.
+        const { promise, resolve, reject } = Promise.withResolvers();
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open() {},
+            data(s, b) { resolve(b.toString()); s.end(); },
+            close() {},
+            error(_s, e) { reject(e); },
+            connectError(_s, e) { reject(e); },
+          },
+        }).then(s => { s; }, reject);
+        console.log("received=" + (await promise));
+
+        // And they must survive the listener's own teardown.
+        listener.stop(true);
+        listener = null;
+        for (let i = 0; i < 20; i++) Bun.gc(true);
+        console.log("done");
+      `,
+    ],
+    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("errors=8\nreceived=hello\ndone\n");
   expect(exitCode).toBe(0);
   void stderr;
 });

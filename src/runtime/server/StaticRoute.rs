@@ -15,7 +15,7 @@ use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::server::{AnyServer, write_status};
+use crate::server::{AnyServer, HTTPStatusText, write_status};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
@@ -156,6 +156,13 @@ impl StaticRoute {
         // unsafe in `JSValue`); every `Response` accessor used below takes
         // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
+            if !HTTPStatusText::is_sendable(response.status_code()) {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Cannot use a Response with status {} as a static route. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+                    response.status_code(),
+                )));
+            }
+
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();
@@ -214,15 +221,22 @@ impl StaticRoute {
                 h.fast_remove(HTTPHeaderName::ContentLength);
             }
 
-            let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                bun_http_jsc::headers_jsc::from_fetch_headers(Some(h), any_blob_content_type(&blob))
-            } else {
-                Headers::default()
-            };
-
-            if was_string && headers.get_content_type().is_none() {
-                headers.append(b"Content-Type", b"text/plain; charset=utf-8");
+            // Consuming the body left a plain `Blob` behind, which no longer implies
+            // the `text/plain` a string body carried. Record it on the response's own
+            // headers so re-registering the same `Response` serves the same type.
+            if was_string {
+                let text_mime = bun_http_types::MimeType::TEXT;
+                response.get_or_create_headers(global_this)?.put_default(
+                    HTTPHeaderName::ContentType,
+                    &bun_core::String::ascii(text_mime.value.as_ref()),
+                    global_this,
+                )?;
             }
+
+            let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+                response.get_init_headers(),
+                any_blob_content_type(&blob),
+            );
 
             // Generate ETag if not already present
             if headers.get(b"etag").is_none() {
@@ -284,7 +298,15 @@ impl StaticRoute {
 
     fn render_metadata_and_end(&self, resp: AnyResponse) {
         self.render_metadata(resp);
-        resp.write_header_int(b"Content-Length", self.cached_blob_size);
+        // `do_render_blob_corked` drops the body for a null-body status, so
+        // HEAD reports the zero bytes GET actually sends (RFC 9110 §9.3.2).
+        // (For 1xx/204 uWS suppresses the Content-Length header entirely.)
+        let size = if HTTPStatusText::is_null_body(self.status_code) {
+            0
+        } else {
+            self.cached_blob_size
+        };
+        resp.write_header_int(b"Content-Length", size);
         resp.end_without_body(resp.should_close_connection());
     }
 
@@ -408,6 +430,13 @@ impl StaticRoute {
 
     fn do_render_blob_corked(&self, resp: AnyResponse, did_finish: &mut bool) {
         self.render_metadata(resp);
+        // A null-body status never puts body bytes on the wire, the same drop
+        // `render` and `FileRoute` already do. Writing them here with no
+        // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
+        if HTTPStatusText::is_null_body(self.status_code) {
+            *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            return;
+        }
         self.render_bytes(resp, did_finish);
     }
 
@@ -480,16 +509,7 @@ impl StaticRoute {
     }
 
     fn render_metadata(&self, resp: AnyResponse) {
-        let mut status = self.status_code;
-        let size = self.cached_blob_size;
-
-        status = if status == 200 && size == 0 && !self.blob.is_detached() {
-            204
-        } else {
-            status
-        };
-
-        self.do_write_status(status, resp);
+        self.do_write_status(self.status_code, resp);
         self.do_write_headers(resp);
     }
 

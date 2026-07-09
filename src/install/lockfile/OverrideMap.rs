@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use bun_collections::ArrayHashMap;
@@ -10,12 +9,13 @@ use bun_output::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
 
+use super::package::value_loc_of;
 use super::{StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
 // is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
-use crate::bun_json::{Expr, ExprData};
+use crate::bun_json::Expr;
 
 declare_scope!(OverrideMap, visible);
 
@@ -38,6 +38,22 @@ impl OverrideMap {
             return None;
         }
         self.map.get(&name_hash).map(|dep| dep.version.clone())
+    }
+
+    /// Like `get().is_some()` but also compares the stored name so a hash
+    /// collision cannot produce a false positive.
+    pub(crate) fn contains_name(
+        &self,
+        name_hash: PackageNameHash,
+        name: &[u8],
+        buf: &[u8],
+    ) -> bool {
+        if self.map.count() == 0 {
+            return false;
+        }
+        self.map
+            .get(&name_hash)
+            .is_some_and(|dep| dep.name.slice(buf) == name)
     }
 
     // Every caller already holds `&mut self` on `lockfile.overrides`, so
@@ -87,67 +103,23 @@ impl OverrideMap {
     // only call site.
     pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
-            let ExprData::EObject(obj) = &overrides.expr.data else {
-                return;
-            };
-
-            for entry in obj.properties.slice() {
-                builder.count(
-                    entry
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked"),
-                );
-                match &entry
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .data
-                {
-                    ExprData::EString(s) => {
-                        builder.count(&s.data);
+            overrides.expr.for_each_property(|key, _key_loc, value| {
+                builder.count(key);
+                if let Some(s) = value.as_utf8_string_literal() {
+                    builder.count(s);
+                } else if let Some(dot) = value.as_property(b".") {
+                    if let Some(s) = dot.expr.as_utf8_string_literal() {
+                        builder.count(s);
                     }
-                    ExprData::EObject(_) => {
-                        if let Some(dot) = entry
-                            .value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .as_property(b".")
-                        {
-                            if let Some(s) = dot.expr.as_utf8_string_literal() {
-                                builder.count(s);
-                            }
-                        }
-                    }
-                    _ => {}
                 }
-            }
+            });
         } else if let Some(resolutions) = expr.as_property(b"resolutions") {
-            let ExprData::EObject(obj) = &resolutions.expr.data else {
-                return;
-            };
-
-            for entry in obj.properties.slice() {
-                builder.count(
-                    entry
-                        .key
-                        .as_ref()
-                        .expect("infallible: prop has key")
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked"),
-                );
-                let Some(v) = entry
-                    .value
-                    .as_ref()
-                    .expect("infallible: prop has value")
-                    .as_utf8_string_literal()
-                else {
-                    continue;
-                };
-                builder.count(v);
-            }
+            resolutions.expr.for_each_property(|key, _key_loc, value| {
+                builder.count(key);
+                if let Some(v) = value.as_utf8_string_literal() {
+                    builder.count(v);
+                }
+            });
         }
     }
 
@@ -200,78 +172,81 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
-        let ExprData::EObject(obj) = &expr.data else {
+        if !expr.is_object() {
             log.add_warning_fmt(
                 Some(source),
-                expr.loc,
+                value_loc_of(source, expr.loc),
                 format_args!("\"overrides\" must be an object"),
             );
             return Err(bun_core::err!("Invalid"));
-        };
+        }
 
-        self.map
-            .ensure_unused_capacity(obj.properties.len_u32() as usize)?;
+        self.map.ensure_unused_capacity(expr.property_count())?;
 
-        'props: for prop in obj.properties.slice() {
-            let key = prop.key.as_ref().expect("infallible: prop has key");
-            let k = key
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
+        expr.try_for_each_property(|k, key_loc, value_expr| {
             if k.is_empty() {
                 log.add_warning_fmt(
                     Some(source),
-                    key.loc,
+                    key_loc,
                     format_args!("Missing overridden package name"),
                 );
-                continue;
+                return Ok(());
             }
 
             let name_hash = SemverBuilder::string_hash(k);
 
-            let value: Expr = 'value: {
+            let value_expr_loc =
+                crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value_expr);
+            let (value, value_loc): (Expr, _) = 'value: {
                 // for one level deep, we will only support a string and  { ".": value }
-                let value_expr = prop.value.as_ref().expect("infallible: prop has value");
                 if value_expr.data.is_e_string() {
-                    break 'value *value_expr;
-                } else if let ExprData::EObject(value_obj) = &value_expr.data {
+                    break 'value (value_expr, value_expr_loc);
+                } else if value_expr.is_object() {
                     if let Some(dot) = value_expr.as_property(b".") {
                         if dot.expr.data.is_e_string() {
-                            if value_obj.properties.len_u32() > 1 {
+                            if value_expr.property_count() > 1 {
                                 log.add_warning_fmt(
                                     Some(source),
-                                    value_expr.loc,
+                                    value_expr_loc,
                                     format_args!(
                                         "Bun currently does not support nested \"overrides\""
                                     ),
                                 );
                             }
-                            break 'value dot.expr;
+                            break 'value (
+                                dot.expr,
+                                crate::bun_json::value_loc_of_property(
+                                    &source.contents,
+                                    dot.loc,
+                                    &dot.expr,
+                                ),
+                            );
                         } else {
                             log.add_warning_fmt(
                                 Some(source),
-                                value_expr.loc,
+                                value_expr_loc,
                                 format_args!(
                                     "Invalid override value for \"{}\"",
                                     bstr::BStr::new(k)
                                 ),
                             );
-                            continue 'props;
+                            return Ok(());
                         }
                     } else {
                         log.add_warning_fmt(
                             Some(source),
-                            value_expr.loc,
+                            value_expr_loc,
                             format_args!("Bun currently does not support nested \"overrides\""),
                         );
-                        continue 'props;
+                        return Ok(());
                     }
                 }
                 log.add_warning_fmt(
                     Some(source),
-                    value_expr.loc,
+                    value_expr_loc,
                     format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)),
                 );
-                continue 'props;
+                return Ok(());
             };
 
             let version_str = value
@@ -281,10 +256,10 @@ impl OverrideMap {
                 // TODO(dylan-conway): apply .patch files to packages
                 log.add_warning_fmt(
                     Some(source),
-                    key.loc,
+                    key_loc,
                     format_args!("Bun currently does not support patched package \"overrides\""),
                 );
-                continue;
+                return Ok(());
             }
 
             if let Some(version) = parse_override_value(
@@ -293,7 +268,7 @@ impl OverrideMap {
                 pm,
                 root_package,
                 source,
-                value.loc,
+                value_loc,
                 log,
                 k,
                 version_str,
@@ -301,8 +276,8 @@ impl OverrideMap {
             )? {
                 self.map.put_assume_capacity(name_hash, version);
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
@@ -317,43 +292,38 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
-        let ExprData::EObject(obj) = &expr.data else {
+        if !expr.is_object() {
             log.add_warning_fmt(
                 Some(source),
-                expr.loc,
+                value_loc_of(source, expr.loc),
                 format_args!("\"resolutions\" must be an object with string values"),
             );
             return Ok(());
-        };
-        self.map
-            .ensure_unused_capacity(obj.properties.len_u32() as usize)?;
-        for prop in obj.properties.slice() {
-            let key = prop.key.as_ref().expect("infallible: prop has key");
-            let mut k = key
-                .as_utf8_string_literal()
-                .expect("infallible: is_string checked");
+        }
+        self.map.ensure_unused_capacity(expr.property_count())?;
+        expr.try_for_each_property(|key, key_loc, value| {
+            let mut k = key;
             if k.starts_with(b"**/") {
                 k = &k[3..];
             }
             if k.is_empty() {
                 log.add_warning_fmt(
                     Some(source),
-                    key.loc,
+                    key_loc,
                     format_args!("Missing resolution package name"),
                 );
-                continue;
+                return Ok(());
             }
-            let value = prop.value.as_ref().expect("infallible: prop has value");
-            let ExprData::EString(value_str) = &value.data else {
+            let Some(version_str) = value.as_utf8_string_literal() else {
                 log.add_warning_fmt(
                     Some(source),
-                    key.loc,
+                    key_loc,
                     format_args!(
                         "Expected string value for resolution \"{}\"",
                         bstr::BStr::new(k)
                     ),
                 );
-                continue;
+                return Ok(());
             };
             // currently we only support one level deep, so we should error if there are more than one
             // - "foo/bar":
@@ -362,37 +332,36 @@ impl OverrideMap {
                 let Some(first_slash) = strings::index_of_char(k, b'/') else {
                     log.add_warning_fmt(
                         Some(source),
-                        key.loc,
+                        key_loc,
                         format_args!("Invalid package name \"{}\"", bstr::BStr::new(k)),
                     );
-                    continue;
+                    return Ok(());
                 };
                 if strings::index_of_char(&k[first_slash as usize + 1..], b'/').is_some() {
                     log.add_warning_fmt(
                         Some(source),
-                        key.loc,
+                        key_loc,
                         format_args!("Bun currently does not support nested \"resolutions\""),
                     );
-                    continue;
+                    return Ok(());
                 }
             } else if strings::index_of_char(k, b'/').is_some() {
                 log.add_warning_fmt(
                     Some(source),
-                    key.loc,
+                    key_loc,
                     format_args!("Bun currently does not support nested \"resolutions\""),
                 );
-                continue;
+                return Ok(());
             }
 
-            let version_str = value_str.data.slice();
             if version_str.starts_with(b"patch:") {
                 // TODO(dylan-conway): apply .patch files to packages
                 log.add_warning_fmt(
                     Some(source),
-                    key.loc,
+                    key_loc,
                     format_args!("Bun currently does not support patched package \"resolutions\""),
                 );
-                continue;
+                return Ok(());
             }
 
             if let Some(version) = parse_override_value(
@@ -401,7 +370,7 @@ impl OverrideMap {
                 pm,
                 root_package,
                 source,
-                value.loc,
+                crate::bun_json::value_loc_of_property(&source.contents, key_loc, &value),
                 log,
                 k,
                 version_str,
@@ -410,8 +379,8 @@ impl OverrideMap {
                 let name_hash = SemverBuilder::string_hash(k);
                 self.map.put_assume_capacity(name_hash, version);
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 

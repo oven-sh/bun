@@ -27,6 +27,93 @@ describe.concurrent("Streaming body via", () => {
     expect(chunks).toHaveLength(2);
   });
 
+  test("a hand-written async iterator without return() completes", async () => {
+    // https://github.com/oven-sh/bun/pull/33193: the native converter crashed here.
+    let i = 0;
+    const text = await new Response({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.resolve(i++ === 0 ? { value: "a", done: false } : { done: true }),
+      }),
+    }).text();
+    expect(text).toBe("a");
+  });
+
+  // An erroring async-iterable body delivers the error to the consumer exactly once. These assert
+  // in a subprocess because a second, internal rejection would surface as an unhandledRejection.
+  test("an iterator whose next() rejects and has no throw() rejects the body", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await new Response({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("nrej")), return: () => Promise.resolve({ done: true }) }) }).text().then(() => console.log("resolved"), e => console.log("rejected", e.constructor.name, e.message));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected Error nrej");
+    expect(stderr).not.toContain("nrej");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a throwing async generator body does not leak an unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `async function* gen() {
+          yield new Uint8Array([1, 2, 3]);
+          throw new Error("gen boom");
+        }
+        await new Response(gen()).text().then(
+          () => { throw new Error("should have rejected"); },
+          e => console.log("caught:", e.message),
+        );`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught: gen boom\n");
+    // A second, internal rejection would print the error again and exit nonzero.
+    expect(stderr).not.toContain("gen boom");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an iterator returning thenables (non-native promises) streams", async () => {
+    let n = 0;
+    const iterator = {
+      next() {
+        const i = n++;
+        return {
+          then(resolve: (v: any) => void) {
+            queueMicrotask(() => resolve(i < 3 ? { value: "t" + i, done: false } : { done: true }));
+          },
+        };
+      },
+      return: () => Promise.resolve({ done: true }),
+    };
+    const text = await new Response({ [Symbol.asyncIterator]: () => iterator }).text();
+    expect(text).toBe("t0t1t2");
+  });
+
+  test("a non-object iteration result rejects with a TypeError", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await new Response({ [Symbol.asyncIterator]: () => ({ next: async () => undefined }) }).text().then(() => console.log("resolved"), e => console.log("rejected", e.constructor.name));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("rejected TypeError");
+    expect(stderr).not.toContain("TypeError");
+    expect(exitCode).toBe(0);
+  });
+
   test("async generator function throws an error but continues to send the headers", async () => {
     const onMessage = mock(async url => {
       const response = await fetch(url);

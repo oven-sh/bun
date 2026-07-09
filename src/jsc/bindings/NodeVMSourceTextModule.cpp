@@ -63,7 +63,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     JSValue cachedDataValue = args.at(5);
     WTF::Vector<uint8_t> cachedData;
     if (!cachedDataValue.isUndefined() && !extractCachedData(cachedDataValue, cachedData)) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
         return nullptr;
     }
 
@@ -199,6 +199,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     }
 
     m_moduleRecord.set(vm, this, moduleRecord);
+    m_hasTopLevelAwait = node->features() & AwaitFeature;
     m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
@@ -390,7 +391,10 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     UNUSED_PARAM(scriptFetcher);
-    status(Status::Linked);
+    m_linkCalled = true;
+    // Status stays Unlinked: matching Node, only instantiate() flips a
+    // SourceTextModule to "linked" (linkRequests() alone must leave the
+    // module unlinked, and a failed instantiate() must remain retryable).
     return jsUndefined();
 }
 
@@ -443,6 +447,11 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     if (!record)
         return jsUndefined();
 
+    if (!m_linkCalled) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, "module is not linked"_s);
+        return {};
+    }
+
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
@@ -454,9 +463,18 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
+    // A record that never went through link() (e.g. a module with no
+    // dependencies instantiated directly) is still Status::New; record->link
+    // asserts the record is past New, and only the loader's
+    // continueModuleLoading would normally flip it.
+    if (record->status() == JSC::CyclicModuleRecord::Status::New)
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
+    status(Status::Linked);
+    propagateLinked();
     return jsUndefined();
 }
 
@@ -543,7 +561,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
-    visitor.append(vmModule->m_evaluationException);
     visitor.append(vmModule->m_initializeImportMeta);
 }
 

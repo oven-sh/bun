@@ -68,9 +68,7 @@ test/js/node/test/parallel/test-worker-nested-uncaught.js
 # 3rd party napi
 test/regression/issue/30205.test.ts
 test/integration/sharp/sharp.test.ts
-test/js/third_party/@duckdb/node-api/duckdb.test.ts
 test/js/third_party/@napi-rs/canvas/napi-rs-canvas.test.ts
-test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/remix/remix.test.ts
 test/js/third_party/resvg/bbox.test.js

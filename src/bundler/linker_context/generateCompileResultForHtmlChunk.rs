@@ -1,14 +1,13 @@
 use crate::mal_prelude::*;
-use core::ffi::c_void;
-use std::io::Write as _;
 
 use bstr::BStr;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_core::strings;
-use bun_lolhtml_sys::lol_html as lol;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
+use lol_html::HandlerResult;
+use lol_html::html_content::{ContentType, Element, EndTag};
 
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
@@ -95,6 +94,18 @@ struct HTMLLoader<'a> {
     added_body_script: bool,
 }
 
+/// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
+/// fail the same way an invalid attribute name does.
+fn set_attribute(element: &mut Element<'_, '_>, name: &[u8], value: &[u8]) {
+    let ok = match (core::str::from_utf8(name), core::str::from_utf8(value)) {
+        (Ok(name), Ok(value)) => element.set_attribute(name, value).is_ok(),
+        _ => false,
+    };
+    if !ok {
+        panic!("unexpected error from Element.setAttribute");
+    }
+}
+
 impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_write_html(&mut self, bytes: &[u8]) {
         self.output.extend_from_slice(bytes);
@@ -109,7 +120,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
     fn on_tag(
         &mut self,
-        element: &mut lol::Element,
+        element: &mut Element<'_, '_>,
         _path: &[u8],
         url_attribute: &[u8],
         _kind: ImportKind,
@@ -153,18 +164,14 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
         if self.linker.dev_server.is_some() {
             if !unique_key_for_additional_files.is_empty() {
-                element
-                    .set_attribute(url_attribute, unique_key_for_additional_files)
-                    .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+                set_attribute(element, url_attribute, unique_key_for_additional_files);
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
                 element.remove();
             } else {
-                element
-                    .set_attribute(url_attribute, import_record.path.pretty)
-                    .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+                set_attribute(element, url_attribute, import_record.path.pretty);
             }
             return;
         }
@@ -188,89 +195,95 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                element
-                    .set_attribute(url_attribute, url_for_css)
-                    .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+                set_attribute(element, url_attribute, url_for_css);
                 return;
             }
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            element
-                .set_attribute(url_attribute, unique_key_for_additional_files)
-                .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+            set_attribute(element, url_attribute, unique_key_for_additional_files);
             return;
         }
     }
 
-    fn on_head_tag(&mut self, element: &mut lol::Element) -> bool {
-        element
-            .on_end_tag(
-                Self::end_head_tag_handler,
-                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-            )
-            .is_err()
+    fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+        self.register_end_tag_handler(element, Self::end_head_tag_handler)
     }
 
-    fn on_html_tag(&mut self, element: &mut lol::Element) -> bool {
-        element
-            .on_end_tag(
-                Self::end_html_tag_handler,
-                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-            )
-            .is_err()
+    fn on_html_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+        self.register_end_tag_handler(element, Self::end_html_tag_handler)
     }
 
-    fn on_body_tag(&mut self, element: &mut lol::Element) -> bool {
-        element
-            .on_end_tag(
-                Self::end_body_tag_handler,
-                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-            )
-            .is_err()
+    fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+        self.register_end_tag_handler(element, Self::end_body_tag_handler)
     }
 }
 
+/// An `HTMLLoader` end-tag callback. It receives the loader as an erased
+/// `*mut ()` so the closure boxed into `Element::end_tag_handlers` captures
+/// only `'static` data — `HTMLLoader<'a>` itself is not `'static`.
+type EndTagHandlerFn = fn(*mut (), &mut EndTag<'_>) -> HandlerResult;
+
 impl<'a> HTMLLoader<'a> {
+    /// Arranges for `handler(self, end_tag)` to run when `element`'s end tag
+    /// is reached. Returns `true` (stop the rewriter) if `element` cannot
+    /// have an end tag.
+    fn register_end_tag_handler(
+        &mut self,
+        element: &mut Element<'_, '_>,
+        handler: EndTagHandlerFn,
+    ) -> bool {
+        let Some(handlers) = element.end_tag_handlers() else {
+            return true;
+        };
+        // `self` points at the `HTMLLoader` that `HTMLProcessor::run` holds
+        // for the whole rewriting pass, so the erased pointer is still live
+        // when lol-html invokes `handler` at the end tag.
+        let opaque_this = std::ptr::from_mut::<Self>(self).cast::<()>();
+        handlers.push(Box::new(move |end| handler(opaque_this, end)));
+        false
+    }
+
     /// This is called for head, body, and html; whichever ends up coming first.
-    fn add_head_tags(&mut self, end_tag: &mut lol::EndTag) -> Result<(), lol::Error> {
+    fn add_head_tags(&mut self, end_tag: &mut EndTag<'_>) {
         if self.added_head_tags {
-            return Ok(());
+            return;
         }
         self.added_head_tags = true;
 
-        let slices = self.get_head_tags();
-        for slice in slices.as_slice() {
-            end_tag.before(slice, true)?;
+        let tags = self.get_head_tags();
+        for tag in &tags {
+            end_tag.before(tag, ContentType::Html);
         }
-        Ok(())
     }
 
     /// Insert inline script before </body> so DOM elements are available.
-    fn add_body_tags(&mut self, end_tag: &mut lol::EndTag) -> Result<(), lol::Error> {
+    fn add_body_tags(&mut self, end_tag: &mut EndTag<'_>) {
         if self.added_body_script {
-            return Ok(());
+            return;
         }
         self.added_body_script = true;
 
-        // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
-        let chunks = unsafe { &mut *self.chunks };
-        if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(chunks) {
-            let mut script = Vec::new();
-            write!(
-                &mut script,
-                "<script type=\"module\">{}</script>",
-                BStr::new(js_chunk.unique_key)
-            )
-            .unwrap();
-            end_tag.before(&script, true)?;
+        if let Some(script) = self.standalone_body_script() {
+            end_tag.before(&script, ContentType::Html);
         }
-        Ok(())
     }
 
-    fn get_head_tags(&self) -> Vec<Vec<u8>> {
-        let mut array: Vec<Vec<u8>> = Vec::with_capacity(2);
+    /// The inline `<script type="module">…</script>` holding this HTML
+    /// chunk's JavaScript chunk, if it has one.
+    fn standalone_body_script(&self) -> Option<String> {
+        // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
+        let chunks = unsafe { &mut *self.chunks };
+        let js_chunk = self.chunk.get_js_chunk_for_html(chunks)?;
+        Some(format!(
+            "<script type=\"module\">{}</script>",
+            BStr::new(js_chunk.unique_key)
+        ))
+    }
+
+    fn get_head_tags(&self) -> Vec<String> {
+        let mut array: Vec<String> = Vec::with_capacity(2);
         // `self.chunk` is a `BackRef` (safe `Deref`).
         let chunk: &Chunk = &self.chunk;
         // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
@@ -278,108 +291,72 @@ impl<'a> HTMLLoader<'a> {
         if self.compile_to_standalone_html {
             // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
             if let Some(css_chunk) = chunk.get_css_chunk_for_html(chunks) {
-                let mut style_tag = Vec::new();
-                write!(
-                    &mut style_tag,
+                array.push(format!(
                     "<style>{}</style>",
                     BStr::new(css_chunk.unique_key)
-                )
-                .unwrap();
-                array.push(style_tag);
+                ));
             }
         } else {
             // Put CSS before JS to reduce chances of flash of unstyled content
             if let Some(css_chunk) = chunk.get_css_chunk_for_html(chunks) {
-                let mut link_tag = Vec::new();
-                write!(
-                    &mut link_tag,
+                array.push(format!(
                     "<link rel=\"stylesheet\" crossorigin href=\"{}\">",
                     BStr::new(css_chunk.unique_key)
-                )
-                .unwrap();
-                array.push(link_tag);
+                ));
             }
             if let Some(js_chunk) = chunk.get_js_chunk_for_html(chunks) {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
-                let mut script = Vec::new();
-                write!(
-                    &mut script,
+                array.push(format!(
                     "<script type=\"module\" crossorigin src=\"{}\"></script>",
                     BStr::new(js_chunk.unique_key)
-                )
-                .unwrap();
-                array.push(script);
+                ));
             }
         }
         array
     }
 
-    extern "C" fn end_head_tag_handler(
-        end: *mut lol::EndTag,
-        opaque_this: *mut c_void,
-    ) -> lol::Directive {
-        // SAFETY: opaque_this was set to &mut HTMLLoader in on_head_tag; end is non-null from lol-html callback.
-        let (this, end): (&mut Self, &mut lol::EndTag) =
-            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
+    fn end_head_tag_handler(opaque_this: *mut (), end: &mut EndTag<'_>) -> HandlerResult {
+        // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
+        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
-            if this.add_head_tags(end).is_err() {
-                return lol::Directive::Stop;
-            }
+            this.add_head_tags(end);
         } else {
             this.end_tag_indices.head = Some(u32::try_from(this.output.len()).expect("int cast"));
         }
-        lol::Directive::Continue
+        Ok(())
     }
 
-    extern "C" fn end_body_tag_handler(
-        end: *mut lol::EndTag,
-        opaque_this: *mut c_void,
-    ) -> lol::Directive {
-        // SAFETY: opaque_this was set to &mut HTMLLoader in on_body_tag; end is non-null from lol-html callback.
-        let (this, end): (&mut Self, &mut lol::EndTag) =
-            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
+    fn end_body_tag_handler(opaque_this: *mut (), end: &mut EndTag<'_>) -> HandlerResult {
+        // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
+        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // In standalone mode, insert JS before </body> so DOM is available
-                if this.add_body_tags(end).is_err() {
-                    return lol::Directive::Stop;
-                }
+                this.add_body_tags(end);
             } else {
-                if this.add_head_tags(end).is_err() {
-                    return lol::Directive::Stop;
-                }
+                this.add_head_tags(end);
             }
         } else {
             this.end_tag_indices.body = Some(u32::try_from(this.output.len()).expect("int cast"));
         }
-        lol::Directive::Continue
+        Ok(())
     }
 
-    extern "C" fn end_html_tag_handler(
-        end: *mut lol::EndTag,
-        opaque_this: *mut c_void,
-    ) -> lol::Directive {
-        // SAFETY: opaque_this was set to &mut HTMLLoader in on_html_tag; end is non-null from lol-html callback.
-        let (this, end): (&mut Self, &mut lol::EndTag) =
-            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
+    fn end_html_tag_handler(opaque_this: *mut (), end: &mut EndTag<'_>) -> HandlerResult {
+        // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
+        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // Fallback: if no </body> was found, insert both CSS and JS before </html>
-                if this.add_head_tags(end).is_err() {
-                    return lol::Directive::Stop;
-                }
-                if this.add_body_tags(end).is_err() {
-                    return lol::Directive::Stop;
-                }
+                this.add_head_tags(end);
+                this.add_body_tags(end);
             } else {
-                if this.add_head_tags(end).is_err() {
-                    return lol::Directive::Stop;
-                }
+                this.add_head_tags(end);
             }
         } else {
             this.end_tag_indices.html = Some(u32::try_from(this.output.len()).expect("int cast"));
         }
-        lol::Directive::Continue
+        Ok(())
     }
 }
 
@@ -462,25 +439,16 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
             if !html_loader.added_head_tags || !html_loader.added_body_script {
                 // Cold path: the document is missing all of the head, body, and html elements.
                 if !html_loader.added_head_tags {
-                    let slices = html_loader.get_head_tags();
-                    for slice in slices.as_slice() {
-                        html_loader.output.extend_from_slice(slice);
+                    let tags = html_loader.get_head_tags();
+                    for tag in &tags {
+                        html_loader.output.extend_from_slice(tag.as_bytes());
                     }
                     html_loader.added_head_tags = true;
                 }
                 if !html_loader.added_body_script {
                     if html_loader.compile_to_standalone_html {
-                        // SAFETY: `html_loader.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
-                        let chunks = unsafe { &mut *html_loader.chunks };
-                        if let Some(js_chunk) = html_loader.chunk.get_js_chunk_for_html(chunks) {
-                            let mut script = Vec::new();
-                            write!(
-                                &mut script,
-                                "<script type=\"module\">{}</script>",
-                                BStr::new(js_chunk.unique_key)
-                            )
-                            .unwrap();
-                            html_loader.output.extend_from_slice(&script);
+                        if let Some(script) = html_loader.standalone_body_script() {
+                            html_loader.output.extend_from_slice(script.as_bytes());
                         }
                     }
                     html_loader.added_body_script = true;

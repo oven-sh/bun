@@ -1,21 +1,22 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  bunRun,
-  isWindows,
-  normalizeBunSnapshot,
-  rejectUnauthorizedScope,
-  tempDirWithFiles,
-  tls,
-} from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
   test("should not use 100% CPU when websocket is idle", async () => {
-    const { stderr } = bunRun(path.join(import.meta.dir, "bun-websocket-cpu-fixture.js"));
-    expect(stderr).toBe("");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "bun-websocket-cpu-fixture.js")],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: import.meta.dir,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    // The fixture prints its CPU% samples to stdout and exits nonzero when the idle CPU% is too high.
+    expect(exitCode, stdout).toBe(0);
   });
   test("normlizes incoming request URLs", async () => {
     using server = Bun.serve({
@@ -1377,7 +1378,9 @@ describe("HEAD requests #15355", () => {
     //
     // Passing duplicate header entries makes FetchHeaders combine them via
     // makeString(), producing a fresh StringImpl owned solely by the map so the
-    // remove actually frees it. `Malloc=1` routes bmalloc through the system
+    // remove actually frees it. The bodies are null so this stays on the
+    // fastGet path: HEAD only reads the handler-supplied framing headers for a
+    // bodiless Response. `Malloc=1` routes bmalloc through the system
     // allocator so ASAN-enabled builds observe the use-after-free; release
     // builds fall through and validate the header values round-trip.
     test("transfer-encoding / content-length whose StringImpl is held only by the header map", async () => {
@@ -1391,14 +1394,14 @@ describe("HEAD requests #15355", () => {
               port: 0,
               fetch(req) {
                 if (req.url.endsWith("/te")) {
-                  return new Response("hello", {
+                  return new Response(null, {
                     headers: [
                       ["Transfer-Encoding", "gzip"],
                       ["Transfer-Encoding", "chunked"],
                     ],
                   });
                 }
-                return new Response("hello", {
+                return new Response(null, {
                   headers: [
                     ["Content-Length", "1"],
                     ["Content-Length", "2"],

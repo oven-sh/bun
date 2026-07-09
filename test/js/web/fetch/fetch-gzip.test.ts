@@ -566,6 +566,53 @@ describe("corrupt compressed responses", () => {
   });
 });
 
+describe("Transfer-Encoding other than chunked/identity is rejected", () => {
+  // Bun never sends a TE request header, so per RFC 9112 §5 a server may only
+  // apply chunked. A response carrying one of the compression transfer codings
+  // must fail the fetch instead of handing raw wire bytes to the caller.
+  it.concurrent.each(["gzip", "x-gzip", "deflate", "br", "zstd"])("Transfer-Encoding: %s", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => {
+        socket.end(
+          "HTTP/1.1 200 OK\r\n" +
+            `Transfer-Encoding: ${te}\r\n` +
+            "Content-Length: 4\r\n" +
+            "Connection: close\r\n\r\n" +
+            "abcd",
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      // Spawn: without the fix a debug build aborts on the handle_response_body
+      // assert, which would take the test runner down if fetched in-process.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `fetch(process.argv[1]).then(
+             async r => console.log(JSON.stringify({ resolved: true, body: await r.text() })),
+             e => console.log(JSON.stringify({ resolved: false, code: e?.code ?? null })),
+           );`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ resolved: false, code: "UnsupportedTransferEncoding" }),
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.

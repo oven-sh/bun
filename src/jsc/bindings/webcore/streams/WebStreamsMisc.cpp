@@ -51,8 +51,10 @@ JSObject* extractSizeAlgorithm(const QueuingStrategyDict& strategy)
     return asObject(strategy.size);
 }
 
-// How many bytes at the tail of `data` form an incomplete UTF-8 sequence (1..3), or 0 if
-// it ends on a boundary (or the tail is definitely invalid and should be replaced now).
+// How many bytes at the tail of `data` form a valid incomplete UTF-8 sequence (1..3),
+// or 0 if it ends on a boundary (or the tail is definitely invalid and should be
+// replaced now). Applies the WHATWG UTF-8 decoder's per-lead second-byte ranges so a
+// surrogate / overlong / out-of-range prefix is not held back.
 static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
 {
     size_t len = data.size();
@@ -61,17 +63,33 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
         if ((b & 0xC0) == 0x80)
             continue;
         size_t need;
+        uint8_t secondMin = 0x80, secondMax = 0xBF;
         if (b < 0x80)
             need = 1;
-        else if ((b & 0xE0) == 0xC0)
+        else if (b >= 0xC2 && b <= 0xDF)
             need = 2;
-        else if ((b & 0xF0) == 0xE0)
+        else if (b >= 0xE0 && b <= 0xEF) {
             need = 3;
-        else if ((b & 0xF8) == 0xF0)
+            if (b == 0xE0)
+                secondMin = 0xA0;
+            else if (b == 0xED)
+                secondMax = 0x9F;
+        } else if (b >= 0xF0 && b <= 0xF4) {
             need = 4;
-        else
+            if (b == 0xF0)
+                secondMin = 0x90;
+            else if (b == 0xF4)
+                secondMax = 0x8F;
+        } else
             return 0;
-        return back < need ? back : 0;
+        if (back >= need)
+            return 0;
+        if (back >= 2) {
+            uint8_t second = data[len - back + 1];
+            if (second < secondMin || second > secondMax)
+                return 0;
+        }
+        return back;
     }
     return 0;
 }

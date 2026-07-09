@@ -338,6 +338,30 @@ for (const { body, fn } of bodyTypes) {
         expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("a\ufffdb");
       });
       test.each([
+        ["surrogate lead + second byte", [0xed, 0xa0]],
+        ["overlong 4-byte lead + second byte", [0xf0, 0x80]],
+        ["out-of-range 4-byte lead + second byte", [0xf4, 0x90]],
+        ["0xF5 (never a valid lead)", [0xf5]],
+        ["0xC0 (overlong 2-byte lead)", [0xc0]],
+      ])("does not hold back a definitely-invalid trailing prefix: %s", async (_, trailing) => {
+        // An invalid prefix at the end of a chunk should be replaced
+        // immediately (the WHATWG decoder emits U+FFFD), not held back to the
+        // next chunk. Assert via observable chunk timing: the first read of
+        // the output stream must not be empty.
+        let sc!: ReadableStreamDefaultController;
+        const input = new ReadableStream({
+          start(c) {
+            sc = c;
+            c.enqueue(new Uint8Array([0x61, ...trailing]));
+          },
+        });
+        const reader = fn(input).textStream().getReader();
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(first.value!.startsWith("a\ufffd")).toBe(true);
+        sc.close();
+      });
+      test.each([
         ["ascii", Buffer.alloc(1000, "abcd").toString()],
         ["mixed", Buffer.alloc(1000, "hello 🫠 ").toString()],
       ])("decodes a large %s chunk from a ReadableStream body", async (_, big) => {
@@ -374,7 +398,7 @@ for (const { body, fn } of bodyTypes) {
         const ts = r.textStream();
         expect(stream.locked).toBe(true);
         expect(() => stream.getReader()).toThrow(TypeError);
-        expect(stream.cancel()).rejects.toBeInstanceOf(TypeError);
+        await expect(stream.cancel()).rejects.toBeInstanceOf(TypeError);
         expect((await Array.fromAsync(ts)).join("")).toBe("hello");
       });
       test("second textStream() call throws", () => {

@@ -935,14 +935,10 @@ where
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(ctx));
 
         let err = arguments.ptr[0];
-        Self::handle_reject(
-            ctx,
-            if !err.is_empty_or_undefined_or_null() {
-                err
-            } else {
-                JSValue::UNDEFINED
-            },
-        );
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
+        Self::handle_reject(ctx, if err.is_empty() { JSValue::UNDEFINED } else { err });
         Ok(JSValue::UNDEFINED)
     }
 

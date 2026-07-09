@@ -4406,7 +4406,8 @@ pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
 /// by `readableStreamToBlob` so the body-derived type is stored exactly.
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__setType(this: &Blob, ptr: *const u8, len: usize) {
-    // SAFETY: C++ passes an owned `{jsString->span8().data(), span8().size()}`.
+    // SAFETY: the sole caller (BunStreamConsumers.cpp) passes a `WTF::CString`
+    // (`str.utf8()`) whose buffer outlives this call.
     let slice = if len == 0 {
         &[][..]
     } else {

@@ -411,9 +411,7 @@ impl PendingValue {
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
                         Action::GetBlob(content_type) => {
                             let content_type = match content_type.take() {
-                                Some(ct) => {
-                                    BunString::clone_utf8(ct.as_slice()).to_js(global_this)?
-                                }
+                                Some(ct) => BunString::init(ct.as_slice()).to_js(global_this)?,
                                 None => JSValue::UNDEFINED,
                             };
                             global_this.readable_stream_to_blob(readable.value, content_type)

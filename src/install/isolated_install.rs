@@ -32,7 +32,7 @@ use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
-use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
+use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt, strings};
 use bun_paths::path_options::AssumeOk as _;
 use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
 use bun_semver as semver;
@@ -41,6 +41,7 @@ use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
+use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
@@ -2647,6 +2648,18 @@ pub(crate) fn install_isolated_packages(
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
+
+        // ── OHOS: sign native binaries after all packages are installed ──
+        // In workspace mode the per-package signing path is not reached
+        // (packages are deferred via runTasks). Walk the workspace root's
+        // node_modules to sign any .so/.node files.
+        #[cfg(target_env = "ohos")]
+        {
+            let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+            let mut nm = top.to_vec();
+            nm.extend_from_slice(b"/node_modules");
+            crate::package_installer::ohos_sign_native_binaries(&nm);
+        }
 
         return Ok(summary);
     }

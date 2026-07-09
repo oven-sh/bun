@@ -339,5 +339,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_EEXIST", Error],
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
+  ["ERR_INVALID_BUFFER_SIZE", RangeError],
+  ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
+  ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
 ];
 export default errors;

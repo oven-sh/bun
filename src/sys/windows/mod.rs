@@ -119,6 +119,7 @@ pub use bun_windows_sys::LPCVOID;
 pub use bun_windows_sys::LPCWSTR;
 pub use bun_windows_sys::LPSTR;
 pub use bun_windows_sys::LPWSTR;
+pub use bun_windows_sys::NT_ERROR;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::NTSTATUS;
 pub use bun_windows_sys::PWSTR;
@@ -139,6 +140,7 @@ pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
+pub use bun_windows_sys::FILE_ALL_INFORMATION;
 pub use bun_windows_sys::FILE_ATTRIBUTE_ARCHIVE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_COMPRESSED;
 pub use bun_windows_sys::FILE_ATTRIBUTE_DEVICE;
@@ -153,8 +155,13 @@ pub use bun_windows_sys::FILE_ATTRIBUTE_SPARSE_FILE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_SYSTEM;
 pub use bun_windows_sys::FILE_ATTRIBUTE_TEMPORARY;
 pub use bun_windows_sys::FILE_BASIC_INFORMATION;
+pub use bun_windows_sys::FILE_DEVICE_CONSOLE;
+pub use bun_windows_sys::FILE_DEVICE_NAMED_PIPE;
+pub use bun_windows_sys::FILE_DEVICE_NULL;
 pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
+pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
+pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
 pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
@@ -165,6 +172,7 @@ pub use bun_windows_sys::FILE_SHARE_READ;
 pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
 pub use bun_windows_sys::FILE_WRITE_THROUGH;
+pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::STANDARD_RIGHTS_READ;
@@ -188,20 +196,46 @@ pub use bun_core::windows_sys::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
 
+/// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
+pub const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
+
 /// Convert a 64-bit Windows `FILETIME`
 /// (100-ns intervals since 1601-01-01 UTC, as projected in
 /// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
 /// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
 /// `bun_core::time::nano_timestamp()` reports.
-///
-/// Computed as `(hns + epoch_shift * (ns_per_s/100)) * 100` where `epoch_shift`
-/// is `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
-/// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
 #[inline]
 pub const fn from_sys_time(nt_time: i64) -> i128 {
-    /// The 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
-    const WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS: i128 = -11_644_473_600 * 10_000_000;
-    (nt_time as i128 + WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS) * 100
+    (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
+}
+
+/// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
+/// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
+/// Matches libuv's `uv__filetime_to_timespec`.
+#[inline]
+pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
+    let t = filetime - EPOCH_DIFFERENCE_100NS;
+    let mut sec = t / 10_000_000;
+    let mut nsec = (t - sec * 10_000_000) * 100;
+    if nsec < 0 {
+        sec -= 1;
+        nsec += 1_000_000_000;
+    }
+    bun_libuv_sys::uv_timespec_t {
+        sec: sec as _,
+        nsec: nsec as _,
+    }
+}
+
+/// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
+/// Unix epoch) into a Windows `FILETIME`.
+#[inline]
+pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
+    let ticks = (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
+    FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    }
 }
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
@@ -427,10 +461,10 @@ impl Win32ErrorUnwrap for Win32Error {
         if self == Win32Error::SUCCESS {
             return Ok(());
         }
-        if let Some(err) = self.to_system_errno() {
-            return Err(err.to_error());
-        }
-        Ok(())
+        Err(self
+            .to_system_errno()
+            .unwrap_or(SystemErrno::EUNKNOWN)
+            .to_error())
     }
 }
 
@@ -4975,3 +5009,36 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
 bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 // SetFilePointerEx referenced via the `pub use` at the top of this module.
+
+#[cfg(test)]
+mod tests {
+    use super::{E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _};
+
+    /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
+    const UNMAPPED: Win32Error = Win32Error(0xFFFE);
+
+    #[test]
+    fn unwrap_success_is_ok() {
+        assert!(Win32Error::SUCCESS.unwrap().is_ok());
+    }
+
+    #[test]
+    fn unwrap_mapped_is_err() {
+        assert!(Win32Error::FILE_NOT_FOUND.unwrap().is_err());
+    }
+
+    /// `GetLastError()` after a failed Win32 call can return codes not present
+    /// in the errno mapping table (filter drivers, network redirectors, AV
+    /// hooks). Reporting success for those would swallow the failure.
+    #[test]
+    fn unwrap_unmapped_is_err() {
+        assert!(UNMAPPED.to_system_errno().is_none());
+        assert!(UNMAPPED.unwrap().is_err());
+    }
+
+    #[test]
+    fn to_e_unmapped_is_unknown() {
+        assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
+        assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
+    }
+}

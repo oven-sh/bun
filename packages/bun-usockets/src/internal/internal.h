@@ -71,6 +71,10 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
+/* Reports "Bun ran out of memory" through the crash handler and aborts. For
+ * allocations this library has no way to fail gracefully from. */
+extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
@@ -197,6 +201,7 @@ void us_internal_socket_after_open(us_socket_r s, int error);
 void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
+void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
@@ -271,6 +276,9 @@ struct us_socket_t {
    * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
    * spill drains so those records are not cut off by our FIN/close_notify. */
   unsigned char ssl_shutdown_after_spill : 1;
+  /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
+   * close re-runs from the writable event once the spill drains. */
+  unsigned char ssl_close_after_spill : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
    * SSL must not be freed under BoringSSL's feet - the detach is deferred to
@@ -309,7 +317,11 @@ struct us_connecting_socket_t {
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    /* error_is_dns: `error` holds the raw getaddrinfo(3) return code for a
+     * failed name lookup rather than an errno. The two constant sets are
+     * different namespaces that overlap numerically, so consumers of `error`
+     * must check this bit first. */
+    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     unsigned char kind;

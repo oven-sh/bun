@@ -1939,13 +1939,21 @@ impl BuildArtifact {
         BlobExt::get_type(&this.blob, global_this)
     }
 
+    /// `callframe.this()` is a `JSBuildArtifact`, not a `JSBlob`, so the
+    /// cached-stream slot must be BuildArtifact's own (`values: ["stream"]` in
+    /// JSBundler.classes.ts); `Blob::get_stream` would poke `JSBlob::m_stream`.
     #[bun_jsc::host_fn(method)]
     pub fn get_stream(
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.blob.get_stream(global_this, callframe)
+        this.blob.get_stream_with_cache(
+            global_this,
+            callframe,
+            crate::generated_classes::js_BuildArtifact::stream_get_cached,
+            crate::generated_classes::js_BuildArtifact::stream_set_cached,
+        )
     }
 
     #[bun_jsc::host_fn(getter)]

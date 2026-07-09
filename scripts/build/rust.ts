@@ -501,6 +501,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.debug) {
     rustflags.push("--cfg=bun_codegen_embed");
   }
+  // `socket_fault_injection`: usockets bsd_* fault-injection hooks compiled
+  // in (LIBUS_SOCKET_FAULT_INJECTION=1 on the C side). The Rust FFI for
+  // us_fault_set/us_fault_clear_all and the JS control surface gate on this
+  // so the C symbol and the Rust extern are either both present or both
+  // absent regardless of profile.
+  rustflags.push("--check-cfg=cfg(socket_fault_injection)");
+  if (cfg.socketFaultInjection) {
+    rustflags.push("--cfg=socket_fault_injection");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string
@@ -547,8 +556,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // stale/partial profile degrades gracefully rather than failing the build.
     rustflags.push(`-Cprofile-use=${cfg.pgoUse}`);
   }
-  // Force lld for any link rustc itself performs (the cdylib/staticlib deps
-  // like `lol_html_c_api`; the `bun_bin` staticlib has no link step). The
+  // Force lld for any target link rustc itself performs. None exists today
+  // (`bun_bin` is a staticlib with no link step; `lol_html` is a plain rlib
+  // path dep), so this is defensive — see the Windows note below. The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the
   // semantics the C/C++ object set assumes (and, under `-Clinker-plugin-lto`,
   // doesn't understand `-plugin-opt`). This used to live only behind
@@ -566,11 +576,13 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   // Keep the clang driver quiet about link args that don't apply to a given
   // artifact kind: rustc adds `-no-pie` under `-Crelocation-model=static`,
-  // which is meaningless when it links a target cdylib (lol_html_c_api), and
-  // rustc's `linker_messages` lint then re-surfaces clang's
+  // which is meaningless when it links a target cdylib, and rustc's
+  // `linker_messages` lint then re-surfaces clang's
   // "argument unused during compilation: '-no-pie'" as a warning on every
-  // build-rust job. Same approach as the WebKit configure
-  // (`-Qunused-arguments`); real linker errors still fail the link.
+  // build-rust job. No target cdylib exists today (same story as
+  // `-fuse-ld=lld` above), so this too is defensive. Same approach as the
+  // WebKit configure (`-Qunused-arguments`); real linker errors still fail
+  // the link.
   if (!cfg.windows) rustflags.push(`-Clink-arg=-Qunused-arguments`);
   // And allow the lint itself: CI treats new warnings as failures, and the
   // lint forwards anything any platform's linker prints to stderr - the
@@ -650,7 +662,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     BUN_CODEGEN_DIR: cfg.codegenDir,
 
     // ── toolchain forwarding (cc-rs / build scripts) ──
-    // build.rs of vendored crates (lol-html, anything using `cc`) and rustc's
+    // build.rs of crates in the dep graph (anything using `cc`) and rustc's
     // own linker invocations must use the SAME clang/ar `tools.ts` resolved —
     // not whatever is first in PATH. On CI the LLVM toolchain lives at a
     // versioned path (`/opt/llvm-N/`) and the system `cc` may be absent or
@@ -759,8 +771,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   //
   // Ordered before the main cargo build via `implicitInputs` below so the
   // real PE is on disk when `bun_install` compiles. Same env as the main
-  // build (toolchain forwarding, CARGO_HOME) but no codegen / lol-html order
-  // dep — the shim crate's graph is bun_core/bun_sys/bun_string only.
+  // build (toolchain forwarding, CARGO_HOME) but no codegen dep — the shim
+  // crate's graph is bun_core/bun_sys/bun_string only.
   const shimInputs: string[] = [];
   if (cfg.windows) {
     const shimDest = windowsShimDestPath(cfg);

@@ -51,7 +51,6 @@ members = [
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/lolhtml_sys",
   "src/picohttp",
   "src/s3_signing",
   "src/sql_jsc",
@@ -103,13 +102,10 @@ members = [
   "src/bunfig",
   "src/bun_bin",
 ]
-# `vendor/lolhtml/c-api` is consumed as a path dependency of
-# `bun_lolhtml_sys` so its `#[no_mangle]` C API ends up inside
-# `libbun_rust.a` (one Rust staticlib → one copy of std on the link line).
-# It is deliberately NOT a workspace member: keeping it excluded means its
-# `[profile]` section is ignored and its heavy dev-dependencies (criterion,
-# html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
-# by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
+# `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
+# fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
+# Keeping it out of `members` means its `[profile]` section is ignored and its
+# heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
 exclude = ["vendor"]
 
 [workspace.package]
@@ -186,10 +182,11 @@ overflow-checks = false
 # back to "warn" (their priority 0 beats the group's -1) where a warning level
 # is intentional.
 warnings = { level = "deny", priority = -1 }
-# `bun_asan` / `bun_debug` are set via RUSTFLAGS (`--cfg=bun_*` +
-# `--check-cfg=cfg(bun_*)`) by scripts/build/rust.ts; register them here so a
-# plain `cargo build` / `cargo check` (without those flags) doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)'] }
+# `bun_asan` / `bun_debug` / `socket_fault_injection` are set via RUSTFLAGS
+# (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
+# them here so a plain `cargo build` / `cargo check` (without those flags)
+# doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -351,6 +348,8 @@ smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
 itoa = "1"
+# Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
+lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }
@@ -400,7 +399,6 @@ bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_lolhtml_sys = { path = "src/lolhtml_sys" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }

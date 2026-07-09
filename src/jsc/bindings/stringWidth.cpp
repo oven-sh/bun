@@ -76,6 +76,9 @@ static constexpr uint8_t widthFromFused(uint8_t packed, bool ambiguousAsWide)
 static_assert(widthFromFused(fusedClassify(U'A'), false) == 1);
 static_assert(widthFromFused(fusedClassify(0x1B), false) == 0); // ESC: control, zero width
 static_assert(widthFromFused(fusedClassify(0xAD), false) == 0); // soft hyphen
+static_assert(widthFromFused(fusedClassify(0x202E), false) == 0); // RLO: bidi control, zero width
+static_assert(widthFromFused(fusedClassify(0x2069), false) == 0); // PDI: bidi isolate, zero width
+static_assert(widthFromFused(fusedClassify(0x61C), false) == 0); // arabic letter mark, zero width
 static_assert(widthFromFused(fusedClassify(0x4E2D), false) == 2); // CJK ideograph: wide
 static_assert(widthFromFused(fusedClassify(0xFF21), false) == 2); // fullwidth A: wide
 static_assert(widthFromFused(fusedClassify(0xA7), false) == 1); // section sign: ambiguous, narrow by default

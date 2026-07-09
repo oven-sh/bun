@@ -557,12 +557,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name.ref_ = p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?;
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
-            // debug-assert no prior entry.
-            let prev = p.ref_to_ts_namespace_member.insert(
+            // Overwrite allowed: on a forbidden redeclaration `declare_symbol` returns
+            // the existing ref for every colliding enum, so the key repeats; the value
+            // is the same map `get_or_create_exported_namespace_members` already reused.
+            p.ref_to_ts_namespace_member.insert(
                 name.ref_,
                 TSNamespaceMemberData::Namespace(exported_members),
             );
-            debug_assert!(prev.is_none());
         }
 
         p.lexer.expect(T::TOpenBrace)?;

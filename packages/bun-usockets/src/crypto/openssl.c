@@ -18,6 +18,7 @@
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <string.h>
 #include <limits.h>
@@ -632,6 +633,18 @@ static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   }
 }
 
+void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t *old_s,
+                                      struct us_socket_t *new_s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (!loop_ssl_data) return;
+  if (loop_ssl_data->ssl_spill_owner == old_s) {
+    loop_ssl_data->ssl_spill_owner = new_s;
+  }
+  if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
+    loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
+  }
+}
+
 static int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
@@ -662,15 +675,29 @@ static struct loop_ssl_data *ssl_set_loop_data(struct us_socket_t *s) {
   return loop_ssl_data;
 }
 
+/* The loop's shared TLS plaintext buffer. Split out so the fault injector can
+ * fail this one allocation: a 512 KiB malloc only returns NULL where the OS
+ * does not overcommit, which is the only place the crash was ever seen. */
+static char *ssl_alloc_read_output(void) {
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+  ssize_t injected = 0;
+  int unused = 0;
+  if (US_FAULT_CHECK(US_FAULT_SSL_LOOP_BUFFER, -1, injected, unused)) return NULL;
+#endif
+  return us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+}
+
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
     struct loop_ssl_data *loop_ssl_data = us_calloc(1, sizeof(struct loop_ssl_data));
-    loop_ssl_data->ssl_read_output =
-        us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    if (!loop_ssl_data) Bun__outOfMemory();
+    loop_ssl_data->ssl_read_output = ssl_alloc_read_output();
+    if (!loop_ssl_data->ssl_read_output) Bun__outOfMemory();
 
     OPENSSL_init_ssl(0, NULL);
 
     loop_ssl_data->shared_biom = BIO_meth_new(BIO_TYPE_MEM, "µS BIO");
+    if (!loop_ssl_data->shared_biom) Bun__outOfMemory();
     BIO_meth_set_create(loop_ssl_data->shared_biom, BIO_s_custom_create);
     BIO_meth_set_write(loop_ssl_data->shared_biom, BIO_s_custom_write);
     BIO_meth_set_read(loop_ssl_data->shared_biom, BIO_s_custom_read);
@@ -678,6 +705,7 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
 
     loop_ssl_data->shared_rbio = BIO_new(loop_ssl_data->shared_biom);
     loop_ssl_data->shared_wbio = BIO_new(loop_ssl_data->shared_biom);
+    if (!loop_ssl_data->shared_rbio || !loop_ssl_data->shared_wbio) Bun__outOfMemory();
     BIO_set_data(loop_ssl_data->shared_rbio, loop_ssl_data);
     BIO_set_data(loop_ssl_data->shared_wbio, loop_ssl_data);
 
@@ -695,6 +723,9 @@ void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
     BIO_free(loop_ssl_data->shared_wbio);
     BIO_meth_free(loop_ssl_data->shared_biom);
     us_free(loop_ssl_data);
+    /* us_internal_init_loop_ssl_data's guard reads this: leaving it dangling
+     * would hand a freed loop_ssl_data back to the next TLS socket. */
+    loop->data.ssl_data = NULL;
   }
 }
 
@@ -1306,6 +1337,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
   s->ssl_shutdown_after_spill = 0;
+  s->ssl_close_after_spill = 0;
   s->ssl_in_use = 0;
   s->ssl_pending_detach = 0;
   s->ssl_pending_close_code = 0;
@@ -1329,6 +1361,13 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
     }
     SSL_free(s_ssl(s));
     s->ssl = NULL;
+    /* Same for a parked handshake reason: no dispatch can claim it now, and a
+     * socket reusing this address would report it as its own failure. */
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+      loop_ssl_data->ssl_last_fatal_error[0] = 0;
+      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+    }
   }
 }
 
@@ -1408,6 +1447,26 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 }
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
+
+/* Park the fatal OpenSSL reason behind a failed SSL_* call where the
+ * handshake-failure dispatch can find it, then drain the queue and mark the
+ * socket fatal. Only parks while the handshake is unfinished: that dispatch is
+ * the sole consumer, so a later reason would linger and be misreported as some
+ * other socket's handshake failure. */
+static void ssl_park_fatal_reason(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *) s->group->loop->data.ssl_data;
+  if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+    unsigned long ssl_queue_err = ERR_peek_last_error();
+    if (ssl_queue_err != 0) {
+      ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
+                         sizeof(loop_ssl_data->ssl_last_fatal_error));
+      loop_ssl_data->ssl_last_fatal_error_owner = s;
+    }
+  }
+  ERR_clear_error();
+  s->ssl_fatal_error = 1;
+}
 
 /* The on_handshake callback runs JS which may us_socket_close(s) — that frees
  * s->ssl. Every caller MUST check ssl_gone(s) immediately after this returns
@@ -1549,17 +1608,30 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
 }
 
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
-  ssl_release_spill(s->group->loop, s);
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Reaching ssl_set_loop_data /
      * SSL_do_handshake here would re-enter BoringSSL on the same SSL* while
      * the outer ssl_run_handshake is still on the stack; defer to the SSL
-     * driver's epilogue (the same protocol close_raw and ssl_detach honor). */
+     * driver's epilogue (the same protocol close_raw and ssl_detach honor),
+     * releasing the spill now so the re-issued close cannot itself defer. */
+    ssl_release_spill(s->group->loop, s);
     s->ssl_pending_detach = 1;
     s->ssl_pending_close_code = (unsigned char) code;
     return s;
   }
+  /* node's `_handle.close()` (FAST_SHUTDOWN, no reason) must not cut off spilled
+   * ciphertext already reported as written: SSL sealed it, so it can only be
+   * delivered, never re-sent. Mirror ssl_shutdown_after_spill; defer at most once. */
+  if (code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN && !reason
+      && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+      s->ssl_close_after_spill = 1;
+      return s;
+    }
+  }
+  ssl_release_spill(s->group->loop, s);
   /* SEMI_SOCKET never connected — SSL was attached eagerly on the fast-path
    * connect, but no bytes were ever exchanged. Firing on_handshake(0) here
    * lands in JS after onConnectError already tore down `this`/its handlers. */
@@ -1649,16 +1721,7 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     }
     if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        struct loop_ssl_data *loop_ssl_data =
-            (struct loop_ssl_data *) s->group->loop->data.ssl_data;
-        unsigned long ssl_queue_err = ERR_peek_last_error();
-        if (loop_ssl_data && ssl_queue_err != 0) {
-          ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
-                             sizeof(loop_ssl_data->ssl_last_fatal_error));
-          loop_ssl_data->ssl_last_fatal_error_owner = s;
-        }
-        ERR_clear_error();
-        s->ssl_fatal_error = 1;
+        ssl_park_fatal_reason(s);
       }
       ssl_trigger_handshake(s, 0);
       return;
@@ -1721,6 +1784,10 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
       s->ssl_shutdown_after_spill = 0;
       us_internal_ssl_shutdown(s);
       if (ssl_gone(s)) return s;
+    }
+    if (s->ssl_close_after_spill) {
+      s->ssl_close_after_spill = 0;
+      return us_internal_ssl_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
     }
   }
   ssl_update_handshake(s);
@@ -1836,22 +1903,7 @@ restart:
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-          /* Only park the reason while the handshake is still pending - that
-           * is the only consumer (the close path's EPROTO dispatch). For a
-           * completed handshake nothing reads it for this socket, and the
-           * ssl_close below runs JS that could tear down a different
-           * mid-handshake socket on this loop, which would then pick up this
-           * socket's reason as its own. */
-          if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-            unsigned long ssl_queue_err = ERR_peek_last_error();
-            if (ssl_queue_err != 0) {
-              ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
-                                 sizeof(loop_ssl_data->ssl_last_fatal_error));
-              loop_ssl_data->ssl_last_fatal_error_owner = s;
-            }
-          }
-          ERR_clear_error();
-          s->ssl_fatal_error = 1;
+          ssl_park_fatal_reason(s);
         }
         ssl_close(s, 0, NULL);
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
@@ -2050,8 +2102,12 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
     } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-      ERR_clear_error();
-      s->ssl_fatal_error = 1;
+      /* SSL_write drives the handshake when it has not finished, so this is
+       * where a handshake-configuration failure (impossible version window,
+       * no shared cipher) surfaces for a caller that wrote before
+       * 'secureConnect'. Park the reason: the handshake dispatch this failure
+       * triggers reports it instead of a bare verification verdict. */
+      ssl_park_fatal_reason(s);
     }
   }
   return 0;

@@ -161,6 +161,16 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
+// Shrink the markdown parser's block-metadata cap (in bytes) so its
+// `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
+// be lowered, never raised past the real limit. Returns the previous value so
+// a test can restore it.
+export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
+  "MarkdownObject.rs",
+  "setMaxMarkdownBlockBytesForTesting",
+  1,
+);
+
 export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.
@@ -282,6 +292,65 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
   "jsSetSocketOptions",
   3,
 );
+
+/**
+ * The syscalls instrumented in bsd.c, plus "ssl_loop_buffer" — not a syscall,
+ * but the per-loop TLS plaintext buffer allocation, whose failure path is
+ * unreachable on an overcommitting kernel. Arming anything else is rejected.
+ */
+export type SocketFaultSyscall =
+  | "recv"
+  | "send"
+  | "writev"
+  | "sendmsg"
+  | "recvmsg"
+  | "connect"
+  | "accept"
+  | "ssl_loop_buffer";
+
+export type SocketFaultRule = {
+  syscall: SocketFaultSyscall;
+  action: "errno" | "short" | "zero" | "none";
+  /** errno name or numeric value (only used when action === "errno") */
+  errno?:
+    | "ECONNRESET"
+    | "EPIPE"
+    | "ETIMEDOUT"
+    | "ECONNREFUSED"
+    | "EAGAIN"
+    | "EWOULDBLOCK"
+    | "EINTR"
+    | "ENOBUFS"
+    | "ENOMEM"
+    | "EBADF"
+    | "EINVAL"
+    | "ENETUNREACH"
+    | "EHOSTUNREACH"
+    | number;
+  /** clamp recv/send length to this many bytes; required and > 0 when action === "short" */
+  bytes?: number;
+  /** skip the first N matching calls before triggering. Default 0. */
+  after?: number;
+  /** fire this many times then disarm; -1 = forever. Default 1. */
+  repeat?: number;
+  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer", which has no fd. */
+  fd?: number;
+};
+
+export const socketFaultInjection = {
+  /** True when the current binary was built with `--socket-fault-injection=on` (defaults to on for ASan builds). */
+  available: $newRustFunction(
+    "runtime/socket/socket.rs",
+    "TestingAPIs.jsSocketFaultInjectionAvailable",
+    0,
+  ) as () => boolean,
+  /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
+  set: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetSocketFault", 1) as (
+    rule: SocketFaultRule,
+  ) => boolean,
+  /** Disarm all fault rules. */
+  clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
+};
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,

@@ -137,13 +137,11 @@ describe("Bun.file in serve routes", () => {
 
     it("serves empty file", async () => {
       const res = await fetch(new URL(`/empty.txt`, server.url));
-      expect(res.status).toBe(204);
+      // An empty file is a valid zero-byte representation: a plain 200 with
+      // `Content-Length: 0`, the same framing every other empty body form
+      // (`new Response("")`, `new Blob([])`, ...) gets.
+      expect(res.status).toBe(200);
       expect(await res.text()).toBe("");
-      // A server MUST NOT send a Content-Length header field in any response
-      // with a status code of 1xx (Informational) or 204 (No Content). A server
-      // MUST NOT send a Content-Length header field in any 2xx (Successful)
-      // response to a CONNECT request (Section 9.3.6).
-      expect(res.headers.get("Content-Length")).toBeNull();
 
       const headers = res.headers.toJSON();
       delete headers.date;
@@ -151,6 +149,7 @@ describe("Bun.file in serve routes", () => {
 
       expect(headers).toMatchInlineSnapshot(`
         {
+          "content-length": "0",
           "content-type": "text/plain;charset=utf-8",
         }
       `);
@@ -549,10 +548,36 @@ describe("Bun.file in serve routes", () => {
   });
 
   describe.concurrent("Special status codes", () => {
-    it("returns 204 for empty files with 200 status", async () => {
-      const res = await fetch(new URL(`/empty.txt`, server.url));
-      expect(res.status).toBe(204);
-      expect(await res.text()).toBe("");
+    // Bun used to rewrite the default 200 of an empty file-backed body to
+    // 204. No other empty body form got that treatment, HEAD of the same URL
+    // did not, and a server-invented 204 dropped the Content-Type.
+    it("returns 200 for empty files, for GET and HEAD alike", async () => {
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(new URL(`/empty.txt`, server.url), { method });
+        expect({ method, status: res.status, contentLength: res.headers.get("Content-Length") }).toEqual({
+          method,
+          status: 200,
+          contentLength: "0",
+        });
+        expect(await res.text()).toBe("");
+      }
+    });
+
+    it("returns 200 for empty files served from the fetch handler, for GET and HEAD alike", async () => {
+      const emptyPath = join(tempDir, "empty.txt");
+      using handlerServer = Bun.serve({
+        port: 0,
+        fetch: () => new Response(Bun.file(emptyPath)),
+      });
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(handlerServer.url, { method });
+        expect({ method, status: res.status, contentLength: res.headers.get("Content-Length") }).toEqual({
+          method,
+          status: 200,
+          contentLength: "0",
+        });
+        expect(await res.text()).toBe("");
+      }
     });
 
     it("preserves custom status for empty files", async () => {
@@ -776,7 +801,9 @@ const server = Bun.serve({
 // server drains the FIFO, so \`pumped\` tracks how far the server has read.
 // The chain is intentionally never awaited to completion: a correctly
 // backpressured server stops draining the pipe once the client stops reading.
-const CHUNK = Buffer.alloc(4 * 1024, 120);
+// 8 KiB stays under the 16 KiB macOS FIFO capacity while halving the number of
+// threadpool round-trips needed to fill the kernel socket buffers.
+const CHUNK = Buffer.alloc(8 * 1024, 120);
 let pumped = 0;
 let stopPumping = false;
 function pump(err, n) {
@@ -823,13 +850,16 @@ console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill "
 // must eventually report backpressure and the reader must park; the pump then
 // stops making progress. The extra readable events delivered between the first
 // backpressured write and the stall are what used to over-release the
-// in-flight-read reference. Bounded poll so a broken build fails instead of
-// hanging.
+// in-flight-read reference. "Stalled" means the pump advanced by less than one
+// CHUNK across 5 consecutive samples, i.e. body writes are already returning
+// backpressure; waiting for byte-for-byte stability would mean waiting for the
+// kernel socket buffers to fill completely. Bounded poll so a broken build
+// fails instead of hanging.
 let last = -1;
 let stable = 0;
 for (let i = 0; i < 500 && stable < 5; i++) {
   await Bun.sleep(10);
-  if (pumped === last) {
+  if (last >= 0 && pumped - last < CHUNK.length) {
     stable++;
   } else {
     stable = 0;

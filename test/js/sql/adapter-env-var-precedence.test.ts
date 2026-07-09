@@ -555,8 +555,16 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.tls).toEqual({ ca: "-----BEGIN CERTIFICATE-----", serverName: "localhost" });
     });
 
-    test("URL sslmode + tls object combine (tls shape wins, sslmode wins)", () => {
-      const options = new SQL("postgres://user:pass@localhost/mydb?sslmode=verify-full", {
+    test("URL sslmode >= verify-ca survives a tls object requesting verification", () => {
+      const options = new SQL("postgres://user:pass@localhost/mydb?sslmode=verify-ca", {
+        tls: { rejectUnauthorized: true },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_ca);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: true, serverName: "localhost" });
+    });
+
+    test("URL sslmode < verify-ca is escalated by a tls object requesting verification", () => {
+      const options = new SQL("postgres://user:pass@localhost/mydb?sslmode=require", {
         tls: { rejectUnauthorized: true },
       });
       expect(options.options.sslMode).toBe(SSLMode.verify_full);
@@ -582,8 +590,10 @@ describe("SQL adapter environment variable precedence", () => {
       expect(withSsl.options.tls).toEqual(withTls.options.tls as object);
     });
 
-    test("URL sslmode=invalid throws", () => {
-      expect(() => new SQL("postgres://user:pass@localhost/mydb?sslmode=bogus")).toThrow();
+    test("URL sslmode=invalid throws ERR_INVALID_ARG_VALUE", () => {
+      expect(() => new SQL("postgres://user:pass@localhost/mydb?sslmode=bogus")).toThrow(
+        /must be one of: disable, prefer, require, verify-ca, verify-full/,
+      );
     });
   });
 });

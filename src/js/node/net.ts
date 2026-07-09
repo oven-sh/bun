@@ -442,7 +442,9 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
+    // Node skips the identity check on a resumed session: it was verified on
+    // the original full handshake (onConnectSecure in lib/_tls_wrap.js).
+    if (!verifyError && typeof checkServerIdentity === "function" && !self.isSessionReused()) {
       verifyError = runCheckServerIdentity(self, checkServerIdentity);
       if (verifyError === kCheckServerIdentityThrew) return;
     }
@@ -1175,7 +1177,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
+    // Node skips the identity check on a resumed session: it was verified on
+    // the original full handshake (onConnectSecure in lib/_tls_wrap.js).
+    if (!verifyError && typeof checkServerIdentity === "function" && !self.isSessionReused()) {
       verifyError = runCheckServerIdentity(self, checkServerIdentity);
       if (verifyError === kCheckServerIdentityThrew) return;
     }

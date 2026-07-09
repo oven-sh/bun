@@ -5610,7 +5610,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.repl_mode {
                 return None;
             }
-            if (self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm)
+            if (self.has_es_module_syntax
+                || (self.options.module_type == options::ModuleType::Esm && !self.options.bundle))
                 && self.commonjs_named_exports.count() == 0
             {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of

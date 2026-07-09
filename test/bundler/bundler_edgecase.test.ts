@@ -2773,17 +2773,18 @@ describe("bundler", () => {
   });
   itBundled("edgecase/NamelessNestedTypeCommonjsUnderTypeModule", {
     files: {
-      "/entry.js": `import a from "pkg"; console.log(a.hello);`,
+      "/entry.js": `import a from "pkg"; console.log(a.hello, a.viaThis);`,
       "/node_modules/pkg/package.json": `{"name":"pkg","type":"module","exports":{"default":"./dist/cjs/index.js"}}`,
       "/node_modules/pkg/dist/cjs/package.json": `{"type":"commonjs"}`,
       "/node_modules/pkg/dist/cjs/index.js": `
         "use strict";
         Object.defineProperty(exports, "__esModule", { value: true });
         Object.defineProperty(exports, "hello", { value: "nested-cjs" });
+        this.viaThis = "this-is-exports";
       `,
     },
     target: "node",
-    run: { stdout: "nested-cjs" },
+    run: { stdout: "nested-cjs this-is-exports" },
   });
   itBundled("edgecase/ExportsMapImportConditionPointsAtCjs", {
     files: {

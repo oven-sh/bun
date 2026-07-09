@@ -3100,12 +3100,12 @@ declare module "bun" {
       algorithm: "argon2id" | "argon2d" | "argon2i";
 
       /**
-       * Memory usage, in kibibytes. Minimum 8.
+       * Memory usage, in kibibytes. Must be between 8 and 4194304 (4 GiB).
        */
       memoryCost?: number;
       /**
        * Number of iterations. More iterations means more computation and a
-       * longer hash time.
+       * longer hash time. Must be between 1 and 65536.
        */
       timeCost?: number;
     }

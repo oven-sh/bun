@@ -6546,54 +6546,45 @@ impl Default for NormalizePathWindowsOpts {
     }
 }
 
-/// End of the volume prefix in an NT `\Device\…` path: past the 2nd component
-/// (`\Device\HarddiskVolume3`), or past the 4th for UNC redirector devices
-/// (`\Device\Mup\server\share`). Returns `path.len()` when there are fewer.
+/// `..`-clamp boundary from the kernel's own two answers: the handle's full
+/// NT object name minus its volume-relative name; Mup/LanmanRedirector extend
+/// past `\server\share`. `None` when the names don't compose (rename race).
 #[cfg(windows)]
-fn nt_volume_prefix_len(path: &[u16]) -> usize {
+fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<usize> {
     const SEP: u16 = b'\\' as u16;
+    const DEVICE: &[u8] = b"\\Device\\";
+    if vol_rel.first() != Some(&SEP)
+        || vol_rel.len() >= nt.len()
+        || !bun_core::strings::has_suffix_t(nt, vol_rel)
+    {
+        return None;
+    }
+    let device_len = nt.len() - vol_rel.len();
+    let is_device = device_len >= DEVICE.len()
+        && bun_core::strings::eql_case_insensitive_t(&nt[..DEVICE.len()], DEVICE);
+    let device_is = |name: &[u8]| {
+        let full = DEVICE.len() + name.len();
+        is_device
+            && device_len >= full
+            && bun_core::strings::eql_case_insensitive_t(&nt[DEVICE.len()..full], name)
+            && (device_len == full || nt[full] == SEP)
+    };
+    if !device_is(b"Mup") && !device_is(b"LanmanRedirector") {
+        return Some(device_len);
+    }
+    // UNC volume-relative names start at `\server\share` (ntifs
+    // FileNameInformation); fewer components → the boundary is unknowable.
     let component_end = |start: usize| {
-        path[start..]
+        vol_rel[start..]
             .iter()
             .position(|&c| c == SEP)
-            .map_or(path.len(), |i| start + i)
+            .map_or(vol_rel.len(), |i| start + i)
     };
-    if path.first() != Some(&SEP) {
-        return path.len();
+    let server_end = component_end(1);
+    if server_end == vol_rel.len() {
+        return None;
     }
-    let device_end = component_end(1);
-    if device_end == path.len() {
-        return path.len();
-    }
-    let volume_end = component_end(device_end + 1);
-    let volume = &path[device_end + 1..volume_end];
-    // UNC resolves through a redirector device; keep `server\share` in the
-    // prefix so `..` clamps at the share root, mirroring the DOS
-    // `\\server\share` root.
-    if !bun_core::strings::eql_case_insensitive_t(volume, b"Mup")
-        && !bun_core::strings::eql_case_insensitive_t(volume, b"LanmanRedirector")
-    {
-        return volume_end;
-    }
-    if volume_end == path.len() {
-        return path.len();
-    }
-    // Session-qualified redirector paths interpose `;LanmanRedirector` /
-    // `;X:…` components before `server\share` — skip them so the prefix
-    // still ends after the share.
-    let mut server_start = volume_end + 1;
-    while server_start < path.len() && path[server_start] == b';' as u16 {
-        let end = component_end(server_start);
-        if end == path.len() {
-            return path.len();
-        }
-        server_start = end + 1;
-    }
-    let server_end = component_end(server_start);
-    if server_end == path.len() {
-        return path.len();
-    }
-    component_end(server_end + 1)
+    Some(device_len + component_end(server_end + 1))
 }
 
 /// `normalizePathWindows` — convert a (possibly relative) path into an NT
@@ -6766,10 +6757,41 @@ pub fn normalize_path_windows_opts<'a>(
         rel = &rel[2..];
     }
 
-    // The generic normalizer's `..` clamp knows drive/UNC roots, not device
-    // roots: copy the volume prefix (`\Device\HarddiskVolume3`) verbatim and
-    // normalize only the remainder below it.
-    let prefix_len = nt_volume_prefix_len(base);
+    // The clamp boundary only matters when `..` can climb into the copied
+    // prefix (`base` is already normalized); without one, any split yields
+    // identical output, so skip the volume-relative query entirely.
+    let has_dotdot = rel
+        .split(|&c| c == b'\\' as u16 || c == b'/' as u16)
+        .any(|component| component == [b'.' as u16, b'.' as u16]);
+    let mut prefix_len = if !has_dotdot {
+        base.len()
+    } else {
+        // The generic normalizer's `..` clamp knows drive/UNC roots, not
+        // device roots: copy the device prefix (the NT object name minus the
+        // volume-relative name) verbatim and normalize only the remainder.
+        let mut rel_buf = bun_paths::w_path_buffer_pool::get();
+        let vol_rel = match windows::GetFinalPathNameByHandle(
+            base_fd,
+            bun_windows_sys::GetFinalPathNameByHandleFormat {
+                volume_name: bun_windows_sys::VolumeName::None,
+            },
+            &mut rel_buf.0[..],
+        ) {
+            Ok(p) => p,
+            Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+        };
+        // A mis-placed boundary would resolve `..` to the wrong file; fail
+        // loud when the two names don't compose (e.g. a rename race).
+        match nt_clamp_prefix_len(base, vol_rel) {
+            Some(len) => len,
+            None => return Err(Error::from_code(E::BADFD, Tag::open)),
+        }
+    };
+    // The `\Device\…` name of a volume-root handle ends in `\`; keep the
+    // prefix separator-free (the join below adds exactly one).
+    while prefix_len > 0 && base[prefix_len - 1] == b'\\' as u16 {
+        prefix_len -= 1;
+    }
     let mut rest = &base[prefix_len..];
     // Volume-root handles yield a trailing `\` — trim it so `joined` below
     // starts with exactly one separator.
@@ -9759,6 +9781,8 @@ mod normalize_path_windows_tests {
         assert!(got.starts_with("\\Device\\"), "{got}");
         assert!(got.ends_with("\\a\\b"), "{got}");
         assert!(!got.contains("\\??\\"), "{got}");
+        // `..`-free rel: exactly the base directory's NT name plus the rel.
+        assert_eq!(got, format!("{}\\a\\b", normalize(*dir, ".")));
     }
 
     #[test]
@@ -9828,34 +9852,59 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
-    fn volume_prefix_len_shapes() {
-        let ends_after = |path: &str, prefix: &str| {
-            assert!(path.starts_with(prefix), "{path}");
-            assert_eq!(nt_volume_prefix_len(&wide(path)), prefix.len(), "{path}");
+    fn clamp_prefix_len_pairs() {
+        let split_at = |nt: &str, vol_rel: &str, prefix: &str| {
+            assert!(nt.starts_with(prefix), "{nt}");
+            assert_eq!(
+                nt_clamp_prefix_len(&wide(nt), &wide(vol_rel)),
+                Some(prefix.len()),
+                "{nt} / {vol_rel}"
+            );
         };
-        // Local volume: prefix ends after the volume component.
-        ends_after(
+        // Local volume.
+        split_at(
             "\\Device\\HarddiskVolume3\\Users\\x",
+            "\\Users\\x",
             "\\Device\\HarddiskVolume3",
         );
-        // Too few components: the whole path is the prefix.
-        ends_after("\\Device\\HarddiskVolume3", "\\Device\\HarddiskVolume3");
-        ends_after("\\Device", "\\Device");
-        // UNC redirector: prefix ends after `server\share`.
-        ends_after(
-            "\\Device\\Mup\\server\\share\\dir",
-            "\\Device\\Mup\\server\\share",
+        // Volume root.
+        split_at(
+            "\\Device\\HarddiskVolume3\\",
+            "\\",
+            "\\Device\\HarddiskVolume3",
         );
-        ends_after("\\Device\\Mup\\server", "\\Device\\Mup\\server");
-        // Session-qualified redirector shapes skip the `;…` components.
-        ends_after(
-            "\\Device\\Mup\\;LanmanRedirector\\;X:0000000000000000\\server\\share\\dir",
-            "\\Device\\Mup\\;LanmanRedirector\\;X:0000000000000000\\server\\share",
+        // Nested device name (dynamic-disk volume set).
+        split_at(
+            "\\Device\\HarddiskDmVolumes\\MachineDg0\\Volume1\\dir\\f",
+            "\\dir\\f",
+            "\\Device\\HarddiskDmVolumes\\MachineDg0\\Volume1",
         );
-        ends_after(
-            "\\Device\\LanmanRedirector\\;X:0\\server\\share",
-            "\\Device\\LanmanRedirector\\;X:0\\server\\share",
+        // UNC: boundary extends past `\server\share`.
+        split_at(
+            "\\Device\\Mup\\srv\\share\\dir",
+            "\\srv\\share\\dir",
+            "\\Device\\Mup\\srv\\share",
         );
+        // Session-qualified redirector: `;…` components sit on the device
+        // side of the subtraction; the share extension follows.
+        split_at(
+            "\\Device\\Mup\\;LanmanRedirector\\;X:00000000000003e7\\srv\\share\\f",
+            "\\srv\\share\\f",
+            "\\Device\\Mup\\;LanmanRedirector\\;X:00000000000003e7\\srv\\share",
+        );
+        // Guard failures report an unknowable boundary.
+        let fails = |nt: &str, vol_rel: &str| {
+            assert_eq!(
+                nt_clamp_prefix_len(&wide(nt), &wide(vol_rel)),
+                None,
+                "{nt} / {vol_rel}"
+            );
+        };
+        fails("\\Device\\HarddiskVolume3\\x", "x"); // no leading `\`
+        fails("\\Device\\HarddiskVolume3\\x", ""); // empty
+        fails("\\x", "\\Device\\HarddiskVolume3\\x"); // vol_rel >= nt
+        fails("\\Device\\HarddiskVolume3\\x", "\\y"); // suffix mismatch
+        fails("\\Device\\Mup\\srv", "\\srv"); // UNC server without share
     }
 
     #[test]

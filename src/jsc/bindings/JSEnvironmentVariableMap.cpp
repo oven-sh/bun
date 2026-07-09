@@ -389,6 +389,7 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags
         | JSC::OverridesGetOwnPropertySlot
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero
         | JSC::OverridesPut
         | JSC::OverridesGetOwnPropertyNames
         | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
@@ -418,6 +419,11 @@ public:
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    // Integer-like env keys (process.env['123']) arrive through the indexed hooks;
+    // without these they land in JSObject's indexed storage, invisible to the store.
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, JSC::PropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
 
@@ -585,6 +591,33 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     store->set(keyStr, stringValue);
     return true;
+}
+
+bool JSSharedEnvMap::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    return getOwnPropertySlot(object, globalObject, Identifier::from(vm, index), slot);
+}
+
+bool JSSharedEnvMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    PutPropertySlot slot(cell, shouldThrow);
+    return put(cell, globalObject, Identifier::from(vm, index), value, slot);
+}
+
+bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    // Delegate to Base::deletePropertyByIndex, not deleteProperty: JSObject's named
+    // form re-dispatches index-like names back here, which would recurse forever.
+    auto* store = sharedEnvStoreFor(asObject(cell));
+    if (!store) [[unlikely]] {
+        ASSERT_NOT_REACHED();
+        return Base::deletePropertyByIndex(cell, globalObject, index);
+    }
+
+    store->remove(String::number(index));
+    return Base::deletePropertyByIndex(cell, globalObject, index);
 }
 
 JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)

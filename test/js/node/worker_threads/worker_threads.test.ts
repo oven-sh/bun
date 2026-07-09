@@ -974,6 +974,18 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
+  // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
+  // they land in JSObject's indexed storage and never touch the shared store.
+  it("routes integer-like env keys through the shared store", async () => {
+    expect(await run("indexed")).toEqual({
+      worker_sees_123: "from-main",
+      worker_keys_numeric: ["123", "456"],
+      main_sees_456: "from-worker",
+      main_sees_123: "from-main",
+      main_sees_7_after_delete: null,
+    });
+  });
+
   // Two SHARE_ENV children of one thread alias a single store: writes, deletes and
   // enumeration cross between them, and a default-env grandchild snapshots it.
   it("aliases one store across siblings, deletes and enumeration", async () => {

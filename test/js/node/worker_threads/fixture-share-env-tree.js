@@ -63,6 +63,22 @@ async function main() {
     return;
   }
 
+  // Integer-like keys route through JSC's indexed hooks, not the named ones.
+  if (mode === "indexed") {
+    process.env["123"] = "from-main";
+    process.env["7"] = "seven";
+    const a = await spawn({ role: "A", mode }, SHARE_ENV);
+    console.log(
+      JSON.stringify({
+        ...a,
+        main_sees_456: orNull(process.env["456"]),
+        main_sees_123: orNull(process.env["123"]),
+        main_sees_7_after_delete: orNull(process.env["7"]),
+      }),
+    );
+    return;
+  }
+
   throw new Error(`unknown mode ${mode}`);
 }
 
@@ -104,6 +120,19 @@ async function worker() {
     } else if (role === "C") {
       parentPort.postMessage({ ok: true });
     }
+    return;
+  }
+
+  if (mode === "indexed") {
+    const sees123 = orNull(process.env["123"]);
+    process.env["456"] = "from-worker";
+    delete process.env["7"];
+    parentPort.postMessage({
+      worker_sees_123: sees123,
+      worker_keys_numeric: Object.keys(process.env)
+        .filter(k => /^\d+$/.test(k))
+        .sort(),
+    });
     return;
   }
 

@@ -27,11 +27,14 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSStreamsRuntime;
 
-// The transform's readable half always carries a default controller.
+// Null-safe: Bun's native-sink pumps clear a consumed stream's controller slot in their
+// finally step, so a transform reaction (or an async transform()/flush() resuming after
+// that teardown) can see a readable with no controller. A torn-down readable is terminal.
 static JSReadableStreamDefaultController* transformReadableController(JSTransformStream* stream)
 {
     auto* readable = stream->m_readable.get();
-    ASSERT(readable && readable->m_controllerKind == ControllerKind::Default);
+    if (readable->m_controllerKind != ControllerKind::Default)
+        return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
@@ -145,8 +148,10 @@ void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* strea
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), error);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, error);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     RELEASE_AND_RETURN(scope, transformStreamErrorWritableAndUnblockWrite(globalObject, stream, error));
 }
 
@@ -336,8 +341,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelFulfilled, (JSGl
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
         return JSValue::encode(jsUndefined());
     }
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), reason);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     resolvePromise(globalObject, finishPromise, jsUndefined());
     // Resolving with `undefined` performs no thenable lookup and cannot throw.
     scope.assertNoException();
@@ -352,8 +359,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelRejected, (JSGlo
     auto* stream = uncheckedDowncast<JSTransformStream>(uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1))->getInternalField(0));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), rejection);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, rejection);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     rejectPromise(globalObject, finishPromise, rejection);
     return JSValue::encode(jsUndefined());
 }
@@ -370,8 +379,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushFulfilled, (JSGlo
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
         return JSValue::encode(jsUndefined());
     }
-    readableStreamDefaultControllerClose(globalObject, transformReadableController(stream));
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerClose(globalObject, readableController);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     resolvePromise(globalObject, finishPromise, jsUndefined());
     // Resolving with `undefined` performs no thenable lookup and cannot throw.
     scope.assertNoException();
@@ -386,8 +397,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
     auto* finishPromise = stream->m_controller->m_finishPromise.get();
 
-    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), rejection);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerError(globalObject, readableController, rejection);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     rejectPromise(globalObject, finishPromise, rejection);
     return JSValue::encode(jsUndefined());
 }

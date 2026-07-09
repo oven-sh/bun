@@ -2,7 +2,7 @@ import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
-import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import path from "path";
@@ -222,6 +222,36 @@ describe("spawn()", () => {
     expect(child2.stdin).toBe(null);
     expect(child2.stdout).toBe(null);
     expect(child2.stderr).toBe(null);
+  });
+
+  describe("stdin for non-pipe stdio[0] stays null after exit", () => {
+    it.each([
+      ["ignore", ["ignore", "ignore", "ignore"]],
+      ["inherit", ["inherit", "ignore", "ignore"]],
+      ["fd 0", [0, "ignore", "ignore"]],
+    ] as const)("spawn stdio[0]=%s", async (_, stdio) => {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
+      await once(child, "close");
+      expect(child.stdin).toBe(null);
+      expect(child.stdout).toBe(null);
+      expect(child.stderr).toBe(null);
+    });
+
+    it("fork() default stdio", async () => {
+      const dir = tmpdirSync();
+      const kid = path.join(dir, "kid.cjs");
+      fs.writeFileSync(kid, "process.exit(0)");
+      const child = fork(kid, [], { execPath: bunExe(), env: bunEnv });
+      await once(child, "close");
+      expect(child.stdin).toBe(null);
+    });
+
+    it("stdio[0]='pipe' still yields a destroyed Writable after exit", async () => {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
+      await once(child, "close");
+      expect(child.stdin).not.toBe(null);
+      expect(child.stdin!.destroyed).toBe(true);
+    });
   });
 
   it("should allow us to set cwd", async () => {

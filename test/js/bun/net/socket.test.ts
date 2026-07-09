@@ -2035,10 +2035,7 @@ Reo=
 
   const UNTRUSTED_MESSAGE = "unable to verify the first certificate";
 
-  async function connectTo(
-    serverTls: { key: string; cert: string },
-    clientTls: Record<string, unknown> | boolean,
-  ) {
+  async function connectTo(serverTls: { key: string; cert: string }, clientTls: Record<string, unknown> | boolean) {
     const received: string[] = [];
     const handshake = Promise.withResolvers<{
       authorizedArg: boolean;
@@ -2145,10 +2142,7 @@ Reo=
   });
 
   it("reports authorized=false but keeps the connection with rejectUnauthorized: false", async () => {
-    using t = await connectTo(
-      { key: ROGUE_KEY, cert: ROGUE_CRT },
-      { ca: CA_CRT, rejectUnauthorized: false },
-    );
+    using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT, rejectUnauthorized: false });
     // The callback's second argument stays the raw handshake result; the
     // verification verdict is the authorized getter / error argument.
     expect(await t.handshake.promise).toEqual({

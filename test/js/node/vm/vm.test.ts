@@ -1290,6 +1290,60 @@ describe("node:vm SourceTextModule import defer", () => {
     expect(metaCalls).toBe(1);
   });
 
+  test("dynamic `import.defer()` of a SyntheticModule still runs its evaluation steps", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SyntheticModule(
+      ["x"],
+      function () {
+        ctx.LOG.push("SYNTH");
+        this.setExport("x", 42);
+      },
+      { context: ctx, identifier: "dep" },
+    );
+    const root = new vm.SourceTextModule("export const p = import.defer('d');", {
+      context: ctx,
+      identifier: "root",
+      importModuleDynamically: () => dep,
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+
+    const ns = await root.namespace.p;
+    expect(ns.x).toBe(42);
+    expect(ctx.LOG).toContain("SYNTH");
+    expect(dep.status).toBe("evaluated");
+  });
+
+  test("dynamic `import.defer()` of a SourceTextModule still runs initializeImportMeta", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('DEP'); export const u = import.meta.url;", {
+      context: ctx,
+      identifier: "dep",
+      initializeImportMeta(meta: any) {
+        meta.url = "file:///dep.js";
+      },
+    });
+    await dep.link(() => {
+      throw new Error("no deps");
+    });
+    const root = new vm.SourceTextModule("export const p = import.defer('d');", {
+      context: ctx,
+      identifier: "root",
+      importModuleDynamically: () => dep,
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+
+    const ns = await root.namespace.p;
+    expect(ctx.LOG.join("|")).toBe("");
+    expect(ns.u).toBe("file:///dep.js");
+    expect(ctx.LOG.join("|")).toBe("DEP");
+  });
+
   test("a throwing deferred dependency surfaces the error and reports errored status", async () => {
     const ctx = vm.createContext({ LOG: [] });
     const dep = new vm.SourceTextModule("LOG.push('DEP'); throw new Error('boom'); export const a = 1;", {

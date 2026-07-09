@@ -76,6 +76,8 @@ public:
 
     JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
 
+    void prepareDeferredSubgraph(JSGlobalObject* globalObject, UncheckedKeyHashSet<NodeVMModule*>& visited, uint32_t timeout, bool breakOnSigint);
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
@@ -90,7 +92,6 @@ protected:
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 
     void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
-    void prepareDeferredSubgraph(JSGlobalObject* globalObject, UncheckedKeyHashSet<NodeVMModule*>& visited, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

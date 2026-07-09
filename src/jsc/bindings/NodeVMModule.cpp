@@ -598,6 +598,15 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetDeferredNamespace, (JSC::JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        // EvaluateModuleSync (triggered by first property access on the
+        // deferred namespace) runs the JSC record directly with no reference
+        // to the wrapper's initializeImportMeta or a SyntheticModule's
+        // evaluateCallback; perform those wrapper-side steps for the whole
+        // subgraph first, mirroring the static `import defer` path in
+        // evaluateDependencies().
+        UncheckedKeyHashSet<NodeVMModule*> visited;
+        thisObject->prepareDeferredSubgraph(globalObject, visited, 0, false);
+        RETURN_IF_EXCEPTION(scope, {});
         AbstractModuleRecord* amr = thisObject->moduleRecord(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(amr->getModuleNamespace(globalObject, AbstractModuleRecord::ModulePhase::Defer)));

@@ -140,7 +140,7 @@ private:
     bool m_closeEventDispatched { false };
     // Set while the deferred close task is queued: hasPendingActivity() must keep
     // the wrapper alive until it runs, or the task dispatches into a dead listener.
-    bool m_closeEventPending { false };
+    std::atomic<bool> m_closeEventPending { false };
     bool m_hasMessageEventListener { false };
     bool m_hasRef { false };
 

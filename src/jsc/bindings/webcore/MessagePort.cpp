@@ -225,11 +225,11 @@ void MessagePort::close()
     // drained for shutdown, so the task would never run and would outlive the VM.
     auto* context = scriptExecutionContext();
     if (context && !context->isTerminating()) {
-        m_closeEventPending = true;
+        m_closeEventPending.store(true, std::memory_order_release);
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
             protectedThis->dispatchCloseEvent();
             protectedThis->removeAllEventListeners();
-            protectedThis->m_closeEventPending = false;
+            protectedThis->m_closeEventPending.store(false, std::memory_order_release);
         });
     } else {
         removeAllEventListeners();
@@ -392,7 +392,7 @@ bool MessagePort::hasPendingActivity() const
     // close() sets m_isDetached before queueing the deferred close task, and a port
     // with only a 'close' listener has no message listener — so this must precede
     // both gates or the wrapper is collected before the task dispatches.
-    if (m_closeEventPending)
+    if (m_closeEventPending.load(std::memory_order_acquire))
         return true;
     if (!scriptExecutionContext() || m_isDetached)
         return false;

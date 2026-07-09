@@ -193,7 +193,7 @@ bun --console-depth 5 run index.tsx
 ```ts console.ts icon="/icons/typescript.svg"
 const nested = { a: { b: { c: { d: "deep" } } } };
 console.log(nested);
-// With --console-depth 2 (default): { a: { b: [Object] } }
+// With --console-depth 2 (default): { a: { b: { c: [Object] } } }
 // With --console-depth 4: { a: { b: { c: { d: 'deep' } } } }
 ```
 

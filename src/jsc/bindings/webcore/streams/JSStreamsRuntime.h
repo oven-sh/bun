@@ -174,6 +174,7 @@ class JSDirectStreamController;
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
+    V(onDirectPullFulfilled)                                       \
     V(onDirectPullRejected)
 
 // owner: JSReadableStreamDefaultReader.cpp (readMany). context = the reader.
@@ -354,6 +355,7 @@ public:
     // two size-function LazyProperties, and every LazyProperty in
     // FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

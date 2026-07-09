@@ -760,7 +760,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
     if (chunk) {
         JSObject* result = createIteratorResultObject(lexicalGlobalObject, chunk, false);
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseFulfilledWith(lexicalGlobalObject, result)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseResolvedWith(lexicalGlobalObject, result)));
     }
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);

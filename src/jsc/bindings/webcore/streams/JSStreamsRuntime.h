@@ -133,9 +133,7 @@ class JSDirectStreamController;
     V(onWSSinkWriteFulfilled)                                  \
     V(onWSSinkWriteRejected)
 
-// owner: TransformStreamOperations.cpp. context = the JSTransformStream, EXCEPT
-// onTSSinkWriteBackpressureChangeFulfilled, whose context is an
-// InternalFieldTuple{transformStream, chunk}.
+// owner: TransformStreamOperations.cpp. context = the JSTransformStream.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V) \
     V(onTSSinkWriteBackpressureChangeFulfilled)                \
     V(onTSSinkAbortCancelFulfilled)                            \

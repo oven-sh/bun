@@ -12,6 +12,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "BunGlobalObject.h"
 #include <JavaScriptCore/AsyncIteratorPrototype.h>
@@ -135,8 +136,17 @@ void JSReadableStreamAsyncIterator::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSReadableStreamAsyncIterator>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_ongoingPromise);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_ongoingPromise);
+}
+
+void JSReadableStreamAsyncIterator::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamAsyncIterator>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_ongoingPromise, "ongoingPromise"_s);
 }
 
 // "Get the next iteration result": the read request's chunk/close/error steps

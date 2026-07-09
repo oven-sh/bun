@@ -274,7 +274,7 @@ void readableStreamClose(JSGlobalObject* globalObject, JSReadableStream* stream)
     MarkedArgumentBuffer readRequests;
     detachReadRequests(vm, globalObject, defaultReader, readRequests);
     RETURN_IF_EXCEPTION(scope, void());
-    for (size_t i = 0; i < readRequests.size(); ++i) {
+    for (size_t i = 0, count = readRequests.size(); i < count; ++i) {
         uncheckedDowncast<JSReadRequest>(readRequests.at(i))->closeSteps(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -359,9 +359,10 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
     stream->m_disturbed = true;
-    if (stream->m_state == ReadableStreamState::Closed)
+    const ReadableStreamState state = stream->m_state;
+    if (state == ReadableStreamState::Closed)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
-    if (stream->m_state == ReadableStreamState::Errored)
+    if (state == ReadableStreamState::Errored)
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, stream->m_storedError.get()));
 
     readableStreamClose(globalObject, stream);
@@ -373,7 +374,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
         MarkedArgumentBuffer readIntoRequests;
         detachReadRequests(vm, globalObject, byobReader, readIntoRequests);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        for (size_t i = 0; i < readIntoRequests.size(); ++i) {
+        for (size_t i = 0, count = readIntoRequests.size(); i < count; ++i) {
             uncheckedDowncast<JSReadIntoRequest>(readIntoRequests.at(i))->closeSteps(globalObject, nullptr);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
@@ -503,7 +504,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         controller->releaseSteps();
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
         if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
-            auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
+            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
             if (auto* handle = adapter->m_handle.get()) {
                 JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
                 RETURN_IF_EXCEPTION(scope, void());
@@ -589,7 +590,7 @@ JSReadableStreamBYOBReader* acquireReadableStreamBYOBReader(JSGlobalObject* glob
 
 // SetUpReadableStreamDefaultController steps 1-8. The caller populated the controller's
 // algorithm slots; the start reaction (steps 10-12) is registered by the caller.
-static void installDefaultController(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSReadableStreamDefaultController* controller, double highWaterMark)
+static void installDefaultController(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* __restrict stream, JSReadableStreamDefaultController* __restrict controller, double highWaterMark)
 {
     ASSERT(stream->m_controllerKind == ControllerKind::None && !stream->m_controller);
     controller->m_stream.set(vm, controller, stream);
@@ -647,7 +648,7 @@ void setUpReadableStreamDefaultControllerFromUnderlyingSource(JSGlobalObject* gl
 }
 
 // SetUpReadableByteStreamController steps 1-13.
-static void installByteController(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSReadableByteStreamController* controller, double highWaterMark, std::optional<uint64_t> autoAllocateChunkSize)
+static void installByteController(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* __restrict stream, JSReadableByteStreamController* __restrict controller, double highWaterMark, std::optional<uint64_t> autoAllocateChunkSize)
 {
     ASSERT(stream->m_controllerKind == ControllerKind::None && !stream->m_controller);
     if (autoAllocateChunkSize)
@@ -828,7 +829,7 @@ JSPromise* fromIterablePullAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
+    const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
     IterationRecord iteratorRecord { context->m_iterator.get(), context->m_nextMethod.get() };
 
     JSValue nextResult;
@@ -856,7 +857,7 @@ JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableS
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
+    const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
     JSObject* iterator = context->m_iterator.get();
 
     JSValue returnMethod;
@@ -1162,7 +1163,7 @@ JSPromise* byteTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeState* 
     }
     teeState->m_reading = true;
     auto* branchStream = branch ? teeState->m_branch2.get() : teeState->m_branch1.get();
-    auto* byobRequest = readableByteStreamControllerGetBYOBRequest(globalObject, byteControllerOf(branchStream));
+    const auto* byobRequest = readableByteStreamControllerGetBYOBRequest(globalObject, byteControllerOf(branchStream));
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!byobRequest)
         byteTeePullWithDefaultReader(vm, globalObject, teeState);
@@ -1304,7 +1305,7 @@ static EncodedJSValue byteTeeReaderClosedRejected(JSGlobalObject* globalObject, 
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* teeState = uncheckedDowncast<JSStreamTeeState>(context->getInternalField(0));
+    const auto* teeState = uncheckedDowncast<JSStreamTeeState>(context->getInternalField(0));
     if (context->getInternalField(1) != teeState->m_reader.get())
         return JSValue::encode(jsUndefined());
     if (auto* controller1 = teeBranchByteController(teeState->m_branch1.get())) {

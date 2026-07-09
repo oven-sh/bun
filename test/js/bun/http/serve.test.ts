@@ -697,6 +697,50 @@ describe("streaming", () => {
         message: "Body object should not be disturbed or locked",
       });
     });
+
+    it.each([
+      ["null", null],
+      ["undefined", undefined],
+      ["false", false],
+      ["0", 0],
+      ["empty string", ""],
+    ])("passes rejection reason %s verbatim on every rejection path", async (_, reason) => {
+      const received: Record<string, unknown> = {};
+      let route = "";
+      await using server = serve({
+        port: 0,
+        development: false,
+        routes: {
+          "/sync": () => {
+            throw reason;
+          },
+          "/presettled": async () => {
+            throw reason;
+          },
+          "/returned-reject": () => Promise.reject(reason),
+          "/awaited": async () => {
+            await Bun.sleep(1);
+            throw reason;
+          },
+        },
+        error(e) {
+          received[route] = e;
+          return new Response("handled", { status: 500 });
+        },
+      });
+      for (const p of ["/sync", "/presettled", "/returned-reject", "/awaited"]) {
+        route = p;
+        const res = await fetch(new URL(p, server.url));
+        expect(res.status).toBe(500);
+        expect(await res.text()).toBe("handled");
+      }
+      expect(received).toStrictEqual({
+        "/sync": reason,
+        "/presettled": reason,
+        "/returned-reject": reason,
+        "/awaited": reason,
+      });
+    });
   });
 
   it("text from JS, one chunk", async () => {

@@ -295,12 +295,18 @@ impl DefineExt for Define {
 
         // Step 4. Load environment data into hash tables.
         // These are only strings. We do not parse them as JSON.
+        // Skip keys the user already provided via `define` so the explicit
+        // option wins over the env-derived shorthand.
         if let Some(string_defines_) = &string_defines {
             define.insert_from_iterator(
                 string_defines_
                     .keys()
                     .iter()
                     .zip(string_defines_.values().iter())
+                    .filter(|(k, _)| match &_user_defines {
+                        Some(ud) => !ud.contains_key(k.as_ref()),
+                        None => true,
+                    })
                     .map(|(k, v)| (k.as_ref(), v)),
             )?;
         }

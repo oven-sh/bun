@@ -17,7 +17,9 @@ bun_core::declare_scope!(uws, visible);
 bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
-    pub fn create<T>(loop_: &mut Loop, _ptr: T) -> NonNull<Timer> {
+    // None when the C layer returns NULL (timerfd_create EMFILE/ENFILE on
+    // Linux). Callers must degrade gracefully rather than abort the process.
+    pub fn create<T>(loop_: &mut Loop, _ptr: T) -> Option<NonNull<Timer>> {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
@@ -29,15 +31,10 @@ impl Timer {
                 c_uint::try_from(size_of::<T>()).expect("int cast"),
             )
         };
-        NonNull::new(t).unwrap_or_else(|| {
-            panic!(
-                "us_create_timer: returned null: {}",
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            )
-        })
+        NonNull::new(t)
     }
 
-    pub fn create_fallthrough<T>(loop_: &mut Loop, _ptr: T) -> NonNull<Timer> {
+    pub fn create_fallthrough<T>(loop_: &mut Loop, _ptr: T) -> Option<NonNull<Timer>> {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
@@ -49,12 +46,7 @@ impl Timer {
                 c_uint::try_from(size_of::<T>()).expect("int cast"),
             )
         };
-        NonNull::new(t).unwrap_or_else(|| {
-            panic!(
-                "us_create_timer: returned null: {}",
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            )
-        })
+        NonNull::new(t)
     }
 
     pub fn set<T>(

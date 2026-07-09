@@ -1066,20 +1066,21 @@ impl EventLoop {
 
         if !loop_.is_active() {
             if self.forever_timer.is_none() {
-                let mut t = uws::Timer::create(
+                if let Some(mut t) = uws::Timer::create(
                     loop_,
                     std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                );
-                // SAFETY: t is a fresh non-null timer handle
-                unsafe {
-                    t.as_mut().set(
-                        std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                        Some(noop_forever_timer),
-                        1000 * 60 * 4,
-                        1000 * 60 * 4,
-                    )
-                };
-                self.forever_timer = Some(t);
+                ) {
+                    // SAFETY: t is a fresh non-null timer handle
+                    unsafe {
+                        t.as_mut().set(
+                            std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+                            Some(noop_forever_timer),
+                            1000 * 60 * 4,
+                            1000 * 60 * 4,
+                        )
+                    };
+                    self.forever_timer = Some(t);
+                }
             }
         }
 

@@ -607,7 +607,14 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
     memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
     int timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (timerfd == -1) {
-      return NULL;
+        /* Undo us_create_poll: free the allocation and the num_polls bump it
+         * took for non-fallthrough timers. The caller handles NULL. */
+        if (fallthrough) {
+            us_free(p);
+        } else {
+            us_poll_free(p, loop);
+        }
+        return NULL;
     }
     us_poll_init(p, timerfd, POLL_TYPE_CALLBACK);
 

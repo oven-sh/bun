@@ -11,10 +11,7 @@ namespace Bun {
 namespace WebStreams {
 
 // Node's `customInspect(depth, options, name, data)` (lib/internal/webstreams/util.js):
-//   if (depth < 0) return this;
-//   const opts = { ...options, depth: options.depth == null ? null : options.depth - 1 };
-//   return `${name} ${inspect(data, opts)}`;
-// `thisValue` is returned when depth < 0; `data` is the pre-built field object.
+// depth < 0 returns `thisValue`; otherwise `${name} ${inspect(data, {...options, depth-1})}`.
 JSC::EncodedJSValue customInspect(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::JSValue thisValue, ASCIILiteral name, JSC::JSObject* data);
 
 // Installs the host function on a prototype under Symbol.for("nodejs.util.inspect.custom").

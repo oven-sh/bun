@@ -6,9 +6,6 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[target.'cfg(target_env = "ohos")'.dependencies]
-ohos_sign.workspace = true
-
 [dependencies]
 bytemuck = "1"
 bun_opaque.workspace = true

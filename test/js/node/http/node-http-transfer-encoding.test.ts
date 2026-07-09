@@ -200,7 +200,9 @@ test("CTL byte in a trailer value fires clientError HPE_INVALID_HEADER_TOKEN", a
   const { port } = server.address() as AddressInfo;
 
   const socket = connect(port, "127.0.0.1", () => {
-    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTrailer: X-T\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: a\bb\r\n\r\n");
+    socket.write(
+      "POST / HTTP/1.1\r\nHost: x\r\nTrailer: X-T\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: a\bb\r\n\r\n",
+    );
   });
   socket.on("error", () => {});
   const err = await promise;
@@ -225,7 +227,9 @@ test("insecureHTTPParser accepts a CTL byte in a trailer value like node", async
   const { port } = server.address() as AddressInfo;
 
   const socket = connect(port, "127.0.0.1", () => {
-    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTrailer: X-T\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: a\bb\r\n\r\n");
+    socket.write(
+      "POST / HTTP/1.1\r\nHost: x\r\nTrailer: X-T\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: a\bb\r\n\r\n",
+    );
   });
   socket.on("error", reject);
   const result = await promise;

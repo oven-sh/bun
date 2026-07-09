@@ -7220,10 +7220,10 @@ declare module "bun" {
      *
      * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
      * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
-     * returned). For `"pipe"`, the subprocess owns and closes the fd. For
-     * `"socket-fd"` and raw-fd slots, the fd remains owned by the caller and is
-     * never closed by the subprocess. Other slots — including raw fds on Windows —
-     * are `null`.
+     * returned). Reading this property transfers ownership of any `"pipe"` fds to
+     * the caller, who is then responsible for closing them; the subprocess will
+     * not close them. `"socket-fd"` and raw-fd slots are likewise caller-owned.
+     * Other slots — including raw fds on Windows — are `null`.
      */
     readonly stdio: [null, null, null, ...(number | null)[]];
 

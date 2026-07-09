@@ -194,10 +194,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObjec
     data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isWritableStreamLocked(thisObject)), 0);
     ASCIILiteral state;
     switch (thisObject->m_state) {
-    case WritableStreamState::Writable: state = "writable"_s; break;
-    case WritableStreamState::Erroring: state = "erroring"_s; break;
-    case WritableStreamState::Errored:  state = "errored"_s;  break;
-    case WritableStreamState::Closed:   state = "closed"_s;   break;
+    case WritableStreamState::Writable:
+        state = "writable"_s;
+        break;
+    case WritableStreamState::Erroring:
+        state = "erroring"_s;
+        break;
+    case WritableStreamState::Errored:
+        state = "errored"_s;
+        break;
+    case WritableStreamState::Closed:
+        state = "closed"_s;
+        break;
     }
     data->putDirect(vm, Identifier::fromString(vm, "state"_s), jsNontrivialString(vm, state), 0);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStream"_s, data));

@@ -414,9 +414,15 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObjec
     data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isReadableStreamLocked(thisObject)), 0);
     ASCIILiteral state;
     switch (thisObject->m_state) {
-    case ReadableStreamState::Readable: state = "readable"_s; break;
-    case ReadableStreamState::Closed:   state = "closed"_s;   break;
-    case ReadableStreamState::Errored:  state = "errored"_s;  break;
+    case ReadableStreamState::Readable:
+        state = "readable"_s;
+        break;
+    case ReadableStreamState::Closed:
+        state = "closed"_s;
+        break;
+    case ReadableStreamState::Errored:
+        state = "errored"_s;
+        break;
     }
     data->putDirect(vm, Identifier::fromString(vm, "state"_s), jsNontrivialString(vm, state), 0);
     data->putDirect(vm, Identifier::fromString(vm, "supportsBYOB"_s), jsBoolean(thisObject->m_controllerKind == ControllerKind::Byte), 0);

@@ -163,7 +163,9 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
   const inspect = util.inspect;
 
   test("ReadableStream", () => {
-    expect(inspect(new ReadableStream())).toBe("ReadableStream { locked: false, state: 'readable', supportsBYOB: false }");
+    expect(inspect(new ReadableStream())).toBe(
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }",
+    );
     expect(inspect(new ReadableStream({ type: "bytes" }))).toBe(
       "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }",
     );

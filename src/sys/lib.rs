@@ -6706,12 +6706,47 @@ pub fn normalize_path_windows_opts<'a>(
         return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
     }
 
+    // Strip a leading drive letter (`C:`) on the relative part; the bypass
+    // below still copies the original `path` verbatim.
+    let rel = if path.len() >= 2
+        && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
+        && path[1] == b':' as u16
+    {
+        &path[2..]
+    } else {
+        path
+    };
+
+    // One pass over `rel` answers both routing (any separator or `.` → fd
+    // resolution) and clamp relevance (a whole `..` component); exit early
+    // only once both answers are known.
+    let mut saw_sep_or_dot = false;
+    let mut has_dotdot = false;
+    let mut dots = 0usize; // `.` count in the current component
+    let mut other = false; // non-dot chars in the current component
+    for &c in rel {
+        if c == b'\\' as u16 || c == b'/' as u16 {
+            saw_sep_or_dot = true;
+            if dots == 2 && !other {
+                has_dotdot = true;
+                break;
+            }
+            dots = 0;
+            other = false;
+        } else if c == b'.' as u16 {
+            saw_sep_or_dot = true;
+            dots += 1;
+        } else {
+            other = true;
+        }
+    }
+    if dots == 2 && !other {
+        has_dotdot = true; // trailing `..` component
+    }
+
     // Relative path with no separators or `.` can be passed straight through
     // to `NtCreateFile` against `RootDirectory`.
-    if !path
-        .iter()
-        .any(|&c| c == b'\\' as u16 || c == b'/' as u16 || c == b'.' as u16)
-    {
+    if !saw_sep_or_dot {
         if path.len() >= buf.len() {
             return Err(too_long());
         }
@@ -6748,21 +6783,9 @@ pub fn normalize_path_windows_opts<'a>(
         Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
     };
 
-    // Strip a leading drive letter (`C:`) on the relative part.
-    let mut rel = path;
-    if rel.len() >= 2
-        && bun_paths::resolve_path::is_drive_letter_t::<u16>(rel[0])
-        && rel[1] == b':' as u16
-    {
-        rel = &rel[2..];
-    }
-
     // The clamp boundary only matters when `..` can climb into the copied
     // prefix (`base` is already normalized); without one, any split yields
     // identical output, so skip the volume-relative query entirely.
-    let has_dotdot = rel
-        .split(|&c| c == b'\\' as u16 || c == b'/' as u16)
-        .any(|component| component == [b'.' as u16, b'.' as u16]);
     let mut prefix_len = if !has_dotdot {
         base.len()
     } else {
@@ -9820,6 +9843,34 @@ mod normalize_path_windows_tests {
         let base = normalize(*dir, ".");
         let base_vol = base["\\Device\\".len()..].split('\\').next().unwrap();
         assert_eq!(comps[0], base_vol, "{got} vs {base}");
+    }
+
+    #[test]
+    fn drive_relative_dotdot_resolves_into_parent() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_drive_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        // The drive prefix of a drive-relative path is stripped; the `..`
+        // after it must still reach the clamp logic.
+        assert_eq!(normalize(*child, "C:..\\x"), normalize(*child, "..\\x"));
+    }
+
+    #[test]
+    fn dot_in_name_resolves_under_base() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dotname");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        // Dot without separator routes to fd resolution (not the bare
+        // passthrough) and needs no `..` clamp.
+        assert_eq!(
+            normalize(*dir, "a.b"),
+            format!("{}\\a.b", normalize(*dir, "."))
+        );
     }
 
     #[test]

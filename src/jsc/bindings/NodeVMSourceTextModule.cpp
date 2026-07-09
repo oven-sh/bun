@@ -215,6 +215,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& specifierIdentifier = builtinNames.specifierPublicName();
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
+    const Identifier phaseIdentifier = Identifier::fromString(vm, "phase"_s);
+    JSString* evaluationPhase = jsString(vm, String("evaluation"_s));
+    JSString* deferPhase = jsString(vm, String("defer"_s));
 
     WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
     attributesNodes.reserveInitialCapacity(requests.size());
@@ -293,6 +296,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         }
 
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
+        requestObject->putDirect(vm, phaseIdentifier, request.m_phase == AbstractModuleRecord::ModulePhase::Defer ? deferPhase : evaluationPhase);
         addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
     }

@@ -1177,3 +1177,94 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("node:vm SourceTextModule import defer", () => {
+  const vm = require("node:vm");
+
+  test("static `import defer` leaves the dependency unevaluated until first namespace access", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('DEP-EVAL'); export const a = 41;", {
+      identifier: "dep",
+      context: ctx,
+    });
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep';\n" +
+        "LOG.push('ROOT');\n" +
+        "export const before = LOG.join('|');\n" +
+        "export const v = N.a + 1;\n" +
+        "export const after = LOG.join('|');",
+      { identifier: "root", context: ctx },
+    );
+
+    await root.link(() => dep);
+    await root.evaluate();
+
+    // Bun previously evaluated the deferred dependency eagerly, giving
+    // before === "DEP-EVAL|ROOT".
+    expect({ ...root.namespace }).toEqual({ before: "ROOT", v: 42, after: "ROOT|DEP-EVAL" });
+    expect(dep.status).toBe("evaluated");
+    expect(root.moduleRequests).toEqual([{ specifier: "dep", attributes: {}, phase: "defer" }]);
+  });
+
+  test("dynamic `import.defer()` returns a deferred namespace that evaluates on first access", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('D2'); export const z = 7;", {
+      identifier: "d2",
+      context: ctx,
+    });
+    await dep.link(() => {
+      throw new Error("no deps");
+    });
+
+    let seenPhase: string | undefined;
+    const root = new vm.SourceTextModule("export const p = import.defer('x');", {
+      identifier: "r2",
+      context: ctx,
+      importModuleDynamically: (_spec: string, _ref: unknown, _attrs: unknown, phase: string) => {
+        seenPhase = phase;
+        return dep;
+      },
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+
+    const ns = await root.namespace.p;
+    // Bun previously dropped the deferred flag and handed back the regular
+    // (un-evaluated) namespace, so every property read TDZ-threw and the
+    // dependency body never ran.
+    expect(ctx.LOG.join("|")).toBe("");
+    expect(ns.z).toBe(7);
+    expect(ctx.LOG.join("|")).toBe("D2");
+    expect(dep.status).toBe("evaluated");
+    expect(seenPhase).toBe("defer");
+  });
+
+  test("`import.defer()` and `import()` from the same module report distinct phases", async () => {
+    const ctx = vm.createContext({});
+    const dep = new vm.SourceTextModule("export const v = 1;", { identifier: "dep", context: ctx });
+    await dep.link(() => {
+      throw new Error("no deps");
+    });
+    await dep.evaluate();
+
+    const phases: string[] = [];
+    const root = new vm.SourceTextModule("export const a = import('x'); export const b = import.defer('y');", {
+      identifier: "root",
+      context: ctx,
+      importModuleDynamically: (_s: string, _r: unknown, _a: unknown, phase: string) => {
+        phases.push(phase);
+        return dep;
+      },
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+    await root.namespace.a;
+    await root.namespace.b;
+
+    expect(phases).toEqual(["evaluation", "defer"]);
+  });
+});

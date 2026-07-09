@@ -54,7 +54,11 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
-    if (m_status != Status::Evaluating)
+    // Evaluating: a top-level-await module whose async machinery finishes
+    // after evaluate() returned. Linked: a deferred dependency whose body was
+    // run via EvaluateModuleSync on first namespace access, bypassing this
+    // wrapper's evaluate().
+    if (m_status != Status::Evaluating && m_status != Status::Linked)
         return;
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
@@ -307,6 +311,12 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     for (const auto& request : record->requestedModules()) {
+        // `import defer` dependencies are left unevaluated here; the
+        // spec-level Evaluate() (innerModuleEvaluation) already handles the
+        // Defer phase correctly, and the deferred namespace's first property
+        // access triggers EvaluateModuleSync on the dependency's record.
+        if (request.m_phase == AbstractModuleRecord::ModulePhase::Defer)
+            continue;
         if (auto iter = m_resolveCache.find(request.m_specifier.string()); iter != m_resolveCache.end()) {
             auto* dependency = uncheckedDowncast<NodeVMModule>(iter->value.get());
             RELEASE_ASSERT(dependency != nullptr);
@@ -401,6 +411,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatus);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetNamespace);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetDeferredNamespace);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetError);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleInstantiate);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleEvaluate);
@@ -417,6 +428,7 @@ static const HashTableValue NodeVMModulePrototypeTableValues[] = {
     { "getStatusCode"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetStatusCode, 0 } },
     { "getStatus"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetStatus, 0 } },
     { "getNamespace"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetNamespace, 0 } },
+    { "getDeferredNamespace"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetDeferredNamespace, 0 } },
     { "getError"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetError, 0 } },
     { "instantiate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleInstantiate, 0 } },
     { "evaluate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleEvaluate, 2 } },
@@ -520,6 +532,21 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * glob
 
     if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->namespaceObject(globalObject)));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetDeferredNamespace, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        AbstractModuleRecord* amr = thisObject->moduleRecord(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, JSValue::encode(amr->getModuleNamespace(globalObject, AbstractModuleRecord::ModulePhase::Defer)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);

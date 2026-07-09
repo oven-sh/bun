@@ -377,10 +377,25 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
+        // `stop()` is called twice in sequence at exit: once by
+        // `Watcher::stop_all_for_exit` on the main thread, then by the watcher
+        // thread's own `Err` arm once its IOCP wait unblocks. Both callers hold
+        // `Watcher.mutex` around `platform.stop()`, so they're serialised — this
+        // isn't a concurrent race (`mem::replace` is not atomic and couldn't
+        // guard one). Snapshot-and-clear each handle so the second, serialised
+        // call sees `INVALID_HANDLE_VALUE` and skips the close — no
+        // double-`CloseHandle`.
+        let dir_handle = std::mem::replace(&mut self.watcher.dir_handle, w::INVALID_HANDLE_VALUE);
+        let iocp = std::mem::replace(&mut self.iocp, w::INVALID_HANDLE_VALUE);
+        // SAFETY: each handle was opened in init() and is closed at most once
+        // (the replace above guarantees a second caller gets INVALID_HANDLE_VALUE).
         unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
-            w::CloseHandle(self.iocp);
+            if dir_handle != w::INVALID_HANDLE_VALUE {
+                w::CloseHandle(dir_handle);
+            }
+            if iocp != w::INVALID_HANDLE_VALUE {
+                w::CloseHandle(iocp);
+            }
         }
     }
 }

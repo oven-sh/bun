@@ -1398,7 +1398,7 @@ function _writeHead(statusCode, reason, obj, response) {
 
   response.statusCode = statusCode;
 
-  {
+  if (response[kOutHeaders]) {
     // Slow-case: when progressive API and header fields are passed.
     let k;
 
@@ -1453,6 +1453,50 @@ function _writeHead(statusCode, reason, obj, response) {
       (response._trailer || response.hasHeader("trailer"))
     ) {
       // remove the invalid content-length or trailer header
+      if (hasContentLength) {
+        response.removeHeader("trailer");
+      } else {
+        response.removeHeader("content-length");
+      }
+      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+    }
+  } else {
+    // Fast-case: only writeHead() was called. Like Node.js, an array stays
+    // out of kOutHeaders and is emitted verbatim (same-named fields keep
+    // their positions) instead of being folded into the name-keyed map.
+    if ($isArray(obj)) {
+      const length = obj.length;
+      if (length && $isArray(obj[0])) {
+        for (let i = 0; i < length; i++) {
+          const entry = obj[i];
+          if (entry) {
+            validateHeaderName(entry[0]);
+            validateHeaderValue(entry[0], entry[1]);
+          }
+        }
+      } else {
+        if (length % 2 !== 0) {
+          throw $ERR_INVALID_ARG_VALUE("headers", obj);
+        }
+        for (let n = 0; n < length; n += 2) {
+          validateHeaderName(obj[n]);
+          validateHeaderValue(obj[n], obj[n + 1]);
+        }
+      }
+      response[kRawOutHeaders] = obj;
+    } else if (obj) {
+      const keys = Object.keys(obj);
+      // Retain for(;;) loop for performance reasons
+      // Refs: https://github.com/nodejs/node/pull/30958
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (k) response.setHeader(k, obj[k]);
+      }
+    }
+    if (
+      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
+      (response._trailer || response.hasHeader("trailer"))
+    ) {
       if (hasContentLength) {
         response.removeHeader("trailer");
       } else {
@@ -1537,10 +1581,13 @@ $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 // the user actually set, even after the headers have been flushed.
 function renderNativeHeaders(res) {
   const headersMap = res[kOutHeaders];
+  const rawHeaders = res[kRawOutHeaders];
   const flat: string[] = [];
   let hasDate = false;
   let hasConnection = false;
   let hasKeepAlive = false;
+  let hasContentLength = false;
+  let hasTransferEncoding = false;
   if (headersMap !== null && headersMap !== undefined) {
     for (const key in headersMap) {
       const entry = headersMap[key];
@@ -1556,11 +1603,53 @@ function renderNativeHeaders(res) {
           res[kMustCloseConnection] = true;
         }
       } else if (key === "keep-alive") hasKeepAlive = true;
+      else if (key === "content-length") hasContentLength = true;
+      else if (key === "transfer-encoding") hasTransferEncoding = true;
       if ($isArray(value)) {
         const valueLength = value.length;
         if (valueLength < 2 || key !== "cookie") {
           for (let i = 0; i < valueLength; i++) {
             flat.push(name, String(value[i]));
+          }
+        } else {
+          flat.push(name, value.join("; "));
+        }
+      } else {
+        flat.push(name, String(value));
+      }
+    }
+  } else if (rawHeaders !== undefined) {
+    // writeHead() was called with an array and no prior setHeader(): emit the
+    // list verbatim (Node.js's _storeHeader raw-array branch) so same-named
+    // fields keep their original positions.
+    const length = rawHeaders.length;
+    const nested = length && $isArray(rawHeaders[0]);
+    for (let i = 0; i < length; i += nested ? 1 : 2) {
+      let name, value;
+      if (nested) {
+        const entry = rawHeaders[i];
+        if (!entry) continue;
+        name = entry[0];
+        value = entry[1];
+      } else {
+        name = rawHeaders[i];
+        value = rawHeaders[i + 1];
+      }
+      const key = name.toLowerCase();
+      if (key === "date") hasDate = true;
+      else if (key === "connection") {
+        hasConnection = true;
+        if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
+          res[kMustCloseConnection] = true;
+        }
+      } else if (key === "keep-alive") hasKeepAlive = true;
+      else if (key === "content-length") hasContentLength = true;
+      else if (key === "transfer-encoding") hasTransferEncoding = true;
+      if ($isArray(value)) {
+        const valueLength = value.length;
+        if (valueLength < 2 || key !== "cookie") {
+          for (let j = 0; j < valueLength; j++) {
+            flat.push(name, String(value[j]));
           }
         } else {
           flat.push(name, value.join("; "));
@@ -1580,7 +1669,7 @@ function renderNativeHeaders(res) {
   // proxies, so like Node.js the body framing is suppressed and the
   // connection is forcibly closed after the response.
   let defectiveNoBodyResponse = false;
-  if (res[kOutHeaders]?.["transfer-encoding"] !== undefined) {
+  if (hasTransferEncoding) {
     const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
     if (statusCode === 204 || statusCode === 304) {
       defectiveNoBodyResponse = true;
@@ -1595,7 +1684,7 @@ function renderNativeHeaders(res) {
   // header is rendered so the advertised value matches the transport.
   let closeDelimited = false;
   let forceChunked = false;
-  if (res[kOutHeaders]?.["content-length"] === undefined && res[kOutHeaders]?.["transfer-encoding"] === undefined) {
+  if (!hasContentLength && !hasTransferEncoding) {
     if (res._hasBody === false) {
       // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
       // framing headers must not close the connection (Node's _storeHeader
@@ -2356,6 +2445,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
 const kSnapshotStatusMessage = Symbol("kSnapshotStatusMessage");
+const kRawOutHeaders = Symbol("kRawOutHeaders");
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {
     throw $ERR_HTTP_HEADERS_SENT("writeHead");
@@ -2375,7 +2465,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   // render the header block immediately like Node.js does.
   if (!this[kHandle] && !this._header) {
     const statusLine = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
-    this._storeHeader(statusLine, this[kOutHeaders]);
+    this._storeHeader(statusLine, this[kRawOutHeaders] ?? this[kOutHeaders]);
   }
 
   return this;

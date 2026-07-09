@@ -51,11 +51,6 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// Default inbound-message cap (128 MB) when no `maxPayload` option is given.
-/// A server that declares a larger frame, or whose continuation fragments
-/// accumulate past the cap, fails with close code 1009 instead of growing
-/// `receive_buffer` without bound. Must match `WebSocket::kDefaultMaxPayload`.
-pub const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 /// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
 const MAX_CONTROL_PAYLOAD: usize = 125;
 /// RFC 6455 §5.5.1: a Close payload is the 2-byte status code + the reason.

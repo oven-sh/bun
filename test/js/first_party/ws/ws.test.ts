@@ -926,17 +926,16 @@ describe("WebSocket ClientOptions", () => {
         },
       });
 
-      const { promise, resolve, reject } = Promise.withResolvers<{ event: string; code?: number }>();
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
       const ws = new WebSocket(server.url.href.replace("http", "ws"), { maxPayload: 1024 });
       clients.push(ws);
       ws.on("message", data => reject(new Error(`received ${(data as Buffer).length} bytes; maxPayload ignored`)));
-      ws.on("error", err => resolve({ event: "error" }));
-      ws.on("close", code => resolve({ event: "close", code }));
+      // npm ws emits a RangeError before 'close'; accept either ordering but
+      // always assert the close code unconditionally.
+      ws.on("error", () => {});
+      ws.on("close", code => resolve(code));
 
-      const result = await promise;
-      if (result.event === "close") {
-        expect(result.code).toBe(1009);
-      }
+      expect(await promise).toBe(1009);
     }
 
     it("closes with 1009 when a text frame exceeds the limit", async () => {

@@ -123,8 +123,7 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, size_t maxPayload);
     ~WebSocket();
 
-    // Default inbound message cap when no `maxPayload` is specified. Must match
-    // MAX_RECEIVE_MESSAGE_LENGTH in http_jsc/websocket_client.rs.
+    // Default inbound message cap when no `maxPayload` is specified (128 MiB).
     static constexpr size_t kDefaultMaxPayload = 128 * 1024 * 1024;
 
     enum State {

@@ -7565,7 +7565,7 @@ impl NodeFS {
             Encoding::Buffer => {
                 StringOrBuffer::Buffer(Buffer::from_string(link_path).expect("unreachable"))
             }
-            _ => {
+            Encoding::Utf8 => {
                 if let PathLike::SliceWithUnderlyingString(s) = &args.path {
                     if strings::eql_long(s.slice(), link_path, true) {
                         return Ok(StringOrBuffer::String(s.dupe_ref()));
@@ -7576,6 +7576,10 @@ impl NodeFS {
                     ..Default::default()
                 })
             }
+            enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
+                underlying: webcore::encoding::to_bun_string(link_path, enc),
+                ..Default::default()
+            }),
         })
     }
 

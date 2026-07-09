@@ -2397,6 +2397,39 @@ it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
   expect(readlinkSync(link)).toBe(target);
 });
 
+describe.skipIf(isWindows)("readlink encoding option", () => {
+  const readlinkCb = promisify(fs.readlink);
+  // A symlink target on POSIX is an arbitrary byte string. `readlink(path, enc)`
+  // must encode those raw bytes with `enc` (Buffer.toString semantics), not
+  // UTF-8-decode them first.
+  it.each(["latin1", "ascii", "hex", "base64", "base64url", "ucs2", "utf16le"] as const)(
+    "honors %p for the link target bytes (sync/callback/promises)",
+    async enc => {
+      const dir = tmpdirSync();
+      const link = join(dir, "a");
+      symlinkSync("tést-ü", link);
+      const want = readlinkSync(link, "buffer").toString(enc);
+      expect({
+        positional: readlinkSync(link, enc),
+        object: readlinkSync(link, { encoding: enc }),
+        callback: await readlinkCb(link, enc),
+        promises: await promises.readlink(link, enc),
+      }).toEqual({ positional: want, object: want, callback: want, promises: want });
+    },
+  );
+
+  it("latin1 round-trips a non-UTF-8 link target losslessly", async () => {
+    const dir = tmpdirSync();
+    const link = join(dir, "b");
+    symlinkSync(Buffer.from([0x66, 0xff, 0x62]), link);
+    expect({
+      sync: readlinkSync(link, "latin1"),
+      promises: await promises.readlink(link, { encoding: "latin1" }),
+      hex: readlinkSync(link, "hex"),
+    }).toEqual({ sync: "f\u00ffb", promises: "f\u00ffb", hex: "66ff62" });
+  });
+});
+
 it.if(isWindows)("symlink on windows with forward slashes", async () => {
   const r = tmpdirSync();
   await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });

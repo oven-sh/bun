@@ -2487,3 +2487,82 @@ describe("bulk drain runs the user pull() against the already-reset queue", () =
     await reader.closed;
   });
 });
+
+// https://github.com/oven-sh/bun/pull/33193 — a reentrant next()/return() from a
+// synchronous pull() must chain onto the in-flight iteration instead of racing it.
+describe("ReadableStream async iterator reentrancy", () => {
+  test("return() from inside a synchronous pull() does not crash", async () => {
+    const script = `
+      let it, phase = 0;
+      const rs = new ReadableStream(
+        {
+          pull(c) {
+            if (++phase === 2) {
+              it.return("bye");
+              return new Promise(() => {});
+            }
+          },
+        },
+        { highWaterMark: 1 },
+      );
+      it = rs.values();
+      await null; await null; await null; // let start + the initial pull settle
+      it.next(); // fires pull #2 synchronously, which reenters via it.return()
+      await Bun.sleep(10);
+      console.log("SURVIVED");
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "SURVIVED",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("return() from inside a dequeueing pull() settles after the ongoing next()", async () => {
+    let it,
+      phase = 0,
+      returnPromise;
+    const rs = new ReadableStream(
+      {
+        pull(c) {
+          if (++phase === 2) {
+            returnPromise = it.return("bye");
+            c.enqueue("x");
+          } else {
+            c.enqueue("first");
+          }
+        },
+      },
+      { highWaterMark: 1 },
+    );
+    it = rs.values();
+    const r1 = await it.next(); // pull #2 fires inside this next()'s dequeue
+    expect(r1).toEqual({ value: "first", done: false });
+    expect(await returnPromise).toEqual({ value: "bye", done: true });
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test("queued next() calls resolve in call order as chunks arrive", async () => {
+    let controller;
+    const rs = new ReadableStream({ start(c) { controller = c; } });
+    const it = rs.values();
+    const p1 = it.next();
+    const p2 = it.next();
+    const p3 = it.next();
+    controller.enqueue("a");
+    controller.enqueue("b");
+    controller.enqueue("c");
+    const p4 = it.next(); // must chain after p3, not after whichever promise settled last
+    controller.enqueue("d");
+    controller.close();
+    expect(await Promise.all([p1, p2, p3, p4])).toEqual([
+      { value: "a", done: false },
+      { value: "b", done: false },
+      { value: "c", done: false },
+      { value: "d", done: false },
+    ]);
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+});

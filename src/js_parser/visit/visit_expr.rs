@@ -1424,12 +1424,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
 
-        // "console.log.bind(x)" => "(() => {}).bind(x)" when `console` is
-        // dropped, so the bound function stays callable instead of the whole
-        // expression collapsing to `undefined` and throwing when invoked.
-        // Only applies when this `.bind` is the direct call target and the
-        // flag was set by the target visit rather than by this EDot's own
-        // dot-define match (e.g. `drop: ["Mousetrap.bind"]`).
+        // "console.log.bind(x)" => "(() => {}).bind(x)" so the result stays callable.
+        // Gate on is_call_target and a false->true flag transition so drop paths that
+        // themselves end in .bind (`drop: ["Mousetrap.bind"]`) still collapse to undefined.
         if is_call_target
             && !drop_flag_before_target_visit
             && p.method_call_must_be_replaced_with_undefined

@@ -2705,20 +2705,28 @@ describe("bundler", () => {
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `
-        const m = require("./模块.cjs");
-        console.log(m.x);
+        const a = require("./模块.cjs");
+        const b = require("./foo\u2014bar.cjs");
+        console.log(a.x, b.y);
       `,
       "/模块.cjs": /* js */ `
         module.exports = { x: 42 };
       `,
+      "/foo\u2014bar.cjs": /* js */ `
+        module.exports = { y: 7 };
+      `,
     },
     target: "node",
-    run: { stdout: "42" },
+    run: { stdout: "42 7" },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
+      // ID_Continue code points in the path basename are preserved.
       expect(out).toContain("require_模块");
       expect(out).not.toContain("require_模_");
       expect(out).not.toContain("require___");
+      // Non-ID_Continue code points (U+2014 em dash) are still replaced with _.
+      expect(out).toContain("require_foo_bar");
+      expect(out).not.toContain("require_foo\u2014bar");
     },
   });
 });

@@ -1234,7 +1234,7 @@ pub struct FormatValidIdentifier<'a> {
 
 impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::js_lexer;
+        use crate::string::lexer as js_lexer;
 
         let mut iterator = strings::CodepointIterator::init(self.name);
         let mut cursor = strings::Cursor::default();
@@ -1248,11 +1248,11 @@ impl Display for FormatValidIdentifier<'_> {
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer::is_identifier_start(cursor.c);
+        needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) {
+                if !js_lexer::is_identifier_continue(cursor.c as u32) {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -1274,7 +1274,7 @@ impl Display for FormatValidIdentifier<'_> {
             cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) {
+                if js_lexer::is_identifier_continue(cursor.c as u32) {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;

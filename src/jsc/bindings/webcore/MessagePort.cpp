@@ -27,6 +27,7 @@
 #include "config.h"
 #include "MessagePort.h"
 #include <wtf/SetForScope.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 #include "BunClientData.h"
 #include "EventNames.h"
@@ -80,11 +81,16 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     // aborts before any ArrayBuffer in the list is detached (transfer is atomic).
     // Node checks each entry in order: source port first, then detached.
     for (auto& transferable : options.transfer) {
-        if (auto* jsPort = dynamicDowncast<JSMessagePort>(transferable.get())) {
+        JSObject* obj = transferable.get();
+        if (auto* jsPort = dynamicDowncast<JSMessagePort>(obj)) {
             if (&jsPort->wrapped() == this)
                 return Exception { DataCloneError, "Transfer list contains source port"_s };
             if (jsPort->wrapped().isDetached())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
+        } else if (!obj->inherits<JSC::JSArrayBuffer>()) {
+            // MessagePort and ArrayBuffer are the only transferables bun serializes;
+            // node reports anything else here, in order, with this exact message.
+            return Exception { DataCloneError, "Found invalid value in transferList."_s };
         }
     }
 

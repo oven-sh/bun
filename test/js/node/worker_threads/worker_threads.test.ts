@@ -1040,6 +1040,90 @@ test("close() drops queued messages unless it runs inside a dispatch", async () 
   }
 });
 
+// node reports every bad transfer-list entry the same way, from both the array
+// overload and the options bag, and accepts any iterable -- not just arrays.
+describe("postMessage transfer list", () => {
+  const dataClone = expect.objectContaining({ name: "DataCloneError", code: 25 });
+
+  test.each([
+    ["array, number", p => p.postMessage({}, [5])],
+    ["array, string", p => p.postMessage({}, ["x"])],
+    ["array, plain object", p => p.postMessage({}, [{}])],
+    ["bag, number", p => p.postMessage({}, { transfer: [5] })],
+    ["bag, plain object", p => p.postMessage({}, { transfer: [{}] })],
+    ["bag, Set", p => p.postMessage({}, { transfer: new Set([5]) })],
+    [
+      "bag, generator",
+      p =>
+        p.postMessage(
+          {},
+          {
+            transfer: (function* () {
+              yield 5;
+            })(),
+          },
+        ),
+    ],
+  ])("%s throws DataCloneError", (_name, post) => {
+    const { port1, port2 } = new MessageChannel();
+    expect(() => post(port1)).toThrow(dataClone);
+    expect(() => post(port1)).toThrow("Found invalid value in transferList.");
+    port1.close();
+    port2.close();
+  });
+
+  // A genuinely non-iterable transfer arg is still ERR_INVALID_ARG_TYPE, not DataCloneError.
+  test.each([
+    ["second arg", p => p.postMessage({}, 5)],
+    ["bag number", p => p.postMessage({}, { transfer: 5 })],
+    ["bag plain object", p => p.postMessage({}, { transfer: {} })],
+  ])("%s throws ERR_INVALID_ARG_TYPE", (_name, post) => {
+    const { port1, port2 } = new MessageChannel();
+    expect(() => post(port1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    port1.close();
+    port2.close();
+  });
+
+  test("an iterable that throws propagates the user error unchanged", () => {
+    const { port1, port2 } = new MessageChannel();
+    expect(() =>
+      port1.postMessage(
+        {},
+        {
+          transfer: {
+            *[Symbol.iterator]() {
+              throw new Error("user boom");
+            },
+          },
+        },
+      ),
+    ).toThrow("user boom");
+    port1.close();
+    port2.close();
+  });
+
+  test("valid transferables still transfer", async () => {
+    const ab = new ArrayBuffer(8);
+    const { port1, port2 } = new MessageChannel();
+    port1.postMessage(ab, [ab]);
+    expect(ab.byteLength).toBe(0);
+
+    const { port1: a, port2: b } = new MessageChannel();
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    port2.on("message", received => {
+      if (received?.on) {
+        received.on("message", resolve);
+        b.postMessage("hi");
+      }
+    });
+    port1.postMessage(a, [a]);
+    expect(await promise).toBe("hi");
+    port1.close();
+    port2.close();
+    b.close();
+  });
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");

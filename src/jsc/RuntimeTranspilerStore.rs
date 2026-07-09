@@ -309,6 +309,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
+        module_type: ModuleType,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
@@ -352,6 +353,7 @@ impl RuntimeTranspilerStore {
                 vm,
                 log: bun_ast::Log::init(),
                 loader,
+                module_type,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
                 fetcher: Fetcher::File,
@@ -401,6 +403,7 @@ pub struct TranspilerJob {
     pub non_threadsafe_input_specifier: OwnedString,
     pub non_threadsafe_referrer: OwnedString,
     pub loader: Loader,
+    pub module_type: ModuleType,
     pub promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
@@ -816,11 +819,7 @@ impl TranspilerJob {
             && vm_main_hash == hash
             && strings::eql_long(vm_main, path.text, false);
 
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
+        let module_type = self.module_type;
 
         let mut parse_options = ParseOptions {
             arena: &arena,

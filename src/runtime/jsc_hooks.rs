@@ -4272,6 +4272,7 @@ unsafe fn transpile_file(
                     &lr.path,
                     (*referrer).dupe_ref(),
                     concurrent_loader,
+                    module_type,
                     lr.package_json,
                 )
             };

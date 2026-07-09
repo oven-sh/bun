@@ -685,25 +685,29 @@ impl IoRequestLoop {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let waker = Waker::init_with_file_descriptor(bun_sys::eventfd(0, 0)?);
         #[cfg(target_os = "macos")]
-        let waker = Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker"));
+        let waker = Waker::try_init()?;
         let waker_fd = waker.get_fd();
 
         // SAFETY: runs under `INIT_LOCK` with `INITIALIZED == false`; no other
         // access until this returns Ok. `get_unchecked` because this runs on the
         // *spawning* thread, before the IO thread `claim()`s the cell.
-        let loop_ = unsafe { (*LOOP.get_unchecked()).assume_init_mut() };
-        *loop_ = IoRequestLoop {
-            pending: RequestQueue::default(),
-            waker,
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            epoll_fd: Fd::INVALID,
-            #[cfg(target_os = "freebsd")]
-            kqueue_fd: Fd::INVALID,
-            cached_now: core::cell::Cell::new(libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            }),
-            active: core::cell::Cell::new(0),
+        // `MaybeUninit::write` (not `assume_init_mut` + assignment) because the
+        // cell is uninitialized on the first call; the previous value must not
+        // be dropped.
+        let loop_ = unsafe {
+            (*LOOP.get_unchecked()).write(IoRequestLoop {
+                pending: RequestQueue::default(),
+                waker,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                epoll_fd: Fd::INVALID,
+                #[cfg(target_os = "freebsd")]
+                kqueue_fd: Fd::INVALID,
+                cached_now: core::cell::Cell::new(libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 0,
+                }),
+                active: core::cell::Cell::new(0),
+            })
         };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -797,7 +801,11 @@ impl IoRequestLoop {
             #[cfg(target_os = "freebsd")]
             loop_.kqueue_fd.close();
             #[cfg(target_os = "macos")]
-            crate::waker::io_darwin_close_machport(loop_.waker.machport);
+            {
+                crate::waker::io_darwin_close_machport(loop_.waker.machport);
+                // A retry re-writes LOOP without dropping the prior value.
+                loop_.waker.machport_buf = Box::default();
+            }
             waker_fd.close();
             return Err(err);
         }
@@ -2173,15 +2181,26 @@ pub mod waker {
         }
 
         pub fn init() -> crate::error::Result<Self> {
+            Self::try_init().map_err(|e| {
+                bun_errno::SystemErrno::init(i64::from(e.errno))
+                    .map(crate::Error::Sys)
+                    .unwrap_or(crate::Error::Unexpected)
+            })
+        }
+
+        pub(crate) fn try_init() -> bun_sys::Result<Self> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
-                return Err(
-                    bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
-                        .map(crate::Error::Sys)
-                        .unwrap_or(crate::Error::Unexpected),
-                );
+                return Err(bun_sys::Error::from_code_int(
+                    bun_errno::posix::errno(),
+                    bun_sys::Tag::kqueue,
+                ));
             }
-            Self::init_with_file_descriptor(kq)
+            Self::init_with_file_descriptor(kq).map_err(|_| {
+                use bun_sys::FdExt as _;
+                Fd::from_native(kq).close();
+                bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::kqueue)
+            })
         }
 
         pub fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {

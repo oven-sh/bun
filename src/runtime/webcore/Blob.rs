@@ -7299,13 +7299,15 @@ pub trait FileCloser: Sized {
                 // store_callback_seq_cst` lowers to a volatile write + SeqCst
                 // fence (Rust has no `AtomicFnPtr`).
                 io_request.store_callback_seq_cst(Self::schedule_close);
+                if io_request.scheduled {
+                    return true;
+                }
                 // `close_after_io` is only set by a successful
                 // `wait_for_readable`/`wait_for_writable`, so the IO loop is
                 // already initialized and `schedule` is infallible here.
-                if !io_request.scheduled && bun_io::IoRequestLoop::schedule(io_request).is_err() {
-                    debug_assert!(false, "IoRequestLoop::schedule failed after init");
-                } else {
-                    return true;
+                match bun_io::IoRequestLoop::schedule(io_request) {
+                    Ok(()) => return true,
+                    Err(_) => debug_assert!(false, "IoRequestLoop::schedule failed after init"),
                 }
             }
         }

@@ -504,7 +504,9 @@ impl WriteFile {
         // }
 
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
-            self.wait_for_writable();
+            if !self.wait_for_writable() {
+                self.on_finish();
+            }
             return;
         }
 

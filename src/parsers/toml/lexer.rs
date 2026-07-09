@@ -1253,11 +1253,6 @@ impl<'a> Lexer<'a> {
             should_redact_logs: redact_logs,
         };
         lex.step();
-        // TOML 1.0 permits a single leading U+FEFF; file readers no longer
-        // strip the UTF-8 BOM (source-map fidelity), so skip it here.
-        if lex.code_point == 0xFEFF {
-            lex.step();
-        }
         lex.next()?;
 
         Ok(lex)

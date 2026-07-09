@@ -4226,10 +4226,6 @@ impl<'a> ParserInput<'a> {
     /// via raw-pointer cast; the previous self-referential `owned_arena` hack
     /// was removed. Callers now pass `&'a Bump` explicitly.
     pub fn new(code: &'a [u8], arena: &'a Bump) -> ParserInput<'a> {
-        // CSS Syntax § 3.2: a leading U+FEFF from the byte stream is not part
-        // of the input stream. File readers now keep a UTF-8 BOM in the buffer
-        // for source-map fidelity, so skip it here.
-        let code = bun_core::strings::without_utf8_bom(code);
         ParserInput {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,

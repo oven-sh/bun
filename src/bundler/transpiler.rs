@@ -3172,7 +3172,7 @@ impl<'a> Transpiler<'a> {
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
-            entry.contents(),
+            strings::without_utf8_bom(entry.contents()),
             opts,
             None,
             bun_ast::Index::INVALID,

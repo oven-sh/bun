@@ -111,6 +111,54 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(received.equals(payload)).toBe(true);
   });
 
+  // A short send leaves the remainder in the native buffered_data_for_node_net;
+  // the next writable event drives internal_flush(), and if that retry's send()
+  // fails with a transient errno (ENOBUFS/ENOMEM on a healthy connection) the
+  // bytes must stay buffered and be retried, not dropped. Dropping them fired
+  // 'drain' on a socket that had silently lost a span of the application's
+  // byte stream.
+  test.each(["ENOBUFS", "ENOMEM"] as const)(
+    "send → %s on the drain-path flush of buffered data does not drop bytes",
+    async errno => {
+      let received = Buffer.alloc(0);
+      using p = await connectedPair(s => {
+        s.on("data", c => (received = Buffer.concat([received, c])));
+      });
+      const clientFd = (p.client as any)._handle.fd as number;
+      expect(clientFd).toBeGreaterThanOrEqual(0);
+
+      const head = Buffer.from(Array.from({ length: 200 }, (_, i) => i & 0xff));
+      const body = Buffer.alloc(4096, 0xee);
+
+      // send #0: clamp to 1 byte so the other 199 bytes of `head` land in
+      // buffered_data_for_node_net and the writable poll is armed.
+      fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd: clientFd });
+      const headWritten = new Promise<void>((resolve, reject) =>
+        p.client.write(head, err => (err ? reject(err) : resolve())),
+      );
+
+      // send #1: the drain-path flush of the buffered remainder. Inject a
+      // one-shot transient errno; once it fires the rule self-disarms and the
+      // next retry must deliver the bytes.
+      fault.set({ syscall: "send", action: "errno", errno, repeat: 1, fd: clientFd });
+
+      // A follow-up write on the same connection after the first write's
+      // callback fires lets the peer observe a mid-stream gap (head[0]
+      // followed by body) if the buffered remainder was dropped.
+      await headWritten;
+      p.client.write(body);
+      p.client.end();
+      await once(p.serverSock, "end");
+      fault.clear();
+
+      const expected = Buffer.concat([head, body]);
+      expect({ length: received.length, intact: received.equals(expected) }).toEqual({
+        length: expected.length,
+        intact: true,
+      });
+    },
+  );
+
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
     server.listen(0, "127.0.0.1");

@@ -13,13 +13,12 @@ import { join } from "node:path";
  *  - `linker`: hoisted vs isolated. The same dependency graph, two very
  *    different installers.
  *
- *  - manifest cache: registry.npmjs.org sends `Cache-Control:
- *    max-age=300`, so on a second resolve within five minutes bun never
- *    touches the network and every manifest load completes
- *    synchronously, which drives a completely different (re-entrant)
- *    path through the resolver than the asynchronous cold-cache one.
- *    verdaccio sent no `Cache-Control`, so the warm, fully-synchronous
- *    path was almost never tested. The one known bug of this class (a
+ *  - manifest cache: bun's warm-manifest gate is an on-disk cache
+ *    entry younger than 300 s (`src/install/npm.rs` /
+ *    `PackageManifestMap.rs`; independent of any server header). When
+ *    it fires, every manifest load completes synchronously, which is a
+ *    completely different (re-entrant) path through the resolver than
+ *    the asynchronous network one. The one known bug of this class (a
  *    transitive peer dependency dropped by the isolated linker, the
  *    `fully synchronous` test in isolated-install.test.ts) reproduced
  *    only in the `isolated x warm` cell.
@@ -27,10 +26,10 @@ import { join } from "node:path";
  * Every cell of a scenario gets its own registry and project and must
  * produce byte-for-byte the same `bun.lock` (after normalizing the
  * registry's port): resolution may never depend on the linker or on
- * whether a manifest came from the network or the cache. Each cell also
- * resolves in two passes (cold, then again from the warmed cache with
- * no lockfile), must satisfy a `--frozen-lockfile` re-install of its own
- * output, and must actually make the packages `require`able.
+ * whether a manifest came from the network or the warm cache. Each cell
+ * also resolves in two passes, must satisfy a `--frozen-lockfile`
+ * re-install of its own output, and must actually make the packages
+ * `require`able.
  */
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -38,18 +37,20 @@ setDefaultTimeout(1000 * 60 * 5);
 interface Mode {
   linker: "hoisted" | "isolated";
   /**
-   * `"warm"` serves `Cache-Control: public, max-age=300`; the second
-   * install resolves synchronously from the fresh manifest cache.
-   * `"revalidate"` serves no `Cache-Control`; the second install must
-   * go back to the registry for every manifest.
+   * `"warm"`: pass 1 and pass 2 share one `BUN_INSTALL_CACHE_DIR`, so
+   * pass 2 hits the on-disk manifest cache pass 1 wrote (under the
+   * 300 s window) and every manifest load is synchronous.
+   *
+   * `"cold"`: pass 2 points at a fresh empty cache dir, so it resolves
+   * the same graph from the network again.
    */
-  manifests: "warm" | "revalidate";
+  manifests: "warm" | "cold";
 }
 
 const MODES: Mode[] = [
-  { linker: "hoisted", manifests: "revalidate" },
+  { linker: "hoisted", manifests: "cold" },
   { linker: "hoisted", manifests: "warm" },
-  { linker: "isolated", manifests: "revalidate" },
+  { linker: "isolated", manifests: "cold" },
   { linker: "isolated", manifests: "warm" },
 ];
 
@@ -217,21 +218,22 @@ async function run(cwd: string, args: string[], env: Record<string, string | und
 
 /** One cell: a fresh registry, a fresh project, two resolves, a probe. */
 async function runCell(mode: Mode, scenario: Scenario): Promise<string> {
-  await using registry = await new NpmRegistry(
-    mode.manifests === "warm" ? { cacheControl: "public, max-age=300" } : {},
-  ).start();
+  await using registry = await new NpmRegistry().start();
   scenario.define(registry);
 
   const dir = tmpdirSync();
-  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: undefined };
+  const cache1 = join(dir, ".bun-cache-1");
+  // The second axis is `BUN_INSTALL_CACHE_DIR`: the warm cell reuses
+  // pass 1's cache dir (on-disk manifests under the 300 s window, so
+  // pass 2 never hits the network); the cold cell points pass 2 at a
+  // fresh empty dir, isolating the manifest-cache variable.
+  const cache2 = mode.manifests === "warm" ? cache1 : join(dir, ".bun-cache-2");
+  const env = (cacheDir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir });
   await Promise.all([
-    // A real manifest cache directory: `warm` vs `revalidate` is about
-    // whether bun trusts what is in it, so it has to exist.
     write(
       join(dir, "bunfig.toml"),
       `
 [install]
-cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
 registry = "${registry.url}"
 saveTextLockfile = true
 linker = "${mode.linker}"
@@ -243,29 +245,33 @@ linker = "${mode.linker}"
   ]);
 
   const label = `[${mode.linker}, ${mode.manifests}]`;
-  // Pass 1: cold. Populates the manifest cache and writes a lockfile.
-  const first = await run(dir, ["install"], env);
+  // Pass 1: cold. Populates cache1's manifest cache and writes a lockfile.
+  const first = await run(dir, ["install"], env(cache1));
   expect({ label, err: first.stderr, exitCode: first.exitCode }).toEqual({
     label,
     err: expect.not.stringContaining("error:"),
     exitCode: 0,
   });
+  const requestsAfterFirst = registry.requestCount;
 
-  // Pass 2: resolve the same graph again from nothing but the warmed
-  // manifest cache. With `Cache-Control: max-age`, no network at all.
+  // Pass 2: the same graph again with no lockfile, warm or cold on disk.
   await Promise.all([
     rm(join(dir, "node_modules"), { recursive: true, force: true }),
     rm(join(dir, "bun.lock"), { force: true }),
   ]);
-  const second = await run(dir, ["install"], env);
+  const second = await run(dir, ["install"], env(cache2));
   expect({ label, err: second.stderr, exitCode: second.exitCode }).toEqual({
     label,
     err: expect.not.stringContaining("error:"),
     exitCode: 0,
   });
+  // The axis is real: warm must not have touched the registry.
+  const packuments2 = registry.requests.slice(requestsAfterFirst).filter(r => !r.path.includes(".tgz")).length;
+  if (mode.manifests === "warm") expect({ label, packuments2 }).toEqual({ label, packuments2: 0 });
+  else expect(packuments2).toBeGreaterThan(0);
 
   // The tree it produced must be importable and complete.
-  const probe = await run(join(dir, scenario.probeDir ?? "."), ["probe.js"], env);
+  const probe = await run(join(dir, scenario.probeDir ?? "."), ["probe.js"], env(cache2));
   expect({ label, stdout: probe.stdout, stderr: probe.stderr, exitCode: probe.exitCode }).toEqual({
     label,
     stdout: scenario.expected,
@@ -274,7 +280,7 @@ linker = "${mode.linker}"
   });
 
   // And its own lockfile must reproduce it exactly.
-  const frozen = await run(dir, ["install", "--frozen-lockfile"], env);
+  const frozen = await run(dir, ["install", "--frozen-lockfile"], env(cache2));
   expect({ label, err: frozen.stderr, exitCode: frozen.exitCode }).toEqual({
     label,
     err: expect.not.stringContaining("error:"),

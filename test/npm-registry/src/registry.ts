@@ -66,11 +66,13 @@ export interface NpmRegistryOptions {
   port?: number;
   /**
    * The `Cache-Control` header on packument responses.
-   * registry.npmjs.org sends `public, max-age=300`, which lets a client
-   * skip the network entirely for five minutes; verdaccio sent nothing,
-   * which forces a conditional request every time. The registry always
-   * supports the conditional path (`ETag` / `If-None-Match` → 304)
-   * regardless of this option.
+   * registry.npmjs.org sends `public, max-age=300`; bun **does not read
+   * this header** — its warm-manifest gate is an on-disk cache entry
+   * younger than a hardcoded 300 s (`src/install/npm.rs`), independent
+   * of what the registry sent. This option exists so a test can assert
+   * bun tolerates what registry.npmjs.org sends, not to drive bun's
+   * cache behavior. The conditional path (`ETag`/`If-None-Match` → 304)
+   * is always on.
    *
    * Unset by default so that a test's second install is observable in
    * {@link NpmRegistry.requests}.

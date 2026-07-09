@@ -1598,11 +1598,11 @@ test("runs lifecycle scripts correctly", async () => {
 // the transitive peer's resolution unset (= invalid_package_id → filtered
 // from the install).
 test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
-  // `Cache-Control: max-age=300` is what registry.npmjs.org sends (and
-  // what the shared registry deliberately does not): on the second
-  // install the manifest cache is still fresh, so every resolution is
-  // synchronous, which is the bug trigger.
-  await using server = await new TestRegistry({ cacheControl: "public, max-age=300" }).start();
+  // bun's warm-manifest gate is an on-disk cache entry younger than
+  // 300 s (`src/install/npm.rs`). On the second install the manifest
+  // cache is still fresh, so every resolution is synchronous, which is
+  // the bug trigger.
+  await using server = await new TestRegistry().start();
 
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");

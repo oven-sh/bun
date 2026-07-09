@@ -633,6 +633,101 @@ describe.concurrent("bun run", () => {
       expect(stderr).not.toContain("Script not found");
       expect(exitCode).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/22719
+    const allWorkspacesRepo = (rootScript: string) => ({
+      "package.json": JSON.stringify({
+        private: true,
+        workspaces: ["apps/*"],
+        scripts: { start: rootScript },
+      }),
+      "apps": {
+        "app": {
+          "package.json": JSON.stringify({
+            name: "app",
+            private: true,
+            scripts: { hello: "echo workspace-ok" },
+          }),
+        },
+        // No "hello" script: --if-present must skip it rather than error.
+        "lib": {
+          "package.json": JSON.stringify({ name: "lib", private: true, scripts: {} }),
+        },
+      },
+    });
+
+    it.each([
+      ["npm run hello --ws --if-present", "--ws"],
+      ["npm run hello --workspaces --if-present", "--workspaces"],
+      ["echo chained && npm run hello --ws --if-present", "chained with &&"],
+    ])("%s runs workspace scripts without recursing (%s)", async rootScript => {
+      using dir = tempDir("npm-workspaces-flag", allWorkspacesRepo(rootScript));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("workspace-ok");
+      expect(stderr).not.toContain("Script not found");
+      expect(stderr).not.toContain("Missing");
+      expect(exitCode).toBe(0);
+    });
+
+    // A root script is present so the plain rewrite keeps working; `-w app` must
+    // NOT be hoisted into a filter in these cases.
+    const rootScriptRepo = (rootScript: string) => ({
+      "package.json": JSON.stringify({
+        private: true,
+        workspaces: ["apps/*"],
+        scripts: { start: rootScript, greet: "echo greet-done" },
+      }),
+      "apps": {
+        "app": {
+          "package.json": JSON.stringify({ name: "app", private: true, scripts: {} }),
+        },
+      },
+    });
+
+    it("does not treat -w after -- as a workspace filter", async () => {
+      using dir = tempDir("npm-ws-ddash", rootScriptRepo("npm run greet -- -w app"));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("greet-done");
+      expect(stderr).not.toContain("Missing");
+      expect(exitCode).toBe(0);
+    });
+
+    it.skipIf(isWindows)("does not mangle quoting for npm run -w inside a quoted string", async () => {
+      using dir = tempDir("npm-ws-quoted", rootScriptRepo("sh -c 'npm run greet -w app'"));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("greet-done");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("'bun run' priority", async () => {

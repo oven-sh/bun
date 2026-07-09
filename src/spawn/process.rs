@@ -2388,14 +2388,19 @@ mod spawn_process_body {
     #[cfg(windows)]
     const DISCARD_SCRATCH_LEN: usize = 64 * 1024;
 
-    // Scratch for every discarded read. Thread-local (one loop per thread); the
-    // bytes are never read back and no Rust reference is ever formed over the
-    // array (raw pointer only) — clobbering is unobservable and alias-free.
+    // One process-global scratch for all discard reads: contents are garbage
+    // by design and never read back; a zeroed static lives in .bss (no commit
+    // until first touch), so one buffer beats per-thread copies.
     #[cfg(windows)]
-    std::thread_local! {
-        static DISCARD_SCRATCH: core::cell::UnsafeCell<[u8; DISCARD_SCRATCH_LEN]> =
-            const { core::cell::UnsafeCell::new([0u8; DISCARD_SCRATCH_LEN]) };
-    }
+    struct DiscardScratch(core::cell::UnsafeCell<[u8; DISCARD_SCRATCH_LEN]>);
+    // SAFETY: written only by kernel ReadFile completions during discard reads;
+    // concurrent writers produce garbage by design and discard pipes are never
+    // IPC pipes — the one libuv mode that parses read buffers.
+    #[cfg(windows)]
+    unsafe impl Sync for DiscardScratch {}
+    #[cfg(windows)]
+    static DISCARD_SCRATCH: DiscardScratch =
+        DiscardScratch(core::cell::UnsafeCell::new([0; DISCARD_SCRATCH_LEN]));
 
     /// Null `pipe`'s slot on its owning Process (the exit path reads it) and
     /// close it; the close callback frees the Box and drops the Process ref.
@@ -2428,9 +2433,9 @@ mod spawn_process_body {
             _suggested_size: usize,
             buffer: *mut uv::uv_buf_t,
         ) {
-            let base = DISCARD_SCRATCH.with(|c| c.get().cast::<u8>());
-            // SAFETY: `buffer` is libuv's out-param; the scratch is
-            // thread-local to this loop's thread and outlives the read.
+            let base = DISCARD_SCRATCH.0.get().cast::<u8>();
+            // SAFETY: `buffer` is libuv's out-param; the scratch is a
+            // process-lifetime static, so it outlives every read.
             unsafe {
                 *buffer = uv::uv_buf_t {
                     len: DISCARD_SCRATCH_LEN as uv::ULONG,

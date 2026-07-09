@@ -34,14 +34,17 @@ const workerFixture = /* js */ `
   // on the first nextTick, which new Worker()'s close-event dispatch triggers).
   process.nextTick(() => {});
   const held = [];
-  for (;;) { try { held.push(fs.openSync("/dev/null", "r")); } catch { break; } }
-  await new Promise(resolve => {
-    const w = new Worker(W);
-    w.onerror = ev => { console.error("worker error:", ev?.message ?? "error"); resolve(); };
-    w.onmessage = () => { console.error("UNEXPECTED: worker message"); resolve(); };
-  });
-  for (const fd of held) fs.closeSync(fd);
-  fs.unlinkSync(W);
+  try {
+    for (;;) { try { held.push(fs.openSync("/dev/null", "r")); } catch { break; } }
+    await new Promise(resolve => {
+      const w = new Worker(W);
+      w.onerror = ev => { console.error("worker error:", ev?.message ?? "error"); resolve(); };
+      w.onmessage = () => { console.error("UNEXPECTED: worker message"); resolve(); };
+    });
+  } finally {
+    for (const fd of held) fs.closeSync(fd);
+    fs.unlinkSync(W);
+  }
   console.error("SURVIVED");
 `;
 
@@ -59,8 +62,10 @@ describe.skipIf(!isPosix)("lazy event-loop creation under EMFILE", () => {
       stderr: expect.stringContaining("SURVIVED"),
       exitCode: 0,
     });
-    expect(stderr).toContain("rejected:");
-    expect(stderr).toContain("retry rejected:");
+    expect(stderr).toContain("rejected: FailedToOpenSocket");
+    // The retry must reach the normal connect path (loop recovered), not
+    // another FailedToOpenSocket.
+    expect(stderr).toContain("retry rejected: ConnectionRefused");
   });
 
   test.concurrent("first new Worker() fires an error event instead of aborting the process", async () => {
@@ -76,6 +81,6 @@ describe.skipIf(!isPosix)("lazy event-loop creation under EMFILE", () => {
       stderr: expect.stringContaining("SURVIVED"),
       exitCode: 0,
     });
-    expect(stderr).toContain("worker error:");
+    expect(stderr).toContain("worker error: Worker initialization failed: EMFILE");
   });
 });

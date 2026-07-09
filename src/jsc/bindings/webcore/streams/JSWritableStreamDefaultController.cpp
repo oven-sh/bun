@@ -52,6 +52,33 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
     RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
 }
 
+// As invokePromiseReturningMethod, but returns nullptr for a synchronous non-thenable completion
+// and returns a vanilla JSPromise unwrapped (isThenFastAndNonObservable); the caller queues the
+// upon-fulfillment handler directly when the result is nullptr or already Fulfilled.
+static JSC::JSPromise* invokePromiseReturningMethodFast(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue result;
+    JSC::JSValue thrown;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto callData = JSC::getCallData(method);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        result = JSC::call(globalObject, method, callData, thisValue, args);
+        if (catchScope.exception()) [[unlikely]]
+            thrown = takeAbruptCompletion(globalObject, catchScope);
+    }
+    if (!thrown.isEmpty()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    if (result.isEmpty()) [[unlikely]]
+        return nullptr;
+    if (!result.isObject()) [[likely]]
+        return nullptr;
+    if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+        return resultPromise;
+    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+}
+
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
 // controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
 // implemented, so setUpCrossRealmTransformWritable never creates one).
@@ -72,28 +99,7 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        JSC::JSValue result;
-        JSC::JSValue thrown;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto callData = JSC::getCallData(writeMethod);
-            ASSERT(callData.type != JSC::CallData::Type::None);
-            result = JSC::call(globalObject, writeMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
-            if (catchScope.exception()) [[unlikely]]
-                thrown = takeAbruptCompletion(globalObject, catchScope);
-        }
-        if (!thrown.isEmpty()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        if (result.isEmpty()) [[unlikely]]
-            return nullptr;
-        if (!result.isObject()) [[likely]]
-            return nullptr;
-        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
-        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
-        // thenable adoption is unobservable. Subclasses / patched .then fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
-            return resultPromise;
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethodFast(vm, globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
         return nullptr;
@@ -118,32 +124,7 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         if (!closeMethod)
             return nullptr;
         JSC::MarkedArgumentBuffer args;
-        if (args.hasOverflowed()) [[unlikely]] {
-            JSC::throwOutOfMemoryError(globalObject, scope);
-            return nullptr;
-        }
-        JSC::JSValue result;
-        JSC::JSValue thrown;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto callData = JSC::getCallData(closeMethod);
-            ASSERT(callData.type != JSC::CallData::Type::None);
-            result = JSC::call(globalObject, closeMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
-            if (catchScope.exception()) [[unlikely]]
-                thrown = takeAbruptCompletion(globalObject, catchScope);
-        }
-        if (!thrown.isEmpty()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        if (result.isEmpty()) [[unlikely]]
-            return nullptr;
-        if (!result.isObject()) [[likely]]
-            return nullptr;
-        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
-        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
-        // thenable adoption is unobservable. Subclasses / patched .then fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
-            return resultPromise;
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, invokePromiseReturningMethodFast(vm, globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
         return nullptr;

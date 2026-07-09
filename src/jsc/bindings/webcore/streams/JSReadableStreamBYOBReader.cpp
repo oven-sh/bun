@@ -11,7 +11,6 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
-#include "JSPullIntoDescriptor.h"
 #include "JSReadRequest.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
@@ -23,7 +22,6 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -476,65 +474,6 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
 
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
-
-    // Queued bytes and nothing waiting: fill the view synchronously with no read-into request.
-    auto* stream = reader->m_stream.get();
-    if (stream->m_state == ReadableStreamState::Readable && stream->m_controllerKind == ControllerKind::Byte && reader->m_readIntoRequests.isEmpty()) {
-        auto* controller = byteControllerOf(stream);
-        if (controller->m_pendingPullIntos.isEmpty() && controller->m_queue.totalSize() > 0) {
-            stream->m_disturbed = true;
-            size_t byteOffset = view->byteOffset();
-            size_t byteLength = view->byteLength();
-            RefPtr<JSC::ArrayBuffer> buffer;
-            JSValue transferAbruptCompletion;
-            {
-                auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                buffer = transferArrayBufferImpl(lexicalGlobalObject, *viewedBuffer);
-                if (catchScope.exception()) [[unlikely]] {
-                    transferAbruptCompletion = takeAbruptCompletion(lexicalGlobalObject, catchScope);
-                    if (transferAbruptCompletion.isEmpty()) [[unlikely]]
-                        return {};
-                }
-            }
-            if (!transferAbruptCompletion.isEmpty()) [[unlikely]]
-                RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, transferAbruptCompletion)));
-            JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, runtime->pullIntoDescriptorStructure(domGlobalObject));
-            pullIntoDescriptor->m_bufferByteLength = buffer->byteLength();
-            pullIntoDescriptor->m_buffer = WTF::move(buffer);
-            pullIntoDescriptor->m_byteOffset = byteOffset;
-            pullIntoDescriptor->m_byteLength = byteLength;
-            pullIntoDescriptor->m_bytesFilled = 0;
-            pullIntoDescriptor->m_minimumFill = static_cast<size_t>(minRequested) * JSC::elementSize(viewType);
-            pullIntoDescriptor->m_viewConstructor = viewType;
-            pullIntoDescriptor->m_readerType = ReaderType::Byob;
-            if (readableByteStreamControllerFillPullIntoDescriptorFromQueue(controller, pullIntoDescriptor)) {
-                JSArrayBufferView* filledView = readableByteStreamControllerConvertPullIntoDescriptor(lexicalGlobalObject, pullIntoDescriptor);
-                RETURN_IF_EXCEPTION(scope, {});
-                readableByteStreamControllerHandleQueueDrain(lexicalGlobalObject, controller);
-                RETURN_IF_EXCEPTION(scope, {});
-                JSObject* result = createIteratorResultObject(lexicalGlobalObject, filledView, false);
-                RETURN_IF_EXCEPTION(scope, {});
-                RELEASE_AND_RETURN(scope, JSValue::encode(promiseResolvedWith(lexicalGlobalObject, result)));
-            }
-            if (controller->m_closeRequested) {
-                JSObject* error = createTypeError(lexicalGlobalObject, "Cannot read into a view after close has been requested on the ReadableByteStreamController"_s);
-                readableByteStreamControllerError(lexicalGlobalObject, controller, error);
-                RETURN_IF_EXCEPTION(scope, {});
-                RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, error)));
-            }
-            {
-                WTF::Locker locker { controller->cellLock() };
-                controller->m_pendingPullIntos.append(WriteBarrier<JSPullIntoDescriptor>(vm, controller, pullIntoDescriptor));
-            }
-            auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
-            auto* readIntoRequest = JSReadIntoRequest::create(vm, runtime->readIntoRequestStructure(domGlobalObject), ReadIntoRequestKind::Promise, promise);
-            readableStreamAddReadIntoRequest(vm, stream, readIntoRequest);
-            readableByteStreamControllerCallPullIfNeeded(lexicalGlobalObject, controller);
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(promise);
-        }
-    }
-
     auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
     auto* readIntoRequest = JSReadIntoRequest::create(vm, runtime->readIntoRequestStructure(domGlobalObject), ReadIntoRequestKind::Promise, promise);
     readableStreamBYOBReaderRead(lexicalGlobalObject, reader, view, minRequested, readIntoRequest);

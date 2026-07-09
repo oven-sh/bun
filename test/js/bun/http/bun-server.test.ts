@@ -1876,9 +1876,9 @@ describe("handler liveness across reload/stop", () => {
     // re-check after coercion ensures only one on_websocket_closed() runs.
     let openCount = 0;
     const bothOpen = Promise.withResolvers<void>();
-    const firstClosed = Promise.withResolvers<void>();
+    const targetClosed = Promise.withResolvers<void>();
     let reentered = 0;
-    let serverSideFirst: unknown;
+    let closedTarget: unknown;
 
     using server = Bun.serve({
       port: 0,
@@ -1888,12 +1888,14 @@ describe("handler liveness across reload/stop", () => {
         return new Response(null, { status: 404 });
       },
       websocket: {
-        open(ws) {
-          if (openCount === 0) serverSideFirst = ws;
+        open() {
           if (++openCount === 2) bothOpen.resolve();
         },
         message(ws, m) {
           if (m === "do-close") {
+            // Only c1 sends this; capture c1's server-side peer here rather
+            // than by open() order, which is not guaranteed across platforms.
+            closedTarget = ws;
             ws.close(1000, {
               toString() {
                 reentered++;
@@ -1904,7 +1906,7 @@ describe("handler liveness across reload/stop", () => {
           }
         },
         close(ws) {
-          if (ws === serverSideFirst) firstClosed.resolve();
+          if (ws === closedTarget) targetClosed.resolve();
         },
       },
     });
@@ -1923,7 +1925,7 @@ describe("handler liveness across reload/stop", () => {
     expect(server.pendingWebSockets).toBe(2);
 
     c1.send("do-close");
-    await firstClosed.promise;
+    await targetClosed.promise;
     await c1Closed.promise;
 
     // Without the re-check, the outer close() would decrement again: 2→0.

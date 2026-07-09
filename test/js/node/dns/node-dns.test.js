@@ -624,23 +624,31 @@ describe("dns.Resolver#setServers with IPv6 zone identifiers", () => {
 });
 
 describe("dns.lookupService with a numeric-string port", () => {
+  // getnameinfo for 127.0.0.1 resolves on Linux/macOS but may ENOTFOUND on
+  // Windows, so assert that "22" yields the same outcome as 22 rather than a
+  // specific result.
+  const settle = p => p.then(v => ({ ok: v }), e => ({ err: e.code }));
+
   it("callback API coerces a numeric-string port", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    dns.lookupService("127.0.0.1", "22", (err, hostname, service) => {
-      if (err) return reject(err);
-      resolve({ hostname, service });
-    });
-    const result = await promise;
-    expect(result).toEqual({ hostname: expect.any(String), service: expect.any(String) });
-    expect(result.hostname.length).toBeGreaterThan(0);
-    expect(result.service.length).toBeGreaterThan(0);
+    const run = port => {
+      const { promise, resolve } = Promise.withResolvers();
+      dns.lookupService("127.0.0.1", port, (err, hostname, service) => {
+        resolve(err ? { err: err.code } : { ok: { hostname, service } });
+      });
+      return promise;
+    };
+    const [asString, asNumber] = await Promise.all([run("22"), run(22)]);
+    expect(asString).toEqual(asNumber);
+    expect(asString.err).not.toBe("ERR_SOCKET_BAD_PORT");
   });
 
   it("promises API coerces a numeric-string port", async () => {
-    const result = await dns_promises.lookupService("127.0.0.1", "22");
-    expect(result).toEqual({ hostname: expect.any(String), service: expect.any(String) });
-    expect(result.hostname.length).toBeGreaterThan(0);
-    expect(result.service.length).toBeGreaterThan(0);
+    const [asString, asNumber] = await Promise.all([
+      settle(dns_promises.lookupService("127.0.0.1", "22")),
+      settle(dns_promises.lookupService("127.0.0.1", 22)),
+    ]);
+    expect(asString).toEqual(asNumber);
+    expect(asString.err).not.toBe("ERR_SOCKET_BAD_PORT");
   });
 
   it("promises API still throws ERR_SOCKET_BAD_PORT synchronously for a truly bad port", () => {

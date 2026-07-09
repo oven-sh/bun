@@ -515,7 +515,11 @@ pub fn post_process_js_chunk(
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
+    // Gate on the build target, not the entry file's per-file target: a
+    // `#!/usr/bin/env bun` hashbang forces only the entry to print ASCII-only,
+    // while bundled dependencies follow the build target and may contain raw
+    // UTF-8 identifiers that the `// @bun` Latin-1 fast path cannot read.
+    let is_bun = c.options.target.is_bun();
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =

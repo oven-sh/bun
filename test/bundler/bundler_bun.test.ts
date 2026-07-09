@@ -137,6 +137,34 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+  for (const target of ["node", "browser"] as const) {
+    itBundled(`bun/HashbangBunNoPragmaFor_${target}`, {
+      target,
+      files: {
+        "/entry.ts": `#!/usr/bin/env bun\nimport { Café } from "./lib.ts";\nconsole.log(new Café().méth());\n`,
+        "/lib.ts": `export class Café { méth() { return 7 } }\n`,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toStartWith("#!/usr/bin/env bun\n");
+        expect(out).not.toContain("// @bun");
+      },
+      run: { stdout: "7" },
+    });
+  }
+  itBundled("bun/HashbangBunPragmaForBunTarget", {
+    target: "bun",
+    files: {
+      "/entry.ts": `#!/usr/bin/env bun\nimport { Café } from "./lib.ts";\nconsole.log(new Café().méth());\n`,
+      "/lib.ts": `export class Café { méth() { return 7 } }\n`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith("#!/usr/bin/env bun\n// @bun\n");
+      expect(out).not.toContain("méth");
+    },
+    run: { stdout: "7" },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

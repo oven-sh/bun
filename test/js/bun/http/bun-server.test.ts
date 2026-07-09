@@ -1,6 +1,14 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  normalizeBunSnapshot,
+  rejectUnauthorizedScope,
+  tempDirWithFiles,
+  tls,
+} from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {

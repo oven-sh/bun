@@ -3362,10 +3362,7 @@ where
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
         // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
-        let args = [
-            unsafe { (*request_object_ptr).to_js(&global) },
-            server_js,
-        ];
+        let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
         let request_value = args[0];
         request_value.ensure_still_alive();
 

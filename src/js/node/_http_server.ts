@@ -2417,13 +2417,17 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle) {
     handle.abort();
   }
-  // Writable.destroy semantics: 'close' is emitted on a later tick. The
-  // socket close path (#onClose → emitCloseNT) handles it when a socket is
-  // attached; otherwise schedule it here.
-  const socket = this.socket;
+  // Writable.destroy semantics: 'close' is emitted on a later tick. Read the
+  // storage directly: the `socket` getter auto-creates a FakeSocket that does
+  // not route back to emitCloseNT.
+  const socket = this[fakeSocketSymbol];
   if (socket) {
     socket.destroy(err);
-  } else {
+  }
+  // Native server path: the socket's #onClose schedules emitCloseNT(this).
+  // Without a handle (standalone response) schedule it here; emitCloseNT is
+  // guarded by _closed so a later socket close emission is a no-op.
+  if (!handle) {
     process.nextTick(emitCloseNT, this);
   }
   return this;

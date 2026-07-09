@@ -1251,10 +1251,10 @@ describe("node:vm SourceTextModule import defer", () => {
       },
       { context: ctx, identifier: "dep" },
     );
-    const root = new vm.SourceTextModule(
-      "import defer * as N from 'dep'; LOG.push('ROOT'); export const v = N.x;",
-      { context: ctx, identifier: "root" },
-    );
+    const root = new vm.SourceTextModule("import defer * as N from 'dep'; LOG.push('ROOT'); export const v = N.x;", {
+      context: ctx,
+      identifier: "root",
+    });
     await root.link(() => dep);
     await root.evaluate();
 

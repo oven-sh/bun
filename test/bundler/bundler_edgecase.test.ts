@@ -9,6 +9,39 @@ import { itBundled } from "./expectBundled";
 const CDN_PUBLIC_PATH = "https://cdn.example/app/";
 const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.example\/[^"]+)"/g)].map(match => match[1]);
 
+function decodeSourceMappingsLine(line: string) {
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
+  let gen = 0;
+  let src = 0;
+  let ol = 0;
+  let oc = 0;
+  for (const raw of line ? line.split(",") : []) {
+    const f: number[] = [];
+    let v = 0;
+    let sh = 0;
+    for (const c of raw) {
+      const d = B64.indexOf(c);
+      v |= (d & 31) << sh;
+      if (d & 32) {
+        sh += 5;
+        continue;
+      }
+      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+      v = 0;
+      sh = 0;
+    }
+    gen += f[0];
+    if (f.length > 1) {
+      src += f[1];
+      ol += f[2];
+      oc += f[3];
+    }
+    segs.push({ gen, src, ol, oc });
+  }
+  return segs;
+}
+
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
     files: {
@@ -1288,6 +1321,48 @@ describe("bundler", () => {
         mappingsExactMatch:
           "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
       },
+    },
+  });
+  // SourceMapPieces.finalize advanced the shift cursor at most once per
+  // mapping, so a mapping crossing >=2 placeholder substitutions on one
+  // minified line was re-encoded against a stale shift and landed out of order.
+  itBundled("edgecase/EmitInvalidSourceMapMultipleShifts", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import a from "./a.bin";
+        import b from "./b.bin";
+        import c from "./c.bin";
+        const keep: string[] = [a, b, c];
+        console.log(keep);
+      `,
+      "/a.bin": "AAAA",
+      "/b.bin": "BBBB",
+      "/c.bin": "CCCC",
+    },
+    outdir: "/out",
+    loader: { ".bin": "file" },
+    sourceMap: "external",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["../entry.ts"]);
+      const line1 = decodeSourceMappingsLine(map.mappings.split(";")[0]);
+      for (let i = 1; i < line1.length; i++) {
+        if (line1[i].gen < line1[i - 1].gen) {
+          throw new Error(
+            `out-of-order mappings on line 1: generated column ` +
+              `${line1[i - 1].gen} -> ${line1[i].gen}\n` +
+              line1.map(s => `  col ${s.gen} -> entry.ts:${s.ol + 1}:${s.oc}`).join("\n"),
+          );
+        }
+      }
+      // The first mapping after all three substituted asset paths is for
+      // `keep` in `const keep`. It must point at the `keep` identifier in
+      // the generated output, not at a stale pre-shift column.
+      const keepCol = js.split("\n")[0].indexOf("keep=[");
+      expect(keepCol).toBeGreaterThan(0);
+      expect(line1).toContainEqual({ gen: keepCol, src: 0, ol: 3, oc: 6 });
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {

@@ -1589,6 +1589,41 @@ for (const [key, blob] of build.outputs) {
         const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
         if (file.endsWith(".map")) {
           const parsed = await Bun.file(path.join(outdir, file)).json();
+          // SourceMapConsumer re-sorts segments by generated position, so
+          // decode the raw VLQ first to catch out-of-order segments (a
+          // source-map spec violation).
+          {
+            const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let ln = 0;
+            for (const line of String(parsed.mappings).split(";")) {
+              ln++;
+              let gen = 0;
+              let prev = -1;
+              for (const seg of line ? line.split(",") : []) {
+                let v = 0;
+                let sh = 0;
+                let delta: number | undefined;
+                for (const c of seg) {
+                  const d = B64.indexOf(c);
+                  v |= (d & 31) << sh;
+                  if (d & 32) {
+                    sh += 5;
+                    continue;
+                  }
+                  delta = v & 1 ? -(v >>> 1) : v >>> 1;
+                  break;
+                }
+                gen += delta!;
+                if (gen < prev) {
+                  throw new Error(
+                    `${file}: out-of-order segments on generated line ${ln}: ` +
+                      `column ${prev} -> ${gen}\n  mappings line: ${line}`,
+                  );
+                }
+                prev = gen;
+              }
+            }
+          }
           const mappedLocations = new Map();
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {

@@ -43,3 +43,26 @@ test("client aborting a native-source stream response does not use the sink afte
     signalCode: null,
   });
 }, 60_000);
+
+// An async fetch handler that rejects routes the error() Response through
+// handle_reject(). When error() returns a ReadableStream body, handle_reject()
+// wrongly called render_missing() after starting the stream, ending the uWS
+// response out from under the still-pumping HTTPResponseSink. ASAN:
+// heap-use-after-free in uws_res_has_responded via HTTPServerWritable::write.
+test("client aborting a streaming error() response from a rejected async handler does not use-after-free", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "serve-error-stream-client-abort-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stderr, stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stderr: "",
+    stdout: JSON.stringify({ ok: true, arej: 4, await: 4 }),
+    exitCode: 0,
+    signalCode: null,
+  });
+}, 60_000);

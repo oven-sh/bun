@@ -1266,6 +1266,41 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1000);
   });
+
+  test("context leaked past a transaction is not treated as nested in a later one", async () => {
+    // A fire-and-forget continuation scheduled inside txn A that fires while a
+    // later txn B holds the connection must queue behind B, not run inside it.
+    let leaked: Promise<unknown> | undefined;
+    await sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      leaked = new Promise(resolve => setImmediate(resolve)).then(
+        () => sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`,
+      );
+    });
+
+    const txnBRunning = Promise.withResolvers<void>();
+    const releaseTxnB = Promise.withResolvers<void>();
+    const txnB = sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        txnBRunning.resolve();
+        await releaseTxnB.promise;
+        throw new Error("rollback B");
+      })
+      .catch(() => {});
+
+    await txnBRunning.promise;
+    // Let the leaked continuation fire while B holds the connection.
+    await new Promise(resolve => setImmediate(resolve));
+    releaseTxnB.resolve();
+    await txnB;
+    await leaked;
+
+    const accounts = await sql`SELECT balance FROM accounts ORDER BY id`;
+    // A committed (-100 on id=1). B rolled back. The leaked write queued behind
+    // B and ran afterwards, so it survives.
+    expect(accounts.map(r => r.balance)).toEqual([900, 507]);
+  });
 });
 
 describe("SQLite-specific features", () => {

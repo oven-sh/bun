@@ -301,8 +301,11 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   private connectQueue: Array<{ onConnected: OnConnected<BunSQLiteModule.Database>; reserved: boolean }> = [];
   // Tracks the async context of the currently-running transaction callback so
   // nested acquisitions from inside it participate in the transaction instead
-  // of queueing and deadlocking.
-  #txnContext: import("node:async_hooks").AsyncLocalStorage<true> | undefined;
+  // of queueing and deadlocking. A fresh token per transaction lets connect()
+  // distinguish "nested in the current transaction" from stale context leaked
+  // out of a prior one.
+  #txnContext: import("node:async_hooks").AsyncLocalStorage<symbol> | undefined;
+  #txnToken: symbol | undefined;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -433,7 +436,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       // Called from inside the active transaction callback's own async context
       // (e.g. a helper closing over the outer sql handle). Queueing would
       // deadlock, so let the query participate in the open transaction.
-      if (this.#txnContext?.getStore()) {
+      if (this.#txnToken !== undefined && this.#txnContext?.getStore() === this.#txnToken) {
         if (reserved) {
           return onConnected(
             this.invalidTransactionStateError(
@@ -459,7 +462,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       const { AsyncLocalStorage } = require("node:async_hooks");
       store = this.#txnContext = new AsyncLocalStorage();
     }
-    return store.run(true, cb);
+    return store.run(this.#txnToken ?? (this.#txnToken = Symbol()), cb);
   }
 
   #handConnection(onConnected: OnConnected<BunSQLiteModule.Database>, reserved: boolean) {
@@ -470,6 +473,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     } else if (db) {
       if (reserved) {
         this.reservedConnection = true;
+        this.#txnToken = Symbol();
       }
       onConnected(null, db);
     } else {
@@ -499,6 +503,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       return;
     }
     this.reservedConnection = false;
+    this.#txnToken = undefined;
     this.#drainConnectQueue();
   }
 

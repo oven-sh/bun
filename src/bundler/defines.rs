@@ -100,8 +100,9 @@ fn env_string_store_put(
 /// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
 /// all of which are public.
 ///
-/// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
-/// per-env `UserDefinesArray`.
+/// `to_json` is the caller's explicit-`define` `RawDefines` map (framework
+/// defaults are appended into it at the end); `to_string` is the per-env
+/// `UserDefinesArray`.
 pub fn copy_env_for_define(
     env: &bun_dotenv::Loader<'_>,
     to_json: &mut RawDefines,

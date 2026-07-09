@@ -422,6 +422,18 @@ for (const { body, fn } of bodyTypes) {
         }).toThrow(TypeError);
         expect(cancelled).toBeInstanceOf(TypeError);
       });
+      test("treats a detached BufferSource chunk as empty", async () => {
+        const view = new Uint8Array([0x68, 0x69]);
+        structuredClone(view, { transfer: [view.buffer] });
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(view);
+            controller.enqueue(new Uint8Array([0x21]));
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("!");
+      });
       test("accepts raw ArrayBuffer chunks from a ReadableStream body", async () => {
         const input = new ReadableStream({
           start(controller) {

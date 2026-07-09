@@ -1026,11 +1026,15 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
         return;
+    // WebIDL "get a copy of the bytes held by the buffer source": a detached
+    // buffer is still a BufferSource whose bytes are the empty sequence.
     std::span<const uint8_t> bytes;
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk); view && !view->isDetached()) {
-        bytes = std::span { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
-    } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk); buffer && buffer->impl() && !buffer->impl()->isDetached()) {
-        bytes = std::span { static_cast<const uint8_t*>(buffer->impl()->data()), buffer->impl()->byteLength() };
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
+        if (!view->isDetached())
+            bytes = std::span { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
+    } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+        if (buffer->impl() && !buffer->impl()->isDetached())
+            bytes = std::span { static_cast<const uint8_t*>(buffer->impl()->data()), buffer->impl()->byteLength() };
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());

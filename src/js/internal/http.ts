@@ -201,7 +201,9 @@ function emitEOFIncomingMessageOuter(self) {
   // handle at its body fin, so pipelined requests can neither inherit nor
   // overwrite another request's trailers.
   if (self[kHandle] !== undefined) {
-    let rawTrailers = self[kHandle].takeRequestTrailers();
+    // The lenient (insecureHTTPParser) value bytes must match what the parser
+    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
+    let rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
     if (rawTrailers !== undefined) {
       // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
       // does (the same maxHeaderPairs limit covers both). The parser hard-caps

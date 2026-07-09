@@ -536,10 +536,30 @@ struct HttpResponseData;
             return count;
         }
 
+        /* node:http compat: validate a captured, complete trailer section before the
+         * message is completed. Node's llhttp fails the message on a malformed trailer
+         * field line (clientError HPE_INVALID_HEADER_TOKEN) instead of completing it
+         * with req.trailers silently dropped; a CTL byte in a value is only accepted
+         * under insecureHTTPParser, exactly like a header value. An empty section
+         * (bare CRLF, no trailers) is valid. */
+        static bool validNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser) {
+            if (!section || section->size() <= 2) {
+                return true;
+            }
+            /* parseTrailerFields consumes (post-pads) its input, so validate a copy. */
+            std::string copy(*section);
+            std::pair<std::string_view, std::string_view> scratch[MAX_TRAILER_FIELDS];
+            return parseTrailerFields(copy, scratch, useInsecureHTTPParser) > 0;
+        }
+
     private:
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
+        /* node:http compat: a completed request on this connection forbade keep-alive
+         * (Connection: close, or HTTP/1.0), so no further message may be dispatched
+         * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
+        bool nodeHttpSawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
@@ -1086,6 +1106,18 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
+            /* node:http compat: a pipelined request behind one that forbade keep-alive is
+             * never dispatched - node's parser is closed after that message and raises
+             * HPE_CLOSED_CONNECTION ('clientError') on further bytes. The predicate is the
+             * same one that marks the connection for close at dispatch (HttpContext). */
+            if constexpr (IsNodeHttp) {
+                if (nodeHttpSawConnectionClose) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                if (req->isAncient() || req->getHeader("connection").length() == 5) {
+                    nodeHttpSawConnectionClose = true;
+                }
+            }
             /* RFC 9112 6.3
             * If a message is received with both a Transfer-Encoding and a Content-Length header field,
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
@@ -1219,6 +1251,11 @@ struct HttpResponseData;
                         if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
+                        /* The fin dispatch completes the message: a malformed trailer field
+                         * line must fail it first (node: HPE_INVALID_HEADER_TOKEN). */
+                        if (IsNodeHttp && chunk.length() == 0 && !validNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                        }
                         void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                         if (returnedUser != user) {
                             /* The data handler closed or shut down the socket; stop parsing
@@ -1291,6 +1328,11 @@ public:
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
                     if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
+                    }
+                    /* The fin dispatch completes the message: a malformed trailer field
+                     * line must fail it first (node: HPE_INVALID_HEADER_TOKEN). */
+                    if (IsNodeHttp && chunk.length() == 0 && !validNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                     }
                     void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                     if (returnedUser != user) {
@@ -1366,6 +1408,11 @@ public:
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
                             if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
+                            }
+                            /* The fin dispatch completes the message: a malformed trailer field
+                             * line must fail it first (node: HPE_INVALID_HEADER_TOKEN). */
+                            if (IsNodeHttp && chunk.length() == 0 && !validNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                             }
                             void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                             if (returnedUser != user) {

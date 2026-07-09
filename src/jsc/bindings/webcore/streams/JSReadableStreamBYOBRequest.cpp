@@ -13,6 +13,7 @@
 #include "JSReadableByteStreamController.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -21,6 +22,7 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -31,6 +33,7 @@ using namespace Bun::WebStreams;
 
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWithNewView);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_view);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_constructor);
 
@@ -99,10 +102,25 @@ static const HashTableValue JSReadableStreamBYOBRequestPrototypeTableValues[] = 
 
 const ClassInfo JSReadableStreamBYOBRequestPrototype::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequestPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStreamBYOBRequest>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "view"_s), thisObject->m_view.get() ? JSValue(thisObject->m_view.get()) : jsNull(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "controller"_s), thisObject->m_controller.get() ? JSValue(thisObject->m_controller.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamBYOBRequest"_s, data));
+}
+
 void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamBYOBRequestPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

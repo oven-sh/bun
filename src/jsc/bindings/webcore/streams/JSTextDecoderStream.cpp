@@ -13,6 +13,7 @@
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -34,6 +35,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_fatal);
 static JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_ignoreBOM);
 static JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_writable);
+static JSC_DECLARE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom);
 
 class JSTextDecoderStreamPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -189,10 +191,37 @@ static const HashTableValue JSTextDecoderStreamPrototypeTableValues[] = {
 
 const ClassInfo JSTextDecoderStreamPrototype::s_info = { "TextDecoderStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoderStreamPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSTextDecoderStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    // encoding/fatal/ignoreBOM live on the TextDecoder held by m_decoder; read them via the
+    // public prototype getters this class already exposes so no extra coupling is introduced.
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    JSValue encoding = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), encoding, 0);
+    JSValue fatal = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "fatal"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "fatal"_s), fatal, 0);
+    JSValue ignoreBOM = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "ignoreBOM"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    data->putDirect(vm, Identifier::fromString(vm, "ignoreBOM"_s), ignoreBOM, 0);
+    auto* transform = thisObject->m_transform.get();
+    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), transform && transform->m_readable.get() ? JSValue(transform->m_readable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), transform && transform->m_writable.get() ? JSValue(transform->m_writable.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextDecoderStream"_s, data));
+}
+
 void JSTextDecoderStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTextDecoderStream::info(), JSTextDecoderStreamPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsTextDecoderStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

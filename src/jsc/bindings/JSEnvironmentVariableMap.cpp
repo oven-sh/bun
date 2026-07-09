@@ -575,6 +575,20 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     auto* uid = propertyName.uid();
     if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
+        // The descriptor lands on the Base object, but getOwnPropertySlot reads the
+        // store first, so a store entry would shadow it. Move the entry onto Base as
+        // an enumerable data property first: a partial descriptor then keeps that
+        // enumerability, exactly as it does on the regular process.env. (Node rejects
+        // accessors on process.env outright — on both maps — so match bun's own map.)
+        if (!propertyName.isSymbol() && uid) {
+            if (auto* store = sharedEnvStoreFor(object)) {
+                String existing = store->get(String(uid));
+                if (!existing.isNull()) {
+                    store->remove(String(uid));
+                    object->putDirect(vm, propertyName, jsString(vm, existing), 0);
+                }
+            }
+        }
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 

@@ -1006,6 +1006,39 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
+  // An accessor installed via defineProperty lands on the base object, but reads hit
+  // the store first — so the store entry must go, or the getter is shadowed. (Node
+  // rejects accessors on process.env entirely; bun allows them on the regular map,
+  // so the shared map matches the regular one rather than diverging from it.)
+  it("does not let the store shadow an accessor defined on process.env", async () => {
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         const probe = \`process.env.FOO = "old";
+           Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
+           const count = Object.keys(process.env).filter(k => k === "FOO").length;
+           const read = process.env.FOO;
+           delete process.env.FOO;
+           ({ read, count, afterDelete: process.env.FOO ?? null })\`;
+         const regular = eval(probe);
+         const w = new Worker(
+           'const { parentPort } = require("worker_threads"); parentPort.postMessage(eval(' + JSON.stringify(probe) + '));',
+           { eval: true, env: SHARE_ENV },
+         );
+         w.on("message", shared => console.log(JSON.stringify({ regular, shared })));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // count === 1: defineProperty on an existing enumerable key keeps it enumerable.
+    const want = { read: "new", count: 1, afterDelete: null };
+    expect(JSON.parse(stdout)).toEqual({ regular: want, shared: want });
+    expect(exitCode).toBe(0);
+  });
+
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
   // they land in JSObject's indexed storage and never touch the shared store.
   it("routes integer-like env keys through the shared store", async () => {

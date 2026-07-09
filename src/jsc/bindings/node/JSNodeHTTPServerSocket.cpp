@@ -152,7 +152,7 @@ extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_
 
 /* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
  * jsUndefined() when it contains no fields. */
-extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length)
+extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length, bool useInsecureHTTPParser)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -163,7 +163,7 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
     /* Parse with the same field-line primitives the request-header parser uses
      * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
     std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields);
+    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields, useInsecureHTTPParser);
     if (count == 0) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }

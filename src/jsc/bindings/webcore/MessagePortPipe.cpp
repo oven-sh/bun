@@ -286,11 +286,12 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // Notify each closed pipe's entangled peer so it can fire 'close' and
         // release its event-loop ref — including nested in-transit ports drained
         // from the worklist, not just the originally-closed side.
-        // Only a real close reaches the peer. A collected wrapper must not: node never
-        // fires 'close' (nor releases the survivor's loop ref) for a GC, so doing it here
-        // would make both observable at GC timing.
-        if (sdKind == CloseKind::Explicit)
-            pipe->notifyPeerClosed(1 - sd);
+        // Always notify, even for a collected wrapper. Node never collects an entangled
+        // port so it never faces this; bun does, and a peer that is never told is
+        // stranded -- its loop ref is never released and the process hangs. A 'close'
+        // fired at GC timing is the lesser evil. (jsRef() still ignores a collected
+        // peer: it keys on ClosedByRequest, not on Closed.)
+        pipe->notifyPeerClosed(1 - sd);
     }
 }
 

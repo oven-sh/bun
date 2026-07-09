@@ -986,19 +986,35 @@ test("off() removes only the listener it names, per event and per port", () => {
   }
 });
 
-// Node never closes a channel because a port was garbage-collected: the survivor
-// gets no 'close' and keeps its event-loop ref. bun's ~MessagePort closes its pipe
-// side, so the collection must not be reported to the peer.
-test("collecting the unreferenced peer fires no close event", async () => {
-  let closed = 0;
-  const { port1 } = new MessageChannel(); // port2 unreachable, no listeners
-  port1.on("close", () => closed++);
-  Bun.gc(true);
-  Bun.gc(true);
-  Bun.gc(true);
-  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
-  expect(closed).toBe(0);
-  port1.close();
+// bun collects entangled ports; node never does. A worker that drops its transferred
+// port must therefore still notify the peer, or the peer's loop ref is never released
+// and the parent hangs forever. Spawned: the symptom is "the process never exits".
+test("a collected port in a worker does not strand its peer", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker, MessageChannel } = require("worker_threads");
+       const channel = new MessageChannel();
+       new Worker(
+         \`const { workerData } = require("worker_threads");
+          workerData.messagePort.postMessage("Meow");
+          workerData.messagePort = null;
+          Bun.gc(true); Bun.gc(true);\`,
+         { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] },
+       );
+       channel.port1.on("message", m => console.log(m));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than being killed.
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "Meow",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 // An orphaned transferred endpoint IS a real close -- node fires 'close' on its peer.

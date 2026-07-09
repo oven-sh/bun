@@ -399,18 +399,16 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    // First `Bun.connect({tls:true})` of the process triggers the once-only
-    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
-    // debug+ASAN) so SSL_get_verify_result is real instead of the false
-    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
-    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    // The client trusts the server's self-signed cert via `ca` so chain
+    // verification passes; with the default rejectUnauthorized (true) an
+    // untrusted chain would close the connection right after the handshake.
     timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
-          tls: true,
+          tls: { ca: COMMON_CERT.cert },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -451,18 +449,16 @@ describe("tls.createServer events", () => {
     };
     server.on("error", closeAndFail);
 
-    // First `Bun.connect({tls:true})` of the process triggers the once-only
-    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
-    // debug+ASAN) so SSL_get_verify_result is real instead of the false
-    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
-    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    // The client trusts the server's self-signed cert via `ca` so chain
+    // verification passes; with the default rejectUnauthorized (true) an
+    // untrusted chain would close the connection right after the handshake.
     timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         await Bun.connect({
-          tls: true,
+          tls: { ca: COMMON_CERT.cert },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -529,7 +525,7 @@ describe("tls.createServer events", () => {
 
         async function spawnClient() {
           await Bun.connect({
-            tls: true,
+            tls: { ca: COMMON_CERT.cert },
             port: address?.port,
             hostname: address?.address,
             socket: {
@@ -607,18 +603,16 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    // First `Bun.connect({tls:true})` of the process triggers the once-only
-    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
-    // debug+ASAN) so SSL_get_verify_result is real instead of the false
-    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
-    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    // The client trusts the server's self-signed cert via `ca` so chain
+    // verification passes; with the default rejectUnauthorized (true) an
+    // untrusted chain would close the connection right after the handshake.
     timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
-          tls: true,
+          tls: { ca: COMMON_CERT.cert },
           hostname: address.address,
           port: address.port,
           socket: {

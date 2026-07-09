@@ -1100,7 +1100,7 @@ it("TLS client: flush() after end() does not double-teardown before deferred onC
       const client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
-        tls,
+        tls: { ...tls, ca: tls.cert },
         socket: {
           handshake() { onHandshook(); },
           data() {},

@@ -1491,7 +1491,8 @@ function _writeHead(statusCode, reason, obj, response) {
         const key = name.toLowerCase();
         if (key === "content-length") {
           rawHasContentLength = true;
-          response._contentLength = +($isArray(value) ? value[0] : value);
+          const v = $isArray(value) ? value[value.length - 1] : value;
+          if (v !== undefined) response._contentLength = +v;
         } else if (key === "trailer") rawHasTrailer = true;
         if ($isArray(value)) {
           if (value.length >= 2 && key === "cookie") {

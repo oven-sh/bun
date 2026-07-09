@@ -1489,8 +1489,10 @@ function _writeHead(statusCode, reason, obj, response) {
         validateHeaderName(name);
         validateHeaderValue(name, value);
         const key = name.toLowerCase();
-        if (key === "content-length") rawHasContentLength = true;
-        else if (key === "trailer") rawHasTrailer = true;
+        if (key === "content-length") {
+          rawHasContentLength = true;
+          response._contentLength = +($isArray(value) ? value[0] : value);
+        } else if (key === "trailer") rawHasTrailer = true;
         if ($isArray(value)) {
           if (value.length >= 2 && key === "cookie") {
             flat.push(name, value.join("; "));

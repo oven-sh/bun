@@ -111,6 +111,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 
 // The [[pullAlgorithm]] dispatch. The reachable kind set on a byte controller is exactly
 // {JavaScript, Nothing, ByteTeeBranch}; the switch is total over SourceKind.
+// Returns nullptr with no exception pending when the pull completed synchronously with a
+// non-thenable result: the caller runs the upon-fulfillment steps inline.
 static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -118,18 +120,34 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
     case SourceKind::JavaScript: {
         JSC::JSObject* pullMethod = controller->m_algorithms.method1.get();
         if (!pullMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+            return nullptr;
         JSC::MarkedArgumentBuffer args;
         args.append(controller);
         if (args.hasOverflowed()) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
+        JSC::JSValue result;
+        JSC::JSValue thrown;
+        {
+            StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto callData = JSC::getCallData(pullMethod);
+            ASSERT(callData.type != JSC::CallData::Type::None);
+            result = JSC::call(globalObject, pullMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
+            if (catchScope.exception()) [[unlikely]]
+                thrown = takeAbruptCompletion(globalObject, catchScope);
+        }
+        if (!thrown.isEmpty()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+        if (result.isEmpty()) [[unlikely]]
+            return nullptr;
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeePullAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex));
     case SourceKind::Transform:
@@ -579,12 +597,24 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
         controller->m_pullAgain = true;
         return;
     }
-    ASSERT(!controller->m_pullAgain);
-    controller->m_pulling = true;
-    JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
-    RETURN_IF_EXCEPTION(scope, void());
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    while (true) {
+        ASSERT(!controller->m_pullAgain);
+        controller->m_pulling = true;
+        JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (pullPromise) {
+            auto* runtime = JSStreamsRuntime::from(globalObject);
+            pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
+            return;
+        }
+        controller->m_pulling = false;
+        if (!controller->m_pullAgain)
+            return;
+        controller->m_pullAgain = false;
+        if (!readableByteStreamControllerShouldCallPull(controller))
+            return;
+    }
 }
 
 bool readableByteStreamControllerShouldCallPull(JSReadableByteStreamController* controller)

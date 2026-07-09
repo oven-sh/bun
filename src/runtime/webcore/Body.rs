@@ -621,7 +621,12 @@ impl ValueError {
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         let js_value = match self {
             ValueError::AbortReason(reason) => reason.to_js(global_object),
-            ValueError::SystemError(system_error) => system_error.to_error_instance(global_object),
+            // `to_error_instance` consumes the error's string refs, and `to_js`
+            // takes `&mut self` — take the value out so a second call builds an
+            // empty error rather than releasing those refs twice.
+            ValueError::SystemError(system_error) => {
+                core::mem::take(system_error).to_error_instance(global_object)
+            }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong

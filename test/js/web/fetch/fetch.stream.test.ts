@@ -164,11 +164,10 @@ describe.concurrent("fetch() with streaming", () => {
       },
     });
     // A locked (or disturbed) body init is rejected at Request construction with a
-    // TypeError (fetch spec; Node agrees on the error). Like Bun's other fetch
-    // argument errors, it surfaces synchronously.
+    // TypeError (fetch spec; Node agrees on the error), surfaced as a rejected promise.
     stream.getReader();
 
-    expect(() => fetch(server.url, { method: "POST", body: stream })).toThrow(
+    await expect(fetch(server.url, { method: "POST", body: stream })).rejects.toThrow(
       expect.objectContaining({ name: "TypeError", message: "Body object should not be disturbed or locked" }),
     );
   });

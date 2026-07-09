@@ -2325,6 +2325,23 @@ function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortS
 function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: number, stream: Http2Stream) {
   if (stream.destroyed) return;
   if (rstCode && !stream.rstCode) stream.rstCode = rstCode;
+  // A clean session teardown can reach here while a stream's already-received request data is
+  // still being drained by its consumer: the native side is done with the stream (state 7,
+  // which is what allowed the session to start destroying), but the JS side is not. Destroying
+  // now discards that data and emits 'close' without 'end' (a piped request body never
+  // finishes). Node's session waits for the JS stream, so finish delivering and destroy on
+  // 'end'. Only for natively-closed streams: a still-open one must keep node's contract that
+  // session.destroy() destroys it synchronously (and the engine error sweep follows for it).
+  if (
+    error === undefined &&
+    (stream[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0 &&
+    stream.readable &&
+    stream.readableFlowing !== null
+  ) {
+    stream.push(null);
+    stream.once("end", destroySelfOnEnd);
+    return;
+  }
   // Only surface the session error on streams that are listening for it (the
   // same guard emitStreamErrorNT applies): a still-open stream with no 'error'
   // listener would otherwise turn session.destroy(code) into an uncaught

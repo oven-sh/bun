@@ -216,8 +216,14 @@ async function run(cwd: string, args: string[], env: Record<string, string | und
   return { stdout, stderr, exitCode };
 }
 
+interface CellResult {
+  lock: string;
+  /** Packument requests issued during pass 2. */
+  packuments2: number;
+}
+
 /** One cell: a fresh registry, a fresh project, two resolves, a probe. */
-async function runCell(mode: Mode, scenario: Scenario): Promise<string> {
+async function runCell(mode: Mode, scenario: Scenario): Promise<CellResult> {
   await using registry = await new NpmRegistry().start();
   scenario.define(registry);
 
@@ -267,15 +273,7 @@ linker = "${mode.linker}"
     err: expect.not.stringContaining("error:"),
     exitCode: 0,
   });
-  // The axis is real: a fresh empty cache dir forces pass 2 back to
-  // the network. A warm pass 2 may still leak a few packument requests
-  // on some CI hosts (observed on Windows and one darwin agent), so
-  // `warm === 0` is not asserted; `cold > 0` is enough to show
-  // `BUN_INSTALL_CACHE_DIR` is the variable bun actually reads.
-  if (mode.manifests === "cold") {
-    const packuments2 = registry.requests.slice(requestsAfterFirst).filter(r => !r.path.includes(".tgz")).length;
-    expect(packuments2).toBeGreaterThan(0);
-  }
+  const packuments2 = registry.requests.slice(requestsAfterFirst).filter(r => !r.path.includes(".tgz")).length;
 
   // The tree it produced must be importable and complete.
   const probe = await run(join(dir, scenario.probeDir ?? "."), ["probe.js"], env(cache2));
@@ -294,24 +292,36 @@ linker = "${mode.linker}"
     exitCode: 0,
   });
 
-  return normalizeLock(await Bun.file(join(dir, "bun.lock")).text());
+  return { lock: normalizeLock(await Bun.file(join(dir, "bun.lock")).text()), packuments2 };
 }
 
 describe.concurrent("resolver matrix", () => {
   for (const [name, scenario] of Object.entries(SCENARIOS)) {
     test(name, async () => {
       const cells = await Promise.all(
-        MODES.map(async mode => [`${mode.linker}, ${mode.manifests} manifests`, await runCell(mode, scenario)]),
+        MODES.map(async mode => [`${mode.linker}, ${mode.manifests}`, await runCell(mode, scenario)] as const),
       );
+      const by = Object.fromEntries(cells) as Record<`${Mode["linker"]}, ${Mode["manifests"]}`, CellResult>;
+      // The axis is real: a warm pass 2 issues strictly fewer packument
+      // requests than a cold one (0 on Linux; a few may leak on some
+      // CI hosts, so the assertion is relative, not exact-0), and a
+      // fresh empty cache dir forces pass 2 back to the network.
+      for (const linker of ["hoisted", "isolated"] as const) {
+        const warm = by[`${linker}, warm`].packuments2;
+        const cold = by[`${linker}, cold`].packuments2;
+        expect({ linker, warm, cold }).toMatchObject({ linker, warm: expect.any(Number), cold: expect.any(Number) });
+        expect(warm).toBeLessThan(cold);
+        expect(cold).toBeGreaterThan(0);
+      }
       // Resolution is a pure function of package.json and the registry:
       // the linker and the manifest cache's freshness must not change
       // the lockfile. A mismatch names the cell that diverged.
-      const lockfiles = Object.fromEntries(cells);
-      const reference = cells[0]![1];
+      const lockfiles = Object.fromEntries(cells.map(([k, v]) => [k, v.lock]));
+      const reference = cells[0]![1].lock;
       // The comparison is only meaningful over a real lockfile.
       expect(reference).toContain(`"packages"`);
       expect(reference).toContain("localhost:4873/");
-      expect(lockfiles).toEqual(Object.fromEntries(cells.map(([key]) => [key, reference])));
+      expect(lockfiles).toEqual(Object.fromEntries(cells.map(([k]) => [k, reference])));
     });
   }
 });

@@ -88,12 +88,7 @@ export function normalizeManifest(name: string, raw: Manifest, tarballPaths: Ite
   }
 
   const scripts = (manifest.scripts ?? {}) as Record<string, unknown>;
-  if (
-    manifest.gypfile !== false &&
-    scripts.install === undefined &&
-    scripts.preinstall === undefined &&
-    hasRootGypFile(tarballPaths)
-  ) {
+  if (manifest.gypfile !== false && !scripts.install && !scripts.preinstall && hasRootGypFile(tarballPaths)) {
     manifest.scripts = { ...scripts, install: "node-gyp rebuild" };
     manifest.gypfile = true;
   }

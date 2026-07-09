@@ -932,6 +932,13 @@ public:
      * instantiations. Called before listen(), so no socket exists yet; it is
      * never turned back off. */
     void setNodeHttpCompat(bool value) {
+        /* Idempotent: a reload of an existing node:http server (server.reload(),
+         * `bun --hot`) re-runs set_routes and lands here again on a context that is
+         * already listening. Same value means same layout and same vtable: nothing
+         * to do, and the no-socket precondition below only applies to a real switch. */
+        if (getSocketContextData()->flags.usingNodeHttpCompat == value) {
+            return;
+        }
         /* Swapping the group vtable retargets dispatch for every socket in the
          * group, and the ext block of an already-accepted socket was sized and
          * constructed by the other instantiation. */

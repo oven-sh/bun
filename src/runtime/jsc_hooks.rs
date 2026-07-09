@@ -4105,10 +4105,8 @@ unsafe fn transpile_file(
     // it; never fall through to extension-based loading on the "ns:path"
     // string. Mirrors `bundle_v2::LoadValue::NoMatch` for non-file namespaces.
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-    if lr.virtual_source.is_none()
-        && !bun_paths::is_absolute(lr.path.text)
-        && unsafe { &*jsc_vm }.plugin_runner.is_some()
-    {
+    let has_plugin_runner = unsafe { &*jsc_vm }.plugin_runner.is_some();
+    if has_plugin_runner && lr.virtual_source.is_none() && !bun_paths::is_absolute(lr.path.text) {
         let ns = bun_bundler::transpiler::PluginRunner::extract_namespace(lr.path.text);
         let is_builtin_scheme = matches!(ns, b"" | b"file" | b"bun" | b"node" | b"data" | b"macro");
         if !is_builtin_scheme {

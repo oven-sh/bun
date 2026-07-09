@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -815,12 +815,8 @@ it.concurrent("onResolve into a custom namespace with no matching onLoad is a ha
   expect(exitCode).toBe(0);
 });
 
-it.concurrent("the unmatched-onLoad guard does not trip on absolute paths containing ':'", async () => {
-  // ':' is a legal POSIX filename character. On Windows the absolute-path
-  // check in bun_paths::is_absolute covers "X:\...", so a real file's path
-  // cannot be mistaken for a plugin namespace there either.
-  if (process.platform === "win32") return;
-
+// ':' is a legal POSIX filename character; Windows cannot create it on disk.
+it.skipIf(isWindows).concurrent("the unmatched-onLoad guard does not trip on absolute paths containing ':'", async () => {
   using dir = tempDir("plugin-colon-in-path", {
     "sub:dir/mod.js": `export default "from-colon-dir";`,
     "sub:dir/asset.xyz": `ignored`,

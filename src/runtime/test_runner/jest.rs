@@ -159,6 +159,21 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
+        // Return the soonest per-entry deadline rather than the file timer:
+        // `update_min_timeout` only advances `timer.next` to sooner values, so
+        // the file timer can be stale (earlier than any running entry).
+        if active_file.phase == bun_test::Phase::Execution {
+            if let Some(group) = active_file.execution.active_group_ref() {
+                let mut soonest = bun_core::Timespec::EPOCH;
+                for seq in group.sequences_const(&active_file.execution) {
+                    let Some(entry) = seq.active_entry else { continue };
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                    let ts = unsafe { entry.as_ref() }.timespec;
+                    soonest = soonest.min_ignore_epoch(ts);
+                }
+                return soonest;
+            }
+        }
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next == ElTimespec::EPOCH
         {

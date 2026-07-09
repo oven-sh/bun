@@ -442,7 +442,7 @@ class Session extends EventEmitter {
   ) {
     validateString(method, "method");
     // Handle overloaded signature: post(method, callback)
-    if (typeof params === "function") {
+    if (callback === undefined && typeof params === "function") {
       callback = params;
       params = undefined;
     }

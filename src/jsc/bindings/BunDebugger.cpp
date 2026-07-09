@@ -52,6 +52,7 @@ static PausedWait& pausedWait()
 }
 
 static bool waitingForConnection = false;
+static bool bunControllerInstalled = false;
 extern "C" void Debugger__didConnect();
 
 class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
@@ -597,11 +598,12 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     // they are always non-null here; Bun must replace them with its own
     // (BunInjectedScriptHost, and BunJSGlobalObjectDebuggable's
     // unpauseForResolvedAutomaticInspection hook that resolves
-    // wait-for-debugger). Re-entrant calls — inspector.waitForDebugger() after
-    // inspector.open() — must not recreate the controller while a frontend is
-    // connected, which would orphan that connection; in that case the Bun
-    // controller is already installed from the earlier call.
-    if (!globalObject->m_inspectorController || !globalObject->inspectorController().frontendRouter().hasFrontends()) {
+    // wait-for-debugger). Once installed, never recreate: destroying a
+    // controller that ever had a frontend attached — even a since-disconnected
+    // one — trips the CheckedPtr ordering bug (see the exit-path comment
+    // below). node:inspector re-enters this from waitForDebugger() at runtime.
+    if (!bunControllerInstalled) {
+        bunControllerInstalled = true;
         globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
         globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
         globalObject->m_inspectorDebuggable->init();
@@ -722,7 +724,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
 
 extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForConnection);
 extern "C" void Debugger__waitForNodeInspectorConnection();
-extern "C" void Debugger__resetNodeInspectorWaitResolved();
 extern "C" void Debugger__abandonNodeInspectorWait();
 
 // Posts a control message to the node-inspector server's debugger thread
@@ -783,9 +784,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     }
 
     if (reopen) {
-        // A client of the previous server resolved the wait; the new server's
-        // wait state starts fresh.
-        Debugger__resetNodeInspectorWaitResolved();
         auto controlMessage = JSON::Object::create();
         controlMessage->setString("type"_s, "open"_s);
         controlMessage->setString("url"_s, requestedUrl);

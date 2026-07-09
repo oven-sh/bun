@@ -433,6 +433,88 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
   expect(exitCode).toBe(0);
 });
 
+// A second waitForDebugger() must block again for a fresh
+// Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
+// safe to reach after the previous frontend disconnected (once-connected
+// controller must not be recreated).
+const waitForDebuggerTwiceFixture = `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+process.stderr.write("READY\\n");
+inspector.waitForDebugger();
+process.stderr.write("FIRST_RESUMED " + globalThis.__mark + "\\n");
+inspector.waitForDebugger();
+console.log(JSON.stringify({ first: globalThis.__mark, second: globalThis.__mark2 }));
+process.exit(0);
+`;
+
+test("inspector.waitForDebugger() blocks again on the second call after a frontend disconnects", async () => {
+  using dir = tempDir("inspector-wait-twice", {
+    "fixture.mjs": waitForDebuggerTwiceFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  const readUntil = async (needle: string) => {
+    while (!stderrText.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stderr closed before ${JSON.stringify(needle)}; got: ${stderrText}`);
+      stderrText += decoder.decode(value);
+    }
+  };
+
+  await readUntil("READY");
+  const wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  expect(wsUrl).toBeDefined();
+
+  const connectAndResume = async (expression: string) => {
+    const ws = new WebSocket(wsUrl!);
+    const closed = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<void>();
+    ws.onopen = () => opened.resolve();
+    ws.onerror = e => {
+      opened.reject(e);
+      closed.reject(e);
+    };
+    ws.onclose = () => closed.resolve();
+    await opened.promise;
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression } }));
+    ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+    ws.close();
+    await closed.promise;
+  };
+
+  await connectAndResume("globalThis.__mark = 1");
+  // The fixture resumes, prints FIRST_RESUMED, then blocks again in the second
+  // waitForDebugger(). Seeing FIRST_RESUMED proves the first wait blocked; the
+  // fixture would already have exited if the second call returned immediately.
+  await readUntil("FIRST_RESUMED 1");
+  await connectAndResume("globalThis.__mark2 = 2");
+
+  const drained = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await drained;
+
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
+  expect(exitCode).toBe(0);
+});
+
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();
   session.connect();
@@ -494,6 +576,11 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
   expect(() => session.post("Runtime.enable", {}, "not a function" as any)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  // post(method, fn, fn) must throw ERR_INVALID_ARG_TYPE for `params` — the
+  // (method, callback) overload only applies when no third argument is passed.
+  expect(() => session.post("Runtime.enable", (() => {}) as any, () => {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
   expect(() => session.post("Nonexistent.domain")).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));

@@ -306,7 +306,7 @@ function setTraceSigInt(enable) {
   validateBoolean(enable, "enable");
   if (!Bun.isMainThread) {
     // Matches node's ERR_WORKER_UNSUPPORTED_OPERATION('Calling util.setTraceSigInt').
-    throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt is not supported in workers");
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt");
   }
   // Node starts/stops a SIGINT watchdog that prints a stack trace when the
   // process is interrupted; bun does not implement the watchdog yet, so this

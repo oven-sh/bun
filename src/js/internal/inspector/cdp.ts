@@ -231,13 +231,14 @@ class InspectorCDPAdapter {
               return;
             }
             const remote = result.result;
-            if (!result.wasThrown && remote?.type === "object" && remote.objectId) {
+            const objectId = remote?.objectId;
+            if (!result.wasThrown && remote?.type === "object" && objectId) {
               // JSC's Runtime.awaitPromise resolves any thenable and returns
               // non-thenable objects as-is, so no subtype check is needed.
               this.#sendToBackend(
                 "Runtime.awaitPromise",
                 {
-                  promiseObjectId: remote.objectId,
+                  promiseObjectId: objectId,
                   returnByValue: params.returnByValue,
                   generatePreview: params.generatePreview,
                   saveResult: params.saveResult,

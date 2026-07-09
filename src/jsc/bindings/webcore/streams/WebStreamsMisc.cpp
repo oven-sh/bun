@@ -111,7 +111,7 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
         if (joined.size() >= 3 && !memcmp(joined.data(), bom, 3)) {
             joined = joined.subspan(3);
             state.bomSeen = true;
-        } else if (!flush && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
+        } else if (!flush && !joined.empty() && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
             // Still a possible BOM prefix; carry it to the next chunk.
             state.setPending(joined.data(), static_cast<unsigned>(joined.size()));
             return nullptr;

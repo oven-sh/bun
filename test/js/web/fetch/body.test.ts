@@ -519,108 +519,112 @@ for (const { body, fn } of bodyTypes) {
         expect(await p1).toEqual({ value: undefined, done: true });
         expect(await p2).toEqual({ value: undefined, done: true });
       });
-      test("streams a fetch response body", async () => {
-        await using server = Bun.serve({
-          port: 0,
-          fetch() {
-            const chunks = ["hello ", "world 🫠"];
-            return new Response(
-              new ReadableStream({
-                start(controller) {
-                  for (const c of chunks) controller.enqueue(new TextEncoder().encode(c));
-                  controller.close();
-                },
-              }),
-            );
-          },
-        });
-        const res = await fetch(server.url);
-        const stream = res.textStream();
-        expect(res.bodyUsed).toBe(true);
-        expect(() => res.textStream()).toThrow(TypeError);
-        const out = (await Array.fromAsync(stream)).join("");
-        expect(out).toBe("hello world 🫠");
-      });
-      test("Bun's ReadableStream.text() on a fetch textStream() yields decoded text", async () => {
-        await using server = Bun.serve({
-          port: 0,
-          fetch: () => new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff, 0x62])),
-        });
-        const res = await fetch(server.url);
-        // The native-handle buffered fast path must not bypass the decode.
-        expect(await res.textStream().text()).toBe("a\ufffdb");
-      });
-      test("streams an incoming request body server-side", async () => {
-        const { promise, resolve, reject } = Promise.withResolvers<{
-          chunks: string[];
-          bodyUsedAfter: boolean;
-          secondCallThrew: boolean;
-        }>();
-        await using server = Bun.serve({
-          port: 0,
-          async fetch(req) {
-            try {
-              const stream = req.textStream();
-              const chunks = await Array.fromAsync(stream);
-              let secondCallThrew = false;
-              try {
-                req.textStream();
-              } catch (e) {
-                secondCallThrew = e instanceof TypeError;
-              }
-              resolve({ chunks, bodyUsedAfter: req.bodyUsed, secondCallThrew });
-            } catch (e) {
-              reject(e);
-            }
-            return new Response("ok");
-          },
-        });
-        await fetch(server.url, {
-          method: "POST",
-          body: new ReadableStream({
-            start(c) {
-              for (const s of ["hello ", "world 🫠"]) c.enqueue(new TextEncoder().encode(s));
-              c.close();
+      if (body === Response) {
+        test("streams a fetch response body", async () => {
+          await using server = Bun.serve({
+            port: 0,
+            fetch() {
+              const chunks = ["hello ", "world 🫠"];
+              return new Response(
+                new ReadableStream({
+                  start(controller) {
+                    for (const c of chunks) controller.enqueue(new TextEncoder().encode(c));
+                    controller.close();
+                  },
+                }),
+              );
             },
-          }),
+          });
+          const res = await fetch(server.url);
+          const stream = res.textStream();
+          expect(res.bodyUsed).toBe(true);
+          expect(() => res.textStream()).toThrow(TypeError);
+          const out = (await Array.fromAsync(stream)).join("");
+          expect(out).toBe("hello world 🫠");
         });
-        const result = await promise;
-        for (const chunk of result.chunks) {
-          expect(typeof chunk).toBe("string");
-        }
-        expect(result.chunks.join("")).toBe("hello world 🫠");
-        expect(result.bodyUsedAfter).toBe(true);
-        expect(result.secondCallThrew).toBe(true);
-      });
-      test("rejects when the client aborts mid-upload server-side", async () => {
-        const firstChunk = Promise.withResolvers<void>();
-        const done = Promise.withResolvers<{ name: string; received: string }>();
-        await using server = Bun.serve({
-          port: 0,
-          async fetch(req) {
-            const received: string[] = [];
-            try {
-              for await (const c of req.textStream()) {
-                received.push(c);
-                firstChunk.resolve();
+        test("Bun's ReadableStream.text() on a fetch textStream() yields decoded text", async () => {
+          await using server = Bun.serve({
+            port: 0,
+            fetch: () => new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff, 0x62])),
+          });
+          const res = await fetch(server.url);
+          // The native-handle buffered fast path must not bypass the decode.
+          expect(await res.textStream().text()).toBe("a\ufffdb");
+        });
+      }
+      if (body === Request) {
+        test("streams an incoming request body server-side", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers<{
+            chunks: string[];
+            bodyUsedAfter: boolean;
+            secondCallThrew: boolean;
+          }>();
+          await using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              try {
+                const stream = req.textStream();
+                const chunks = await Array.fromAsync(stream);
+                let secondCallThrew = false;
+                try {
+                  req.textStream();
+                } catch (e) {
+                  secondCallThrew = e instanceof TypeError;
+                }
+                resolve({ chunks, bodyUsedAfter: req.bodyUsed, secondCallThrew });
+              } catch (e) {
+                reject(e);
               }
-              done.resolve({ name: "<no error>", received: received.join("") });
-            } catch (e: any) {
-              done.resolve({ name: e?.name, received: received.join("") });
-            }
-            return new Response("ok");
-          },
+              return new Response("ok");
+            },
+          });
+          await fetch(server.url, {
+            method: "POST",
+            body: new ReadableStream({
+              start(c) {
+                for (const s of ["hello ", "world 🫠"]) c.enqueue(new TextEncoder().encode(s));
+                c.close();
+              },
+            }),
+          });
+          const result = await promise;
+          for (const chunk of result.chunks) {
+            expect(typeof chunk).toBe("string");
+          }
+          expect(result.chunks.join("")).toBe("hello world 🫠");
+          expect(result.bodyUsedAfter).toBe(true);
+          expect(result.secondCallThrew).toBe(true);
         });
-        const connected = Promise.withResolvers<void>();
-        const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
-        sock.on("error", () => {});
-        await connected.promise;
-        sock.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\nhello");
-        await firstChunk.promise;
-        sock.destroy();
-        const result = await done.promise;
-        expect(result).toEqual({ name: "AbortError", received: "hello" });
-      });
+        test("rejects when the client aborts mid-upload server-side", async () => {
+          const firstChunk = Promise.withResolvers<void>();
+          const done = Promise.withResolvers<{ name: string; received: string }>();
+          await using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              const received: string[] = [];
+              try {
+                for await (const c of req.textStream()) {
+                  received.push(c);
+                  firstChunk.resolve();
+                }
+                done.resolve({ name: "<no error>", received: received.join("") });
+              } catch (e: any) {
+                done.resolve({ name: e?.name, received: received.join("") });
+              }
+              return new Response("ok");
+            },
+          });
+          const connected = Promise.withResolvers<void>();
+          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          sock.on("error", () => {});
+          await connected.promise;
+          sock.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\nhello");
+          await firstChunk.promise;
+          sock.destroy();
+          const result = await done.promise;
+          expect(result).toEqual({ name: "AbortError", received: "hello" });
+        });
+      }
     });
     describe("json()", () => {
       const validTests: [string, unknown][] = [

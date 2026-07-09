@@ -973,7 +973,9 @@ TLSSocket.prototype._start = function _start() {
   // port, path, or socket and throws ERR_MISSING_ARGS.
   const wrapped = this._handle;
   if (!this.isServer && wrapped instanceof Duplex) {
-    this.connect({ socket: wrapped });
+    // Preserve any SNI set via setServername() before _start(): connect()
+    // would otherwise overwrite this.servername from its options object.
+    this.connect({ socket: wrapped, servername: this.servername });
     return;
   }
   this.connect();

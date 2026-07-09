@@ -968,6 +968,36 @@ it("new tls.TLSSocket(socket, { isServer: false, rejectUnauthorized: false }) co
   }
 });
 
+it("setServername() before _start() is sent as the client SNI, matching Node", async () => {
+  // Socket.prototype.connect overwrites this.servername from its options;
+  // _start() has to forward the value set between construction and start so
+  // the SNI reaches the handshake.
+  const observed = Promise.withResolvers<string | false | undefined>();
+  const server = tls.createServer({ ...COMMON_CERT_ });
+  server.on("secureConnection", socket => {
+    observed.resolve(socket.servername);
+    socket.end();
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const raw = net.connect(port, "127.0.0.1");
+  await once(raw, "connect");
+  const secure: any = new TLSSocket(raw, { isServer: false, rejectUnauthorized: false } as tls.TLSSocketOptions);
+  try {
+    secure.setServername("example.test");
+    secure._start();
+    await once(secure, "secureConnect");
+    expect(secure.servername).toBe("example.test");
+    expect(await observed.promise).toBe("example.test");
+  } finally {
+    secure.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
 it("rejectUnauthorized: null keeps certificate verification on, matching Node (CVE-2021-22939)", async () => {
   // Node only disables verification on an explicit `false`. Every other value
   // (including `null`, which used to reach the handshake's truthiness check

@@ -2342,3 +2342,47 @@ it("TransformStreamDefaultController survives after a native sink tears down its
     signalCode: null,
   });
 });
+
+// https://github.com/oven-sh/bun/pull/33193 — constructing any stream class with a newTarget
+// from a non-Zig realm (a node:vm context) must not downcast that realm's global object.
+test("streams constructors survive a foreign-realm (node:vm) newTarget", async () => {
+  const script = `
+    const vm = require("node:vm");
+    const context = vm.createContext({});
+    const foreign = vm.runInContext("(function F(){})", context);
+    const byteStream = () => new ReadableStream({ type: "bytes" });
+    const readerCtor = Object.getPrototypeOf(new ReadableStream().getReader()).constructor;
+    const byobCtor = Object.getPrototypeOf(byteStream().getReader({ mode: "byob" })).constructor;
+    const writerCtor = Object.getPrototypeOf(new WritableStream().getWriter()).constructor;
+    const cases = [
+      [CountQueuingStrategy, [{ highWaterMark: 1 }]],
+      [ByteLengthQueuingStrategy, [{ highWaterMark: 1 }]],
+      [ReadableStream, []],
+      [WritableStream, []],
+      [TransformStream, []],
+      [TextEncoderStream, []],
+      [TextDecoderStream, []],
+      [readerCtor, [new ReadableStream()]],
+      [byobCtor, [byteStream()]],
+      [writerCtor, [new WritableStream()]],
+    ];
+    for (const [C, args] of cases) {
+      const constructed = Reflect.construct(C, args, foreign);
+      if (Object.getPrototypeOf(constructed) !== foreign.prototype) throw new Error(C.name + ": wrong prototype");
+    }
+    // A non-object foreign prototype falls back to the constructor realm's structure.
+    const bare = vm.runInContext("(function G(){})", context);
+    bare.prototype = 5;
+    const fallback = Reflect.construct(CountQueuingStrategy, [{ highWaterMark: 2 }], bare);
+    if (!(fallback instanceof CountQueuingStrategy)) throw new Error("fallback: wrong prototype");
+    if (fallback.highWaterMark !== 2) throw new Error("fallback: object broken");
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "OK",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

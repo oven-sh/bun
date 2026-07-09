@@ -537,19 +537,6 @@ template<> void JSReadableStreamDefaultReaderConstructor::finishCreation(VM& vm,
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStreamDefaultReader>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSReadableStreamDefaultReaderConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSReadableStreamDefaultReader>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 // new ReadableStreamDefaultReader(stream): SetUpReadableStreamDefaultReader(this, stream).
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
@@ -564,7 +551,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultR
     // Same as getReader(): a lazy native/direct stream materializes before it is locked.
     stream->materializeIfNeeded(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* structure = structureForNewTarget(constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = JSReadableStreamDefaultReader::create(vm, structure);
     setUpReadableStreamDefaultReader(lexicalGlobalObject, reader, stream);

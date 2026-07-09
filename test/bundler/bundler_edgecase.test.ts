@@ -171,6 +171,44 @@ describe("bundler", () => {
       NODE_ENV: "production",
     },
   });
+  for (const ambient of [undefined, "production", "development", "test", ""]) {
+    itBundled(`edgecase/NodeEnvProductionFlagOverridesAmbient_${ambient ?? "unset"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+        `,
+      },
+      target: "browser",
+      production: true,
+      // An explicit --production flag must set process.env.NODE_ENV to
+      // "production" regardless of the ambient NODE_ENV in the build env.
+      capture: ['"production"'],
+      env: {
+        NODE_ENV: ambient,
+        BUN_ENV: undefined,
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("development");
+        api.expectFile("/out.js").not.toContain("process.env.NODE_ENV");
+      },
+    });
+  }
+  itBundled("edgecase/NodeEnvProductionFlagDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.NODE_ENV);
+      `,
+    },
+    target: "browser",
+    production: true,
+    // An explicit --define still wins over --production.
+    define: { "process.env.NODE_ENV": '"staging"' },
+    capture: ['"staging"'],
+    env: {
+      NODE_ENV: "development",
+      BUN_ENV: undefined,
+    },
+  });
   itBundled("edgecase/NodeEnvOptionalChaining", {
     todo: true,
     files: {

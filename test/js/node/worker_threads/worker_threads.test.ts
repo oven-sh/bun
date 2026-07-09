@@ -7,6 +7,7 @@ import wt, {
   BroadcastChannel,
   getEnvironmentData,
   isMainThread,
+  markAsUncloneable,
   markAsUntransferable,
   MessageChannel,
   MessagePort,
@@ -860,6 +861,32 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.ref();
   expect({ afterListener, afterRefCycle: port1.hasRef() }).toEqual({ afterListener: true, afterRefCycle: true });
   port1.close();
+});
+
+// markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer
+// list is moved, so node lets it through and it still works on the far side.
+test("markAsUncloneable blocks cloning a port but not transferring it", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const { port1: a, port2: b } = new MessageChannel();
+  markAsUncloneable(a);
+
+  // cloned (not in the transfer list) -> DataCloneError, like an unmarked plain object
+  expect(() => port1.postMessage(a)).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+  const plain = {};
+  markAsUncloneable(plain);
+  expect(() => port1.postMessage(plain)).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  port2.on("message", received => {
+    received.on("message", resolve);
+    b.postMessage("through");
+  });
+  port1.postMessage(a, [a]);
+  expect(await promise).toBe("through");
+
+  port1.close();
+  port2.close();
+  b.close();
 });
 
 test("MessagePort NodeEventTarget methods", () => {

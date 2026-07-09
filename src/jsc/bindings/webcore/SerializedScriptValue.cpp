@@ -1637,9 +1637,12 @@ private:
         // markAsUncloneable: reject a marked object anywhere in the graph (nested terminals
         // come through dumpIfTerminal directly); ArrayBuffers/views serialize natively. The
         // marker is a DontEnum JSC private name (node parity), invisible to user JS.
+        // A port in the transfer list is moved rather than cloned, so the marker doesn't
+        // apply to it — node lets `postMessage(port, [port])` through for a marked port.
         if (value.isObject()) {
             JSObject* obj = asObject(value);
             if (!obj->inherits<JSArrayBuffer>() && !obj->inherits<JSArrayBufferView>()
+                && !(obj->inherits<JSMessagePort>() && m_transferredMessagePorts.contains(obj))
                 && obj->structure()->hasNonEnumerableProperties()
                 && obj->getDirect(vm, builtinNames(vm).isUncloneablePrivateName())) {
                 code = SerializationReturnCode::DataCloneError;

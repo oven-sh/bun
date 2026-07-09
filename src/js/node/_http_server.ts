@@ -1017,6 +1017,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
+const kBytesRead = Symbol("kBytesRead");
 const kEnableStreaming = Symbol("kEnableStreaming");
 const kIsTunnel = Symbol("kIsTunnel");
 function onServerSocketError(this: any, _err) {
@@ -1032,11 +1033,11 @@ function onServerSocketError(this: any, _err) {
 function noopOnError() {}
 
 const NodeHTTPServerSocket = class Socket extends Duplex {
-  bytesRead = 0;
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
   [kIsTunnel] = false;
+  [kBytesRead] = 0;
   [kHandle];
   server: Server;
   _httpMessage;
@@ -1057,6 +1058,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // events on the socket.
     this.on("error", onServerSocketError);
     server[kTrackedConnections]?.add(this);
+  }
+
+  get bytesRead() {
+    const handle = this[kHandle];
+    return handle ? (handle.response?.getBytesRead?.() ?? this[kBytesRead] ?? 0) : (this[kBytesRead] ?? 0);
   }
 
   get bytesWritten() {
@@ -1109,6 +1115,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #closeHandle(handle, callback, err?: Error) {
+    // Snapshot bytesRead so it survives after the handle is cleared.
+    this[kBytesRead] = handle.response?.getBytesRead?.() ?? this[kBytesRead] ?? 0;
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
     handle.close();
@@ -1121,6 +1129,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #onClose() {
+    const handle = this[kHandle];
+    // Snapshot bytesRead so it survives after the handle is cleared.
+    this[kBytesRead] = handle?.response?.getBytesRead?.() ?? this[kBytesRead] ?? 0;
     this[kHandle] = null;
     this.server?.[kTrackedConnections]?.delete(this);
 

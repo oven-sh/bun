@@ -102,11 +102,13 @@ let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
 function injectFakeEmitter(Class) {
   // Per-instance registry of wrapped listeners so listenerCount/eventNames/
-  // removeAllListeners work over EventTarget's opaque internal map.
-  const listenerRegistry = new WeakMap<object, Map<string, Set<Function>>>();
+  // removeAllListeners work over EventTarget's opaque internal map. Keyed by a
+  // module-local symbol rather than a WeakMap: WeakMap.prototype.get/set are
+  // user-overridable and JSC exposes no @get/@set private name for them.
+  const kListenerRegistry = Symbol("listenerRegistry");
   function registryFor(target, create) {
-    let map = listenerRegistry.get(target);
-    if (!map && create) listenerRegistry.set(target, (map = new Map()));
+    let map = target[kListenerRegistry];
+    if (!map && create) target[kListenerRegistry] = map = new Map();
     return map;
   }
 
@@ -161,9 +163,9 @@ function injectFakeEmitter(Class) {
     const wrapper = functionForEventType(event, listener);
     this.addEventListener(event, wrapper);
     const map = registryFor(this, true)!;
-    let set = map.get(event);
-    if (!set) map.set(event, (set = new Set()));
-    set.add(wrapper);
+    let set = map.$get(event);
+    if (!set) map.$set(event, (set = new Set()));
+    set.$add(wrapper);
     return this;
   }
 
@@ -171,7 +173,7 @@ function injectFakeEmitter(Class) {
     const wrapper = listener ? listener[wrappedListener] || listener : undefined;
     if (wrapper) {
       this.removeEventListener(event, wrapper);
-      registryFor(this, false)?.get(event)?.delete(wrapper);
+      registryFor(this, false)?.$get(event)?.$delete(wrapper);
     } else {
       this.removeEventListener(event);
     }
@@ -185,7 +187,7 @@ function injectFakeEmitter(Class) {
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.
     function onceWrapper(ev) {
-      registryFor(target, false)?.get(event)?.delete(onceWrapper);
+      registryFor(target, false)?.$get(event)?.$delete(onceWrapper);
       return wrapper(ev);
     }
     // off()/removeListener() look the registered function up through the user's
@@ -193,9 +195,9 @@ function injectFakeEmitter(Class) {
     listener[wrappedListener] = onceWrapper;
     this.addEventListener(event, onceWrapper, { once: true });
     const map = registryFor(this, true)!;
-    let set = map.get(event);
-    if (!set) map.set(event, (set = new Set()));
-    set.add(onceWrapper);
+    let set = map.$get(event);
+    if (!set) map.$set(event, (set = new Set()));
+    set.$add(onceWrapper);
     return this;
   }
 
@@ -224,7 +226,7 @@ function injectFakeEmitter(Class) {
     return this[kMaxListeners] ?? 10;
   }
   function listenerCount(type) {
-    return registryFor(this, false)?.get(type)?.size ?? 0;
+    return registryFor(this, false)?.$get(type)?.size ?? 0;
   }
   function eventNames() {
     const map = registryFor(this, false);
@@ -237,10 +239,10 @@ function injectFakeEmitter(Class) {
     const map = registryFor(this, false);
     if (!map) return this;
     const removeType = t => {
-      const set = map.get(t);
+      const set = map.$get(t);
       if (set) {
         for (const w of set) this.removeEventListener(t, w);
-        map.delete(t);
+        map.$delete(t);
       }
     };
     if (arguments.length === 0) {

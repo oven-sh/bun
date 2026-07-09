@@ -889,6 +889,44 @@ test("markAsUncloneable blocks cloning a port but not transferring it", async ()
   b.close();
 });
 
+// The listener registry must not route through user-overridable Map/Set/WeakMap
+// methods. Spawned: it clobbers prototypes, which would poison the whole runner.
+test("the listener registry survives tampered Map/Set/WeakMap prototypes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const boom = name => function () { throw new Error("tampered " + name); };
+       Map.prototype.get = boom("Map.get");
+       Map.prototype.set = boom("Map.set");
+       Map.prototype.delete = boom("Map.delete");
+       Set.prototype.add = boom("Set.add");
+       Set.prototype.delete = boom("Set.delete");
+       WeakMap.prototype.get = boom("WeakMap.get");
+       WeakMap.prototype.set = boom("WeakMap.set");
+
+       const { port1, port2 } = new MessageChannel();
+       const fn = () => {};
+       port1.on("message", fn);
+       const c1 = port1.listenerCount("message");
+       port1.once("close", () => {});
+       const names = port1.eventNames().sort();
+       port1.off("message", fn);
+       const c2 = port1.listenerCount("message");
+       port1.removeAllListeners();
+       console.log(JSON.stringify({ c1, names, c2, after: port1.eventNames() }));
+       port1.close();
+       port2.close();`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ c1: 1, names: ["close", "message"], c2: 0, after: [] });
+  expect(exitCode).toBe(0);
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");

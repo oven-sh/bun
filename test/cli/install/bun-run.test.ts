@@ -755,10 +755,7 @@ describe.concurrent("bun run", () => {
     // A later quoted string with a separator can defeat a naive quote tracker;
     // the rewrite must leave a quoted npm run (with text before it) untouched.
     it.skipIf(isWindows)("does not hoist -w out of an earlier quoted string", async () => {
-      using dir = tempDir(
-        "npm-ws-quote-align",
-        rootScriptRepo("echo 'step: npm run build -w app' && echo 'ok; done'"),
-      );
+      using dir = tempDir("npm-ws-quote-align", rootScriptRepo("echo 'step: npm run build -w app' && echo 'ok; done'"));
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "start"],
         cwd: String(dir),

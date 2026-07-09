@@ -591,6 +591,50 @@ describe.concurrent("bun run", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/33796
+  describe("npm workspace flags in scripts", () => {
+    const workspaceRepo = (rootScript: string) => ({
+      "package.json": JSON.stringify({
+        private: true,
+        workspaces: ["apps/*"],
+        scripts: { start: rootScript },
+      }),
+      "apps": {
+        "app": {
+          "package.json": JSON.stringify({
+            name: "app",
+            private: true,
+            scripts: { hello: "echo workspace-ok" },
+          }),
+        },
+      },
+    });
+
+    it.each([
+      ["npm run hello -w app", "-w after script"],
+      ["npm run -w app hello", "-w before script"],
+      ["npm run hello --workspace app", "--workspace after script"],
+      ["npm run hello --workspace=app", "--workspace=pkg"],
+      ["npm run hello -w=app", "-w=pkg"],
+    ])("%s runs the workspace script instead of re-entering the root (%s)", async rootScript => {
+      using dir = tempDir("npm-workspace-flag", workspaceRepo(rootScript));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("workspace-ok");
+      expect(stderr).not.toContain("Script not found");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("'bun run' priority", async () => {
     // priority:
     // - 1: run script with matching name

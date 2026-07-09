@@ -122,6 +122,122 @@ impl YarnCommands {
 /// `.text.unlikely.*` keeps the byte-scanning loop out of the hot
 /// fault-around windows the startup/dot benches page in (belt-and-suspenders
 /// alongside `startup.order` regen — survives mangling-hash drift).
+/// Translate npm's workspace-selection flags into Bun's when rewriting an
+/// `npm run ...` invocation. `cmd` starts at `npm run ` and `prefix_len` is its
+/// length. When the remainder of this simple command (up to the next top-level
+/// shell separator) carries `-w`/`--workspace[=<pkg>]` or `--workspaces`, emit a
+/// `bun run` with the equivalent `--filter=<pkg>`/`--workspaces` placed before
+/// the script name and return the number of input bytes consumed. Returns 0 when
+/// no workspace flag is present so the caller falls back to the plain
+/// `npm run` -> `bun run` rewrite, keeping byte-for-byte output for that case.
+fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize) -> usize {
+    let args = &cmd[prefix_len..];
+
+    // End of this simple command: first top-level (unquoted) shell separator.
+    let mut seg_end = args.len();
+    {
+        let (mut in_single, mut in_double) = (false, false);
+        let mut i = 0;
+        while i < args.len() {
+            let c = args[i];
+            if in_single {
+                in_single = c != b'\'';
+            } else if in_double {
+                in_double = c != b'"';
+            } else {
+                match c {
+                    b'\'' => in_single = true,
+                    b'"' => in_double = true,
+                    b';' | b'&' | b'|' | b'\n' | b'\r' => {
+                        seg_end = i;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+    }
+    let segment = &args[..seg_end];
+
+    // Split into tokens on top-level whitespace, preserving any quote bytes.
+    let mut tokens: Vec<&[u8]> = Vec::new();
+    {
+        let (mut in_single, mut in_double) = (false, false);
+        let mut tok_start: Option<usize> = None;
+        let mut j = 0;
+        while j < segment.len() {
+            let c = segment[j];
+            let is_sep = !in_single && !in_double && (c == b' ' || c == b'\t');
+            if is_sep {
+                if let Some(s) = tok_start.take() {
+                    tokens.push(&segment[s..j]);
+                }
+            } else {
+                if tok_start.is_none() {
+                    tok_start = Some(j);
+                }
+                if in_single {
+                    in_single = c != b'\'';
+                } else if in_double {
+                    in_double = c != b'"';
+                } else if c == b'\'' {
+                    in_single = true;
+                } else if c == b'"' {
+                    in_double = true;
+                }
+            }
+            j += 1;
+        }
+        if let Some(s) = tok_start {
+            tokens.push(&segment[s..]);
+        }
+    }
+
+    let mut filters: Vec<&[u8]> = Vec::new();
+    let mut all_workspaces = false;
+    let mut rest: Vec<&[u8]> = Vec::new();
+    let mut k = 0;
+    while k < tokens.len() {
+        let t = tokens[k];
+        if t == b"--workspaces" {
+            all_workspaces = true;
+        } else if t == b"-w" || t == b"--workspace" {
+            if k + 1 < tokens.len() {
+                filters.push(tokens[k + 1]);
+                k += 1;
+            }
+        } else if let Some(v) = t.strip_prefix(b"--workspace=") {
+            filters.push(v);
+        } else if let Some(v) = t.strip_prefix(b"-w=") {
+            filters.push(v);
+        } else {
+            rest.push(t);
+        }
+        k += 1;
+    }
+
+    if filters.is_empty() && !all_workspaces {
+        return 0;
+    }
+
+    out.extend_from_slice(BUN_BIN_NAME);
+    out.extend_from_slice(b" run");
+    if all_workspaces {
+        out.extend_from_slice(b" --workspaces");
+    }
+    for f in &filters {
+        out.extend_from_slice(b" --filter=");
+        out.extend_from_slice(f);
+    }
+    for t in &rest {
+        out.push(b' ');
+        out.extend_from_slice(t);
+    }
+
+    prefix_len + seg_end
+}
+
 #[cold]
 pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
@@ -199,6 +315,16 @@ pub fn replace_package_manager_run(
             b'n' => {
                 if delimiter > 0 {
                     if strings::has_prefix_comptime(&script[start..], b"npm run ") {
+                        let consumed = rewrite_npm_run_workspaces(
+                            copy_script,
+                            &script[start..],
+                            b"npm run ".len(),
+                        );
+                        if consumed > 0 {
+                            entry_i += consumed;
+                            delimiter = 0;
+                            continue;
+                        }
                         append_bun_run(copy_script);
                         copy_script.push(b' ');
                         entry_i += b"npm run ".len();

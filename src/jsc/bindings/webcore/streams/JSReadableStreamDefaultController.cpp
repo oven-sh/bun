@@ -493,29 +493,24 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
         controller->m_pullAgain = true;
         return;
     }
-    // A pull() that returns a non-thenable (the overwhelmingly common case for a JS source)
-    // completes synchronously: loop the upon-fulfillment steps here instead of allocating a
-    // wrapper promise and a microtask per chunk. Every Bun chunkSteps arm defers its
-    // consumer continuation via a promise or queueReactionJob, so a re-read from inside
-    // enqueue() only sets m_pullAgain (the m_pulling guard holds) and the loop picks it up
-    // after the stack unwinds, keeping stack depth constant.
-    while (true) {
-        ASSERT(!controller->m_pullAgain);
-        controller->m_pulling = true;
-        JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (pullPromise) {
-            auto* runtime = JSStreamsRuntime::from(globalObject);
-            pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
-            return;
-        }
-        controller->m_pulling = false;
-        if (!controller->m_pullAgain)
-            return;
-        controller->m_pullAgain = false;
-        if (!readableStreamDefaultControllerShouldCallPull(controller))
-            return;
+    ASSERT(!controller->m_pullAgain);
+    controller->m_pulling = true;
+    JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    if (pullPromise) {
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
+        return;
     }
+    // A pull() that returned a non-thenable completed synchronously: skip the wrapper promise.
+    // When nothing during the pull set m_pullAgain, the upon-fulfillment steps are a no-op and
+    // can run inline. When m_pullAgain is set (enqueue()'s trailing callPullIfNeeded), defer
+    // the re-pull as its own microtask to preserve spec timing and bound stack depth.
+    if (!controller->m_pullAgain) {
+        controller->m_pulling = false;
+        return;
+    }
+    queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
 }
 
 bool readableStreamDefaultControllerShouldCallPull(JSReadableStreamDefaultController* controller)

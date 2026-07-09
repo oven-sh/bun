@@ -597,24 +597,21 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
         controller->m_pullAgain = true;
         return;
     }
-    // See readableStreamDefaultControllerCallPullIfNeeded.
-    while (true) {
-        ASSERT(!controller->m_pullAgain);
-        controller->m_pulling = true;
-        JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (pullPromise) {
-            auto* runtime = JSStreamsRuntime::from(globalObject);
-            pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
-            return;
-        }
-        controller->m_pulling = false;
-        if (!controller->m_pullAgain)
-            return;
-        controller->m_pullAgain = false;
-        if (!readableByteStreamControllerShouldCallPull(controller))
-            return;
+    ASSERT(!controller->m_pullAgain);
+    controller->m_pulling = true;
+    JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    if (pullPromise) {
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
+        return;
     }
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    if (!controller->m_pullAgain) {
+        controller->m_pulling = false;
+        return;
+    }
+    queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
 }
 
 bool readableByteStreamControllerShouldCallPull(JSReadableByteStreamController* controller)

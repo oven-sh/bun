@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tls as tlsCerts, isASAN } from "harness";
+import { isASAN, tls as tlsCerts } from "harness";
 import http from "node:http";
 import net from "node:net";
 

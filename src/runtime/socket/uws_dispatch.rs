@@ -277,3 +277,37 @@ pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
     let _ = TLSSocket::on_keylog(tls, slice);
 }
+
+/// Hands the server's stapled OCSP response to the JS `ocspResponse` handler.
+/// `len < 0` means nothing was stapled (Node emits `'OCSPResponse'` with null).
+/// Unlike session/keylog this runs from *inside* the handshake, so a listener
+/// that rejects the staple can still abort the connection by destroying it.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes when
+/// `len >= 0`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_ocsp_response(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        return;
+    };
+    let response = match usize::try_from(len) {
+        // SAFETY: `data` points to `len` readable bytes owned by the TLS session
+        // for the duration of this call.
+        Ok(len) if !data.is_null() => Some(unsafe { core::slice::from_raw_parts(data, len) }),
+        _ => None,
+    };
+    // `on_ocsp_response` consumes any exception itself - this returns straight
+    // into BoringSSL.
+    TLSSocket::on_ocsp_response(tls, response);
+}

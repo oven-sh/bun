@@ -27,6 +27,8 @@ export const Handlers = b.dictionary(
     keylog: { type: b.RawAny, internalName: "onKeylog" },
     serverName: { type: b.RawAny, internalName: "onServerName" },
     alpnCallback: { type: b.RawAny, internalName: "onALPNCallback" },
+    ocspRequest: { type: b.RawAny, internalName: "onOCSPRequest" },
+    ocspResponse: { type: b.RawAny, internalName: "onOCSPResponse" },
     binaryType: {
       type: BinaryType,
       default: "buffer",

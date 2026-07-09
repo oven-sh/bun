@@ -201,6 +201,8 @@ pub struct SocketConfigHandlers {
     pub on_keylog: JSValue,
     pub on_server_name: JSValue,
     pub on_alpn_callback: JSValue,
+    pub on_ocsp_request: JSValue,
+    pub on_ocsp_response: JSValue,
     pub binary_type: SocketConfigHandlersBinaryType,
 }
 
@@ -220,6 +222,8 @@ struct ExternSocketConfigHandlers {
     onKeylog: JSValue,
     onServerName: JSValue,
     onALPNCallback: JSValue,
+    onOCSPRequest: JSValue,
+    onOCSPResponse: JSValue,
     binary_type: SocketConfigHandlersBinaryType,
 }
 
@@ -251,6 +255,8 @@ impl SocketConfigHandlers {
             on_keylog: ext.onKeylog,
             on_server_name: ext.onServerName,
             on_alpn_callback: ext.onALPNCallback,
+            on_ocsp_request: ext.onOCSPRequest,
+            on_ocsp_response: ext.onOCSPResponse,
             binary_type: ext.binary_type,
         }
     }

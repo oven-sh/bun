@@ -266,6 +266,9 @@ pub(super) mod ffi {
         ) -> c_int;
         // Returns X509_V_OK (0) when `issuer` could have issued `subject`.
         pub(crate) fn X509_check_issued(issuer: *mut X509, subject: *mut X509) -> c_int;
+        // DER-encodes `x`. A null `outp` only measures; otherwise it must point
+        // at a writable buffer of that size and is advanced past the output.
+        pub(crate) fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
     }
 }
 use crate::node::StringOrBuffer;
@@ -1264,6 +1267,154 @@ pub(super) fn is_session_reused(
     Ok(JSValue::from(
         ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1,
     ))
+}
+
+// ── OCSP stapling ──────────────────────────────────────────────────────────
+
+/// DER-encodes `cert` (a live X509) into a JS `Buffer`, or `undefined` when it
+/// cannot be encoded.
+fn x509_to_der_buffer(cert: *mut boringssl::X509, global: &JSGlobalObject) -> JsResult<JSValue> {
+    // SAFETY: `cert` is a live X509; a null out-ptr requests the size only.
+    let size = unsafe { ffi::i2d_X509(cert, core::ptr::null_mut()) };
+    let Ok(size) = usize::try_from(size) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    if size == 0 {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let buffer = JSValue::create_buffer_from_length(global, size)?;
+    let Some(array_buffer) = buffer.as_array_buffer(global) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let mut ptr = array_buffer.ptr;
+    // SAFETY: `ptr` points at `size` writable bytes owned by the JS buffer.
+    let written = unsafe { ffi::i2d_X509(cert, &raw mut ptr) };
+    // A second encode that disagrees with the sizing pass would leave the tail
+    // of the buffer as the zeroes `create_buffer_from_length` left there.
+    if written != size as c_int {
+        return Ok(JSValue::UNDEFINED);
+    }
+    Ok(buffer)
+}
+
+/// The certificate that issued `leaf`, as Node's `SecureContext.getIssuer()`
+/// resolves it: first the extra chain certificates configured on the context,
+/// then its trust store. Returns a +1 reference the caller must free.
+fn resolve_issuer(
+    ssl_ptr: *mut boringssl::SSL,
+    leaf: *mut boringssl::X509,
+) -> *mut boringssl::X509 {
+    let ctx = ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr));
+    if ctx.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    // SAFETY: `ctx` is the live parent CTX of a live SSL. `chain` is a valid
+    // out-param; the stack it receives (and every X509 in it) is borrowed from
+    // the CTX, which outlives this synchronous walk. `X509_check_issued`
+    // borrows both certificates. The store_ctx created below is freed on every
+    // exit, and `get1_issuer` writes a +1 reference we hand to the caller.
+    unsafe {
+        let mut chain: *mut c_void = core::ptr::null_mut();
+        if ffi::SSL_CTX_get0_chain_certs(ctx, &raw mut chain) == 1 && !chain.is_null() {
+            let count = ffi::OPENSSL_sk_num(chain);
+            let stack = boringssl::struct_stack_st_X509::opaque_ref(chain.cast());
+            for i in 0..count {
+                let candidate = ffi::sk_X509_value(stack, i);
+                if !candidate.is_null() && ffi::X509_check_issued(candidate, leaf) == 0 {
+                    ffi::X509_up_ref(boringssl::X509::opaque_ref(candidate));
+                    return candidate;
+                }
+            }
+        }
+
+        let store = ffi::SSL_CTX_get_cert_store(boringssl::SSL_CTX::opaque_ref(ctx));
+        if store.is_null() {
+            return core::ptr::null_mut();
+        }
+        let store_ctx = ffi::X509_STORE_CTX_new();
+        if store_ctx.is_null() {
+            return core::ptr::null_mut();
+        }
+        let mut issuer: *mut boringssl::X509 = core::ptr::null_mut();
+        if ffi::X509_STORE_CTX_init(
+            store_ctx,
+            store,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        ) != 1
+            || ffi::X509_STORE_CTX_get1_issuer(&raw mut issuer, store_ctx, leaf) <= 0
+        {
+            issuer = core::ptr::null_mut();
+        }
+        ffi::X509_STORE_CTX_free(store_ctx);
+        issuer
+    }
+}
+
+/// `(certificateDER, issuerDER)` for the certificate this server connection is
+/// about to send - the arguments Node's `'OCSPRequest'` listener receives.
+/// Either slot is `undefined` when it cannot be resolved.
+pub(super) fn ocsp_certificates(
+    ssl_ptr: *mut boringssl::SSL,
+    global: &JSGlobalObject,
+) -> JsResult<(JSValue, JSValue)> {
+    let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
+    if cert.is_null() {
+        return Ok((JSValue::UNDEFINED, JSValue::UNDEFINED));
+    }
+    let cert_der = x509_to_der_buffer(cert, global)?;
+
+    let issuer = resolve_issuer(ssl_ptr, cert);
+    if issuer.is_null() {
+        return Ok((cert_der, JSValue::UNDEFINED));
+    }
+    // SAFETY: `issuer` is the +1 reference `resolve_issuer` handed us.
+    let _guard = scopeguard::guard(issuer, |c| unsafe { boringssl::X509_free(c) });
+    Ok((cert_der, x509_to_der_buffer(issuer, global)?))
+}
+
+/// `handle.requestOCSP()` - client-side: ask the server to staple an OCSP
+/// response. Must run before the ClientHello goes out. Returns false when this
+/// transport cannot deliver one (see `NewSocketHandler::request_ocsp_stapling`).
+pub(super) fn request_ocsp(
+    this: &This,
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::from(this.socket.get().request_ocsp_stapling()))
+}
+
+/// `handle.resumeOCSP(responseOrNull)` - resumes a server handshake suspended
+/// by an asynchronous `'OCSPRequest'` handler, stapling `response` when the
+/// handler produced one. Returns false when the response was rejected: the
+/// handshake stays parked and the caller tears the connection down instead of
+/// completing it without the staple the client asked for.
+pub(super) fn resume_ocsp(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let socket = this.socket.get();
+    if socket.is_detached() {
+        return Ok(JSValue::TRUE);
+    }
+    let args = frame.arguments_old::<1>();
+    if args.len >= 1 && !args.ptr[0].is_undefined_or_null() {
+        let Some(buffer) = args.ptr[0].as_array_buffer(global) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected the OCSP response to be a Buffer or TypedArray"
+            )));
+        };
+        let bytes = buffer.byte_slice();
+        // An empty response is Node's "nothing to staple": its setOCSPResponse
+        // accepts one and nothing ever reaches the wire. Not a failure.
+        if !bytes.is_empty() && !socket.set_ocsp_response(bytes) {
+            return Ok(JSValue::FALSE);
+        }
+    }
+    socket.ocsp_resolve();
+    Ok(JSValue::TRUE)
 }
 
 pub(super) fn set_verify_mode(

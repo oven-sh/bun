@@ -995,6 +995,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.interactive_eval_script =
+                ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
@@ -2954,26 +2956,13 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        use ::core::fmt::Write as _;
         let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
-        let user = ::core::mem::take(&mut ctx.runtime_options.eval.script);
-        let mut script = String::with_capacity(user.len() + 40 + bootstrap.len());
-        if !user.is_empty() {
-            // `node -i -e`: pass the user script as DATA (a JSON string
-            // literal), never as spliced code — the bootstrap runs it via
-            // vm.runInThisContext; a `-e` error is fatal (exit 1) as in
-            // Node's internal/main/repl.js. Splicing code would let an
-            // unterminated `` ` `` swallow the bootstrap and would
-            // block-scope `-e` declarations away.
-            // Argv is arbitrary bytes on Linux; the JSON encoder's SAFETY
-            // contract requires UTF-8, so lossily normalize first.
-            let user = String::from_utf8_lossy(&user);
-            let json = bun_core::fmt::format_json_string_utf8(user.as_bytes(), Default::default());
-            write!(script, "const __BUN_EVAL_SCRIPT__ = {json};\n").unwrap_or_oom();
-        }
-        // SAFETY: embedded builtin sources are UTF-8 by construction.
-        script.push_str(unsafe { ::core::str::from_utf8_unchecked(bootstrap) });
-        ctx.runtime_options.eval.script = script.into_bytes().into_boxed_slice();
+        // Stash the user's `-e` (so `process._eval` is correct) and boot the
+        // bootstrap via `[eval]`; it runs `process._eval` like Node's
+        // internal/main/repl.js — no source splicing.
+        ctx.runtime_options.eval.interactive_script =
+            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
+        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
         Self::exec_eval(ctx)
     }
 
@@ -3011,6 +3000,15 @@ impl RunCommand {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
+
+        // `node --interactive [-e code]`: same gate as AutoCommand — a script
+        // positional wins, `-p` wins.
+        if ctx.runtime_options.interactive
+            && !ctx.runtime_options.eval.eval_and_print
+            && ctx.positionals.is_empty()
+        {
+            return Self::exec_node_repl(ctx);
+        }
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
@@ -3074,7 +3072,7 @@ impl RunCommand {
     )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
-            "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+            "Missing script to execute. Pass --interactive to start the Node.js-compatible REPL.",
             (),
         );
         Global::exit(1);

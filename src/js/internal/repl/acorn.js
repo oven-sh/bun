@@ -7,8 +7,8 @@
 // The minified dist uses ES5 `function Foo(){} Foo.prototype.x = ...`; JSC
 // does not auto-materialize `.prototype` on builtin `function` declarations
 // (only that — nested `function`/`class` in builtins are constructible), so
-// evaluate via vm.Script under full JS semantics. Lazy: the ~122 KB source is
-// only parsed on first property access, so `require('node:repl')` stays cheap.
+// evaluate via vm.Script under full JS semantics. Lazy: deferred to first
+// property access so `require('node:repl')` stays cheap.
 // prettier-ignore
 let _acorn;
 function load() {

@@ -132,15 +132,16 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that. Matches
-    // vm.compileFunction (NodeVM.cpp) which also parses eagerly.
+    // recoverable-error flow (and user code) relies on that.
+    // FIXME: double-parse — checkSyntax discards its AST and runInThisContext
+    // reparses via JSC::evaluate; migrate to compile-once via m_cachedExecutable.
     JSC::ParserError parseError;
     if (!JSC::checkSyntax(vm, source, parseError)) {
         auto exception = parseError.toErrorObject(globalObject, source, -1);
         RETURN_IF_EXCEPTION(scope, {});
         // Node always attaches the arrow header to compile-time SyntaxErrors
         // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, options.filename, parseError, options.lineOffset, options.columnOffset);
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, options.filename, parseError, options.lineOffset);
         throwException(globalObject, scope, exception);
         return {};
     }

@@ -5,7 +5,18 @@
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
-const { RegExpPrototypeSymbolReplace, RegExpPrototypeSymbolSplit } = require("internal/repl/node-primordials");
+const {
+  ArrayPrototypeJoin,
+  ArrayPrototypeMap,
+  ArrayPrototypePush,
+  ArrayPrototypeSlice,
+  RegExpPrototypeExec,
+  RegExpPrototypeSymbolReplace,
+  RegExpPrototypeSymbolSplit,
+  StringPrototypeIncludes,
+  StringPrototypeReplace,
+  StringPrototypeSplit,
+} = require("internal/repl/node-primordials");
 
 // ---- internal/util ----------------------------------------------------
 
@@ -24,27 +35,19 @@ function SideEffectFreeRegExpPrototypeSymbolSplit(regexp, str, limit) {
   return RegExpPrototypeSymbolSplit(regexp, str, limit);
 }
 
-function assignFunctionName(name, fn) {
-  return Object.defineProperty(fn, "name", {
-    __proto__: null,
-    configurable: true,
-    value: name,
-  });
-}
-
 function decorateErrorStack(err) {
   // JSC materializes stacks eagerly so Node's overrideStackTrace never runs;
   // reproduce it by normalizing "<anonymous> (loc)" frames and cutting at the
   // last REPLn:l:c frame (drops the REPL top-level + vm runner frames).
   if (typeof err?.stack !== "string") return err;
-  let lines = err.stack.split("\n");
-  lines = lines.map(l => l.replace(/^(\s+at )<anonymous> \((.+)\)$/, "$1$2"));
+  let lines = StringPrototypeSplit(err.stack, "\n");
+  lines = ArrayPrototypeMap(lines, l => StringPrototypeReplace(l, /^(\s+at )<anonymous> \((.+)\)$/, "$1$2"));
   let anonIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s+at REPL\d*:\d+:\d+$/.test(lines[i])) anonIdx = i;
+    if (RegExpPrototypeExec(/^\s+at REPL\d*:\d+:\d+$/, lines[i]) !== null) anonIdx = i;
   }
-  if (anonIdx !== -1) lines = lines.slice(0, anonIdx);
-  const newStack = lines.join("\n");
+  if (anonIdx !== -1) lines = ArrayPrototypeSlice(lines, 0, anonIdx);
+  const newStack = ArrayPrototypeJoin(lines, "\n");
   if (newStack !== err.stack) {
     // Errors with a non-writable .stack (Object.freeze, getter-only) must
     // not turn into a TypeError that escapes the REPL's error handler.
@@ -203,7 +206,9 @@ function addBuiltinLibsToObject(object, _dummy) {
   // (avoids ENOENT from process.cwd() in a deleted working directory).
   const builtinRequire = Module.createRequire(process.execPath);
   getBuiltinLibs().forEach(name => {
-    if (Object.getOwnPropertyDescriptor(object, name)) {
+    // Node filters slash-modules here (not in getBuiltinLibs), so
+    // repl.builtinModules and require-completion still offer them.
+    if (StringPrototypeIncludes(name, "/") || Object.getOwnPropertyDescriptor(object, name)) {
       return;
     }
 
@@ -328,24 +333,28 @@ const SKIP_SYMBOLS = 16;
 
 function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
   const indexRegex = /^(0|[1-9][0-9]*)$/;
-  let keys = [];
+  const keys = [];
   if (!(filter & SKIP_STRINGS)) {
-    for (const key of Object.getOwnPropertyNames(obj)) {
-      if (indexRegex.test(key)) continue;
+    const names = Object.getOwnPropertyNames(obj);
+    for (let i = 0; i < names.length; i++) {
+      const key = names[i];
+      if (RegExpPrototypeExec(indexRegex, key) !== null) continue;
       if (filter & ONLY_ENUMERABLE) {
         const desc = Object.getOwnPropertyDescriptor(obj, key);
         if (!desc?.enumerable) continue;
       }
-      keys.push(key);
+      ArrayPrototypePush(keys, key);
     }
   }
   if (!(filter & SKIP_SYMBOLS)) {
-    for (const sym of Object.getOwnPropertySymbols(obj)) {
+    const syms = Object.getOwnPropertySymbols(obj);
+    for (let i = 0; i < syms.length; i++) {
+      const sym = syms[i];
       if (filter & ONLY_ENUMERABLE) {
         const desc = Object.getOwnPropertyDescriptor(obj, sym);
         if (!desc?.enumerable) continue;
       }
-      keys.push(sym);
+      ArrayPrototypePush(keys, sym);
     }
   }
   return keys;
@@ -405,7 +414,6 @@ export default {
   // internal/util
   SideEffectFreeRegExpPrototypeSymbolReplace,
   SideEffectFreeRegExpPrototypeSymbolSplit,
-  assignFunctionName,
   decorateErrorStack,
   deprecate: util.deprecate,
   isError,

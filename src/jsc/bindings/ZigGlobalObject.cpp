@@ -143,6 +143,8 @@
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
 #include <JavaScriptCore/WebAssemblyCompileOptions.h>
+#include <JavaScriptCore/DeferredWorkTimer.h>
+#include <JavaScriptCore/WasmWorklist.h>
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "streams/JSWritableStream.h"
@@ -4002,6 +4004,15 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     if (vm.refCount() == 1) {
         vm.derefSuppressingSaferCPPChecking();
     } else {
+        // Replicate ~VM's prefix so background compilation is quiesced before
+        // lastChanceToFinalize() destroys cells (JITWorklist::cancelAllPlansForVM
+        // isn't in exported headers; the LSAN lane reaching here doesn't tier up).
+        vm.deferredWorkTimer->stopRunningTasks();
+#if ENABLE(WEBASSEMBLY)
+        if (auto* worklist = JSC::Wasm::existingWorklistOrNull())
+            worklist->stopAllPlansForContext(vm);
+#endif
+        vm.traps().willDestroyVM();
         vm.heap.lastChanceToFinalize();
     }
     runLoop->threadWillExit();

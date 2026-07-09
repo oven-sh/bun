@@ -24,7 +24,6 @@ var __node_module__ = { exports: {} };
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-
 const {
   DateNow,
   FunctionPrototypeBind,
@@ -43,7 +42,10 @@ const promises = require("node:readline/promises");
 
 const { AbortError } = require("internal/repl/node-errors");
 const { inspect } = require("internal/repl/node-inspect");
-const { kEmptyObject, promisify } = require("internal/repl/node-shims");
+// node-shims eagerly loads node:{util,module,path,vm}; readline only needs
+// kEmptyObject/promisify, so import from their tiny sources.
+const { kEmptyObject } = require("internal/shared");
+const { promisify } = require("internal/promisify");
 const { validateAbortSignal } = require("internal/validators");
 
 /**
@@ -134,7 +136,7 @@ Interface.prototype.question = function question(query, options, cb) {
     const onAbort = () => {
       this[kQuestionCancel]();
     };
-    addAbortListener ??= require("internal/repl/node-shims").addAbortListener;
+    addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(options.signal, onAbort);
     const originalCb = cb;
     cb =
@@ -166,7 +168,7 @@ Interface.prototype.question[promisify.custom] = function question(query, option
       const onAbort = () => {
         reject(new AbortError(undefined, { cause: options.signal.reason }));
       };
-      addAbortListener ??= require("internal/repl/node-shims").addAbortListener;
+      addAbortListener ??= require("internal/abort_listener").addAbortListener;
       const disposable = addAbortListener(options.signal, onAbort);
       cb = answer => {
         disposable[SymbolDispose]();

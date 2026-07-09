@@ -577,6 +577,24 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       err = e;
     }
     expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
+
+    // columnOffset on line 1 is subtracted from the caret; on later lines it
+    // is not (Node applies it only to the first physical line).
+    err = undefined;
+    try {
+      new Script("   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "   %%", "   ^", ""]);
+
+    err = undefined;
+    try {
+      new Script("1;\n   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
   });
   test.todo("can specify timeout", () => {
     //

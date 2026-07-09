@@ -13,7 +13,7 @@ const { Interface: _Interface, kQuestion, kQuestionCancel, kQuestionReject } = r
 const { AbortError } = require("internal/repl/node-errors");
 const { validateAbortSignal } = require("internal/validators");
 
-const { kEmptyObject } = require("internal/repl/node-shims");
+const { kEmptyObject } = require("internal/shared");
 let addAbortListener;
 
 class Interface extends _Interface {
@@ -31,7 +31,7 @@ class Interface extends _Interface {
           this[kQuestionCancel]();
           reject(new AbortError(undefined, { cause: options.signal.reason }));
         };
-        addAbortListener ??= require("internal/repl/node-shims").addAbortListener;
+        addAbortListener ??= require("internal/abort_listener").addAbortListener;
         const disposable = addAbortListener(options.signal, onAbort);
 
         cb = answer => {

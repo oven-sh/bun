@@ -2645,7 +2645,7 @@ fn transpile_source_code_inner(
                         _ => (core::ptr::null_mut(), 0),
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,
@@ -2981,19 +2981,27 @@ fn transpile_source_code_inner(
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; `printer.ctx.get_written()` borrows thread-local data.
-                    let mut resolved_source = unsafe {
-                        (*jsc_vm).ref_counted_resolved_source::<false>(
-                            printer.ctx.get_written(),
-                            input_specifier.dupe_ref(),
-                            path.text,
-                            None,
-                        )
-                    };
-                    resolved_source.is_commonjs_module = is_commonjs_module;
-                    resolved_source.module_info = module_info;
-                    return Ok(OwnedResolvedSource::from(resolved_source));
+                    let written = printer.ctx.get_written();
+                    // The ref-counted watcher source creates an external
+                    // Latin-1 WTFString, which mis-decodes any multi-byte
+                    // UTF-8 (raw tagged-template contents / regex literals are
+                    // printed verbatim). Fall through to the encoding-aware
+                    // clone below when the output is not pure ASCII.
+                    if bun_core::strings::first_non_ascii(written).is_none() {
+                        // SAFETY: per fn contract — `jsc_vm` is the live
+                        // per-thread VM; `written` borrows thread-local data.
+                        let mut resolved_source = unsafe {
+                            (*jsc_vm).ref_counted_resolved_source::<false>(
+                                written,
+                                input_specifier.dupe_ref(),
+                                path.text,
+                                None,
+                            )
+                        };
+                        resolved_source.is_commonjs_module = is_commonjs_module;
+                        resolved_source.module_info = module_info;
+                        return Ok(OwnedResolvedSource::from(resolved_source));
+                    }
                 }
 
                 // Final ResolvedSource.
@@ -3059,7 +3067,7 @@ fn transpile_source_code_inner(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
-                let source_code = bun_core::String::clone_latin1(written);
+                let source_code = bun_core::String::clone_utf8(written);
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the
                 // next transpile. Replacing the printer drops the old buffer

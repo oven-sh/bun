@@ -1328,16 +1328,6 @@ impl AsyncModule {
 
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
-            // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source::<false>(
-                    printer.ctx.get_written(),
-                    BunString::init(specifier),
-                    path.text,
-                    None,
-                )
-            };
-
             if let Some(fd_) = input_fd {
                 if bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
@@ -1369,13 +1359,26 @@ impl AsyncModule {
                 }
             }
 
-            resolved_source.is_commonjs_module = is_commonjs_module;
-
-            return Ok(resolved_source);
+            // The ref-counted watcher source creates an external Latin-1
+            // WTFString; fall through to `clone_utf8` when the printer output
+            // contains multi-byte UTF-8 (raw tagged-template / regex literals).
+            if strings::first_non_ascii(printer.ctx.get_written()).is_none() {
+                // SAFETY: per-thread VM.
+                let mut resolved_source = unsafe {
+                    (*jsc_vm).ref_counted_resolved_source::<false>(
+                        printer.ctx.get_written(),
+                        BunString::init(specifier),
+                        path.text,
+                        None,
+                    )
+                };
+                resolved_source.is_commonjs_module = is_commonjs_module;
+                return Ok(resolved_source);
+            }
         }
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
+            source_code: BunString::clone_utf8(printer.ctx.get_written()),
             specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),
             is_commonjs_module,

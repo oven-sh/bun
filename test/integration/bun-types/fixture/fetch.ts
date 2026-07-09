@@ -264,6 +264,15 @@ if (typeof process !== "undefined") {
 }
 
 {
+  // Object proxy with url as a URL object is valid
+  fetch("https://example.com", {
+    proxy: {
+      url: new URL("http://proxy.example.com:8080"),
+    },
+  });
+}
+
+{
   // Object proxy with url and headers (plain object) is valid
   fetch("https://example.com", {
     proxy: {

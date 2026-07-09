@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -709,14 +709,17 @@ describe("FormData", () => {
       formData.get("foo")!.type;
       return formData;
     }
-    for (let i = 0; i < 100000; i++) {
+    // Release needs 100k iterations so the freed name string's memory is actually
+    // reused; ASAN/debug detect the use-after-free deterministically, so far fewer
+    // iterations (with the same 20 forced GC cycles) are enough there.
+    const iterations = isASAN || isDebug ? 2000 : 100000;
+    const gcEvery = iterations / 20;
+    for (let i = 0; i < iterations; i++) {
       test();
-      if (i % 5000 === 0) {
+      if (i % gcEvery === 0) {
         Bun.gc();
       }
     }
-    // 100k iterations of allocate-and-GC is fast on release but slow under a
-    // debug/ASAN build, where it runs well past the default 5s test timeout.
   }, 180000);
 });
 

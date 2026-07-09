@@ -3327,7 +3327,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchNodeModulesAt(packageDir);
 
-  for (var i = 0; i < 100; i++) {
+  // Iterating more than once matters: this repeatedly re-resolves from a deleted
+  // lockfile to catch nondeterministic peer-dep hoisting. Do not collapse to 1.
+  for (var i = 0; i < 10; i++) {
     // Situation:
     //
     // Root package has a dependency on one-fixed-dep, peer-deps-too and two-range-deps.

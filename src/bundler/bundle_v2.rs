@@ -4151,7 +4151,9 @@ pub mod bv2_impl {
                                     .into_boxed_slice();
                             }
                             let mut v = Vec::new();
-                            template.print(&mut v).expect("oom");
+                            template
+                                .print(&mut v, !self.transpiler.options.compile)
+                                .expect("oom");
                             v.into_boxed_slice()
                         };
 

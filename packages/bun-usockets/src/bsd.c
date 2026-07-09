@@ -1010,6 +1010,18 @@ int bsd_would_block() {
 #endif
 }
 
+/* Transient kernel resource exhaustion from send(): the connection is still
+ * healthy and a later retry can succeed. Kept distinct from bsd_would_block()
+ * so recv() callers that use that to mean EOF-vs-error do not start spinning
+ * on ENOBUFS. */
+int bsd_send_is_transient_error() {
+#ifdef _WIN32
+    return WSAGetLastError() == WSAENOBUFS;
+#else
+    return errno == ENOBUFS || errno == ENOMEM;
+#endif
+}
+
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do

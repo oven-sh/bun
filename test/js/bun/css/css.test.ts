@@ -96,6 +96,21 @@ describe("css tests", () => {
         padding: var(--custom-padding);
        }`,
     );
+
+    // Adjacent `/` and `*` delim tokens must not be printed as `/*` or `*/`
+    // when minifying, which would open/close a comment and swallow the rest of
+    // the stylesheet.
+    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x/ *y}.k{color:red}");
+    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x* /y}.k{color:red}");
+    minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
+    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
+    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
+    // A lone `/` or `*` delim must still minify without extra whitespace.
+    minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
+    minify_test(":root { --a: x * y }", ":root{--a:x*y}");
+    minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
+    // Non-minified output is unchanged.
+    cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
   });
 
   describe("pseudo-class edge case", () => {

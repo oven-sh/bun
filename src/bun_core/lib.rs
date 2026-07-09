@@ -2738,6 +2738,12 @@ pub mod ffi {
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
     #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}

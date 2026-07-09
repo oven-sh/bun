@@ -613,6 +613,7 @@ impl AsyncHTTP<'static> {
         // SAFETY: caller guarantees `http` is live and exclusively owned by
         // this thread (popped from the MPSC queue).
         let mut copy = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(http) });
+        copy.real = NonNull::new(http);
         copy.err = Some(err);
         copy.state.store(State::Fail, Ordering::Relaxed);
         let callback = copy.result_callback;

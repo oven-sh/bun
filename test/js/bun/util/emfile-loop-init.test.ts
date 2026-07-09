@@ -41,6 +41,7 @@ const workerFixture = /* js */ `
     w.onmessage = () => { console.error("UNEXPECTED: worker message"); resolve(); };
   });
   for (const fd of held) fs.closeSync(fd);
+  fs.unlinkSync(W);
   console.error("SURVIVED");
 `;
 

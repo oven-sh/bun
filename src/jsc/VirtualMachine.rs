@@ -1990,6 +1990,14 @@ impl VirtualMachine {
     pub fn init(mut opts: InitOptions) -> crate::CrateResult<*mut VirtualMachine> {
         jsc::mark_binding();
 
+        // `uws::Loop::get()` lazily creates the per-thread uSockets loop; on
+        // fd exhaustion (epoll_create1/timerfd/eventfd → EMFILE) it returns
+        // null. Check before allocating anything so the worker's null-vm
+        // `shutdown()` path has nothing to reclaim.
+        if uws::Loop::get().is_null() {
+            return Err(bun_core::err!("EMFILE"));
+        }
+
         let log: *mut bun_ast::Log = match opts.log {
             Some(l) => l.as_ptr(),
             None => bun_core::heap::into_raw(Box::new(bun_ast::Log::default())),
@@ -2153,13 +2161,6 @@ impl VirtualMachine {
         }
 
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
-        // `uws::Loop::get()` lazily creates the per-thread uSockets loop; on
-        // fd exhaustion (epoll_create1/timerfd/eventfd → EMFILE) it returns
-        // null. Fail the VM init instead of letting `ensure_waker` deref null,
-        // so a worker thread can surface an `error` event rather than abort.
-        if uws::Loop::get().is_null() {
-            return Err(bun_core::err!("EMFILE"));
-        }
         // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).

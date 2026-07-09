@@ -86,7 +86,7 @@ void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSGlobalObject* globa
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* readyPromise = writer->m_readyPromise.get();
-    if (readyPromise->status() == JSPromise::Status::Pending) {
+    if (readyPromise && readyPromise->status() == JSPromise::Status::Pending) {
         rejectPromise(globalObject, readyPromise, error);
         RETURN_IF_EXCEPTION(scope, );
     } else {
@@ -436,10 +436,25 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_desiredSiz
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_ready, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    const auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
+    auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'ready' getter can only be used on a WritableStreamDefaultWriter"_s)));
-    return JSValue::encode(writer->m_readyPromise.get());
+    return JSValue::encode(writer->readyPromise(lexicalGlobalObject));
+}
+
+JSPromise* JSWritableStreamDefaultWriter::readyPromise(JSGlobalObject* globalObject)
+{
+    if (auto* ready = m_readyPromise.get())
+        return ready;
+    // Only writableStreamUpdateBackpressure clears the slot (while Writable); every other
+    // state transition sets it eagerly. Materialize pending if backpressure, else fulfilled.
+    auto& vm = getVM(globalObject);
+    auto* stream = m_stream.get();
+    auto* ready = (stream && stream->m_backpressure)
+        ? JSPromise::create(vm, globalObject->promiseStructure())
+        : Bun::WebStreams::promiseFulfilledWith(globalObject, JSC::jsUndefined());
+    m_readyPromise.set(vm, this, ready);
+    return ready;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

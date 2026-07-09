@@ -238,9 +238,11 @@ JSPromise* writableStreamClose(JSGlobalObject* globalObject, JSWritableStream* s
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     stream->m_closeRequest.set(vm, stream, promise);
 
-    const auto* writer = stream->m_writer.get();
+    auto* writer = stream->m_writer.get();
     if (writer && stream->m_backpressure && state == WritableStreamState::Writable) {
-        resolvePromise(globalObject, writer->m_readyPromise.get(), jsUndefined());
+        // Materialize-then-resolve so a later `.ready` read sees fulfilled even when the lazy
+        // slot was null (close() does not clear [[backpressure]]).
+        resolvePromise(globalObject, writer->readyPromise(globalObject), jsUndefined());
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     writableStreamDefaultControllerClose(globalObject, stream->m_controller.get());
@@ -468,9 +470,9 @@ void writableStreamUpdateBackpressure(JSGlobalObject* globalObject, JSWritableSt
     auto* writer = stream->m_writer.get();
     if (writer && backpressure != stream->m_backpressure) {
         if (backpressure)
-            writer->m_readyPromise.set(vm, writer, JSPromise::create(vm, globalObject->promiseStructure()));
-        else {
-            resolvePromise(globalObject, writer->m_readyPromise.get(), jsUndefined());
+            writer->m_readyPromise.clear();
+        else if (auto* ready = writer->m_readyPromise.get()) {
+            resolvePromise(globalObject, ready, jsUndefined());
             RETURN_IF_EXCEPTION(scope, );
         }
     }

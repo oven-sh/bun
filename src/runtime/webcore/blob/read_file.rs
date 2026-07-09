@@ -473,6 +473,7 @@ impl ReadFile {
     /// Returns `false` if the IO request loop's lazy init failed; in that case
     /// `errno`/`system_error` have been recorded and nothing was registered,
     /// so the caller should fall through to its own `on_finish()` path.
+    #[must_use]
     pub fn wait_for_readable(&mut self) -> bool {
         bloblog!("ReadFile.waitForReadable");
         self.close_after_io = true;

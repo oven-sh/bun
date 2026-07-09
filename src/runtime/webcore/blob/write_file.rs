@@ -273,6 +273,7 @@ impl WriteFile {
     /// Returns `false` if the IO request loop's lazy init failed; in that case
     /// `errno`/`system_error` have been recorded and nothing was registered,
     /// so the caller should fall through to its own `on_finish()` path.
+    #[must_use]
     pub fn wait_for_writable(&mut self) -> bool {
         self.close_after_io = true;
         self.io_request
@@ -369,7 +370,9 @@ impl WriteFile {
                             // this is fine on kqueue, but not on epoll.
                             continue;
                         }
-                        self.wait_for_writable();
+                        // On failure errno is set; do_write_loop_posix checks
+                        // errno.is_some() after !continue_writing.
+                        let _ = self.wait_for_writable();
                         return false;
                     } else {
                         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());

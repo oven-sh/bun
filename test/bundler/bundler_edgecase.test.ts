@@ -2676,8 +2676,14 @@ describe("bundler", () => {
       expect(out).toContain("class Café");
       expect(out).toContain("function naïve");
       expect(out).toContain("class Cafá");
+      expect(out).toContain("class 模块");
+      expect(out).toContain("var aπ");
+      expect(out).toContain("var a𝒜");
+      expect(out).toContain("var élan");
       expect(out).not.toContain("Caf_");
       expect(out).not.toContain("na_ve");
+      expect(out).not.toContain("模_");
+      expect(out).not.toContain("var a_");
     },
   });
   itBundled("edgecase/NonAsciiIdentifierPreservedBunTarget", {

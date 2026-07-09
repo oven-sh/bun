@@ -51,11 +51,11 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// Maximum buffered inbound message size (128 MB). A server that declares a
-/// larger frame, or whose continuation fragments accumulate past this, fails
-/// the connection with close code 1009 instead of growing `receive_buffer`
-/// without bound.
-const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
+/// Default inbound-message cap (128 MB) when no `maxPayload` option is given.
+/// A server that declares a larger frame, or whose continuation fragments
+/// accumulate past the cap, fails with close code 1009 instead of growing
+/// `receive_buffer` without bound. Must match `WebSocket::kDefaultMaxPayload`.
+pub const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 /// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
 const MAX_CONTROL_PAYLOAD: usize = 125;
 /// RFC 6455 §5.5.1: a Close payload is the 2-byte status code + the reason.
@@ -88,6 +88,8 @@ pub struct WebSocket<const SSL: bool> {
     pub close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
 
     pub receive_body_remain: Cell<usize>,
+    /// Inbound-message size cap (0 disables the check); `ws` `maxPayload`.
+    pub max_payload: usize,
     pub receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -845,7 +847,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn recv_body(&self, cursor: &mut RecvCursor<'_>) -> Step {
         let buffered_len = self.receive_buffer.borrow().readable_length();
-        if buffered_len.saturating_add(cursor.body_remain) > MAX_RECEIVE_MESSAGE_LENGTH {
+        if self.max_payload > 0
+            && buffered_len.saturating_add(cursor.body_remain) > self.max_payload
+        {
             return self.recv_failed(ErrorCode::MessageTooBig);
         }
 
@@ -1499,6 +1503,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<*mut SslCtx>,
         proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
+        max_payload: usize,
     ) -> *mut Self {
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
@@ -1513,6 +1518,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             close_received: Cell::new(false),
             close_dispatch_pending: RefCell::new(None),
             receive_body_remain: Cell::new(0),
+            max_payload,
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
@@ -1534,7 +1540,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params).ok();
+            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params, max_payload).ok();
         }
 
         ws
@@ -1609,10 +1615,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         buffered_data_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
         secure_ptr: *mut c_void,
+        max_payload: usize,
     ) -> *mut c_void {
         let tcp = input_socket.cast::<us_socket_t>();
         let secure = (!secure_ptr.is_null()).then(|| secure_ptr.cast::<SslCtx>());
-        let ws = Self::new_raw(outgoing, global_this, deflate_params, secure, None);
+        let ws = Self::new_raw(
+            outgoing,
+            global_this,
+            deflate_params,
+            secure,
+            None,
+            max_payload,
+        );
 
         // `adopt_group` takes a closure to write the new socket.
         let group = {
@@ -1662,6 +1676,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         buffered_data: *mut u8,
         buffered_data_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
+        max_payload: usize,
     ) -> *mut c_void {
         // SAFETY: tunnel_ptr is a valid *WebSocketProxyTunnel from C++ with an
         // intrusive refcount. The caller retains its own ref; we bump the
@@ -1685,6 +1700,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate_params,
             None,
             Some(tunnel_owned),
+            max_payload,
         );
 
         Self::finish_init(ws, outgoing, global_this, buffered_data, buffered_data_len)
@@ -1860,6 +1876,7 @@ macro_rules! export_websocket_client {
             buffered_data_len: usize,
             deflate_params: Option<&websocket_deflate::Params>,
             secure_ptr: *mut c_void,
+            max_payload: usize,
         ) -> *mut c_void {
             WebSocket::<$ssl>::init(
                 outgoing,
@@ -1869,6 +1886,7 @@ macro_rules! export_websocket_client {
                 buffered_data_len,
                 deflate_params,
                 secure_ptr,
+                max_payload,
             )
         }
         #[unsafe(no_mangle)]
@@ -1879,6 +1897,7 @@ macro_rules! export_websocket_client {
             buffered_data: *mut u8,
             buffered_data_len: usize,
             deflate_params: Option<&websocket_deflate::Params>,
+            max_payload: usize,
         ) -> *mut c_void {
             WebSocket::<$ssl>::init_with_tunnel(
                 outgoing,
@@ -1887,6 +1906,7 @@ macro_rules! export_websocket_client {
                 buffered_data,
                 buffered_data_len,
                 deflate_params,
+                max_payload,
             )
         }
         #[unsafe(no_mangle)]

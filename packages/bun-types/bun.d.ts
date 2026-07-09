@@ -4306,6 +4306,20 @@ declare module "bun" {
     perMessageDeflate?: boolean;
   };
 
+  type WebSocketOptionsMaxPayload = {
+    /**
+     * The maximum allowed size in bytes of an inbound message. When a frame (or
+     * the accumulated fragments of a message, including decompressed
+     * permessage-deflate output) exceeds this, the connection is closed with
+     * code `1009` before the message is delivered. `0` disables the limit.
+     *
+     * Matches the `ws` package's client `maxPayload` option.
+     *
+     * @default 134217728 (128 MiB)
+     */
+    maxPayload?: number;
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
@@ -4313,7 +4327,8 @@ declare module "bun" {
     WebSocketOptionsTLS &
     WebSocketOptionsHeaders &
     WebSocketOptionsProxy &
-    WebSocketOptionsCompression;
+    WebSocketOptionsCompression &
+    WebSocketOptionsMaxPayload;
 
   interface WebSocketEventMap {
     close: CloseEvent;

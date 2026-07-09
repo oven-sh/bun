@@ -5,7 +5,7 @@ import crypto from "crypto";
 import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import { createServer } from "http";
-import { AddressInfo, connect } from "net";
+import net, { AddressInfo, connect } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -904,5 +904,159 @@ describe("ping/pong no-arg payload", () => {
     const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     ws.on("open", () => ws.pong(Buffer.from("hello")));
     await promise;
+  });
+});
+
+describe("WebSocket ClientOptions", () => {
+  describe("maxPayload", () => {
+    async function testMaxPayload(sendText: boolean) {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 404 });
+        },
+        websocket: {
+          perMessageDeflate: false,
+          open(ws) {
+            const payload = Buffer.alloc(100_000, "x");
+            ws.send(sendText ? payload.toString() : payload);
+          },
+          message() {},
+        },
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers<{ event: string; code?: number }>();
+      const ws = new WebSocket(server.url.href.replace("http", "ws"), { maxPayload: 1024 });
+      clients.push(ws);
+      ws.on("message", data => reject(new Error(`received ${(data as Buffer).length} bytes; maxPayload ignored`)));
+      ws.on("error", err => resolve({ event: "error" }));
+      ws.on("close", code => resolve({ event: "close", code }));
+
+      const result = await promise;
+      if (result.event === "close") {
+        expect(result.code).toBe(1009);
+      }
+    }
+
+    it("closes with 1009 when a text frame exceeds the limit", async () => {
+      await testMaxPayload(true);
+    });
+
+    it("closes with 1009 when a binary frame exceeds the limit", async () => {
+      await testMaxPayload(false);
+    });
+
+    it("delivers messages at or below the limit", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 404 });
+        },
+        websocket: {
+          perMessageDeflate: false,
+          open(ws) {
+            ws.send(Buffer.alloc(1024, "x").toString());
+          },
+          message() {},
+        },
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const ws = new WebSocket(server.url.href.replace("http", "ws"), { maxPayload: 1024 });
+      clients.push(ws);
+      ws.on("message", data => resolve((data as Buffer).length));
+      ws.on("error", reject);
+      ws.on("close", code => reject(new Error(`closed ${code} before message`)));
+
+      expect(await promise).toBe(1024);
+      ws.close();
+    });
+
+    it("treats 0 as unlimited", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 404 });
+        },
+        websocket: {
+          perMessageDeflate: false,
+          open(ws) {
+            ws.send(Buffer.alloc(100_000, "x").toString());
+          },
+          message() {},
+        },
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const ws = new WebSocket(server.url.href.replace("http", "ws"), { maxPayload: 0 });
+      clients.push(ws);
+      ws.on("message", data => resolve((data as Buffer).length));
+      ws.on("error", reject);
+      ws.on("close", code => reject(new Error(`closed ${code} before message`)));
+
+      expect(await promise).toBe(100_000);
+      ws.close();
+    });
+  });
+
+  describe("handshakeTimeout", () => {
+    it("emits 'error' when the server never completes the upgrade", async () => {
+      const sockets: net.Socket[] = [];
+      const srv = net.createServer(s => {
+        sockets.push(s);
+      });
+      let ws: WebSocket | undefined;
+      try {
+        await once(srv.listen(0, "127.0.0.1"), "listening");
+        const port = (srv.address() as AddressInfo).port;
+
+        const events: unknown[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        ws = new WebSocket(`ws://127.0.0.1:${port}`, { handshakeTimeout: 500 });
+        ws.on("open", () => reject(new Error("should not open")));
+        ws.on("error", err => events.push({ event: "error", message: (err as Error).message }));
+        ws.on("close", code => {
+          events.push({ event: "close", code });
+          resolve();
+        });
+
+        await promise;
+        expect(events).toEqual([
+          { event: "error", message: "Opening handshake has timed out" },
+          { event: "close", code: 1006 },
+        ]);
+      } finally {
+        ws?.removeAllListeners();
+        ws?.terminate();
+        for (const s of sockets) s.destroy();
+        await new Promise<void>(r => srv.close(() => r()));
+      }
+    });
+
+    it("does not fire when the connection opens in time", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 404 });
+        },
+        websocket: { open() {}, message() {} },
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const ws = new WebSocket(server.url.href.replace("http", "ws"), { handshakeTimeout: 60_000 });
+      clients.push(ws);
+      ws.on("open", () => resolve("open"));
+      ws.on("error", err => reject(err));
+
+      expect(await promise).toBe("open");
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+      ws.on("close", () => onClose());
+      ws.close();
+      await closed;
+    });
   });
 });

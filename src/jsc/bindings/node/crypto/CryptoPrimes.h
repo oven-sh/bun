@@ -17,7 +17,8 @@ struct CheckPrimeJobCtx {
     int32_t m_checks;
     ncrypto::BignumPointer m_candidate;
 
-    bool m_result { false };
+    int32_t m_result { -1 };
+    uint32_t m_opensslError { 0 };
 
     WTF_MAKE_TZONE_ALLOCATED(CheckPrimeJobCtx);
 };

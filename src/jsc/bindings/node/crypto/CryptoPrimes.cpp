@@ -25,12 +25,14 @@ extern "C" void Bun__CheckPrimeJobCtx__runTask(CheckPrimeJobCtx* ctx, JSGlobalOb
 }
 void CheckPrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    auto res = m_candidate.isPrime(m_checks, [](int32_t a, int32_t b) -> bool {
+    ncrypto::ClearErrorOnReturn clearError;
+    m_result = m_candidate.isPrime(m_checks, [](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
         return true;
     });
-
-    m_result = res != 0;
+    if (m_result < 0) {
+        m_opensslError = ERR_get_error();
+    }
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
@@ -39,7 +41,15 @@ extern "C" void Bun__CheckPrimeJobCtx__runFromJS(CheckPrimeJobCtx* ctx, JSGlobal
 }
 void CheckPrimeJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
-    Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(jsBoolean(m_result)));
+    if (m_result < 0) {
+        auto& vm = lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, nullptr);
+        RETURN_IF_EXCEPTION(scope, );
+        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
+        return;
+    }
+    Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(jsBoolean(m_result == 1)));
 }
 
 extern "C" void Bun__CheckPrimeJobCtx__deinit(CheckPrimeJobCtx* ctx)
@@ -110,12 +120,17 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
         }
     }
 
+    ncrypto::ClearErrorOnReturn clearError;
     auto res = candidate.isPrime(checks, [](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
         return true;
     });
+    if (res < 0) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error());
+        return {};
+    }
 
-    return JSValue::encode(jsBoolean(res != 0));
+    return JSValue::encode(jsBoolean(res == 1));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -190,6 +205,7 @@ extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGl
 }
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
+    ncrypto::ClearErrorOnReturn clearError;
     m_generated = m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, [](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
         return true;

@@ -681,7 +681,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     let version: dependency::Version = 'version: {
-        if dependency.version.tag == dependency::version::Tag::Npm {
+        // An `npm:` alias names its registry target explicitly, so only plain
+        // dependencies may be redirected to a same-named alias elsewhere in the tree.
+        if dependency.version.tag == dependency::version::Tag::Npm
+            && !dependency.version.npm().is_alias
+        {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();

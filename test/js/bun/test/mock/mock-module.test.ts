@@ -162,7 +162,12 @@ test("mock.module propagates a throwing getter on the factory's return value", (
 
   const sentinel = new Error("GETTER-THROW");
   const mockExports: { existing: string } = {} as any;
-  Object.defineProperty(mockExports, "existing", { enumerable: true, get: () => { throw sentinel; } });
+  Object.defineProperty(mockExports, "existing", {
+    enumerable: true,
+    get: () => {
+      throw sentinel;
+    },
+  });
 
   expect(() => mock.module("./mock-module-getter-throw-fixture", () => mockExports)).toThrow(sentinel);
   expect(getterThrowFixture.existing).toBe("original");

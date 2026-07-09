@@ -2631,6 +2631,15 @@ pub(crate) fn install_isolated_packages(
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
 
+        // OHOS: sign native binaries across the entire node_modules tree.
+        #[cfg(target_env = "ohos")]
+        {
+            let nm = installer.node_modules.path.as_slice();
+            if !nm.is_empty() {
+                crate::package_installer::ohos_sign_native_binaries(nm);
+            }
+        }
+
         return Ok(summary);
     }
 }

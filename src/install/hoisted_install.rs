@@ -617,5 +617,18 @@ pub(crate) fn install_hoisted_packages(
         }
     }
 
+    Ok(summary)?;
+
+    // OHOS: sign native binaries across the entire node_modules tree.
+    // Per-package signing in PackageInstaller doesn't fire for workspace
+    // installs, so do a full recursive pass here.
+    #[cfg(target_env = "ohos")]
+    {
+        let nm = installer.node_modules.path.as_slice();
+        if !nm.is_empty() {
+            crate::package_installer::ohos_sign_native_binaries(nm);
+        }
+    }
+
     Ok(summary)
 }

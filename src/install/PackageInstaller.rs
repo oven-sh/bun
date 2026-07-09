@@ -2403,8 +2403,6 @@ impl<'a> PackageInstaller<'a> {
 /// into node_modules, before lifecycle scripts run.
 #[cfg(target_env = "ohos")]
 pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
-    use std::process::Command;
-
     let dir = match Dir::open(pkg_dir) {
         Ok(d) => d,
         Err(_) => return,
@@ -2432,16 +2430,13 @@ pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
         full.push(b'/');
         full.extend_from_slice(name);
         let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
-        if Command::new("binary-sign-tool")
-            .args(["display-sign", "-inFile", full_str])
-            .output()
-            .is_ok_and(|o| o.status.success())
-        {
-            continue;
+        let p = std::path::Path::new(full_str);
+        if let Ok(elf_bytes) = std::fs::read(p) {
+            if ohos_sign::has_codesign(&elf_bytes) {
+                continue;
+            }
+            let _ = ohos_sign::sign_selfsign_inplace(p);
         }
-        let _ = Command::new("binary-sign-tool")
-            .args(["sign", "-selfSign", "1", "-inFile", full_str, "-outFile", full_str])
-            .output();
     }
 }
 

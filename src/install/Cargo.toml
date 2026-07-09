@@ -13,6 +13,9 @@ path = "lib.rs"
 # when those files are compiled by the separate `bun_shim_impl` crate.
 shim_standalone = []
 
+[target.'cfg(target_env = "ohos")'.dependencies]
+ohos_sign = { path = "../ohos_sign" }
+
 [lints]
 workspace = true
 

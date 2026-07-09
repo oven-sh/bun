@@ -51,6 +51,7 @@ members = [
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
+  "src/ohos_sign",
   "src/picohttp",
   "src/s3_signing",
   "src/sql_jsc",

@@ -325,6 +325,14 @@ fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize) 
         }
     }
 
+    // A usable workspace value is not itself a flag and carries no redirect
+    // byte: `>`/`<` never appear in workspace names, but a glued compound
+    // redirect (`-w app>&2`) would otherwise be hoisted into the filter.
+    #[inline]
+    fn is_workspace_value(t: &[u8]) -> bool {
+        !t.is_empty() && !t.starts_with(b"-") && !t.iter().any(|&c| c == b'<' || c == b'>')
+    }
+
     let mut filters: Vec<&[u8]> = Vec::new();
     let mut all_workspaces = false;
     let mut if_present = false;
@@ -339,18 +347,23 @@ fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize) 
         } else if t == b"--workspaces" || t == b"--ws" {
             all_workspaces = true;
         } else if t == b"-w" || t == b"--workspace" {
-            // The value must be the next token and must not itself be a flag;
-            // otherwise we would swallow a real flag (e.g. `--if-present`) as a
-            // bogus workspace name. Bail to the plain prefix swap instead.
-            if k + 1 < tokens.len() && !tokens[k + 1].starts_with(b"-") {
+            // The value must be the next token; bail to the plain prefix swap
+            // rather than swallow a flag (e.g. `--if-present`) or a redirect.
+            if k + 1 < tokens.len() && is_workspace_value(tokens[k + 1]) {
                 filters.push(tokens[k + 1]);
                 k += 1;
             } else {
                 return 0;
             }
         } else if let Some(v) = t.strip_prefix(b"--workspace=") {
+            if !is_workspace_value(v) {
+                return 0;
+            }
             filters.push(v);
         } else if let Some(v) = t.strip_prefix(b"-w=") {
+            if !is_workspace_value(v) {
+                return 0;
+            }
             filters.push(v);
         } else if t == b"--if-present" {
             if_present = true;

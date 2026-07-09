@@ -1275,6 +1275,9 @@ describe("uid/gid", () => {
 describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
   const knobEnv = { ...bunEnv, BUN_INTERNAL_NUL_UNAVAILABLE: "1" };
 
+  // The knob is read by the process PERFORMING the spawn, so each test runs an
+  // intermediate bunExe() with knobEnv and the intermediate does the
+  // ignore-stdio spawn; the outer test only relays and asserts.
   it("all-ignore slots become discard pipes and a 1MB write succeeds", async () => {
     using dir = tempDir("spawn-nul-substitute", {
       "probe.js": `
@@ -1291,18 +1294,27 @@ describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
         for (let i = 0; i < 16; i++) wrote += fs.writeSync(1, chunk);
         fs.writeFileSync(process.argv[2], JSON.stringify({ type, wrote }));
       `,
+      "mid.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, process.argv[2], process.argv[3]],
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+        const grandExit = await child.exited;
+        console.log(JSON.stringify({ grandExit }));
+      `,
     });
     const results = join(String(dir), "results.json");
     await using proc = spawn({
-      cmd: [bunExe(), join(String(dir), "probe.js"), results],
+      cmd: [bunExe(), join(String(dir), "mid.js"), join(String(dir), "probe.js"), results],
       env: knobEnv,
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", "pipe", "inherit"],
     });
-    const exitCode = await proc.exited;
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const r = existsSync(results) ? JSON.parse(readFileSync(results, "utf8")) : {};
     // FILE_TYPE_PIPE = 3; the real NUL device reports FILE_TYPE_CHAR = 2.
     expect(r.type).toBe(3);
     expect(r.wrote).toBe(16 * 64 * 1024);
+    expect(JSON.parse(stdout.trim())).toEqual({ grandExit: 0 });
     expect(exitCode).toBe(0);
   });
 
@@ -1311,10 +1323,16 @@ describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
       cmd: [
         bunExe(),
         "-e",
-        `let n = 0; for await (const c of process.stdin) n += c.length; console.log("COUNT:" + n);`,
+        `const child = Bun.spawn({
+          cmd: [process.execPath, "-e", 'let n = 0; for await (const c of process.stdin) n += c.length; console.log("COUNT:" + n);'],
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        const [out, code] = await Promise.all([child.stdout.text(), child.exited]);
+        process.stdout.write(out);
+        process.exit(code);`,
       ],
       env: knobEnv,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "inherit"],
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("COUNT:0");
@@ -1327,10 +1345,16 @@ describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
       cmd: [
         bunExe(),
         "-e",
-        `process.stderr.write("discarded" + "z".repeat(128 * 1024)); process.stdout.write(${JSON.stringify(payload)});`,
+        `const child = Bun.spawn({
+          cmd: [process.execPath, "-e", 'process.stderr.write("discarded" + "z".repeat(128 * 1024)); process.stdout.write(${JSON.stringify(payload)});'],
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        const [out, code] = await Promise.all([child.stdout.text(), child.exited]);
+        process.stdout.write(out);
+        process.exit(code);`,
       ],
       env: knobEnv,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "inherit"],
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe(payload);

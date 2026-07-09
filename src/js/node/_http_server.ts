@@ -1561,8 +1561,12 @@ function renderNativeHeaders(res) {
         // Like Node.js's matchHeader: the body is chunk-framed iff the user's
         // Transfer-Encoding value names `chunked` (any array element). The
         // native writer otherwise decides framing from Content-Length alone,
-        // so the declared coding and the emitted framing disagree.
-        userTEChunked = chunkExpression.test($isArray(value) ? value.join(", ") : String(value));
+        // so the declared coding and the emitted framing disagree. An empty
+        // array renders no header line; treat it as no TE (Node's matchHeader
+        // never runs), or sentinel "4" would strip the auto Content-Length.
+        if (!($isArray(value) && value.length === 0)) {
+          userTEChunked = chunkExpression.test($isArray(value) ? value.join(", ") : String(value));
+        }
       }
       if ($isArray(value)) {
         const valueLength = value.length;

@@ -244,4 +244,33 @@ describe("response body framing matches the user's Transfer-Encoding header", ()
     expect(normalizeHead(head)).toBe("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close");
     expect(body).toBe("2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n");
   });
+
+  // An empty array emits no Transfer-Encoding header line; Node.js's
+  // matchHeader never runs, so the response falls through to auto-framing.
+  // Guard against deriving `userTEChunked = false` from it, which would
+  // push sentinel "4" and strip the auto Content-Length.
+  describe("empty-array Transfer-Encoding keeps auto-framing", () => {
+    test.concurrent("res.end", async () => {
+      await using server = createServer((req, res) => {
+        res.setHeader("Transfer-Encoding", []);
+        res.end("ok");
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { head, body } = await rawGet((server.address() as AddressInfo).port, "/");
+      expect(normalizeHead(head)).toBe("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2");
+      expect(body).toBe("ok");
+    });
+
+    test.concurrent("res.write + res.end", async () => {
+      await using server = createServer((req, res) => {
+        res.setHeader("Transfer-Encoding", []);
+        res.write("ab");
+        res.end("cd");
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { head, body } = await rawGet((server.address() as AddressInfo).port, "/");
+      expect(normalizeHead(head)).toBe("HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked");
+      expect(body).toBe("2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n");
+    });
+  });
 });

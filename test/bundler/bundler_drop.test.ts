@@ -164,4 +164,30 @@ describe("bundler", () => {
     backend: "api",
     run: { stdout: "undefined\nundefined" },
   });
+  itBundled("drop/BindNotCallTargetStillDropped", {
+    files: {
+      "/a.js": `globalThis.console.log(console.log.bind.call(console.log, console));`,
+    },
+    drop: ["console"],
+    backend: "api",
+    run: { stdout: "undefined" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("() => {");
+    },
+  });
+  itBundled("drop/DotDefineEndingInBindStillDropped", {
+    files: {
+      "/a.js": `
+        globalThis.handler = () => "SHOULD NOT RUN";
+        globalThis.console.log(typeof Mousetrap.bind('ctrl+s', handler));
+      `,
+    },
+    drop: ["Mousetrap.bind"],
+    backend: "api",
+    run: { stdout: "undefined" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("() => {");
+      api.expectFile("out.js").not.toContain("handler)");
+    },
+  });
 });

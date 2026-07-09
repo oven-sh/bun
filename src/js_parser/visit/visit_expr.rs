@@ -1414,6 +1414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        let drop_flag_before_target_visit = p.method_call_must_be_replaced_with_undefined;
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1426,7 +1427,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "console.log.bind(x)" => "(() => {}).bind(x)" when `console` is
         // dropped, so the bound function stays callable instead of the whole
         // expression collapsing to `undefined` and throwing when invoked.
-        if p.method_call_must_be_replaced_with_undefined && e_.name == b"bind" {
+        // Only applies when this `.bind` is the direct call target and the
+        // flag was set by the target visit rather than by this EDot's own
+        // dot-define match (e.g. `drop: ["Mousetrap.bind"]`).
+        if is_call_target
+            && !drop_flag_before_target_visit
+            && p.method_call_must_be_replaced_with_undefined
+            && e_.name == b"bind"
+        {
             e_.target = p.new_expr(E::Arrow::NOOP_RETURN_UNDEFINED, e_.target.loc);
             p.method_call_must_be_replaced_with_undefined = false;
         }

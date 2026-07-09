@@ -2136,6 +2136,11 @@ where
                 match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                     jsc::PromiseResult::Pending => {
                         stream_log!("promise still Pending");
+                        // The sink now owns a raw `resp` pointer and the pump
+                        // promise holds a ref on this context. Marking pending
+                        // keeps `handle_reject` from ending the response out
+                        // from under the sink while the stream is in flight.
+                        this.flags.set_has_marked_pending(true);
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
                             response_stream.sink.ctx = None;

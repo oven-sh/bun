@@ -9,7 +9,7 @@
 //      with a clean `0\r\n\r\n`, so the client could not tell the truncated
 //      body apart from a complete one.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "serve-stream-body-error-fixture.ts");
@@ -150,3 +150,87 @@ test.concurrent("a stream body error does not kill the server process", async ()
   // The error must still be surfaced to the operator.
   expect(stderr).toContain("boom");
 });
+
+// An already-rejected async fetch handler reaches handle_reject synchronously
+// inside the uWS request callback. If error() then returns a Response whose
+// body is a ReadableStream that goes pending, do_render_stream attaches a
+// sink holding a raw uWS response pointer and returns. handle_reject's
+// "did the error handler respond?" check used to miss the pending stream and
+// call render_missing(), which ended the uWS response while the sink still
+// held the pointer. The socket was then freed in us_internal_free_closed_sockets,
+// and the stream's later rejection drove controller.close() -> sink.end()
+// -> uws_res_has_responded on the freed socket:
+//   AddressSanitizer: heap-use-after-free (READ of size 1)
+//     uws_res_has_responded <- HTTPServerWritable::end <- JSSink::js_close
+//     <- rsisSinkClose <- rsisAbrupt
+test.skipIf(!isASAN)(
+  "error() returning a pending stream after an already-rejected handler does not use-after-free the socket",
+  async () => {
+    const fixture = `
+      const net = require("node:net");
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        // async + throw-before-await: an already-rejected promise, unwrapped
+        // synchronously in on_response -> handle_reject.
+        fetch: async () => { throw new Error("boom"); },
+        error() {
+          let i = 0;
+          return new Response(
+            new ReadableStream({
+              async pull(c) {
+                if (i++ === 0) { c.enqueue("EB"); await Bun.sleep(1); }
+                else throw new Error("nested");
+              },
+            }),
+            { status: 597 },
+          );
+        },
+      });
+
+      function rawRequest() {
+        return new Promise(resolve => {
+          const chunks = [];
+          const sock = net.connect(server.port, "127.0.0.1", () => {
+            sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+          });
+          sock.on("data", d => chunks.push(d));
+          sock.on("error", () => {});
+          sock.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+        });
+      }
+
+      const results = [];
+      for (let i = 0; i < 6; i++) {
+        const wire = await rawRequest();
+        results.push({
+          status: wire.split("\\r\\n")[0],
+          terminated: wire.endsWith("0\\r\\n\\r\\n"),
+        });
+        // Let the stream's rejection microtask and the socket-free loop post run.
+        for (let j = 0; j < 4; j++) await Bun.sleep(0);
+      }
+      console.log(JSON.stringify(results));
+      server.stop(true);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The stream errors after "EB" is on the wire, so the body is force-closed
+    // without the terminating 0\r\n\r\n chunk (RFC 9112 section 7).
+    const expected = Array(6).fill({ status: "HTTP/1.1 597 HM", terminated: false });
+    expect({ stderr, results: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
+      stderr: "",
+      results: expected,
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

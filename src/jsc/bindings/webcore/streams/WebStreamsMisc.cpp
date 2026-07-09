@@ -50,6 +50,65 @@ JSObject* extractSizeAlgorithm(const QueuingStrategyDict& strategy)
     return asObject(strategy.size);
 }
 
+// How many bytes at the tail of `data` form an incomplete UTF-8 sequence (1..3), or 0 if
+// it ends on a boundary (or the tail is definitely invalid and should be replaced now).
+static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
+{
+    size_t len = data.size();
+    for (size_t back = 1; back <= std::min<size_t>(3, len); ++back) {
+        uint8_t b = data[len - back];
+        if ((b & 0xC0) == 0x80)
+            continue;
+        size_t need;
+        if (b < 0x80)
+            need = 1;
+        else if ((b & 0xE0) == 0xC0)
+            need = 2;
+        else if ((b & 0xF0) == 0xE0)
+            need = 3;
+        else if ((b & 0xF8) == 0xF0)
+            need = 4;
+        else
+            return 0;
+        return back < need ? back : 0;
+    }
+    return 0;
+}
+
+WTF::String streamingUTF8Decode(std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
+{
+    WTF::Vector<uint8_t> joinedStorage;
+    std::span<const uint8_t> joined = chunk;
+    if (unsigned pendingLen = state.pendingLen()) {
+        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
+        joinedStorage.append(chunk);
+        joined = joinedStorage.span();
+        state.clearPending();
+    }
+
+    if (!state.bomSeen) {
+        static constexpr uint8_t bom[] = { 0xEF, 0xBB, 0xBF };
+        if (joined.size() >= 3 && !memcmp(joined.data(), bom, 3)) {
+            joined = joined.subspan(3);
+            state.bomSeen = true;
+        } else if (!flush && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
+            // Still a possible BOM prefix; carry it to the next chunk.
+            state.setPending(joined.data(), static_cast<unsigned>(joined.size()));
+            return emptyString();
+        } else if (!joined.empty())
+            state.bomSeen = true;
+    }
+
+    size_t holdBack = flush ? 0 : incompleteTrailingUTF8(joined);
+    if (holdBack)
+        state.setPending(joined.data() + (joined.size() - holdBack), static_cast<unsigned>(holdBack));
+    auto toDecode = joined.first(joined.size() - holdBack);
+    if (toDecode.empty())
+        return emptyString();
+    return WTF::String::fromUTF8ReplacingInvalidSequences(toDecode);
+}
+
 // spec IsNonNegativeNumber(v). Non-throwing leaf: pure type + range test, no coercion.
 bool isNonNegativeNumber(JSValue value)
 {

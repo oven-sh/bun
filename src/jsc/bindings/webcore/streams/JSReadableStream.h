@@ -50,6 +50,9 @@ public:
     ReadableStreamState m_state { ReadableStreamState::Readable };
     // The Bun lazy-start mode; tells materializeIfNeeded() what to do.
     BunStreamMode m_bunMode { BunStreamMode::Default };
+    // Body.textStream(): the native source adapter decodes each chunk as UTF-8
+    // text before enqueue.
+    bool m_nativeTextMode { false };
     // The tag for the ERASED m_controller below. Every switch over it is TOTAL.
     ControllerKind m_controllerKind { ControllerKind::None };
     // [[disturbed]]

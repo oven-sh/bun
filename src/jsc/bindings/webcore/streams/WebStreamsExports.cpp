@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
+#include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
@@ -221,6 +222,48 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
     // Nothing native runs until a consumer materializes the stream.
     stream->m_bunMode = BunStreamMode::NativePending;
     stream->m_nativePtr.set(vm, stream, JSValue::decode(nativePtr));
+    return JSValue::encode(stream);
+}
+
+extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeTextReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    initializeReadableStream(stream);
+    stream->m_bunMode = BunStreamMode::NativePending;
+    stream->m_nativeTextMode = true;
+    stream->m_nativePtr.set(vm, stream, JSValue::decode(nativePtr));
+    return JSValue::encode(stream);
+}
+
+extern "C" JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue string)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = createReadableStream(globalObject, SourceKind::Nothing, nullptr, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    JSValue chunk = JSValue::decode(string);
+    if (chunk.isString() && asString(chunk)->length()) {
+        readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    readableStreamDefaultControllerClose(globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(stream);
+}
+
+extern "C" JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject* globalObject, JSC::EncodedJSValue sourceValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* source = dynamicDowncast<JSReadableStream>(JSValue::decode(sourceValue));
+    if (!source) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Expected a ReadableStream"_s);
+    auto* stream = readableStreamTextDecodeFrom(globalObject, source);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);
 }
 

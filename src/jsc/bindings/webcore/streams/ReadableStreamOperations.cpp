@@ -29,6 +29,7 @@
 #include <JavaScriptCore/JSAsyncFromSyncIterator.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
@@ -972,6 +973,110 @@ static EncodedJSValue fromIterableCancelFulfilled(JSGlobalObject* globalObject, 
     if (!iterResult.isObject())
         return throwVMTypeError(globalObject, scope, "The promise returned by the async iterator's return() method must fulfill with an object"_s);
     return JSValue::encode(jsUndefined());
+}
+
+// SourceKind::TextDecode — Body.textStream() over an existing byte ReadableStream. The
+// controller's algorithmContext is the source JSReadableStreamDefaultReader; underlyingObject
+// is a 4-byte Uint8Array holding the StreamingUTF8DecodeState verbatim.
+
+static constexpr size_t textDecodeStateSize = sizeof(StreamingUTF8DecodeState);
+static_assert(textDecodeStateSize == 4);
+
+static void textDecodeLoadState(JSC::JSUint8Array* stateView, StreamingUTF8DecodeState& state)
+{
+    memcpy(&state, stateView->typedVector(), textDecodeStateSize);
+}
+
+static void textDecodeStoreState(JSC::JSUint8Array* stateView, const StreamingUTF8DecodeState& state)
+{
+    memcpy(stateView->typedVector(), &state, textDecodeStateSize);
+}
+
+JSReadableStream* readableStreamTextDecodeFrom(JSGlobalObject* globalObject, JSReadableStream* source)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+
+    source->materializeIfNeeded(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* reader = acquireReadableStreamDefaultReader(globalObject, source);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *domGlobalObject));
+    initializeReadableStream(stream);
+    auto* controller = JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<JSReadableStreamDefaultController>(vm, *domGlobalObject));
+    controller->m_algorithms.kind = SourceKind::TextDecode;
+    controller->m_algorithms.algorithmContext.set(vm, controller, reader);
+    auto* stateView = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), textDecodeStateSize);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    controller->m_algorithms.underlyingObject.set(vm, controller, stateView);
+    setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), /* highWaterMark */ 0);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return stream;
+}
+
+JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+    auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::TextDecode, controller);
+    readableStreamDefaultReaderRead(globalObject, reader, readRequest);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+}
+
+JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+    RELEASE_AND_RETURN(scope, readableStreamReaderGenericCancel(globalObject, reader, reason));
+}
+
+void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk);
+    if (!view || view->isDetached()) [[unlikely]] {
+        auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not an ArrayBufferView"_s);
+        RETURN_IF_EXCEPTION(scope, void());
+        readableStreamDefaultControllerError(globalObject, controller, error);
+        return;
+    }
+    auto* stateView = uncheckedDowncast<JSC::JSUint8Array>(controller->m_algorithms.underlyingObject.get().getObject());
+    StreamingUTF8DecodeState state;
+    textDecodeLoadState(stateView, state);
+    std::span<const uint8_t> bytes { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
+    WTF::String decoded = streamingUTF8Decode(bytes, state, /* flush */ false);
+    textDecodeStoreState(stateView, state);
+    if (decoded.isEmpty()) {
+        // No output from this chunk (held back as an incomplete sequence). Arm
+        // `m_pullAgain` so the controller re-pulls once this pull settles.
+        RELEASE_AND_RETURN(scope, readableStreamDefaultControllerCallPullIfNeeded(globalObject, controller));
+    }
+    readableStreamDefaultControllerEnqueue(globalObject, controller, jsString(vm, WTF::move(decoded)));
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
+void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stateView = uncheckedDowncast<JSC::JSUint8Array>(controller->m_algorithms.underlyingObject.get().getObject());
+    StreamingUTF8DecodeState state;
+    textDecodeLoadState(stateView, state);
+    WTF::String decoded = streamingUTF8Decode({}, state, /* flush */ true);
+    textDecodeStoreState(stateView, state);
+    if (!decoded.isEmpty()) {
+        readableStreamDefaultControllerEnqueue(globalObject, controller, jsString(vm, WTF::move(decoded)));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    readableStreamDefaultControllerClose(globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 // Bun: `$structuredCloneForStream(chunk)` — the shared native host function installed as a

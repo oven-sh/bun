@@ -273,7 +273,147 @@ for (const { body, fn } of bodyTypes) {
           expect(await fn(buffer).text()).toBe(string);
         });
       });
+      describe("textStream()", () => {
+        test("undefined", async () => {
+          const stream = fn().textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          expect(await Array.fromAsync(stream)).toEqual([]);
+        });
+        test("null", async () => {
+          const stream = fn(null).textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          expect(await Array.fromAsync(stream)).toEqual([]);
+        });
+        test(`"${string}" (string body)`, async () => {
+          const stream = fn(string).textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          expect((await Array.fromAsync(stream)).join("")).toBe(string);
+        });
+        test(`"${string}" (buffer body)`, async () => {
+          const stream = fn(buffer).textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          const chunks = await Array.fromAsync(stream);
+          for (const chunk of chunks) {
+            expect(typeof chunk).toBe("string");
+          }
+          expect(chunks.join("")).toBe(string);
+        });
+      });
     }
+    describe("textStream()", () => {
+      test("yields string chunks from a ReadableStream body", async () => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello "));
+            controller.enqueue(new TextEncoder().encode("world"));
+            controller.close();
+          },
+        });
+        const stream = fn(input).textStream();
+        const chunks = await Array.fromAsync(stream);
+        for (const chunk of chunks) {
+          expect(typeof chunk).toBe("string");
+        }
+        expect(chunks.join("")).toBe("hello world");
+      });
+      test("joins multi-byte characters split across chunks", async () => {
+        // "🫠" is F0 9F AB A0
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([0xf0, 0x9f]));
+            controller.enqueue(new Uint8Array([0xab]));
+            controller.enqueue(new Uint8Array([0xa0]));
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("🫠");
+      });
+      test("strips a leading UTF-8 BOM", async () => {
+        const input = new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]);
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("hi");
+      });
+      test("replaces invalid sequences with U+FFFD", async () => {
+        const input = new Uint8Array([0x61, 0xff, 0x62]);
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("a\ufffdb");
+      });
+      test("marks body as used", async () => {
+        const r = fn("hello");
+        expect(r.bodyUsed).toBe(false);
+        const stream = r.textStream();
+        expect(r.bodyUsed).toBe(true);
+        expect((await Array.fromAsync(stream)).join("")).toBe("hello");
+      });
+      test("throws TypeError synchronously when body is unusable", async () => {
+        const r = fn("hello");
+        await r.text();
+        expect(r.bodyUsed).toBe(true);
+        expect(() => r.textStream()).toThrow(TypeError);
+      });
+      test("throws TypeError when body stream is locked", () => {
+        const r = fn("hello");
+        r.body!.getReader();
+        expect(() => r.textStream()).toThrow(TypeError);
+      });
+      test("second textStream() call throws", () => {
+        const r = fn("hello");
+        r.textStream();
+        expect(() => r.textStream()).toThrow(TypeError);
+      });
+      test("ignores Content-Type charset", async () => {
+        const result = fn(new Uint8Array([0xf0, 0x9f, 0xab, 0xa0]), {
+          "Content-Type": "text/plain; charset=iso-8859-1",
+        });
+        expect((await Array.fromAsync(result.textStream())).join("")).toBe("🫠");
+      });
+      test("propagates errors from a ReadableStream body", async () => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello"));
+            controller.error(new Error("boom"));
+          },
+        });
+        const stream = fn(input).textStream();
+        expect(async () => {
+          for await (const _ of stream) {
+          }
+        }).toThrow("boom");
+      });
+      test("cancel propagates to the source stream", async () => {
+        let cancelled: unknown;
+        const input = new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("x"));
+          },
+          cancel(reason) {
+            cancelled = reason;
+          },
+        });
+        const stream = fn(input).textStream();
+        await stream.cancel("stop");
+        expect(cancelled).toBe("stop");
+      });
+      test("streams a fetch response body", async () => {
+        await using server = Bun.serve({
+          port: 0,
+          fetch() {
+            const chunks = ["hello ", "world 🫠"];
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  for (const c of chunks) controller.enqueue(new TextEncoder().encode(c));
+                  controller.close();
+                },
+              }),
+            );
+          },
+        });
+        const res = await fetch(server.url);
+        const stream = res.textStream();
+        const out = (await Array.fromAsync(stream)).join("");
+        expect(out).toBe("hello world 🫠");
+        expect(res.bodyUsed).toBe(true);
+      });
+    });
     describe("json()", () => {
       const validTests: [string, unknown][] = [
         ["true", true],

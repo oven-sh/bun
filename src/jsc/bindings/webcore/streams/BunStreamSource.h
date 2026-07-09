@@ -13,6 +13,7 @@
 #include "StreamsForward.h"
 
 #include "JSReadableStreamDefaultController.h"
+#include "WebStreamsInternals.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/Weak.h>
 
@@ -62,6 +63,9 @@ public:
     bool m_hasResized : 1 { false };
     // #closed
     bool m_closed : 1 { false };
+    // Body.textStream(): each pulled byte span is UTF-8-decoded before enqueue.
+    bool m_textMode : 1 { false };
+    Bun::WebStreams::StreamingUTF8DecodeState m_textState;
 
 private:
     JSNativeStreamSourceAdapter(JSC::VM&, JSC::Structure*);

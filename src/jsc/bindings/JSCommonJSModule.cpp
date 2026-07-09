@@ -687,12 +687,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    if (thisObject->m_overriddenCompile) {
+    if (thisObject && thisObject->m_overriddenCompile) {
         return JSValue::encode(thisObject->m_overriddenCompile.get());
     }
+    // `Module.prototype._compile` is read with the prototype as receiver; still return the function.
     return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
 }
 

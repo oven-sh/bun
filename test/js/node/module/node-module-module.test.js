@@ -263,6 +263,13 @@ describe.concurrent("node-module-module", () => {
     expect({ ...m }.id).toBe("xyz");
   });
 
+  test("Module.prototype._compile is the shared function when read off the prototype", () => {
+    expect(typeof Module.prototype._compile).toBe("function");
+    expect(typeof Module.prototype.require).toBe("function");
+    const m = new Module("x");
+    expect(m._compile).toBe(Module.prototype._compile);
+  });
+
   test("Module._extensions", () => {
     expect(".js" in Module._extensions).toBeTrue();
     expect(".json" in Module._extensions).toBeTrue();

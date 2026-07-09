@@ -1437,7 +1437,11 @@ impl VirtualMachine {
         // A domain 'error' handler or capture callback that throws in a
         // Worker returns its exception here; route that to the parent
         // instead of the original (node's workerOnGlobalUncaughtException).
-        let err = if substitute.is_empty() { err } else { substitute };
+        let err = if substitute.is_empty() {
+            err
+        } else {
+            substitute
+        };
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
             // down and there is no loop turn left to defer to: print the error

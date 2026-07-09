@@ -165,10 +165,12 @@ class JSDirectStreamController;
     V(onNativePullRejected)                                 \
     V(onNativeSourceCallCloseMicrotask)                     \
     V(onReadStreamIntoSinkReadManyFulfilled)                \
-    V(onReadStreamIntoSinkReadFulfilled)                    \
+    V(onReadStreamIntoSinkChunk)                            \
+    V(onReadStreamIntoSinkClose)                            \
     V(onReadStreamIntoSinkFlushFulfilled)                   \
     V(onReadStreamIntoSinkRejected)                         \
-    V(onResumableSinkReadFulfilled)                         \
+    V(onResumableSinkChunk)                                 \
+    V(onResumableSinkClose)                                 \
     V(onResumableSinkReadRejected)                          \
     V(onResumableSinkEndMicrotask)
 

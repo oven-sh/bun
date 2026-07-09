@@ -158,7 +158,7 @@ static JSPromise* runAsyncIteratorNextSteps(JSC::VM& vm, JSGlobalObject* globalO
     if (iterator->m_isFinished) {
         auto* result = createIteratorResultObject(globalObject, jsUndefined(), true);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
     }
 
     auto* reader = iterator->m_reader.get();
@@ -192,7 +192,7 @@ static JSPromise* runAsyncIteratorReturnSteps(JSC::VM& vm, JSGlobalObject* globa
     if (iterator->m_isFinished) {
         auto* result = createIteratorResultObject(globalObject, value, true);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
     }
     iterator->m_isFinished = true;
 

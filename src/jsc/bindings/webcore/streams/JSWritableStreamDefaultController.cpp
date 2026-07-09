@@ -55,6 +55,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
 // controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
 // implemented, so setUpCrossRealmTransformWritable never creates one).
+// Returns nullptr with no exception pending when the write completed synchronously with a
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -62,7 +64,7 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
     case SinkKind::JavaScript: {
         JSC::JSObject* writeMethod = controller->m_algorithms.method1.get();
         if (!writeMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+            return nullptr;
         JSC::MarkedArgumentBuffer args;
         args.append(chunk);
         args.append(controller);
@@ -70,10 +72,31 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
+        JSC::JSValue result;
+        JSC::JSValue thrown;
+        {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto callData = JSC::getCallData(writeMethod);
+            ASSERT(callData.type != JSC::CallData::Type::None);
+            result = JSC::call(globalObject, writeMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
+            if (catchScope.exception()) [[unlikely]]
+                thrown = takeAbruptCompletion(globalObject, catchScope);
+        }
+        if (!thrown.isEmpty()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+        if (result.isEmpty()) [[unlikely]]
+            return nullptr;
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
+        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+        // thenable adoption is unobservable. Subclasses / patched .then fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+            return resultPromise;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkWriteAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), chunk));
     case SinkKind::CrossRealm:
@@ -84,6 +107,8 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
 }
 
 // The [[closeAlgorithm]] dispatch. Same reachable kind set as the write dispatch.
+// Returns nullptr with no exception pending when the close completed synchronously with a
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -91,16 +116,37 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
     case SinkKind::JavaScript: {
         JSC::JSObject* closeMethod = controller->m_algorithms.method2.get();
         if (!closeMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+            return nullptr;
         JSC::MarkedArgumentBuffer args;
         if (args.hasOverflowed()) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
+        JSC::JSValue result;
+        JSC::JSValue thrown;
+        {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto callData = JSC::getCallData(closeMethod);
+            ASSERT(callData.type != JSC::CallData::Type::None);
+            result = JSC::call(globalObject, closeMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
+            if (catchScope.exception()) [[unlikely]]
+                thrown = takeAbruptCompletion(globalObject, catchScope);
+        }
+        if (!thrown.isEmpty()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+        if (result.isEmpty()) [[unlikely]]
+            return nullptr;
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
+        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+        // thenable adoption is unobservable. Subclasses / patched .then fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+            return resultPromise;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkCloseAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
     case SinkKind::CrossRealm:
@@ -616,6 +662,9 @@ void writableStreamDefaultControllerProcessClose(JSGlobalObject* globalObject, J
     RETURN_IF_EXCEPTION(scope, );
     writableStreamDefaultControllerClearAlgorithms(controller);
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    if (!sinkClosePromise || sinkClosePromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onWSSinkCloseFulfilled(), jsUndefined(), controller);
     sinkClosePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkCloseFulfilled(), runtime->onWSSinkCloseRejected(), jsUndefined(), controller);
 }
 
@@ -627,6 +676,9 @@ void writableStreamDefaultControllerProcessWrite(JSGlobalObject* globalObject, J
     JSPromise* sinkWritePromise = performWriteAlgorithm(vm, globalObject, controller, chunk);
     RETURN_IF_EXCEPTION(scope, );
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    if (!sinkWritePromise || sinkWritePromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onWSSinkWriteFulfilled(), jsUndefined(), controller);
     sinkWritePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkWriteFulfilled(), runtime->onWSSinkWriteRejected(), jsUndefined(), controller);
 }
 

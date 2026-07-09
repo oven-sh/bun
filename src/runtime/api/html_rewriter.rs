@@ -940,8 +940,9 @@ impl BufferOutputSink {
             }),
         );
 
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, None);
-        // TODO: properly propagate exception upwards
+        if let Err(err) = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global) {
+            self.global.report_uncaught_exception_from_error(err);
+        }
     }
 
     pub fn write(&mut self, bytes: &[u8]) {

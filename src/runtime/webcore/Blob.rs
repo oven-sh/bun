@@ -881,8 +881,9 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
-        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+        // Lowercase-safe, so `blob().type` (ASCII-lowercased per the File API)
+        // followed by `fetch(url, { body: blob })` sends the right boundary.
+        const BOUNDARY_PREFIX: &[u8; 17] = b"----formdata-bun-";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
         let boundary: &[u8] = {
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -2136,6 +2137,11 @@ impl BlobExt for Blob {
 
     fn get_name_string(&self) -> Option<BunString> {
         if self.name.get().tag() != bun_core::Tag::Dead {
+            // A `blob()` result's explicitly-empty name suppresses the store's
+            // file name; a File with an explicit empty name stays `""`.
+            if self.name.get().is_empty() && !self.is_jsdom_file.get() {
+                return None;
+            }
             return Some(self.name.get());
         }
         if let Some(path) = self.get_file_name() {
@@ -4393,6 +4399,27 @@ pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
         return BunString::from_bytes(filename);
     }
     BunString::empty()
+}
+
+/// Set a blob's `type` with the Blob constructor's validation and
+/// ASCII-lowercasing, without the interned MIME table canonicalization. Used
+/// by `readableStreamToBlob` so the body-derived type is stored exactly.
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__setType(this: &Blob, ptr: *const u8, len: usize) {
+    // SAFETY: C++ passes an owned `{jsString->span8().data(), span8().size()}`.
+    let slice = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { core::slice::from_raw_parts(ptr, len) }
+    };
+    if is_valid_blob_type(slice) {
+        this.content_type
+            .set(BlobContentType::from_lowercased(slice));
+        this.content_type_was_set.set(true);
+    } else {
+        this.content_type.set(BlobContentType::default());
+        this.content_type_was_set.set(false);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

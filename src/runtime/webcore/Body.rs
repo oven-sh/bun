@@ -12,10 +12,8 @@ use crate::webcore::{
     self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
     ReadableStream, blob, streams,
 };
-use bun_core::Output;
-use bun_http_types::MimeType::MimeType;
+use bun_core::{Output, ZigStringSlice};
 // Re-export so callers can write `body::InternalBlob`.
-use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
@@ -41,31 +39,35 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-/// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
-#[inline]
-#[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
+/// Turn a body's blob into the **plain** `Blob` that `blob()` must return:
+/// per the Fetch spec the result's `type` is the header-derived
+/// [`normalize_blob_type`] result (or "") and never a `File`, so the source
+/// body's `File` identity is cleared. The byte store stays shared (zero-copy).
+fn into_consumed_blob(blob: Blob, content_type: Option<blob::BlobContentType>) -> Blob {
+    blob.is_jsdom_file.set(false);
+    blob.last_modified.set(0.0);
+    // A shared `Bytes` store can still carry the source `File`'s
+    // `stored_name`; an explicitly empty per-blob `name` suppresses that
+    // fallback (see `Blob::get_name_string`).
+    blob.name.set(BunString::empty());
+    // The result's type is exactly the computed one, or "".
+    blob.content_type.set(content_type.unwrap_or_default());
+    blob.content_type_was_set
+        .set(!blob.content_type_slice().is_empty());
+    blob
 }
 
-fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
-    blob.content_type_was_set.set(true);
-    if let Some(store) = blob_store_mut(blob) {
-        store.mime_type = mime_type.clone();
+/// Fetch's "extract a MIME type" + mimesniff's "serialize a MIME type" over a
+/// `Content-Type` header value, then the Blob constructor's `type`
+/// normalization (dropped if any byte is outside U+0020..=U+007E, else
+/// ASCII-lowercased). `None` surfaces as an empty `type`.
+fn normalize_blob_type(combined_content_type: &[u8]) -> Option<blob::BlobContentType> {
+    let mut ty = bun_http_types::mime_sniff::extract_mime_type(combined_content_type)?;
+    if !blob::is_valid_blob_type(&ty) {
+        return None;
     }
-    blob.content_type
-        .set(blob::BlobContentType::from(mime_type));
+    ty.make_ascii_lowercase();
+    Some(blob::BlobContentType::Owned(std::sync::Arc::from(ty)))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -264,6 +266,11 @@ pub struct PendingValue {
     pub on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
     pub size_hint: blob::SizeType,
 
+    /// [`Value::source_content_type`] of the body this stream was created
+    /// from, captured in `to_readable_stream`. `None` for streams that did
+    /// not originate from a local body (user streams, network bodies).
+    pub source_content_type: Option<blob::BlobContentType>,
+
     pub deinit: bool,
     pub action: Action,
 }
@@ -293,6 +300,7 @@ impl Default for PendingValue {
             on_stream_cancelled: None,
             on_stream_drained: None,
             size_hint: 0,
+            source_content_type: None,
             deinit: false,
             action: Action::None,
         }
@@ -391,7 +399,7 @@ impl PendingValue {
                 Action::GetFormData(_)
                 | Action::GetText
                 | Action::GetJSON
-                | Action::GetBlob
+                | Action::GetBlob(_)
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
                     let promise = match &mut self.action {
@@ -401,7 +409,15 @@ impl PendingValue {
                         }
                         Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
-                        Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
+                        Action::GetBlob(content_type) => {
+                            let content_type = match content_type.take() {
+                                Some(ct) => {
+                                    BunString::clone_utf8(ct.as_slice()).to_js(global_this)?
+                                }
+                                None => JSValue::UNDEFINED,
+                            };
+                            global_this.readable_stream_to_blob(readable.value, content_type)
+                        }
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
                             // defer: form_data already taken; action.getFormData = None handled by take()
@@ -449,7 +465,10 @@ pub enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
-    GetBlob,
+    /// Carries the already-normalized Blob `type` ([`normalize_blob_type`])
+    /// computed when `.blob()` was called, so the eventual resolution sites
+    /// (JS readable stream or native buffering) don't need the header list.
+    GetBlob(Option<blob::BlobContentType>),
     GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
 }
 
@@ -698,6 +717,22 @@ impl Value {
             _ => false,
         }
     }
+
+    /// The `Content-Type` that Fetch's "extract a body" derives from a local
+    /// body: the string default for string bodies, else the blob's own type.
+    /// `None` for streams, network bodies, and untyped blobs.
+    pub fn source_content_type(&self) -> Option<blob::BlobContentType> {
+        if self.was_string() {
+            return Some(blob::BlobContentType::Static(b"text/plain;charset=utf-8"));
+        }
+        if let Value::Blob(blob) = self {
+            let content_type = blob.content_type.get().clone();
+            if !content_type.is_empty() {
+                return Some(content_type);
+            }
+        }
+        None
+    }
 }
 
 impl Value {
@@ -733,12 +768,20 @@ impl Value {
         };
 
         if let Some(blob) = locked.to_any_blob() {
+            let source_content_type = locked.source_content_type.take();
             *self = match blob {
                 AnyBlob::Blob(b) => Value::Blob(b),
                 AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
                 AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
                 // AnyBlob::InlineBlob(b) => Value::InlineBlob(b),
             };
+            // Only a string body captures a type and recovers as plain bytes
+            // (`was_string` did not survive the stream round trip); restore it.
+            if source_content_type.is_some() {
+                if let Value::InternalBlob(internal_blob) = self {
+                    internal_blob.was_string = true;
+                }
+            }
         }
     }
 
@@ -817,6 +860,8 @@ impl Value {
             Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
+                // `use_()` below erases what the body was; keep the derived type.
+                let source_content_type = self.source_content_type();
                 // `deinit` must run on every exit incl. `?` paths.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
@@ -826,6 +871,7 @@ impl Value {
                 let stream = ReadableStream::from_js(value, global_this)?.unwrap();
                 *self = Value::Locked(PendingValue {
                     readable: webcore::readable_stream::Strong::init(stream, global_this),
+                    source_content_type,
                     ..PendingValue::new(global_this)
                 });
                 Ok(value)
@@ -1063,14 +1109,7 @@ impl Value {
         })
     }
 
-    pub fn resolve(
-        &mut self,
-        new: &mut Value,
-        global: &JSGlobalObject,
-        // Opaque C++ handle, mutated via FFI. Taking
-        // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
-        headers: Option<NonNull<FetchHeaders>>,
-    ) -> JsTerminated<()> {
+    pub fn resolve(&mut self, new: &mut Value, global: &JSGlobalObject) -> JsTerminated<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
             if let Some(readable) = locked.readable.get(global) {
@@ -1141,27 +1180,17 @@ impl Value {
                         // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
                         result?;
                     }
-                    Action::None | Action::GetBlob => {
-                        let blob_ptr = Blob::new(new.use_());
+                    action @ (Action::None | Action::GetBlob(_)) => {
+                        // `Action::None` never reaches here (nothing calls
+                        // `set_promise` with it); `GetBlob` carries the
+                        // normalized type computed when `.blob()` was called.
+                        let content_type = match action {
+                            Action::GetBlob(content_type) => content_type.take(),
+                            _ => None,
+                        };
+                        let blob_ptr = Blob::new(into_consumed_blob(new.use_(), content_type));
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
-                        if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                            if let Some(content_type) =
-                                fetch_headers.fast_get(HTTPHeaderName::ContentType)
-                            {
-                                let content_slice = content_type.to_slice();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
-                                // content_slice dropped (replaces defer content_slice.deinit())
-                            }
-                        }
-                        if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-                        }
                         promise.resolve(global, blob.to_js(global))?;
                     }
                 }
@@ -1420,6 +1449,10 @@ impl Value {
                 locked.deinit = true;
                 locked.readable.deinit();
                 locked.readable = Default::default();
+                // `Response::destroy` resets then raw-deallocs without ever
+                // running this value's drop glue; free the owned payloads.
+                locked.source_content_type = None;
+                locked.action = Action::None;
             }
             return;
         }
@@ -1477,6 +1510,7 @@ impl Value {
                 locked.readable = webcore::readable_stream::Strong::init(rs0, global_this);
                 return Ok(Value::Locked(PendingValue {
                     readable: webcore::readable_stream::Strong::init(rs1, global_this),
+                    source_content_type: locked.source_content_type.clone(),
                     ..PendingValue::new(global_this)
                 }));
             }
@@ -1488,6 +1522,7 @@ impl Value {
         if let Some(readable) = locked.readable.tee(global_this)? {
             return Ok(Value::Locked(PendingValue {
                 readable: webcore::readable_stream::Strong::init(readable, global_this),
+                source_content_type: locked.source_content_type.clone(),
                 ..PendingValue::new(global_this)
             }));
         }
@@ -1598,8 +1633,17 @@ impl Value {
         self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
+            let was_string = internal_blob.was_string;
             let owned = internal_blob.to_owned_slice();
-            *self = Value::Blob(Blob::init(owned, global_this));
+            let blob = Blob::init(owned, global_this);
+            // `was_string` has no home on the shared-store `Blob` both bodies
+            // get below; keep the type it implies (MimeType::TEXT).
+            if was_string {
+                blob.content_type
+                    .set(blob::BlobContentType::Static(b"text/plain;charset=utf-8"));
+                blob.content_type_was_set.set(true);
+            }
+            *self = Value::Blob(blob);
         }
 
         if let Value::Blob(b) = self {
@@ -1666,6 +1710,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
+    fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>>;
 
     // ────────────────────────────────────────────────────────────────────
     // Twin methods (identical for Request/Response). These were previously
@@ -2120,6 +2165,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.get_blob_with_this_value(global_object, callframe.this())
     }
 
+    /// Fetch's "get the MIME type" for `blob()`: the explicit `Content-Type`
+    /// header, else what "extract a body" derived from the original body
+    /// ([`Value::source_content_type`], kept across a `.body` stream access).
+    fn get_blob_content_type(&self) -> JsResult<Option<blob::BlobContentType>> {
+        if let Some(content_type) = self.get_content_type()? {
+            return Ok(normalize_blob_type(content_type.slice()));
+        }
+        Ok(match self.get_body_value() {
+            Value::Locked(locked) => locked.source_content_type.clone(),
+            value => value.source_content_type(),
+        }
+        .and_then(|ct| normalize_blob_type(ct.as_slice())))
+    }
+
     fn get_blob_with_this_value(
         &self,
         global_object: &JSGlobalObject,
@@ -2133,6 +2192,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if let Some(rejected) = handle_body_error(value, global_object) {
             return Ok(rejected);
         }
+
+        // Computed before the body is consumed: `use_()` below moves the blob
+        // the body-derived content type may come from.
+        let content_type = self.get_blob_content_type()?;
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
@@ -2148,7 +2211,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, Some(readable));
+                    return locked.set_promise(
+                        global_object,
+                        Action::GetBlob(content_type),
+                        Some(readable),
+                    );
                 }
             }
             let value = self.get_body_value();
@@ -2164,31 +2231,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, None);
+                    return locked.set_promise(global_object, Action::GetBlob(content_type), None);
                 }
             }
         }
 
         let value = self.get_body_value();
-        let blob_ptr = Blob::new(value.use_());
+        let blob_ptr = Blob::new(into_consumed_blob(value.use_(), content_type));
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
-        if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_slice();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
-                    // content_slice dropped (replaces defer content_slice.deinit())
-                }
-            }
-            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-            }
-        }
         Ok(JSPromise::resolved_promise_value(
             global_object,
             blob.to_js(global_object),

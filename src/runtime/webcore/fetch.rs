@@ -200,7 +200,14 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     };
     let blob = Blob::init(data, global_this);
 
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+    // Data URL processor step 10: an empty mediatype (`data:,...`) means
+    // text/plain. No headers are carried, so the body blob's `type` is the
+    // only source `blob()` and the other consumers can read it from.
+    let mime_type = if data_url.mime_type.is_empty() {
+        MimeType::TEXT
+    } else {
+        MimeType::MimeType::init(data_url.mime_type, true, None)
+    };
     blob.content_type
         .set(crate::webcore::blob::BlobContentType::from(mime_type));
 

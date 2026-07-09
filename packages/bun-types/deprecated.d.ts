@@ -53,11 +53,12 @@ declare module "bun" {
    * Concatenates the chunks into a single {@link Blob}.
    *
    * @param stream The stream to consume.
+   * @param contentType Optional `type` for the resulting {@link Blob}.
    * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
    *
    * @deprecated Use {@link ReadableStream.blob}
    */
-  function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
+  function readableStreamToBlob(stream: ReadableStream, contentType?: string): Promise<Blob>;
 
   /**
    * Consumes all data from a {@link ReadableStream} until it closes or errors.

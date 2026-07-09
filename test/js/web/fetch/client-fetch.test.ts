@@ -61,7 +61,9 @@ test("should set type of blob object to the value of the `Content-Type` header f
   await once(server, "listening");
 
   const response = await fetch(`http://localhost:${server.address().port}`);
-  expect("application/json;charset=utf-8").toBe((await response.blob()).type);
+  // The blob's type is the response's Content-Type header, parsed and
+  // re-serialized per the MIME Sniffing standard; no `charset` is invented.
+  expect("application/json").toBe((await response.blob()).type);
 });
 
 test("pre aborted with readable request body", async () => {

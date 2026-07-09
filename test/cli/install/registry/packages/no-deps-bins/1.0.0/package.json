@@ -1,5 +1,0 @@
-{
-    "name": "no-deps-bins",
-    "version": "1.0.0",
-    "bin": "./bin"
-}

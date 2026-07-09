@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync } from "fs";
+import { copyFileSync, mkdirSync, statSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -2773,6 +2773,18 @@ describe("binaries", () => {
       await runBin("directory-bin-2", "directory-bin-2\n", global);
       await runBin("map-bin-1", "map-bin-1\n", global);
       await runBin("map-bin-2", "map-bin-2\n", global);
+
+      // dep-with-directory-bins ships its bins at 0644 in the tarball
+      // (real npm bytes); bun's bin linking must have chmod'd the
+      // installed target. This is the assertion that fails if that
+      // chmod regresses; `runBin` above would too, but as a spawn
+      // failure rather than a mode diff.
+      if (!isWindows && !global) {
+        for (const b of ["directory-bin-1", "directory-bin-2"]) {
+          const target = join(packageDir, "node_modules", "dep-with-directory-bins", "bins", b);
+          expect(statSync(target).mode & 0o111).not.toBe(0);
+        }
+      }
     });
   }
 

@@ -1,5 +1,0 @@
-{
-    "name": "no-deps-bins",
-    "version": "2.0.0",
-    "bin": "./ban"
-}

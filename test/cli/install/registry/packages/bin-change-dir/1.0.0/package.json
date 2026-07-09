@@ -1,7 +1,0 @@
-{
-  "name": "bin-change-dir",
-  "version": "1.0.0",
-  "bin": {
-    "bin-change-dir": "./bin-1.0.0/bin.js"
-  }
-}

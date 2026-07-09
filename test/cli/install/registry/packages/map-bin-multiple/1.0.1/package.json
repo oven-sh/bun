@@ -1,8 +1,0 @@
-{
-  "name": "map-bin-multiple",
-  "version": "1.0.1",
-  "bin": {
-    "map-bin": "bin/map-bin",
-    "map_bin": "bin/map-bin"
-  }
-}

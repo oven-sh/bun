@@ -136,16 +136,10 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
     NULL
   };
 #elif defined(__OHOS__)
-  // OHOS: similar to Android, hashed PEM files in system directory.
-  // Compiled-in Mozilla CA bundle handles public CAs; this path is for
-  // device-specific or user-installed CAs when --use-system-ca is set.
-  static const char* bundle_paths[] = {
-    // hcert_store is the native OHOS cert store API; PEM bundle fallback:
-    NULL
-  };
+  // OHOS: hashed PEM files (c_rehash format <hash>.0)
+  static const char* bundle_paths[] = { NULL };
   static const char* dir_paths[] = {
-    "/system/etc/security/cacerts",       // OHOS system CA store
-    "/data/misc/user/0/cacerts-added",    // user-added CAs
+    "/system/etc/security/certificates",  // OHOS system CA store
     NULL
   };
 #else

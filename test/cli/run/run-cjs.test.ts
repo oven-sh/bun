@@ -101,7 +101,12 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "entry.mjs": `await import("./guard.mjs");\nawait import("./bare.mjs");\n`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
-    const lines = stdout.trim() ? stdout.trim().split("\n").map(l => JSON.parse(l)) : [];
+    const lines = stdout.trim()
+      ? stdout
+          .trim()
+          .split("\n")
+          .map(l => JSON.parse(l))
+      : [];
     expect({ lines, stderr, exitCode }).toEqual({
       lines: [
         { m: "undefined", e: "undefined", sep: "string" },

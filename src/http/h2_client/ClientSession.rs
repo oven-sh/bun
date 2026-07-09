@@ -516,11 +516,12 @@ impl ClientSession {
         }
     }
 
-    /// Re-arm the shared socket's idle timer at the longest any attached client
-    /// asked for — treating `0` ("disarm") as unbounded, not as a minimum. The
-    /// fire handler kills the whole session, so a shorter value would cut off a
-    /// longer-timeout or `timeout: false` sibling; this only delays the short
-    /// one. Per-stream idle tracking would be the exact answer.
+    /// Re-arm the shared socket's idle timer based on the aggregate of every
+    /// attached client. With multiplexed streams the per-request
+    /// `disable_timeout` flag can't drive the socket directly (last writer
+    /// would win and a `{timeout:false}` long-poll could be killed by a
+    /// sibling re-arming, or strip the safety net from one that wants it),
+    /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
         // The socket is shared by every stream on the session, so arm the
         // longest effective idle timeout among them (0 = every client's

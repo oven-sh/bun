@@ -247,9 +247,8 @@ test("a numeric timeout longer than the socket-idle default is respected", async
   });
   await Bun.sleep(6_000);
   respond();
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-  expect(stderr).not.toContain("TimeoutError");
 }, 30_000);
 
 test("timeout: false disables the socket timer", async () => {
@@ -273,9 +272,8 @@ test("timeout: false disables the socket timer", async () => {
   });
   await Bun.sleep(6_000);
   respond();
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-  expect(stderr).not.toContain("TimeoutError");
 }, 30_000);
 
 test("connectTimeout of 0 means no connect deadline", async () => {

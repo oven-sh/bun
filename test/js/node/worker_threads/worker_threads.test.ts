@@ -401,6 +401,40 @@ describe("environmentData", () => {
   });
 });
 
+describe("exit event", () => {
+  test.each([
+    ["process.exit(300)", 300],
+    ["process.exit(-1)", -1],
+    ["process.exitCode = 70000", 70000],
+    ["process.exit(0)", 0],
+    ["process.exit(2)", 2],
+  ])("delivers the full integer exit code: %s -> %p", async (body, expected) => {
+    const worker = new Worker(body, { eval: true });
+    worker.on("error", () => {});
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(expected);
+  });
+
+  test("process.on('exit') inside a worker sees the full integer", async () => {
+    const worker = new Worker(
+      `process.on("exit", c => require("worker_threads").parentPort.postMessage(c)); process.exit(300);`,
+      { eval: true },
+    );
+    const [msg] = await once(worker, "message");
+    expect(msg).toBe(300);
+  });
+
+  test("process.exitCode getter returns the full integer", async () => {
+    const worker = new Worker(
+      `process.exitCode = 70000; require("worker_threads").parentPort.postMessage(process.exitCode);`,
+      { eval: true },
+    );
+    const [msg] = await once(worker, "message");
+    const [code] = await once(worker, "exit");
+    expect({ msg, code }).toEqual({ msg: 70000, code: 70000 });
+  });
+});
+
 describe("error event", () => {
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });

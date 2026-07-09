@@ -367,8 +367,8 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
 
-    safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
-    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: i32);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: i32);
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
@@ -482,17 +482,20 @@ pub fn is_smol_mode() -> bool {
 
 #[derive(Default)]
 pub struct ExitHandler {
-    pub exit_code: u8,
+    /// Stored as the full JS integer so a worker's `exit` event observes the
+    /// value passed to `process.exit()` / `process.exitCode` verbatim (Node.js
+    /// parity). The OS-level process exit truncates to 8 bits regardless.
+    pub exit_code: i32,
 }
 
 impl ExitHandler {
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> u8 {
+    pub extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> i32 {
         vm.exit_handler.exit_code
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: u8) {
+    pub extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: i32) {
         vm.exit_handler.exit_code = code;
     }
 
@@ -1598,7 +1601,7 @@ impl VirtualMachine {
             self.gc_controller.deinit();
             self.destroy();
         }
-        bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+        bun_core::Global::exit(self.exit_handler.exit_code as u32)
     }
 }
 
@@ -1712,7 +1715,7 @@ pub struct RuntimeHooks {
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
-    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
+    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: i32),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
     pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
     /// `node_cluster_binding.child_singleton.deinit()`.

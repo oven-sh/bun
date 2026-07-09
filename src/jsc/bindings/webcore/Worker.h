@@ -120,6 +120,7 @@ public:
     bool wasTerminated() const { return m_state.load() >= State::Closing; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     bool isOnline() const { return m_state.load() == State::Running; }
+    int32_t exitCode() const { return m_exitCode.load(); }
 
     const String& name() const { return m_options.name; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
@@ -176,6 +177,9 @@ private:
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
+    // Full-width exit code delivered to the parent's 'exit' event (CloseEvent's
+    // `code` is `unsigned short` and cannot carry the full value).
+    std::atomic<int32_t> m_exitCode { 0 };
 
     // Stable for the process lifetime; used with ScriptExecutionContext::
     // postTaskTo() so the worker thread never dereferences the parent context

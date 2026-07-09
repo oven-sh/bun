@@ -160,8 +160,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
-extern "C" uint8_t Bun__getExitCode(void*);
-extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
+extern "C" int32_t Bun__getExitCode(void*);
+extern "C" void Bun__setExitCode(void*, int32_t);
 extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
@@ -820,7 +820,7 @@ extern "C" double Bun__readOriginTimerStart(void*);
 extern "C" void Bun__VirtualMachine__exitDuringUncaughtException(void*);
 
 // https://github.com/nodejs/node/blob/1936160c31afc9780e4365de033789f39b7cbc0c/src/api/hooks.cc#L49
-extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, int32_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
         return;
@@ -839,14 +839,14 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, int32_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
         return;
     }
 
     auto* process = globalObject->processObject();
-    if (exitCode > 0)
+    if (exitCode != 0)
         process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
 }
@@ -2047,7 +2047,7 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
 
         process->m_isExitCodeObservable = true;
         void* ptr = process->globalObject()->bunVM();
-        Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt % 256));
+        Bun__setExitCode(ptr, static_cast<int32_t>(exitCodeInt));
     }
     return true;
 }
@@ -3331,10 +3331,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    uint8_t exitCode = 0;
+    int32_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
-        exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
+        exitCode = arg0.toInt32(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 

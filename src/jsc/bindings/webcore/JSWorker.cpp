@@ -385,10 +385,22 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
     return JSValue::encode(jsNumber(worker.clientIdentifier() - 1));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_exitCodeGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto* castedThis = dynamicDowncast<JSWorker>(JSValue::decode(thisValue));
+    if (!castedThis) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    auto& worker = castedThis->wrapped();
+    if (!worker.wasTerminated()) return JSValue::encode(jsNull());
+    return JSValue::encode(jsNumber(worker.exitCode()));
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerConstructor, 0 } },
+    { "exitCode"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_exitCodeGetter, nullptr } },
     { "onerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onerror, setJSWorker_onerror } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessage, setJSWorker_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessageerror, setJSWorker_onmessageerror } },

@@ -578,7 +578,7 @@ class Worker extends EventEmitter {
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+      this.#worker.addEventListener("close", () => callback(null, this.#worker.exitCode), { once: true });
     }
 
     const onExitPromise = this.#onExitPromise;
@@ -589,8 +589,8 @@ class Worker extends EventEmitter {
     const { resolve, promise } = Promise.withResolvers();
     this.#worker.addEventListener(
       "close",
-      event => {
-        resolve(event.code);
+      () => {
+        resolve(this.#worker.exitCode);
       },
       { once: true },
     );
@@ -609,10 +609,11 @@ class Worker extends EventEmitter {
   }
 
   #onClose(e) {
-    this.#onExitPromise = e.code;
+    const code = this.#worker.exitCode;
+    this.#onExitPromise = code;
     this.#stdout?.push(null);
     this.#stderr?.push(null);
-    this.emit("exit", e.code);
+    this.emit("exit", code);
   }
 
   #onError(event: ErrorEvent) {

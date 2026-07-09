@@ -578,6 +578,7 @@ bool Worker::dispatchExit(int32_t exitCode)
             // postMessage() (gated only on Closed) still accepts and drops the
             // message, matching browser/Node and pre-refactor behaviour.
             protectedThis->m_state.store(State::Closing);
+            protectedThis->m_exitCode.store(exitCode);
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);

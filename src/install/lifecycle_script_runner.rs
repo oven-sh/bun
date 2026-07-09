@@ -203,7 +203,6 @@ pub fn replace_package_manager_run(
                             copy_script,
                             &script[start..],
                             b"npm run ".len(),
-                            delimiter,
                         );
                         if consumed > 0 {
                             entry_i += consumed;
@@ -261,94 +260,63 @@ pub fn replace_package_manager_run(
 }
 
 /// Translate npm's workspace-selection flags into Bun's when rewriting an
-/// `npm run ...` invocation. `cmd` starts at `npm run `, `prefix_len` is its
-/// length, and `delimiter` is the outer scanner's state at the match (a quote
-/// byte means `npm run` sits inside a quoted string). When the remainder of this
-/// simple command (up to the next top-level shell separator) carries
-/// `-w`/`--workspace[=<pkg>]`, `--workspaces`/`--ws`, or `--if-present`, emit a
-/// `bun run` with the equivalent `--filter=<pkg>`/`--workspaces`/`--if-present`
-/// placed before the script name and return the number of input bytes consumed.
-/// Returns 0 (caller falls back to the plain `npm run` -> `bun run` prefix swap,
-/// keeping byte-for-byte output) when no workspace flag is present, when the
-/// match is inside a quoted string, when the segment's quotes are unbalanced, or
-/// when it contains shell grouping/escaping/comments the tokenizer does not
-/// model (`(`, `)`, `$`, `` ` ``, `\`, `#`): reordering tokens is only safe at
-/// shell top level with balanced quoting and no such constructs.
-fn rewrite_npm_run_workspaces(
-    out: &mut Vec<u8>,
-    cmd: &[u8],
-    prefix_len: usize,
-    delimiter: u8,
-) -> usize {
-    // Reordering tokens inside a quoted string would move the closing quote;
-    // leave those to the plain prefix swap.
-    if delimiter != b' ' {
-        return 0;
-    }
-
+/// `npm run ...` invocation. `cmd` starts at `npm run ` and `prefix_len` is its
+/// length. When the remainder of this simple command (up to the next top-level
+/// shell separator) carries `-w`/`--workspace[=<pkg>]`, `--workspaces`/`--ws`, or
+/// `--if-present`, emit a `bun run` with the equivalent
+/// `--filter=<pkg>`/`--workspaces`/`--if-present` placed before the script name
+/// and return the number of input bytes consumed. Returns 0 (caller falls back
+/// to the plain `npm run` -> `bun run` prefix swap, keeping byte-for-byte output)
+/// when no workspace flag is present, or when the segment contains a quote or
+/// shell grouping/escaping/comment the whitespace tokenizer does not model (`'`,
+/// `"`, `(`, `)`, `$`, `` ` ``, `\`, `#`): reordering tokens is only safe for a
+/// quote-free, construct-free simple command.
+fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize) -> usize {
     let args = &cmd[prefix_len..];
 
-    // End of this simple command: first top-level (unquoted) shell separator.
+    // Scan to the end of this simple command (first top-level shell separator).
+    // Bail (return 0, leaving the plain `npm run` -> `bun run` prefix swap) on
+    // any quote or shell construct the whitespace tokenizer below cannot model:
+    // reordering tokens across them would scramble the command, and the outer
+    // scanner's one-byte lookback cannot tell us whether we are inside a quote.
+    // Quoted workspace names do not occur in practice, so bailing on quotes is
+    // safe.
     let mut seg_end = args.len();
-    let (mut in_single, mut in_double) = (false, false);
-    // Shell grouping/escaping the tokenizer below does not model. Reordering
-    // tokens across these would scramble the command, so bail when present.
     let mut has_unsupported = false;
     {
         let mut i = 0;
         while i < args.len() {
-            let c = args[i];
-            if in_single {
-                in_single = c != b'\'';
-            } else if in_double {
-                in_double = c != b'"';
-            } else {
-                match c {
-                    b'\'' => in_single = true,
-                    b'"' => in_double = true,
-                    b';' | b'&' | b'|' | b'\n' | b'\r' => {
-                        seg_end = i;
-                        break;
-                    }
-                    b'(' | b')' | b'$' | b'`' | b'\\' | b'#' => has_unsupported = true,
-                    _ => {}
+            match args[i] {
+                b';' | b'&' | b'|' | b'\n' | b'\r' => {
+                    seg_end = i;
+                    break;
                 }
+                b'\'' | b'"' | b'(' | b')' | b'$' | b'`' | b'\\' | b'#' => {
+                    has_unsupported = true;
+                }
+                _ => {}
             }
             i += 1;
         }
     }
-    // Unbalanced quotes or unmodeled shell constructs: not safe to reorder.
-    if in_single || in_double || has_unsupported {
+    if has_unsupported {
         return 0;
     }
     let segment = &args[..seg_end];
 
-    // Split into tokens on top-level whitespace, preserving any quote bytes.
+    // Split into tokens on whitespace (no quotes remain after the bail above).
     let mut tokens: Vec<&[u8]> = Vec::new();
     {
-        let (mut in_single, mut in_double) = (false, false);
         let mut tok_start: Option<usize> = None;
         let mut j = 0;
         while j < segment.len() {
             let c = segment[j];
-            let is_sep = !in_single && !in_double && (c == b' ' || c == b'\t');
-            if is_sep {
+            if c == b' ' || c == b'\t' {
                 if let Some(s) = tok_start.take() {
                     tokens.push(&segment[s..j]);
                 }
-            } else {
-                if tok_start.is_none() {
-                    tok_start = Some(j);
-                }
-                if in_single {
-                    in_single = c != b'\'';
-                } else if in_double {
-                    in_double = c != b'"';
-                } else if c == b'\'' {
-                    in_single = true;
-                } else if c == b'"' {
-                    in_double = true;
-                }
+            } else if tok_start.is_none() {
+                tok_start = Some(j);
             }
             j += 1;
         }

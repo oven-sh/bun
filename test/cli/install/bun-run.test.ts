@@ -751,6 +751,31 @@ describe.concurrent("bun run", () => {
       expect(stdout).toContain("greet-done");
       expect(exitCode).toBe(0);
     });
+
+    // A later quoted string with a separator can defeat a naive quote tracker;
+    // the rewrite must leave a quoted npm run (with text before it) untouched.
+    it.skipIf(isWindows)("does not hoist -w out of an earlier quoted string", async () => {
+      using dir = tempDir(
+        "npm-ws-quote-align",
+        rootScriptRepo("echo 'step: npm run build -w app' && echo 'ok; done'"),
+      );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The `-w app` lives inside a string being echoed; it must stay there and
+      // never be turned into a live `--filter`.
+      expect(stdout).toContain("-w app");
+      expect(stdout).not.toContain("--filter");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("'bun run' priority", async () => {
